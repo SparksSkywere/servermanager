@@ -8,11 +8,10 @@ $ServerName = "***"
 $pidFilePath = "C:\PIDS.txt"
 
 # Define the arguments for the process
-$arguments = 
-'
-    -Arguement 1
-    -Arguement 2
-'
+$arguments = @(
+-arguement 1
+-arguement 2
+)
 
 while ($true) {
     # Check if the stop file exists and read its content
@@ -28,17 +27,40 @@ while ($true) {
 
     Write-Output "$ServerName server starting at: $(Get-Date)"
 
-    # Start the server and capture its PID with arguments
-    $process = Start-Process "***" -ArgumentList $arguments -PassThru
+    try {
+        # Start the server and capture its PID with arguments
+        $process = Start-Process "***" -ArgumentList $arguments -PassThru -ErrorAction Stop
+        if ($null -eq $process) {
+            throw "Failed to start the process."
+        }
 
-    # Write the PID and server name to the PIDS.txt file
-    "$($process.Id) - $ServerName" | Out-File -Append -FilePath $pidFilePath
+        # Lock the file during the write operation
+        $pidEntry = "$($process.Id) - $ServerName"
+        $fileStream = [System.IO.File]::Open($pidFilePath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $writer = New-Object System.IO.StreamWriter($fileStream)
+        $writer.WriteLine($pidEntry)
+        $writer.Flush()
+        $writer.Close()
+        $fileStream.Close()
+
+        Write-Output "PID $($process.Id) recorded for $ServerName."
+
+    } catch {
+        Write-Output "Error starting process or writing PID: $_"
+        Start-Sleep -Seconds 5
+        continue
+    }
 
     # Wait for the server process to exit (crash or shutdown)
     $process | Wait-Process
 
     Write-Output "$ServerName server crashed or shutdown at: $(Get-Date)"
 
-    # Optionally remove the PID from the file after the server stops
-    (Get-Content -Path $pidFilePath) | Where-Object { $_ -notmatch "$($process.Id) - $ServerName" } | Set-Content -Path $pidFilePath
+    # Remove the PID from the file after the server stops
+    try {
+        $pids = Get-Content -Path $pidFilePath | Where-Object { $_ -notmatch "$($process.Id) - $ServerName" }
+        Set-Content -Path $pidFilePath -Value $pids
+    } catch {
+        Write-Output "Error removing PID from the file: $_"
+    }
 }
