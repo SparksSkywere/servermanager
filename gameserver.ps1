@@ -8,11 +8,11 @@ $ServerName = "***"
 $pidFilePath = "C:\PIDS.txt"
 
 # Define the arguments for the process
-$arguments = @(
-    # Add each argument as a separate item in the array
-    "-arg1 value1",
-    "-arg2 value2"
-) -join ' ' # Join the arguments into a single string
+$arguments = 
+'
+    -Arguement 1
+    -Arguement 2
+'
 
 while ($true) {
     # Check if the stop file exists and read its content
