@@ -7,9 +7,29 @@ Powershell based video game server update manager (mostly for games)
     ```
     EXAMPLE WITHOUT DIR: @{ Name = "Project Zomboid"; AppID = "108600" },
     ```
-    
+
     ```
     EXAMPLE WITH DIR @{ Name = "Team Fortress 2"; AppID = "232250"; InstallDir = 
     "D:\SteamCMD\steamapps\common\TeamFortress2_DedicatedServer" }
     ```
-3. Right click the PS1 file and "run in powershell"
+3. While editing, you can put in the arguements, an example:
+   ```
+   $arguments = 
+    -console
+    -game garrysmod
+    -secure
+    -ip **
+    -port 27023
+    +clientport 27003
+    +map **
+    +maxplayers 50
+    +gamemode **
+    +r_hunkalloclightmaps 0
+    -high
+    -nod3d9ex
+    -r_emulate_gl
+    -novid
+    -tickrate 33
+    +gmod_mcore_test 1
+   ```
+4. Right click the PS1 file and "run in powershell"
