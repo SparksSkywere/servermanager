@@ -1,5 +1,5 @@
 # Define the path to SteamCMD executable
-$SteamCMDPath = "D:\SteamCMD\steamcmd.exe"
+$SteamCMDPath = "PATHTOSTEAMCMD.exe"
 
 # Define a function to recursively stop a process and its children
 function Stop-ProcessTree {
@@ -106,24 +106,8 @@ function Update-Game {
 
 # List of games with their corresponding App IDs and optional install directories
 $games = @(
-    @{ Name = "Project Zomboid"; AppID = "108600" },
-    @{ Name = "Space Engineers"; AppID = "298740" },
-    @{ Name = "Team Fortress 2"; AppID = "232250"; InstallDir = "D:\SteamCMD\steamapps\common\TeamFortress2_DedicatedServer" },
-    @{ Name = "Starbound"; AppID = "211820" },
-    @{ Name = "Rust"; AppID = "258550" },
-    @{ Name = "Garry's Mod"; AppID = "4020" },
-    @{ Name = "Stormworks"; AppID = "1247090" },
-    @{ Name = "Factorio"; AppID = "427520" },
-    @{ Name = "Satisfactory"; AppID = "1690800" },
-    @{ Name = "Medieval Engineers"; AppID = "367970" },
-    @{ Name = "The Forest"; AppID = "556450" },
-    @{ Name = "Left 4 Dead 2"; AppID = "222860" },
-    @{ Name = "7 Days to Die"; AppID = "251570" },
-    @{ Name = "Unturned"; AppID = "1110390" },
-    @{ Name = "Project Zomboid"; AppID = "108600" },
-    @{ Name = "Valheim"; AppID = "896660" },
-    @{ Name = "Planet Explorers"; AppID = "237870" },
-    @{ Name = "PalWorld"; AppID = "2394010" }
+    #EXAMPLE WITHOUT DIR: @{ Name = "Project Zomboid"; AppID = "108600" },
+    #EXAMPLE WITH DIR @{ Name = "Team Fortress 2"; AppID = "232250"; InstallDir = "D:\SteamCMD\steamapps\common\TeamFortress2_DedicatedServer" }
 )
 
 # Loop through each game and update it
