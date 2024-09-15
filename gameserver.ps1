@@ -7,6 +7,13 @@ $ServerName = "***"
 # Path to the PIDs file
 $pidFilePath = "C:\PIDS.txt"
 
+# Define the arguments for the process
+$arguments = @(
+    # Add each argument as a separate item in the array
+    "-arg1 value1",
+    "-arg2 value2"
+) -join ' ' # Join the arguments into a single string
+
 while ($true) {
     # Check if the stop file exists and read its content
     $stopFilePath = "C:\stop.txt"
@@ -21,8 +28,8 @@ while ($true) {
 
     Write-Output "$ServerName server starting at: $(Get-Date)"
 
-    # Start the server and capture its PID
-    $process = Start-Process "***" -PassThru
+    # Start the server and capture its PID with arguments
+    $process = Start-Process "***" -ArgumentList $arguments -PassThru
 
     # Write the PID and server name to the PIDS.txt file
     "$($process.Id) - $ServerName" | Out-File -Append -FilePath $pidFilePath
