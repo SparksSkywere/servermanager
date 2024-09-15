@@ -33,3 +33,4 @@ Powershell based video game server update manager (mostly for games)
     +gmod_mcore_test 1
    ```
 4. Right click the PS1 file and "run in powershell"
+5. To stop all servers for shutdown just right click and run the ps1 file named "end_all.ps1"
