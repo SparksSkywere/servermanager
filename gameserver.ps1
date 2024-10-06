@@ -5,20 +5,22 @@ $host.UI.RawUI.WindowTitle = "*** Server Watchdog"
 $ServerName = "***"
 
 # Path to the PIDs file
-$pidFilePath = "C:\PIDS.txt"
+$pidFilePath = "C:\servermanager\PIDS.txt"
 
 # Define the arguments for the process
 $arguments = 
 '
-ENTER YOUR ARGUEMENTS HERE
+ENTER YOUR ARGUMENTS HERE
 '
+
+# Path to the stop file
+$stopFilePath = "C:\servermanager\stop.txt"
 
 while ($true) {
     # Check if the stop file exists and read its content
-    $stopFilePath = "C:\stop.txt"
     if (Test-Path -Path $stopFilePath) {
         $stopFileContent = Get-Content -Path $stopFilePath
-        if ($stopFileContent -eq $ServerName) {
+        if ($stopFileContent.Trim() -eq $ServerName) {
             Write-Output "$ServerName update in progress. Waiting for the update to finish at: $(Get-Date)"
             Start-Sleep -Seconds 5
             continue
@@ -34,14 +36,9 @@ while ($true) {
             throw "Failed to start the process."
         }
 
-        # Lock the file during the write operation
+        # Append the PID to the file
         $pidEntry = "$($process.Id) - $ServerName"
-        $fileStream = [System.IO.File]::Open($pidFilePath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-        $writer = New-Object System.IO.StreamWriter($fileStream)
-        $writer.WriteLine($pidEntry)
-        $writer.Flush()
-        $writer.Close()
-        $fileStream.Close()
+        Add-Content -Path $pidFilePath -Value $pidEntry
 
         Write-Output "PID $($process.Id) recorded for $ServerName."
 
@@ -58,8 +55,12 @@ while ($true) {
 
     # Remove the PID from the file after the server stops
     try {
-        $pids = Get-Content -Path $pidFilePath | Where-Object { $_ -notmatch "$($process.Id) - $ServerName" }
+        # Read all lines, filter out the current process PID, and write back
+        $pids = Get-Content -Path $pidFilePath | Where-Object { $_ -notmatch "^\s*$($process.Id)\s*-\s*$ServerName\s*$" }
         Set-Content -Path $pidFilePath -Value $pids
+
+        Write-Output "PID $($process.Id) removed for $ServerName."
+
     } catch {
         Write-Output "Error removing PID from the file: $_"
     }
