@@ -2,7 +2,7 @@
 Powershell based video game server update manager (mostly for games)
 
 # Installation
-1. I have packed a helpful installer along to easily setup the locations, the config.json which is made at the start of the project is important, it will determine the location of SteamCMD for other scripts. If you move steamCMD make sure to update this!
+1. I have packed a helpful installer along to easily setup the locations (run "install.ps1" with powershell), the config.json which is made at the start of the project is important, it will determine the location of SteamCMD for other scripts. If you move steamCMD make sure to update this!
 2. Right click and run in powershell again for the setup and the installer will ask for a location to install to, you can choose wherever you want but it will use that directory, so if you install to the root of a drive please use a folder, EG: C:\SteamCMD or D:\SteamCMD as the exe will be "C:\SteamCMD\steamcmd.exe"
 
 # How to use
