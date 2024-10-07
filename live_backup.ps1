@@ -1,8 +1,33 @@
 # Set process name
 $host.ui.RawUI.WindowTitle = "Steam Game App Updater"
 
-# Path to configuration file (inside SteamCMD's servermanager folder)
-$InstallSteamCMDPath = "C:\SteamCMD"  # Adjust this if the install directory for SteamCMD is different
+# Define the registry path where SteamCMD is installed
+$registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+
+# Function to retrieve registry value
+function Get-RegistryValue {
+    param (
+        [string]$keyPath,
+        [string]$propertyName
+    )
+    try {
+        $value = Get-ItemProperty -Path $keyPath -Name $propertyName -ErrorAction Stop
+        return $value.$propertyName
+    } catch {
+        Write-Host "Failed to retrieve registry value: $($_.Exception.Message)"
+        exit 1
+    }
+}
+
+# Retrieve SteamCMD installation path from registry
+$InstallSteamCMDPath = Get-RegistryValue -keyPath $registryPath -propertyName "InstallDir"
+
+# Check if InstallSteamCMDPath was retrieved successfully
+if (-not $InstallSteamCMDPath) {
+    Write-Host "SteamCMD installation directory not found in the registry. Exiting script."
+    exit 1
+}
+
 $serverManagerDir = Join-Path $InstallSteamCMDPath "servermanager"
 $configFilePath = Join-Path $serverManagerDir "config.json"
 

@@ -4,7 +4,7 @@ Add-Type -AssemblyName System.Windows.Forms
 $steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 
 # Define the registry path for configuration
-$registryPath = "HKLM:\Software\skywereindustries\servermanager"
+$registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
 
 # Function to check if the current user is an administrator
 function Test-Administrator {
