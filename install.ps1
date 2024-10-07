@@ -105,15 +105,21 @@ function Update-SteamCmd {
     )
     Write-Host "Running SteamCMD update..."
     try {
-        Start-Process -FilePath $steamCmdPath -ArgumentList "+login anonymous +quit" -NoNewWindow -Wait
-        Write-Host "SteamCMD updated successfully."
+        # Check if steamcmd.exe exists before attempting to run it
+        if (Test-Path $steamCmdPath) {
+            Write-Host "SteamCMD executable found at $steamCmdPath"
+            Start-Process -FilePath $steamCmdPath -ArgumentList "+login anonymous +quit" -NoNewWindow -Wait
+            Write-Host "SteamCMD updated successfully."
+        } else {
+            Write-Host "SteamCMD executable not found. Cannot run update."
+            exit
+        }
     } catch {
         Write-Host "Failed to update SteamCMD: $($_.Exception.Message)"
     }
 }
 
 # MAIN SCRIPT FLOW
-# Select the directory using Windows Folder Dialog
 $installDir = Select-FolderDialog
 if (-Not $installDir) {
     Write-Host "No directory selected, exiting..."
@@ -138,42 +144,36 @@ $steamCmdExe = Join-Path $installDir "steamcmd.exe"
 
 # Combine all admin-required tasks into a single elevated process
 $scriptBlock = @"
-    # Create registry key if not exists
-    if (-Not (Test-Path '$registryPath')) {
-        try {
-            New-Item -Path '$registryPath' -Force
-            Write-Host 'Created registry key: $registryPath'
-        } catch {
-            Write-Host 'Failed to create registry key: $($_.Exception.Message)'
-            exit
+    # Create or recreate registry key and properties
+    try {
+        Write-Host 'Attempting to create the registry key at path: $($registryPath)'
+
+        # Remove existing registry key if found (to avoid old entries)
+        if (Test-Path -Path '$($registryPath)') {
+            Remove-Item -Path '$($registryPath)' -Recurse -Force
+            Write-Host 'Removed existing registry key: $($registryPath)'
+            Start-Sleep -Seconds 2
         }
-    }
 
-    # Set registry properties
-    try {
-        Set-ItemProperty -Path '$registryPath' -Name 'InstallDir' -Value '$installDir' -Force
-        Set-ItemProperty -Path '$registryPath' -Name 'ConfigFilePath' -Value '$configFilePath' -Force
-    } catch {
-        Write-Host 'Failed to set registry properties: $($_.Exception.Message)'
-        exit
-    }
+        # Create new registry key
+        New-Item -Path '$($registryPath)' -Force
+        Write-Host 'Created new registry key: $($registryPath)'
 
-    # Set directory permissions
-    try {
-        \$acl = Get-Acl '$installDir'
-        \$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-        \$permission = \$currentUser, 'FullControl', 'ContainerInherit, ObjectInherit', 'None', 'Allow'
-        \$accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule \$permission
-        \$acl.SetAccessRule(\$accessRule)
-        Set-Acl '$installDir' \$acl
+        # Set registry properties
+        Set-ItemProperty -Path '$($registryPath)' -Name 'InstallDir' -Value '$($installDir)' -Force
+        Set-ItemProperty -Path '$($registryPath)' -Name 'ConfigFilePath' -Value '$($configFilePath)' -Force
+        Write-Host 'Updated registry with new InstallDir and ConfigFilePath values.'
+
     } catch {
-        Write-Host 'Failed to set directory permissions: $($_.Exception.Message)'
+        Write-Host 'Failed to recreate or set registry properties: $($_.Exception.Message)'
         exit
     }
 
     # Download SteamCMD
     try {
-        Invoke-WebRequest -Uri '$steamCmdUrl' -OutFile '$steamCmdZip' -ErrorAction Stop
+        Write-Host 'Downloading SteamCMD from $($steamCmdUrl)...'
+        Invoke-WebRequest -Uri '$($steamCmdUrl)' -OutFile '$($steamCmdZip)' -ErrorAction Stop
+        Write-Host 'Successfully downloaded SteamCMD to $($steamCmdZip)'
     } catch {
         Write-Host 'Failed to download SteamCMD: $($_.Exception.Message)'
         exit
@@ -181,22 +181,39 @@ $scriptBlock = @"
 
     # Unzip the SteamCMD zip file
     try {
-        Expand-Archive -Path '$steamCmdZip' -DestinationPath '$installDir' -Force
+        Write-Host 'Unzipping SteamCMD to $($installDir)...'
+        Expand-Archive -Path '$($steamCmdZip)' -DestinationPath '$($installDir)' -Force
+        Write-Host 'Successfully unzipped SteamCMD'
+
+        # Verify if steamcmd.exe exists after extraction
+        if (Test-Path '$($steamCmdExe)') {
+            Write-Host 'SteamCMD executable found at $($steamCmdExe)'
+        } else {
+            Write-Host 'SteamCMD executable not found after extraction. Exiting...'
+            exit
+        }
+
     } catch {
         Write-Host 'Failed to unzip SteamCMD: $($_.Exception.Message)'
         exit
     }
 
     # Remove the downloaded zip file
-    Remove-Item -Path '$steamCmdZip' -Force
+    try {
+        Remove-Item -Path '$($steamCmdZip)' -Force
+        Write-Host 'Removed SteamCMD zip file: $($steamCmdZip)'
+    } catch {
+        Write-Host 'Failed to remove SteamCMD zip file: $($_.Exception.Message)'
+    }
 
     # Create config.json file
     try {
         \$configData = @{
-            SteamCmdPath = '$steamCmdExe'
+            SteamCmdPath = '$($steamCmdExe)'
         }
         \$configJson = \$configData | ConvertTo-Json -Depth 3
-        \$configJson | Set-Content -Path '$configFilePath' -Encoding UTF8
+        \$configJson | Set-Content -Path '$($configFilePath)' -Encoding UTF8
+        Write-Host 'Created config.json file at $($configFilePath)'
     } catch {
         Write-Host 'Failed to create config.json: $($_.Exception.Message)'
     }
