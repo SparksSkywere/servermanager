@@ -1,6 +1,10 @@
 # Video Game Updater - Server Manager
 Powershell based video game server update manager (mostly for games)
 
+# Installation
+1. I have packed a helpful installer along to easily setup the locations, the config.json which is made at the start of the project is important, it will determine the location of SteamCMD for other scripts. If you move steamCMD make sure to update this!
+2. Right click and run in powershell again for the setup and the installer will ask for a location to install to, you can choose wherever you want but it will use that directory, so if you install to the root of a drive please use a folder, EG: C:\SteamCMD or D:\SteamCMD as the exe will be "C:\SteamCMD\steamcmd.exe"
+
 # How to use
 1. When using this program what you will need to do is either run the exe (no admin needed) | If this doesn't load type in "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned" into powershell with admin rights and press Y
 2. Edit the file "auto-app-update.ps1" and add all what is required down at the part where you need to input game information
