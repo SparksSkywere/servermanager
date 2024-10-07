@@ -57,7 +57,7 @@ function Select-FolderDialog {
     $dialog.Description = "Select the directory where SteamCMD should be installed"
     $dialog.ShowNewFolderButton = $true
     [void]$dialog.ShowDialog()
-    if ($dialog.SelectedPath -eq $null) {
+    if ($null -eq $dialog.SelectedPath) {
         Write-Host "No directory selected, exiting..."
         exit
     }
