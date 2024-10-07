@@ -13,7 +13,7 @@ function Test-Administrator {
     return $adminRole
 }
 
-# Function to run a script block with elevated privileges
+# Function to run a script block with elevated privileges (for registry changes)
 function Start-ElevatedProcess {
     param (
         [string]$scriptBlock
@@ -25,7 +25,7 @@ function Start-ElevatedProcess {
     Start-Process -FilePath $psExe -ArgumentList "-NoProfile -EncodedCommand $encodedCommand" -Verb RunAs -Wait
 }
 
-# Function to create a directory if it doesn't exist
+# Function to create a directory if it doesn't exist (non-admin)
 function Servermanager {
     param (
         [string]$dir
@@ -44,7 +44,7 @@ function Servermanager {
     }
 }
 
-# Function to write messages to log file
+# Function to write messages to log file (non-admin)
 function Write-Log {
     param (
         [string]$message
@@ -65,7 +65,7 @@ function Write-Log {
     }
 }
 
-# Function to open folder selection dialog
+# Function to open folder selection dialog (non-admin)
 function Select-FolderDialog {
     [System.Windows.Forms.FolderBrowserDialog]$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
     $dialog.Description = "Select the directory where SteamCMD should be installed"
@@ -78,7 +78,7 @@ function Select-FolderDialog {
     return $dialog.SelectedPath
 }
 
-# Function to update and run SteamCMD
+# Function to update and run SteamCMD (non-admin)
 function Update-SteamCmd {
     param (
         [string]$steamCmdPath
@@ -108,22 +108,43 @@ if (-Not $SteamCMDPath) {
 
 Write-Host "Selected installation directory: $SteamCMDPath"
 
-# Ensure the SteamCMD directory exists
+# Ensure the SteamCMD directory exists (non-admin)
 $serverManagerDir = Join-Path $SteamCMDPath "servermanager"
 Servermanager -dir $SteamCMDPath
 Servermanager -dir $serverManagerDir
 
-# Set log file and config paths inside the servermanager directory AFTER the directory is confirmed to exist
+# Set log file paths inside the servermanager directory AFTER the directory is confirmed to exist (non-admin)
 $global:logFilePath = Join-Path $serverManagerDir "Install-Log.txt"
 Write-Log "Log file path set to: $global:logFilePath"
 
-# Prepare the paths and registry values
+# Download SteamCMD if steamcmd.exe does not exist (non-admin)
 $steamCmdZip = Join-Path $SteamCMDPath "steamcmd.zip"
 $steamCmdExe = Join-Path $SteamCMDPath "steamcmd.exe"
 
-# Combine all admin-required tasks into a single elevated process
+if (-Not (Test-Path $steamCmdExe)) {
+    try {
+        Write-Host "Downloading SteamCMD from $steamCmdUrl..."
+        Invoke-WebRequest -Uri $steamCmdUrl -OutFile $steamCmdZip -ErrorAction Stop
+        Write-Host "Successfully downloaded SteamCMD to $steamCmdZip"
+
+        # Unzip the SteamCMD zip file
+        Write-Host "Unzipping SteamCMD to $SteamCMDPath..."
+        Expand-Archive -Path $steamCmdZip -DestinationPath $SteamCMDPath -Force
+        Write-Host "Successfully unzipped SteamCMD"
+
+        # Remove the downloaded zip file
+        Remove-Item -Path $steamCmdZip -Force
+        Write-Host "Removed SteamCMD zip file: $steamCmdZip"
+    } catch {
+        Write-Host "Failed to download or unzip SteamCMD: $($_.Exception.Message)"
+        exit
+    }
+} else {
+    Write-Host "SteamCMD executable already exists, skipping download and extraction."
+}
+
+# Combine registry-related admin-required tasks into a single elevated process
 $scriptBlock = @"
-    # Create or recreate registry key and properties
     try {
         Write-Host 'Attempting to create the registry key at path: $($registryPath)'
 
@@ -140,64 +161,19 @@ $scriptBlock = @"
 
         # Set registry properties
         Set-ItemProperty -Path '$($registryPath)' -Name 'SteamCMDPath' -Value '$($SteamCMDPath)' -Force
-        Set-ItemProperty -Path '$($registryPath)' -Name 'servermanagerdir' -Value '$($servermanagerDir)' -Force
+        Set-ItemProperty -Path '$($registryPath)' -Name 'servermanagerdir' -Value '$($serverManagerDir)' -Force
         Write-Host 'Updated registry with new SteamCMDPath and servermanagerdir values.'
 
     } catch {
         Write-Host 'Failed to recreate or set registry properties: $($_.Exception.Message)'
         exit
     }
-
-    # Download SteamCMD if steamcmd.exe does not exist
-    if (-Not (Test-Path '$($steamCmdExe)')) {
-        try {
-            Write-Host 'Downloading SteamCMD from $($steamCmdUrl)...'
-            Invoke-WebRequest -Uri '$($steamCmdUrl)' -OutFile '$($steamCmdZip)' -ErrorAction Stop
-            Write-Host 'Successfully downloaded SteamCMD to $($steamCmdZip)'
-
-            # Unzip the SteamCMD zip file
-            Write-Host 'Unzipping SteamCMD to $($SteamCMDPath)...'
-            Expand-Archive -Path '$($steamCmdZip)' -DestinationPath '$($SteamCMDPath)' -Force
-            Write-Host 'Successfully unzipped SteamCMD'
-
-            # Verify if steamcmd.exe exists after extraction
-            if (Test-Path '$($steamCmdExe)') {
-                Write-Host 'SteamCMD executable found at $($steamCmdExe)'
-            } else {
-                Write-Host 'SteamCMD executable not found after extraction. Exiting...'
-                exit
-            }
-
-            # Remove the downloaded zip file
-            Remove-Item -Path '$($steamCmdZip)' -Force
-            Write-Host 'Removed SteamCMD zip file: $($steamCmdZip)'
-        } catch {
-            Write-Host 'Failed to download or unzip SteamCMD: $($_.Exception.Message)'
-            exit
-        }
-    } else {
-        Write-Host 'SteamCMD executable already exists, skipping download and extraction.'
-    }
-
-    # Create config.json file
-    try {
-        \$configData = @{
-            SteamCmdPath = '$($steamCmdExe)'
-        }
-        \$configJson = \$configData | ConvertTo-Json -Depth 3
-        \$configJson | Set-Content -Path '$($serverManagerDir)' -Encoding UTF8
-        Write-Host 'Created config.json file at $($serverManagerDir)'
-    } catch {
-        Write-Host 'Failed to create config.json: $($_.Exception.Message)'
-    }
-
-    Write-Host 'All admin-required tasks completed successfully.'
 "@
 
-# Run all admin tasks in one elevation request
+# Run the admin tasks for registry settings only
 Start-ElevatedProcess -scriptBlock $scriptBlock
 
-# Run the SteamCMD update (does not require admin rights)
+# Run the SteamCMD update (non-admin)
 Update-SteamCmd -steamCmdPath $steamCmdExe
 
 # End of script

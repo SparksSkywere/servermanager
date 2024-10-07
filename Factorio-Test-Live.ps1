@@ -19,8 +19,8 @@ function Get-RegistryValue {
     }
 }
 
-# Retrieve SteamCMD installation path from registry
-$SteamCMDPath = Get-RegistryValue -keyPath $registryPath -propertyName "SteamCmdPath"
+# Retrieve SteamCMD installation path from registry and append 'steamcmd.exe'
+$SteamCMDPath = Join-Path (Get-RegistryValue -keyPath $registryPath -propertyName "SteamCmdPath") "steamcmd.exe"
 # Retrieve Server Manager directory path from registry
 $serverManagerDir = Get-RegistryValue -keyPath $registryPath -propertyName "servermanagerdir"
 
@@ -180,6 +180,9 @@ function AnyUpdatesAvailable {
     $processInfo.RedirectStandardOutput = $true
     $processInfo.UseShellExecute = $false
     $processInfo.CreateNoWindow = $true
+    
+    # Set the working directory to the folder containing SteamCMD (excluding the .exe)
+    $processInfo.WorkingDirectory = (Get-RegistryValue -keyPath $registryPath -propertyName "SteamCmdPath")    
 
     $process = [System.Diagnostics.Process]::Start($processInfo)
 
