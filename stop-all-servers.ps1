@@ -1,5 +1,26 @@
-# Define the path to the PID file
-$pidFilePath = "C:\PIDS.txt"
+# Define the registry path where the Server Manager settings are stored
+$registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+
+# Function to retrieve registry value
+function Get-RegistryValue {
+    param (
+        [string]$keyPath,
+        [string]$propertyName
+    )
+    try {
+        $value = Get-ItemProperty -Path $keyPath -Name $propertyName -ErrorAction Stop
+        return $value.$propertyName
+    } catch {
+        Write-Host "Failed to retrieve registry value: $($_.Exception.Message)"
+        exit 1
+    }
+}
+
+# Retrieve Server Manager directory path from registry
+$serverManagerDir = Get-RegistryValue -keyPath $registryPath -propertyName "servermanagerdir"
+
+# Define the path to the PID file using the registry-based directory
+$pidFilePath = Join-Path $serverManagerDir "PIDS.txt"
 
 # Check if the PID file exists
 if (Test-Path -Path $pidFilePath) {

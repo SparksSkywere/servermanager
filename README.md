@@ -2,8 +2,7 @@
 Powershell based video game server update manager (mostly for games)
 
 # Installation
-1. I have packed a helpful installer along to easily setup the locations (run "install.ps1" with powershell), the config.json which is made at the start of the project is important, it will determine the location of SteamCMD for other scripts. If you move steamCMD make sure to update this!
-2. Right click and run in powershell again for the setup and the installer will ask for a location to install to, you can choose wherever you want but it will use that directory, so if you install to the root of a drive please use a folder, EG: C:\SteamCMD or D:\SteamCMD as the exe will be "C:\SteamCMD\steamcmd.exe"
+1. I have packed a helpful installer along to easily setup the locations (run "install.ps1" with powershell), If you move steamCMD re-run the install.ps1 and tell it where the new directory is as it will update all the registry keys.
 
 # How to use
 1. When using this program what you will need to do is either run the exe (no admin needed) | If this doesn't load type in "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned" into powershell with admin rights and press Y
@@ -36,5 +35,8 @@ Powershell based video game server update manager (mostly for games)
     -tickrate 33
     +gmod_mcore_test 1
    ```
-4. Right click the PS1 file and "run in powershell"
-5. To stop all servers for shutdown just right click and run the ps1 file named "end_all.ps1"
+4. Start the server with running the "startserver.bat" file
+5. To stop all servers for shutdown just right click and run the ps1 file named "stop-all-servers.ps1"
+
+# Uninstallation
+1. There is also an uninstaller.ps1 file in there and this is used to completely uninstall everything, registry keys and clear the steamcmd directory, if you wish to stop using my program but wish to keep the downloaded games, move the steamcmd folder and run the uninstaller

@@ -4,8 +4,29 @@ $host.UI.RawUI.WindowTitle = "*** Server Watchdog"
 # Define the name of this server
 $ServerName = "***"
 
+# Define the registry path where SteamCMD is installed
+$registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+
+# Function to retrieve registry value
+function Get-RegistryValue {
+    param (
+        [string]$keyPath,
+        [string]$propertyName
+    )
+    try {
+        $value = Get-ItemProperty -Path $keyPath -Name $propertyName -ErrorAction Stop
+        return $value.$propertyName
+    } catch {
+        Write-Host "Failed to retrieve registry value: $($_.Exception.Message)"
+        exit 1
+    }
+}
+
+# Retrieve Server Manager directory path from the registry
+$serverManagerDir = Get-RegistryValue -keyPath $registryPath -propertyName "servermanagerdir"
+
 # Path to the PIDs file
-$pidFilePath = "C:\servermanager\PIDS.txt"
+$pidFilePath = Join-Path $serverManagerDir "PIDS.txt"
 
 # Define the arguments for the process
 $arguments = 
@@ -14,7 +35,7 @@ ENTER YOUR ARGUMENTS HERE
 '
 
 # Path to the stop file
-$stopFilePath = "C:\servermanager\stop.txt"
+$stopFilePath = Join-Path $serverManagerDir "stop.txt"
 
 while ($true) {
     # Check if the stop file exists and read its content
