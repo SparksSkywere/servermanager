@@ -1,29 +1,32 @@
 # Set process name
 $host.ui.RawUI.WindowTitle = "Steam Game App Updater"
 
-# Path to configuration file (inside SteamCMD's servermanager folder)
-$InstallSteamCMDPath = "C:\SteamCMD"  # Adjust this if the install directory for SteamCMD is different
-$serverManagerDir = Join-Path $InstallSteamCMDPath "servermanager"
-$configFilePath = Join-Path $serverManagerDir "config.json"
+# Define the registry path where SteamCMD is installed
+$registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
 
-# Check if configuration file exists
-if (-not (Test-Path -Path $configFilePath)) {
-    Write-Host "Configuration file not found at $configFilePath. Exiting script."
-    exit 1
+# Function to retrieve registry value
+function Get-RegistryValue {
+    param (
+        [string]$keyPath,
+        [string]$propertyName
+    )
+    try {
+        $value = Get-ItemProperty -Path $keyPath -Name $propertyName -ErrorAction Stop
+        return $value.$propertyName
+    } catch {
+        Write-Host "Failed to retrieve registry value: $($_.Exception.Message)"
+        exit 1
+    }
 }
 
-# Load and parse the configuration file
-try {
-    $configContent = Get-Content -Path $configFilePath -Raw | ConvertFrom-Json
-    $SteamCMDPath = $configContent.SteamCmdPath
-} catch {
-    Write-Host "Error loading or parsing configuration file: $_"
-    exit 1
-}
+# Retrieve SteamCMD installation path from registry
+$SteamCMDPath = Get-RegistryValue -keyPath $registryPath -propertyName "SteamCmdPath"
+# Retrieve Server Manager directory path from registry
+$serverManagerDir = Get-RegistryValue -keyPath $registryPath -propertyName "servermanagerdir"
 
-# Ensure SteamCMDPath is defined
+# Check if SteamCMDPath was retrieved successfully
 if (-not $SteamCMDPath) {
-    Write-Host "SteamCMDPath is not defined in the configuration file. Exiting script."
+    Write-Host "SteamCMD path not found in the registry. Exiting script."
     exit 1
 }
 

@@ -43,15 +43,15 @@ function Remove-Directory {
 # Step 1: Fetch the installation directory from 'servermanager' subkey
 if (Test-Path -Path $serverManagerRegistryPath) {
     try {
-        $installDir = (Get-ItemProperty -Path $serverManagerRegistryPath).InstallDir
+        $SteamCMDPath = (Get-ItemProperty -Path $serverManagerRegistryPath).SteamCMDPath
         
-        if (-not $installDir) {
-            throw "InstallDir property is missing."
+        if (-not $SteamCMDPath) {
+            throw "SteamCMDPath property is missing."
         }
 
-        Write-Host "Installation directory found: $installDir"
+        Write-Host "Installation directory found: $SteamCMDPath"
     } catch {
-        Write-Host "Failed to retrieve InstallDir property from the registry: $($_.Exception.Message)"
+        Write-Host "Failed to retrieve SteamCMDPath property from the registry: $($_.Exception.Message)"
         exit
     }
 } else {
@@ -95,7 +95,7 @@ $scriptBlock = @"
         Write-Host 'Starting uninstallation process'
         
         # Step 2: Remove the installation directory and any related files
-        Remove-Directory -dir '$($installDir)'
+        Remove-Directory -dir '$($SteamCMDPath)'
 
         # Step 3: Remove 'servermanager' registry key
         Remove-RegistryKey -regPath 'HKLM:\Software\SkywereIndustries\servermanager'

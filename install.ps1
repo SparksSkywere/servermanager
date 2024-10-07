@@ -44,26 +44,6 @@ function Servermanager {
     }
 }
 
-# Function to ensure the current user has full permissions to a directory
-function Set-DirectoryPermissions {
-    param (
-        [string]$dir
-    )
-
-    try {
-        $acl = Get-Acl $dir
-        $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-        $permission = $currentUser, "FullControl", "ContainerInherit, ObjectInherit", "None", "Allow"
-        $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule $permission
-        $acl.SetAccessRule($accessRule)
-        Set-Acl $dir $acl
-        Write-Host "Set full control permissions for $currentUser on directory: $dir"
-    } catch {
-        Write-Host "Failed to set directory permissions: $($_.Exception.Message)"
-        throw
-    }
-}
-
 # Function to write messages to log file
 function Write-Log {
     param (
@@ -120,27 +100,26 @@ function Update-SteamCmd {
 }
 
 # MAIN SCRIPT FLOW
-$installDir = Select-FolderDialog
-if (-Not $installDir) {
+$SteamCMDPath = Select-FolderDialog
+if (-Not $SteamCMDPath) {
     Write-Host "No directory selected, exiting..."
     exit
 }
 
-Write-Host "Selected installation directory: $installDir"
+Write-Host "Selected installation directory: $SteamCMDPath"
 
 # Ensure the SteamCMD directory exists
-$serverManagerDir = Join-Path $installDir "servermanager"
-Servermanager -dir $installDir
+$serverManagerDir = Join-Path $SteamCMDPath "servermanager"
+Servermanager -dir $SteamCMDPath
 Servermanager -dir $serverManagerDir
 
 # Set log file and config paths inside the servermanager directory AFTER the directory is confirmed to exist
 $global:logFilePath = Join-Path $serverManagerDir "Install-Log.txt"
 Write-Log "Log file path set to: $global:logFilePath"
-$configFilePath = Join-Path $serverManagerDir "config.json"
 
 # Prepare the paths and registry values
-$steamCmdZip = Join-Path $installDir "steamcmd.zip"
-$steamCmdExe = Join-Path $installDir "steamcmd.exe"
+$steamCmdZip = Join-Path $SteamCMDPath "steamcmd.zip"
+$steamCmdExe = Join-Path $SteamCMDPath "steamcmd.exe"
 
 # Combine all admin-required tasks into a single elevated process
 $scriptBlock = @"
@@ -160,50 +139,44 @@ $scriptBlock = @"
         Write-Host 'Created new registry key: $($registryPath)'
 
         # Set registry properties
-        Set-ItemProperty -Path '$($registryPath)' -Name 'InstallDir' -Value '$($installDir)' -Force
-        Set-ItemProperty -Path '$($registryPath)' -Name 'ConfigFilePath' -Value '$($configFilePath)' -Force
-        Write-Host 'Updated registry with new InstallDir and ConfigFilePath values.'
+        Set-ItemProperty -Path '$($registryPath)' -Name 'SteamCMDPath' -Value '$($SteamCMDPath)' -Force
+        Set-ItemProperty -Path '$($registryPath)' -Name 'servermanagerdir' -Value '$($servermanagerDir)' -Force
+        Write-Host 'Updated registry with new SteamCMDPath and servermanagerdir values.'
 
     } catch {
         Write-Host 'Failed to recreate or set registry properties: $($_.Exception.Message)'
         exit
     }
 
-    # Download SteamCMD
-    try {
-        Write-Host 'Downloading SteamCMD from $($steamCmdUrl)...'
-        Invoke-WebRequest -Uri '$($steamCmdUrl)' -OutFile '$($steamCmdZip)' -ErrorAction Stop
-        Write-Host 'Successfully downloaded SteamCMD to $($steamCmdZip)'
-    } catch {
-        Write-Host 'Failed to download SteamCMD: $($_.Exception.Message)'
-        exit
-    }
+    # Download SteamCMD if steamcmd.exe does not exist
+    if (-Not (Test-Path '$($steamCmdExe)')) {
+        try {
+            Write-Host 'Downloading SteamCMD from $($steamCmdUrl)...'
+            Invoke-WebRequest -Uri '$($steamCmdUrl)' -OutFile '$($steamCmdZip)' -ErrorAction Stop
+            Write-Host 'Successfully downloaded SteamCMD to $($steamCmdZip)'
 
-    # Unzip the SteamCMD zip file
-    try {
-        Write-Host 'Unzipping SteamCMD to $($installDir)...'
-        Expand-Archive -Path '$($steamCmdZip)' -DestinationPath '$($installDir)' -Force
-        Write-Host 'Successfully unzipped SteamCMD'
+            # Unzip the SteamCMD zip file
+            Write-Host 'Unzipping SteamCMD to $($SteamCMDPath)...'
+            Expand-Archive -Path '$($steamCmdZip)' -DestinationPath '$($SteamCMDPath)' -Force
+            Write-Host 'Successfully unzipped SteamCMD'
 
-        # Verify if steamcmd.exe exists after extraction
-        if (Test-Path '$($steamCmdExe)') {
-            Write-Host 'SteamCMD executable found at $($steamCmdExe)'
-        } else {
-            Write-Host 'SteamCMD executable not found after extraction. Exiting...'
+            # Verify if steamcmd.exe exists after extraction
+            if (Test-Path '$($steamCmdExe)') {
+                Write-Host 'SteamCMD executable found at $($steamCmdExe)'
+            } else {
+                Write-Host 'SteamCMD executable not found after extraction. Exiting...'
+                exit
+            }
+
+            # Remove the downloaded zip file
+            Remove-Item -Path '$($steamCmdZip)' -Force
+            Write-Host 'Removed SteamCMD zip file: $($steamCmdZip)'
+        } catch {
+            Write-Host 'Failed to download or unzip SteamCMD: $($_.Exception.Message)'
             exit
         }
-
-    } catch {
-        Write-Host 'Failed to unzip SteamCMD: $($_.Exception.Message)'
-        exit
-    }
-
-    # Remove the downloaded zip file
-    try {
-        Remove-Item -Path '$($steamCmdZip)' -Force
-        Write-Host 'Removed SteamCMD zip file: $($steamCmdZip)'
-    } catch {
-        Write-Host 'Failed to remove SteamCMD zip file: $($_.Exception.Message)'
+    } else {
+        Write-Host 'SteamCMD executable already exists, skipping download and extraction.'
     }
 
     # Create config.json file
@@ -212,8 +185,8 @@ $scriptBlock = @"
             SteamCmdPath = '$($steamCmdExe)'
         }
         \$configJson = \$configData | ConvertTo-Json -Depth 3
-        \$configJson | Set-Content -Path '$($configFilePath)' -Encoding UTF8
-        Write-Host 'Created config.json file at $($configFilePath)'
+        \$configJson | Set-Content -Path '$($serverManagerDir)' -Encoding UTF8
+        Write-Host 'Created config.json file at $($serverManagerDir)'
     } catch {
         Write-Host 'Failed to create config.json: $($_.Exception.Message)'
     }
@@ -228,4 +201,4 @@ Start-ElevatedProcess -scriptBlock $scriptBlock
 Update-SteamCmd -steamCmdPath $steamCmdExe
 
 # End of script
-Write-Log "SteamCMD successfully installed to $installDir and path saved to $configFilePath."
+Write-Log "SteamCMD successfully installed to $SteamCMDPath and path saved to $serverManagerDir."
