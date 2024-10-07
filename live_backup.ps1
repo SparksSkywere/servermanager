@@ -19,36 +19,14 @@ function Get-RegistryValue {
     }
 }
 
-# Retrieve SteamCMD installation path from registry
-$InstallSteamCMDPath = Get-RegistryValue -keyPath $registryPath -propertyName "InstallDir"
+# Retrieve SteamCMD installation path from registry and append 'steamcmd.exe'
+$SteamCMDPath = Join-Path (Get-RegistryValue -keyPath $registryPath -propertyName "SteamCmdPath") "steamcmd.exe"
+# Retrieve Server Manager directory path from registry
+$serverManagerDir = Get-RegistryValue -keyPath $registryPath -propertyName "servermanagerdir"
 
-# Check if InstallSteamCMDPath was retrieved successfully
-if (-not $InstallSteamCMDPath) {
-    Write-Host "SteamCMD installation directory not found in the registry. Exiting script."
-    exit 1
-}
-
-$serverManagerDir = Join-Path $InstallSteamCMDPath "servermanager"
-$configFilePath = Join-Path $serverManagerDir "config.json"
-
-# Check if configuration file exists
-if (-not (Test-Path -Path $configFilePath)) {
-    Write-Host "Configuration file not found at $configFilePath. Exiting script."
-    exit 1
-}
-
-# Load and parse the configuration file
-try {
-    $configContent = Get-Content -Path $configFilePath -Raw | ConvertFrom-Json
-    $SteamCMDPath = $configContent.SteamCmdPath
-} catch {
-    Write-Host "Error loading or parsing configuration file: $_"
-    exit 1
-}
-
-# Ensure SteamCMDPath is defined
+# Check if SteamCMDPath was retrieved successfully
 if (-not $SteamCMDPath) {
-    Write-Host "SteamCMDPath is not defined in the configuration file. Exiting script."
+    Write-Host "SteamCMD path not found in the registry. Exiting script."
     exit 1
 }
 
@@ -202,6 +180,9 @@ function AnyUpdatesAvailable {
     $processInfo.RedirectStandardOutput = $true
     $processInfo.UseShellExecute = $false
     $processInfo.CreateNoWindow = $true
+    
+    # Set the working directory to the folder containing SteamCMD (excluding the .exe)
+    $processInfo.WorkingDirectory = (Get-RegistryValue -keyPath $registryPath -propertyName "SteamCmdPath")    
 
     $process = [System.Diagnostics.Process]::Start($processInfo)
 

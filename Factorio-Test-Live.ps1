@@ -306,7 +306,7 @@ function Update-Game {
 
 # List of games with their corresponding App IDs and optional install directories
 $games = @(
-    @{ Name = "Factorio"; AppID = "427520" }
+    @{ Name = "Left 4 Dead 2"; AppID = "222860" }
 )
 
 # Loop through each game and update it
