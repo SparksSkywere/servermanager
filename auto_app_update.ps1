@@ -216,7 +216,7 @@ function Update-Game {
     )
 
     # Ensure stopFilePath is initialized before use
-    $stopFilePath = Join-Path $serverManagerDir "stop.txt"  # Default stop file path
+    $stopFilePath = Join-Path $serverManagerDir "stop.txt"
 
     # Check if the game is running by looking for its PID
     $pidFilePath = Join-Path $serverManagerDir "PIDS.txt"

@@ -2,7 +2,7 @@
 $host.ui.RawUI.WindowTitle = "Steam Game App Updater"
 
 # Define the registry path where SteamCMD is installed
-$registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+$registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
 
 # Function to retrieve registry value
 function Get-RegistryValue {
@@ -22,7 +22,7 @@ function Get-RegistryValue {
 # Retrieve SteamCMD installation path from registry and append 'steamcmd.exe'
 $SteamCMDPath = Join-Path (Get-RegistryValue -keyPath $registryPath -propertyName "SteamCmdPath") "steamcmd.exe"
 # Retrieve Server Manager directory path from registry
-$serverManagerDir = Get-RegistryValue -keyPath $registryPath -propertyName "servermanagerdir"
+$ServerManagerDir = Get-RegistryValue -keyPath $registryPath -propertyName "Servermanagerdir"
 
 # Check if SteamCMDPath was retrieved successfully
 if (-not $SteamCMDPath) {
@@ -30,8 +30,8 @@ if (-not $SteamCMDPath) {
     exit 1
 }
 
-# Path to log file (inside SteamCMD's servermanager folder)
-$LogFilePath = Join-Path $serverManagerDir "log-autoupdater.log"
+# Path to log file (inside SteamCMD's Servermanager folder)
+$LogFilePath = Join-Path $ServerManagerDir "log-autoupdater.log"
 $log = $true  # Set this to $false to disable logging
 
 # Define a function to log messages if logging is enabled
@@ -97,8 +97,8 @@ function Send-Shutdown {
     $message = "Server will shut down in $ShutdownTime seconds for updates!"
     Logging "Sending shutdown message to $ServerName..."
 
-    # Define the shutdown folder (inside SteamCMD's servermanager folder)
-    $shutdownDir = $serverManagerDir
+    # Define the shutdown folder (inside SteamCMD's Servermanager folder)
+    $shutdownDir = $ServerManagerDir
     if (-not (Test-Path -Path $shutdownDir)) {
         New-Item -Path $shutdownDir -ItemType Directory | Out-Null
         Logging "Created directory: $shutdownDir"
@@ -121,7 +121,7 @@ function Send-Shutdown {
 }
 
 # Ensure stopFilePath is initialized
-$stopFilePath = Join-Path $serverManagerDir "stop.txt"
+$stopFilePath = Join-Path $ServerManagerDir "stop.txt"
 Logging "Stop file path was initialized to: $stopFilePath."
 
 # Define a function to stop a server process based on PID from the PIDS.txt file
@@ -132,7 +132,7 @@ function Stop-Server {
 
     Logging "Stopping server: $ServerName..."
 
-    $pidFilePath = Join-Path $serverManagerDir "PIDS.txt"
+    $pidFilePath = Join-Path $ServerManagerDir "PIDS.txt"
 
     if (Test-Path -Path $pidFilePath) {
         $pidEntries = Get-Content -Path $pidFilePath
@@ -216,10 +216,10 @@ function Update-Game {
     )
 
     # Ensure stopFilePath is initialized before use
-    $stopFilePath = Join-Path $serverManagerDir "stop.txt"  # Default stop file path
+    $stopFilePath = Join-Path $ServerManagerDir "stop.txt"
 
     # Check if the game is running by looking for its PID
-    $pidFilePath = Join-Path $serverManagerDir "PIDS.txt"
+    $pidFilePath = Join-Path $ServerManagerDir "PIDS.txt"
     $isRunning = $false
 
     if (Test-Path -Path $pidFilePath) {
