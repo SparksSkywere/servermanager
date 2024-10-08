@@ -13,7 +13,7 @@ $gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"
 $logMemory = @()
 
 # Current Version of this script
-$CurrentVersion = v0.1
+$CurrentVersion = "0.1"
 
 # Function to check if the current user is an administrator
 function Test-Administrator {
