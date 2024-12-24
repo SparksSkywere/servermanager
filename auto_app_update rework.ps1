@@ -186,6 +186,12 @@ function AnyUpdatesAvailable {
 
     $process = [System.Diagnostics.Process]::Start($processInfo)
 
+    # Check if the process started successfully
+    if ($process -eq $null) {
+    Logging "Failed to start SteamCMD process for $AppName." -Type "ERROR"
+    return $false
+    }
+
     # Wait for the process to finish or timeout
     if (-not $process.WaitForExit(240000)) {
         Logging "SteamCMD process for $AppName timed out. Killing process..." -Type "ERROR"
@@ -193,7 +199,7 @@ function AnyUpdatesAvailable {
         $process.WaitForExit()
         return $false
     }
-
+    
     $output = $process.StandardOutput.ReadToEnd()
     Logging "SteamCMD Output for $AppName $output"
 
