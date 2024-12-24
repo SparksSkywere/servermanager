@@ -207,7 +207,7 @@ function AnyUpdatesAvailable {
     }
 }
 
-# Define a function to update a game using SteamCMD
+# Define a function to update or install a game using SteamCMD
 function Update-Game {
     param (
         [string]$AppName,
@@ -216,7 +216,7 @@ function Update-Game {
     )
 
     # Ensure stopFilePath is initialized before use
-    $stopFilePath = Join-Path $serverManagerDir "stop.txt"  # Default stop file path
+    $stopFilePath = Join-Path $serverManagerDir "stop.txt"
 
     # Check if the game is running by looking for its PID
     $pidFilePath = Join-Path $serverManagerDir "PIDS.txt"
@@ -243,10 +243,13 @@ function Update-Game {
         return
     }
 
-    # Check if the installation directory exists
+    # Determine if this is a new installation or an update
     if ($InstallDir -and -not (Test-Path -Path $InstallDir)) {
         Logging "Directory for $AppName not found at $InstallDir. Installing..."
         $InstallDir = ""  # Reset to default if the specified directory does not exist
+        $installMode = "INSTALLING"
+    } else {
+        $installMode = "UPDATING"
     }
 
     # Only stop the server if it is running
@@ -262,7 +265,7 @@ function Update-Game {
         Start-Sleep -Seconds 60 # Adjust based on how long your server takes to shut down
     }
 
-    Logging "Updating $AppName..."
+    Logging "$installMode $AppName..."
 
     # Construct the SteamCMD arguments
     $arguments = "+login anonymous +app_update $AppID +exit"
@@ -272,7 +275,7 @@ function Update-Game {
         $arguments = "+force_install_dir $InstallDir $arguments"
     }
 
-    # Start the update process and capture the output
+    # Start the update/install process and capture the output
     try {
         $processInfo = New-Object System.Diagnostics.ProcessStartInfo
         $processInfo.FileName = $SteamCMDPath
@@ -288,7 +291,7 @@ function Update-Game {
         Logging "SteamCMD Output: $output"
 
         if ($output -match "progress: \d+\.\d+") {
-            Logging "$AppName update completed successfully."
+            Logging "$AppName $installMode completed successfully."
         } else {
             Logging "No update detected or already up-to-date for $AppName."
         }
@@ -299,7 +302,7 @@ function Update-Game {
         # Remove the stop file to allow the server to restart, if it was created
         if (Test-Path -Path $stopFilePath) {
             Remove-Item -Path $stopFilePath -Force
-            Logging "Update complete for $AppName. Stop file removed. Server can restart."
+            Logging "$installMode complete for $AppName. Stop file removed. Server can restart."
         }
     }
 }
@@ -309,10 +312,10 @@ $games = @(
     @{ Name = "Left 4 Dead 2"; AppID = "222860" }
 )
 
-# Loop through each game and update it
+# Loop through each game and update/install it
 foreach ($game in $games) {
     Update-Game -AppName $game.Name -AppID $game.AppID -InstallDir $game.InstallDir
 }
 
-Logging "All games updated! Exiting in 10 seconds..."
+Logging "All games updated/installed! Exiting in 10 seconds..."
 Start-Sleep -Seconds 10

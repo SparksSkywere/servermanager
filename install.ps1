@@ -4,13 +4,16 @@ Add-Type -AssemblyName System.Windows.Forms
 $steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 
 # Define the registry path for configuration
-$registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+$registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
 
 # Define the Git repository URL
 $gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"
 
 # Variable to store log entries in RAM
 $logMemory = @()
+
+# Current Version of this script
+$CurrentVersion = "0.1"
 
 # Function to check if the current user is an administrator
 function Test-Administrator {
@@ -167,15 +170,15 @@ if (-Not $SteamCMDPath) {
 Write-Log "Selected installation directory: $SteamCMDPath"
 
 # Ensure the SteamCMD directory exists (non-admin)
-$serverManagerDir = Join-Path $SteamCMDPath "servermanager"
+$ServerManagerDir = Join-Path $SteamCMDPath "Servermanager"
 Servermanager -dir $SteamCMDPath
-Servermanager -dir $serverManagerDir
+Servermanager -dir $ServerManagerDir
 
-# Update the Git repository into the servermanager directory (either pull or clone)
-Update-GitRepo -repoUrl $gitRepoUrl -destination $serverManagerDir
+# Update the Git repository into the Servermanager directory (either pull or clone)
+Update-GitRepo -repoUrl $gitRepoUrl -destination $ServerManagerDir
 
-# Set log file paths inside the servermanager directory AFTER the Git repository is updated
-$global:logFilePath = Join-Path $serverManagerDir "Install-Log.txt"
+# Set log file paths inside the Servermanager directory AFTER the Git repository is updated
+$global:logFilePath = Join-Path $ServerManagerDir "Install-Log.txt"
 
 # Ensure the log file is created before we start writing
 if (-not (Test-Path $global:logFilePath)) {
@@ -218,16 +221,20 @@ $scriptBlock = @"
         }
         New-Item -Path '$($registryPath)' -Force
         Set-ItemProperty -Path '$($registryPath)' -Name 'SteamCMDPath' -Value '$($SteamCMDPath)' -Force
-        Set-ItemProperty -Path '$($registryPath)' -Name 'servermanagerdir' -Value '$($serverManagerDir)' -Force
+        Set-ItemProperty -Path '$($registryPath)' -Name 'Servermanagerdir' -Value '$($ServerManagerDir)' -Force
+        Set-ItemProperty -Path '$($registryPath)' -Name 'CurrentVersion' -Value '$($CurrentVersion)' -Force
     } catch {
         exit
     }
 "@
 
+# RUn the registry creation after PATH has been selected
 Start-ElevatedProcess -scriptBlock $scriptBlock
 
 # Run the SteamCMD update (non-admin)
 Update-SteamCmd -steamCmdPath $steamCmdExe
 
+# Finalise and exit
 Write-Log "SteamCMD successfully installed to $SteamCMDPath"
 Flush-LogToFile -logFilePath $global:logFilePath
+Exit
