@@ -13,7 +13,7 @@ $gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"
 $logMemory = @()
 
 # Current Version of this script
-$CurrentVersion = "0.1"
+$CurrentVersion = "0.2"
 
 # Function to check if the current user is an administrator
 function Test-Administrator {
@@ -91,6 +91,31 @@ function Flush-LogToFile {
     $global:logMemory = @()
 }
 
+# Function to check and install Git if missing
+function Install-Git {
+    if (-Not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Host "Git is not installed. Installing Git..."
+        try {
+            $installerUrl = "https://github.com/git-for-windows/git/releases/latest/download/Git-2.43.0-64-bit.exe"
+            $installerPath = Join-Path $env:TEMP "git-installer.exe"
+
+            Write-Host "Downloading Git installer..."
+            Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
+
+            Write-Host "Running Git installer..."
+            Start-Process -FilePath $installerPath -ArgumentList "/VERYSILENT /NORESTART" -Wait
+
+            Write-Host "Git installation completed."
+            Remove-Item -Path $installerPath -Force
+        } catch {
+            Write-Host "Failed to install Git: $($_.Exception.Message)"
+            exit
+        }
+    } else {
+        Write-Host "Git is already installed."
+    }
+}
+
 # Function to open folder selection dialog (non-admin)
 function Select-FolderDialog {
     [System.Windows.Forms.FolderBrowserDialog]$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
@@ -160,6 +185,74 @@ function Update-GitRepo {
     }
 }
 
+# Create AppID.txt file | Future fixes planned for this file
+function Create-AppIDFile {
+    param (
+        [string]$serverManagerDir
+    )
+    $appIDFile = Join-Path $serverManagerDir "AppID.txt"
+    if (-Not (Test-Path $appIDFile)) {
+        New-Item -Path $appIDFile -ItemType File
+        Write-Host "Created AppID.txt file."
+    } else {
+        Write-Host "AppID.txt file already exists."
+    }
+}
+
+# Function to add delay between requests
+function Add-Delay {
+    Start-Sleep -Seconds 2
+}
+
+# Function to update AppID.txt with all Steam AppIDs from SteamDB (games only)
+function Update-AppIDFile {
+    param (
+        [string]$serverManagerDir
+    )
+    
+    $appIDFile = Join-Path $serverManagerDir "AppID.txt"
+    $maxRetries = 3
+    $retryCount = 0
+
+    if (Test-Path $appIDFile) {
+        do {
+            try {
+                # Fetch data from SteamDB API for games only
+                Add-Delay
+                $apiUrl = "https://steamdb.info/api/GetAppList/"
+                # Add header for Cloudflare verification
+                $headers = @{
+                    'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36'
+                }
+                $response = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers
+                
+                # Filter for games only (assuming 'type' field exists and 'game' is one of the values)
+                $appIDs = $response.applist.apps | Where-Object { $_.type -eq "game" } | Select-Object -ExpandProperty appid
+                
+                # Clear the file content before writing new data
+                Clear-Content -Path $appIDFile
+                
+                # Write each AppID on a new line
+                foreach ($appID in $appIDs) {
+                    Add-Content -Path $appIDFile -Value $appID
+                }
+                Write-Host "Updated AppID.txt with AppIDs from SteamDB."
+                break # This will exit the loop if successful
+            }
+            catch {
+                Write-Host "Failed to fetch or process app IDs from SteamDB (Attempt $($retryCount + 1)/$maxRetries). Error: $_"
+                $retryCount++
+                if ($retryCount -ge $maxRetries) {
+                    throw "Exceeded maximum retries attempting to fetch app IDs."
+                }
+                Add-Delay # Add a delay before next try
+            }
+        } while ($retryCount -lt $maxRetries)
+    } else {
+        Write-Host "AppID.txt does not exist, please create it first."
+    }
+}
+
 # MAIN SCRIPT FLOW
 $SteamCMDPath = Select-FolderDialog
 if (-Not $SteamCMDPath) {
@@ -176,6 +269,9 @@ Servermanager -dir $ServerManagerDir
 
 # Update the Git repository into the Servermanager directory (either pull or clone)
 Update-GitRepo -repoUrl $gitRepoUrl -destination $ServerManagerDir
+
+# Create the AppID.txt file
+Create-AppIDFile -serverManagerDir $ServerManagerDir
 
 # Set log file paths inside the Servermanager directory AFTER the Git repository is updated
 $global:logFilePath = Join-Path $ServerManagerDir "Install-Log.txt"
@@ -215,26 +311,76 @@ if (-Not (Test-Path $steamCmdExe)) {
 # Combine registry-related admin-required tasks into a single elevated process
 $scriptBlock = @"
     try {
-        if (Test-Path -Path '$($registryPath)') {
-            Remove-Item -Path '$($registryPath)' -Recurse -Force
-            Start-Sleep -Seconds 2
-        }
-        New-Item -Path '$($registryPath)' -Force
-        Set-ItemProperty -Path '$($registryPath)' -Name 'SteamCMDPath' -Value '$($SteamCMDPath)' -Force
-        Set-ItemProperty -Path '$($registryPath)' -Name 'Servermanagerdir' -Value '$($ServerManagerDir)' -Force
         Set-ItemProperty -Path '$($registryPath)' -Name 'CurrentVersion' -Value '$($CurrentVersion)' -Force
+        if (-Not (Test-Path -Path '$($registryPath)')) {
+            New-Item -Path '$($registryPath)' -Force
+            Set-ItemProperty -Path '$($registryPath)' -Name 'SteamCMDPath' -Value '$($SteamCMDPath)' -Force
+            Set-ItemProperty -Path '$($registryPath)' -Name 'Servermanagerdir' -Value '$($ServerManagerDir)' -Force
+            Write-Host 'Registry keys created.'
+        } else {
+            Write-Host 'Registry keys already exist, skipping creation.'
+        }
     } catch {
+        Write-Host 'Failed to manage registry: ' + $_.Exception.Message
         exit
     }
 "@
 
-# RUn the registry creation after PATH has been selected
+# Run the registry creation after PATH has been selected
 Start-ElevatedProcess -scriptBlock $scriptBlock
+
+# Install Git
+Install-Git
 
 # Run the SteamCMD update (non-admin)
 Update-SteamCmd -steamCmdPath $steamCmdExe
 
+# Update the AppID.txt file with example AppIDs - Disabled for now as cloudflare security setup by SteamDB
+#Update-AppIDFile -serverManagerDir $ServerManagerDir
+
 # Finalise and exit
 Write-Log "SteamCMD successfully installed to $SteamCMDPath"
 Flush-LogToFile -logFilePath $global:logFilePath
+
+Add-Type -AssemblyName System.Windows.Forms
+
+# Create the pop-up window
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Server Manager Installer"
+$form.Width = 350
+$form.Height = 150
+$form.FormBorderStyle = 'FixedDialog'
+$form.StartPosition = 'CenterScreen'
+
+# Create a label
+$label = New-Object System.Windows.Forms.Label
+$label.Text = "SteamCMD successfully installed and set up!"
+$label.AutoSize = $true
+$label.TextAlign = 'MiddleCenter'
+
+# Calculate position to center the label horizontally
+[int]$labelX = [math]::Max(0, (($form.ClientSize.Width - $label.PreferredWidth) / 2))
+[int]$labelY = 30
+$label.Location = New-Object System.Drawing.Point($labelX, $labelY)
+
+# Create a close button
+$button = New-Object System.Windows.Forms.Button
+$button.Text = "OK"
+$button.Width = 80
+$button.Height = 30
+$button.DialogResult = [System.Windows.Forms.DialogResult]::OK
+
+# Calculate position to center the button horizontally
+[int]$buttonX = [math]::Max(0, (($form.ClientSize.Width - $button.Width) / 2))
+[int]$buttonY = 70
+$button.Location = New-Object System.Drawing.Point($buttonX, $buttonY)
+
+# Add controls to the form
+$form.Controls.Add($label)
+$form.Controls.Add($button)
+
+# Show the form as a dialog box
+$form.AcceptButton = $button
+$form.ShowDialog()
+
 Exit

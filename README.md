@@ -6,7 +6,8 @@ Powershell based video game server update manager (mostly for games)
 
 # Installation
 1. I have packed a helpful installer along to easily setup the locations (run "install.ps1" with powershell), If you move steamCMD re-run the install.ps1 and tell it where the new directory is as it will update all the registry keys.
-2. Upon installation all the git cloned files will be copied to "servermanager" which is meant for copying
+2. I have also packed an exe too
+3. Upon installation all the git cloned files will be copied to "servermanager" which is meant for copying
 
 # How to use
 1. Edit the file "auto-app-update.ps1" and add all what is required down at the part where you need to input game information

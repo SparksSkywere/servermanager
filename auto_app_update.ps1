@@ -217,6 +217,11 @@ function Update-Game {
 
     # Ensure stopFilePath is initialized before use
     $stopFilePath = Join-Path $serverManagerDir "stop.txt"
+    $appIDFilePath = Join-Path $serverManagerDir "AppID.txt"
+
+    # Update AppID file
+    Set-Content -Path $appIDFilePath -Value $AppID
+    Logging "AppID file updated with $AppID for $AppName."
 
     # Check if the game is running by looking for its PID
     $pidFilePath = Join-Path $serverManagerDir "PIDS.txt"
@@ -306,6 +311,9 @@ function Update-Game {
         }
     }
 }
+
+# Update AppID file at the start of the script - Disabled for now as cloudflare security setup by SteamDB, the function has been removed, though Install.ps1 contains a copy
+#Update-AppIDFile -serverManagerDir $serverManagerDir
 
 # List of games with their corresponding App IDs and optional install directories
 $games = @(
