@@ -39,6 +39,13 @@ function Remove-Directory {
     }
 }
 
+# Function to show dialog box for user confirmation
+function Get-UserConfirmation {
+    Add-Type -AssemblyName PresentationFramework
+    $result = [System.Windows.MessageBox]::Show("Do you want to uninstall SteamCMD?", "Uninstall SteamCMD", 'YesNo', 'Question')
+    return ($result -eq 'Yes')
+}
+
 # MAIN UNINSTALLATION PROCESS
 # Step 1: Fetch the installation directory from 'servermanager' subkey
 if (Test-Path -Path $serverManagerRegistryPath) {
@@ -58,6 +65,9 @@ if (Test-Path -Path $serverManagerRegistryPath) {
     Write-Host "Registry path does not exist: $serverManagerRegistryPath"
     exit
 }
+
+# Ask if user wants to uninstall SteamCMD
+$uninstallSteamCMD = Get-UserConfirmation
 
 # Combine all admin-required tasks into a single elevated process
 $scriptBlock = @"
@@ -92,10 +102,15 @@ $scriptBlock = @"
     }
 
     try {
-        Write-Host 'Starting uninstallation process'
-        
-        # Step 2: Remove the installation directory and any related files
-        Remove-Directory -dir '$($SteamCMDPath)'
+        Write-Host 'Starting process'
+
+        # Only remove the SteamCMD directory if the user confirmed
+        if (`$env:UNINSTALL_STEAMCMD -eq 'True') {
+            Remove-Directory -dir '$($SteamCMDPath)'
+        }
+
+        # Remove the Servermanager directory
+        Remove-Directory -dir '$($SteamCMDPath)\Servermanager'
 
         # Step 3: Remove 'servermanager' registry key
         Remove-RegistryKey -regPath 'HKLM:\Software\SkywereIndustries\servermanager'
@@ -103,15 +118,23 @@ $scriptBlock = @"
         # Step 4: Remove the parent key 'SkywereIndustries' if it exists and is empty
         Remove-RegistryKey -regPath 'HKLM:\Software\SkywereIndustries'
 
-        Write-Host 'Uninstallation complete.'
+        Write-Host 'Process complete.'
     } catch {
-        Write-Host 'Error during uninstallation: $($_.Exception.Message)'
+        Write-Host 'Error during process: $($_.Exception.Message)'
         exit
     }
 "@
+
+# Set environment variable for use in the elevated script
+if ($uninstallSteamCMD) {
+    $env:UNINSTALL_STEAMCMD = 'True'
+} else {
+    $env:UNINSTALL_STEAMCMD = 'False'
+    Write-Host "SteamCMD uninstallation skipped."
+}
 
 # Run all admin tasks in one elevation request
 Start-ElevatedProcess -scriptBlock $scriptBlock
 
 # End of uninstaller
-Write-Host "Uninstallation process finished."
+Write-Host "Process finished."
