@@ -1,4 +1,5 @@
-1. Add auto-copy of all the server files into the game with names into the directory with some auto edits (the bat file mainly)
+1. Add auto-copy of all the server files into the game with names into the directory with some auto edits
 2. Add "new instance" (website thing)
 3. Add "Remove instance" (website thing)
 4. Make back end for server
+5. Create the required links for SSH and allow verified users access to the contained servers only

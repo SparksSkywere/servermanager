@@ -1,10 +1,11 @@
 Clear-Host
-$host.UI.RawUI.WindowTitle = "*** Server Watchdog"
-
 # Define the name of this server (this is just a name)
 $ServerName = "***"
 # Define the name of the process to start
 $ProcessName = "***"
+
+# Set the window title to the server name
+$host.UI.RawUI.WindowTitle = "$ServerName Server Watchdog"
 
 # Define the registry path where SteamCMD is installed
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
@@ -39,6 +40,7 @@ ENTER YOUR ARGUMENTS HERE
 # Path to the stop file
 $stopFilePath = Join-Path $ServerManagerDir "stop.txt"
 
+# Main loop to start and monitor the process
 while ($true) {
     # Check if the stop file exists and read its content
     if (Test-Path -Path $stopFilePath) {
@@ -59,7 +61,16 @@ while ($true) {
             throw "Failed to start the process."
         }
 
-        # Append the PID to the file
+        # Read the current contents of the PID file
+        $pidFileContent = Get-Content -Path $pidFilePath
+
+        # Filter out any lines that contain the server name
+        $filteredContent = $pidFileContent | Where-Object { $_ -notmatch "$ServerName" }
+
+        # Write the filtered content back to the PID file
+        Set-Content -Path $pidFilePath -Value $filteredContent
+
+        # Append the new PID entry to the file
         $pidEntry = "$($process.Id) - $ServerName"
         Add-Content -Path $pidFilePath -Value $pidEntry
 

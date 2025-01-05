@@ -1,10 +1,11 @@
 Clear-Host
-$host.UI.RawUI.WindowTitle = "Space Engineers Server Watchdog"
-
 # Define the name of this server (this is just a name)
 $ServerName = "Space Engineers"
-# This name is a shortcut of the process "SpaceEngineersDedicated.exe" with -console in the target at the end, it is in the same directory
+# Define the name of the process to start
 $ProcessName = "SECMD"
+
+# Set the window title to the server name
+$host.UI.RawUI.WindowTitle = "$ServerName Server Watchdog"
 
 # Define the registry path where SteamCMD is installed
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
@@ -30,9 +31,16 @@ $ServerManagerDir = Get-RegistryValue -keyPath $registryPath -propertyName "Serv
 # Path to the PIDs file
 $pidFilePath = Join-Path $ServerManagerDir "PIDS.txt"
 
+# Define the arguments for the process
+$arguments = 
+'
+ENTER YOUR ARGUMENTS HERE
+'
+
 # Path to the stop file
 $stopFilePath = Join-Path $ServerManagerDir "stop.txt"
 
+# Main loop to start and monitor the process
 while ($true) {
     # Check if the stop file exists and read its content
     if (Test-Path -Path $stopFilePath) {
@@ -48,12 +56,21 @@ while ($true) {
 
     try {
         # Start the server and capture its PID with arguments
-        $process = Start-Process "$ProcessName" -PassThru -ErrorAction Stop
+        $process = Start-Process "$ProcessName" -ArgumentList $arguments -PassThru -ErrorAction Stop
         if ($null -eq $process) {
             throw "Failed to start the process."
         }
 
-        # Append the PID to the file
+        # Read the current contents of the PID file
+        $pidFileContent = Get-Content -Path $pidFilePath
+
+        # Filter out any lines that contain the server name
+        $filteredContent = $pidFileContent | Where-Object { $_ -notmatch "$ServerName" }
+
+        # Write the filtered content back to the PID file
+        Set-Content -Path $pidFilePath -Value $filteredContent
+
+        # Append the new PID entry to the file
         $pidEntry = "$($process.Id) - $ServerName"
         Add-Content -Path $pidFilePath -Value $pidEntry
 
