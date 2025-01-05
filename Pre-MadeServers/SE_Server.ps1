@@ -1,10 +1,10 @@
 Clear-Host
-$host.UI.RawUI.WindowTitle = "*** Server Watchdog"
+$host.UI.RawUI.WindowTitle = "Space Engineers Server Watchdog"
 
 # Define the name of this server (this is just a name)
-$ServerName = "***"
-# Define the name of the process to start
-$ProcessName = "***"
+$ServerName = "Space Engineers"
+# This name is a shortcut of the process "SpaceEngineersDedicated.exe" with -console in the target at the end, it is in the same directory
+$ProcessName = "SECMD"
 
 # Define the registry path where SteamCMD is installed
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
@@ -30,12 +30,6 @@ $ServerManagerDir = Get-RegistryValue -keyPath $registryPath -propertyName "Serv
 # Path to the PIDs file
 $pidFilePath = Join-Path $ServerManagerDir "PIDS.txt"
 
-# Define the arguments for the process
-$arguments = 
-'
-ENTER YOUR ARGUMENTS HERE
-'
-
 # Path to the stop file
 $stopFilePath = Join-Path $ServerManagerDir "stop.txt"
 
@@ -54,7 +48,7 @@ while ($true) {
 
     try {
         # Start the server and capture its PID with arguments
-        $process = Start-Process "$ProcessName" -ArgumentList $arguments -PassThru -ErrorAction Stop
+        $process = Start-Process "$ProcessName" -PassThru -ErrorAction Stop
         if ($null -eq $process) {
             throw "Failed to start the process."
         }
