@@ -59,8 +59,8 @@ function Write-Log {
     $global:logMemory += $logMessage
 }
 
-# Function to flush the log from memory to file
-function Flush-LogToFile {
+# Function to write the log from memory to file
+function Write-LogToFile {
     param (
         [string]$logFilePath
     )
@@ -460,7 +460,7 @@ function Test-RegistryAccess {
 }
 
 # Add function to ensure admin elevation
-function Ensure-AdminPrivileges {
+function Test-AdminPrivileges {
     if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         Write-Host "Requesting administrative privileges..." -ForegroundColor Yellow
         $arguments = "& '" + $MyInvocation.MyCommand.Path + "'"
@@ -514,8 +514,8 @@ if (-not (Test-Path $global:logFilePath)) {
 
 Write-Log "Log file path set to: $global:logFilePath"
 
-# Flush all logs from memory to the log file
-Flush-LogToFile -logFilePath $global:logFilePath
+# Write all logs from memory to the log file
+Write-LogToFile -logFilePath $global:logFilePath
 
 # Download SteamCMD if steamcmd.exe does not exist (non-admin)
 $steamCmdZip = Join-Path $SteamCMDPath "steamcmd.zip"
@@ -585,7 +585,7 @@ Set-InitialAuthConfig -ServerManagerDir $ServerManagerDir
 
 # Finalise and exit
 Write-Log "SteamCMD successfully installed to $SteamCMDPath"
-Flush-LogToFile -logFilePath $global:logFilePath
+Write-LogToFile -logFilePath $global:logFilePath
 
 Add-Type -AssemblyName System.Windows.Forms
 
