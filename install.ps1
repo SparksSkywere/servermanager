@@ -470,7 +470,7 @@ function Test-AdminPrivileges {
 }
 
 # MAIN SCRIPT FLOW
-Ensure-AdminPrivileges
+Test-AdminPrivileges
 
 $SteamCMDPath = Select-FolderDialog
 if (-Not $SteamCMDPath) {
