@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Create Server - Server Manager</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>Create New Server</h1>
+            <div id="error" class="error"></div>
+            <form onsubmit="createServer(event)">
+                <div class="form-group">
+                    <label for="serverName">Server Name:</label>
+                    <input type="text" id="serverName" required>
+                </div>
+                <div class="form-group">
+                    <label for="appId">Application ID:</label>
+                    <input type="text" id="appId" required>
+                </div>
+                <div class="form-group">
+                    <label for="installDir">Installation Directory:</label>
+                    <input type="text" id="installDir" required>
+                </div>
+                <button type="submit" class="btn">Create Server</button>
+                <button type="button" class="btn" onclick="location.href='index.html'">Cancel</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script>
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        async function createServer(event) {
+            event.preventDefault();
+            
+            const serverName = document.getElementById('serverName').value;
+            const appId = document.getElementById('appId').value;
+            const installDir = document.getElementById('installDir').value;
+
+            try {
+                await API.createServer({
+                    name: serverName,
+                    appId: appId,
+                    installDir: installDir
+                });
+                window.location.href = 'index.html';
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+    </script>
+</body>
+</html>

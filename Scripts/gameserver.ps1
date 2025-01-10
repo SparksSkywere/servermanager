@@ -23,6 +23,38 @@ function Get-RegistryValue {
         Write-Host "Failed to retrieve registry value: $($_.Exception.Message)"
         exit 1
     }
+    
+}
+
+# Function to connect to the PID console
+function Connect-PIDConsole {
+    param (
+        [int]$ProcessId
+    )
+    try {
+        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        $process | Out-Host
+    } catch {
+        Write-Host "Failed to connect to process (PID: $ProcessId): $_" -ForegroundColor Red
+    }
+}
+
+# Function to create a new server instance
+function Create-ServerInstance {
+    param (
+        [string]$ServerName,
+        [string]$ProcessName,
+        [string]$Arguments
+    )
+    # ...existing code...
+}
+
+# Function to remove a server instance
+function Remove-ServerInstance {
+    param (
+        [string]$ServerName
+    )
+    # ...existing code...
 }
 
 # Retrieve Server Manager directory path from the registry
@@ -32,10 +64,8 @@ $ServerManagerDir = Get-RegistryValue -keyPath $registryPath -propertyName "Serv
 $pidFilePath = Join-Path $ServerManagerDir "PIDS.txt"
 
 # Define the arguments for the process
-$arguments = 
-'
-ENTER YOUR ARGUMENTS HERE
-'
+$arguments = '
+ENTER YOUR ARGUMENTS HERE'
 
 # Path to the stop file
 $stopFilePath = Join-Path $ServerManagerDir "stop.txt"
@@ -75,6 +105,9 @@ while ($true) {
         Add-Content -Path $pidFilePath -Value $pidEntry
 
         Write-Output "PID $($process.Id) recorded for $ServerName."
+
+        # Connect to the PID console
+        Connect-PIDConsole -ProcessId $process.Id
 
     } catch {
         Write-Output "Error starting process or writing PID: $_"

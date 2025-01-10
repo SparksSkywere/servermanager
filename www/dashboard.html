@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Server Manager Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/notifications.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Server Manager Dashboard</h1>
+            <div class="header-buttons">
+                <button class="btn" onclick="location.href='create-server.html'">Create Server</button>
+                <button class="btn" onclick="refreshServers()">Refresh</button>
+                <button class="btn" onclick="syncAll()">Sync All</button>
+                <button class="btn btn-danger" onclick="logout()">Logout</button>
+            </div>
+        </div>
+        <div id="error" class="error"></div>
+        
+        <!-- Server Statistics Overview -->
+        <div class="stats-overview">
+            <div class="stat-card">
+                <h3>Total Servers</h3>
+                <div id="totalServers">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Running</h3>
+                <div id="runningServers">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Stopped</h3>
+                <div id="stoppedServers">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>System Load</h3>
+                <div id="systemLoad">0%</div>
+            </div>
+        </div>
+
+        <!-- Server Management -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Server Management</h2>
+                <div class="card-actions">
+                    <select id="bulkAction">
+                        <option value="">Bulk Actions...</option>
+                        <option value="start">Start Selected</option>
+                        <option value="stop">Stop Selected</option>
+                        <option value="restart">Restart Selected</option>
+                    </select>
+                    <button class="btn" onclick="executeBulkAction()">Apply</button>
+                </div>
+            </div>
+            <div id="servers"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { checkAuth, logout } from './js/auth.js';
+        import CONFIG from './js/config.js';
+        import { formatUptime, formatBytes, showNotification } from './js/utils.js';
+
+        // Make logout available globally
+        window.logout = logout;
+        
+        // Check authentication before loading
+        if (!checkAuth()) {
+            window.location.href = 'login.html';
+        }
+
+        // Make functions available globally
+        window.refreshServers = updateServers;
+        window.startServer = startServer;
+        window.stopServer = stopServer;
+        window.deleteServer = deleteServer;
+        window.restartServer = restartServer;
+        window.executeBulkAction = executeBulkAction;
+        window.syncAll = syncAll;
+
+        // Add WebSocket connection
+        const ws = new WebSocket('ws://localhost:8081');
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.Type === "ServerListUpdate") {
+                // Update the web UI with new server data
+                updateServerList(data.Servers);
+            } else if (data.Type === "ForcedSync") {
+                console.log(`Forced sync received at ${data.Timestamp}`);
+                updateServers();
+            }
+        };
+        
+        function updateServerList(servers) {
+            // Update the servers table with new data
+            const html = generateServersTable(servers);
+            document.getElementById('servers').innerHTML = html;
+            updateStatistics(servers);
+        }
+
+        async function updateServers() {
+            try {
+                const servers = await API.getServers();
+                updateStatistics(servers);
+                
+                // Broadcast update to other clients
+                ws.send(JSON.stringify({
+                    Type: "ServerListUpdate",
+                    Servers: servers
+                }));
+                
+                // Update local UI
+                updateServerList(servers);
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        function updateStatistics(servers) {
+            const stats = {
+                total: servers.length,
+                running: servers.filter(s => s.status === 'Running').length,
+                stopped: servers.filter(s => s.status === 'Stopped').length,
+                systemLoad: servers.reduce((acc, s) => acc + s.cpuUsage, 0) / servers.length
+            };
+
+            document.getElementById('totalServers').textContent = stats.total;
+            document.getElementById('runningServers').textContent = stats.running;
+            document.getElementById('stoppedServers').textContent = stats.stopped;
+            document.getElementById('systemLoad').textContent = `${stats.systemLoad.toFixed(1)}%`;
+        }
+
+        async function restartServer(name) {
+            try {
+                await API.restartServer(name);
+                showNotification(`Server "${name}" is restarting...`, 'info');
+                updateServers();
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        async function executeBulkAction() {
+            const action = document.getElementById('bulkAction').value;
+            if (!action) return;
+
+            const selectedServers = Array.from(document.getElementsByName('serverSelect'))
+                .filter(cb => cb.checked)
+                .map(cb => cb.value);
+
+            if (selectedServers.length === 0) {
+                showNotification('Please select at least one server', 'warning');
+                return;
+            }
+
+            try {
+                for (const server of selectedServers) {
+                    switch (action) {
+                        case 'start':
+                            await API.startServer(server);
+                            break;
+                        case 'stop':
+                            await API.stopServer(server);
+                            break;
+                        case 'restart':
+                            await API.restartServer(server);
+                            break;
+                    }
+                }
+                showNotification(`Bulk action "${action}" completed successfully`, 'success');
+                updateServers();
+            } catch (error) {
+                showError(`Bulk action failed: ${error.message}`);
+            }
+        }
+
+        window.toggleAllServers = function(checkbox) {
+            const checkboxes = document.getElementsByName('serverSelect');
+            checkboxes.forEach(cb => cb.checked = checkbox.checked);
+        };
+
+        function showError(message) {
+            showNotification(message, 'error');
+        }
+
+        async function startServer(name) {
+            try {
+                await API.startServer(name);
+                updateServers();
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        async function stopServer(name) {
+            try {
+                await API.stopServer(name);
+                updateServers();
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        async function deleteServer(name) {
+            if (confirm(`Are you sure you want to delete server "${name}"?`)) {
+                try {
+                    await API.deleteServer(name);
+                    updateServers();
+                } catch (error) {
+                    showError(error.message);
+                }
+            }
+        }
+
+        async function syncAll() {
+            try {
+                await updateServers();
+                ws.send(JSON.stringify({
+                    Type: "ForcedSync",
+                    Timestamp: new Date().toISOString()
+                }));
+                showNotification('Sync completed successfully', 'success');
+            } catch (error) {
+                showError('Sync failed: ' + error.message);
+            }
+        }
+
+        // Initial load and periodic updates
+        updateServers();
+        setInterval(updateServers, 30000);
+        setInterval(syncAll, 180000);  // 3 minutes in milliseconds
+    </script>
+</body>
+</html>

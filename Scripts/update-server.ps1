@@ -1,5 +1,9 @@
+# Update module import path
+$serverManagerPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "Modules\ServerManager\ServerManager.psm1"
+Import-Module $serverManagerPath -Force
+
 # Set process name
-$host.ui.RawUI.WindowTitle = "Steam Game App Updater"
+$host.ui.RawUI.WindowTitle = "Steam Game Server Updater"
 
 # Define the registry path where SteamCMD is installed
 $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
@@ -31,11 +35,11 @@ if (-not $SteamCMDPath) {
 }
 
 # Path to log file (inside SteamCMD's servermanager folder)
-$LogFilePath = Join-Path $serverManagerDir "log-autoupdater.log"
+$LogFilePath = Join-Path $serverManagerDir "log-updateserver.log"
 $log = $true  # Set this to $false to disable logging
 
 # Define a function to log messages if logging is enabled
-function Logging {
+function Write-Log {
     param (
         [string]$Message,
         [string]$Type = "INFO"
@@ -64,24 +68,24 @@ function Stop-ProcessTree {
 
     try {
         Stop-Process -Id $ParentId -Force
-        Logging "Stopped process (PID: $ParentId) and its child processes."
+        Write-Log "Stopped process (PID: $ParentId) and its child processes."
     } catch {
-        Logging "Failed to stop process (PID: $ParentId): $_" -Type "ERROR"
+        Write-Log "Failed to stop process (PID: $ParentId): $_" -Type "ERROR"
     }
 }
 
 # Define a function to check if a process is running by PID
-function ServerProcessRunning {
+function Test-ServerProcessRunning {
     param (
         [int]$ProcessId
     )
 
     $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
     if ($process) {
-        Logging "Process $ProcessId is running."
+        Write-Log "Process $ProcessId is running."
         return $true
     } else {
-        Logging "Process $ProcessId is not running."
+        Write-Log "Process $ProcessId is not running."
         return $false
     }
 }
@@ -95,13 +99,13 @@ function Send-Shutdown {
     )
 
     $message = "Server will shut down in $ShutdownTime seconds for updates!"
-    Logging "Sending shutdown message to $ServerName..."
+    Write-Log "Sending shutdown message to $ServerName..."
 
     # Define the shutdown folder (inside SteamCMD's servermanager folder)
     $shutdownDir = $serverManagerDir
     if (-not (Test-Path -Path $shutdownDir)) {
         New-Item -Path $shutdownDir -ItemType Directory | Out-Null
-        Logging "Created directory: $shutdownDir"
+        Write-Log "Created directory: $shutdownDir"
     }
 
     # Create VBS script to send shutdown messages
@@ -114,15 +118,15 @@ function Send-Shutdown {
         Start-Process -FilePath "$shutdownDir\shutdown_$ServerName.vbs"
         Start-Sleep -Seconds $ShutdownTime
         Remove-Item -Path "$shutdownDir\shutdown_$ServerName.vbs"
-        Logging "Shutdown script executed and removed for $ServerName."
+        Write-Log "Shutdown script executed and removed for $ServerName."
     } catch {
-        Logging "Failed to create or run shutdown script for $ServerName : $_" -Type "ERROR"
+        Write-Log "Failed to create or run shutdown script for $ServerName : $_" -Type "ERROR"
     }
 }
 
 # Ensure stopFilePath is initialized
 $stopFilePath = Join-Path $serverManagerDir "stop.txt"
-Logging "Stop file path was initialized to: $stopFilePath."
+Write-Log "Stop file path was initialized to: $stopFilePath."
 
 # Define a function to stop a server process based on PID from the PIDS.txt file
 function Stop-Server {
@@ -130,7 +134,7 @@ function Stop-Server {
         [string]$ServerName
     )
 
-    Logging "Stopping server: $ServerName..."
+    Write-Log "Stopping server: $ServerName..."
 
     $pidFilePath = Join-Path $serverManagerDir "PIDS.txt"
 
@@ -142,7 +146,7 @@ function Stop-Server {
             $processId = [int]($pidEntry -split ' - ')[0]
 
             # Check if the process is running before stopping it
-            if (ServerProcessRunning -ProcessId $processId) {
+            if (Test-ServerProcessRunning -ProcessId $processId) {
                 # Notify users before shutdown
                 Send-Shutdown -ServerName $ServerName -ProcessId $processId -ShutdownTime 60
 
@@ -151,26 +155,26 @@ function Stop-Server {
                 # Remove the PID entry from PIDS.txt
                 $updatedEntries = $pidEntries | Where-Object { $_ -ne $pidEntry }
                 Set-Content -Path $pidFilePath -Value $updatedEntries
-                Logging "PID entry for $ServerName removed from PIDS.txt."
+                Write-Log "PID entry for $ServerName removed from PIDS.txt."
             } else {
-                Logging "$ServerName is not running."
+                Write-Log "$ServerName is not running."
             }
         } else {
-            Logging "No PID found for $ServerName in PIDS.txt. Assuming server is already off."
+            Write-Log "No PID found for $ServerName in PIDS.txt. Assuming server is already off."
         }
     } else {
-        Logging "PIDS.txt file not found at $pidFilePath."
+        Write-Log "PIDS.txt file not found at $pidFilePath."
     }
 }
 
 # Define a function to check if an update is available for a game using SteamCMD
-function AnyUpdatesAvailable {
+function Test-AnyUpdatesAvailable {
     param (
         [string]$AppID,
         [string]$AppName
     )
 
-    Logging "Checking for updates: $AppName..."
+    Write-Log "Checking for updates: $AppName..."
 
     $arguments = "+login anonymous +app_info_update 1 +app_update $AppID validate +exit"
 
@@ -188,21 +192,21 @@ function AnyUpdatesAvailable {
 
     # Wait for the process to finish or timeout
     if (-not $process.WaitForExit(240000)) {
-        Logging "SteamCMD process for $AppName timed out. Killing process..." -Type "ERROR"
+        Write-Log "SteamCMD process for $AppName timed out. Killing process..." -Type "ERROR"
         $process.Kill()
         $process.WaitForExit()
         return $false
     }
 
     $output = $process.StandardOutput.ReadToEnd()
-    Logging "SteamCMD Output for $AppName $output"
+    Write-Log "SteamCMD Output for $AppName $output"
 
     # Check for multiple possible update messages in the output
     if ($output -match "(?i)(update\s+required|reconfiguring|validating|downloading)") {
-        Logging "Update available for $AppName."
+        Write-Log "Update available for $AppName."
         return $true
     } else {
-        Logging "No update available for $AppName."
+        Write-Log "No update available for $AppName."
         return $false
     }
 }
@@ -221,7 +225,7 @@ function Update-Game {
 
     # Update AppID file
     Set-Content -Path $appIDFilePath -Value $AppID
-    Logging "AppID file updated with $AppID for $AppName."
+    Write-Log "AppID file updated with $AppID for $AppName."
 
     # Check if the game is running by looking for its PID
     $pidFilePath = Join-Path $serverManagerDir "PIDS.txt"
@@ -233,24 +237,24 @@ function Update-Game {
 
         if ($pidEntry) {
             $isRunning = $true
-            Logging "$AppName is currently running. Proceeding with shutdown for update."
+            Write-Log "$AppName is currently running. Proceeding with shutdown for update."
         } else {
-            Logging "No PID found for $AppName in PIDS.txt. Assuming server is already off."
+            Write-Log "No PID found for $AppName in PIDS.txt. Assuming server is already off."
         }
     }
 
     # Check if an update is available
-    $updateAvailable = AnyUpdatesAvailable -AppID $AppID -AppName $AppName
+    $updateAvailable = Test-AnyUpdatesAvailable -AppID $AppID -AppName $AppName
 
     # Exit the function if no update is available
     if (-not $updateAvailable) {
-        Logging "No update available for $AppName. Skipping update."
+        Write-Log "No update available for $AppName. Skipping update."
         return
     }
 
     # Determine if this is a new installation or an update
     if ($InstallDir -and -not (Test-Path -Path $InstallDir)) {
-        Logging "Directory for $AppName not found at $InstallDir. Installing..."
+        Write-Log "Directory for $AppName not found at $InstallDir. Installing..."
         $InstallDir = ""  # Reset to default if the specified directory does not exist
         $installMode = "INSTALLING"
     } else {
@@ -261,7 +265,7 @@ function Update-Game {
     if ($isRunning) {
         # Create stop file to notify the watchdog script to halt server restarts
         Set-Content -Path $stopFilePath -Value $AppName
-        Logging "Stop file created for $AppName. Waiting for server shutdown..."
+        Write-Log "Stop file created for $AppName. Waiting for server shutdown..."
 
         # Stop the server if running
         Stop-Server -ServerName $AppName
@@ -270,7 +274,7 @@ function Update-Game {
         Start-Sleep -Seconds 60 # Adjust based on how long your server takes to shut down
     }
 
-    Logging "$installMode $AppName..."
+    Write-Log "$installMode $AppName..."
 
     # Construct the SteamCMD arguments
     $arguments = "+login anonymous +app_update $AppID +exit"
@@ -293,23 +297,103 @@ function Update-Game {
         $output = $process.StandardOutput.ReadToEnd()
         $process.WaitForExit()
 
-        Logging "SteamCMD Output: $output"
+        Write-Log "SteamCMD Output: $output"
 
         if ($output -match "progress: \d+\.\d+") {
-            Logging "$AppName $installMode completed successfully."
+            Write-Log "$AppName $installMode completed successfully."
         } else {
-            Logging "No update detected or already up-to-date for $AppName."
+            Write-Log "No update detected or already up-to-date for $AppName."
         }
     } catch {
-        Logging "Error detected in SteamCMD output: $output" -Type "ERROR"
+        Write-Log "Error detected in SteamCMD output: $output" -Type "ERROR"
         return $false
     } finally {
         # Remove the stop file to allow the server to restart, if it was created
         if (Test-Path -Path $stopFilePath) {
             Remove-Item -Path $stopFilePath -Force
-            Logging "$installMode complete for $AppName. Stop file removed. Server can restart."
+            Write-Log "$installMode complete for $AppName. Stop file removed. Server can restart."
         }
     }
+}
+
+# Function to connect to the PID console
+function Connect-PIDConsole {
+    param (
+        [int]$ProcessId
+    )
+    try {
+        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        $process | Out-Host
+    } catch {
+        Write-Host "Failed to connect to process (PID: $ProcessId): $_" -ForegroundColor Red
+    }
+}
+
+# Define a function to create a new server instance
+function New-ServerInstance {
+    param (
+        [string]$ServerName,
+        [string]$AppID,
+        [string]$InstallDir
+    )
+    Write-Log "Creating server instance: $ServerName..."
+    # ...existing code...
+}
+
+# Define a function to remove a server instance
+function Remove-ServerInstance {
+    param (
+        [string]$ServerName
+    )
+    Write-Log "Removing server instance: $ServerName..."
+    # ...existing code...
+}
+
+# Define a function to list all server instances
+function Get-ServerInstances {
+    Write-Log "Listing all server instances..."
+    # ...existing code...
+}
+
+# Define a function to start a server instance
+function Start-ServerInstance {
+    param (
+        [string]$ServerName
+    )
+    Write-Log "Starting server instance: $ServerName..."
+    # ...existing code...
+}
+
+# Define a function to stop a server instance
+function Stop-ServerInstance {
+    param (
+        [string]$ServerName
+    )
+    Write-Log "Stopping server instance: $ServerName..."
+    # ...existing code...
+}
+
+# Define a function to restart a server instance
+function Restart-ServerInstance {
+    param (
+        [string]$ServerName
+    )
+    Write-Log "Restarting server instance: $ServerName..."
+    Stop-ServerInstance -ServerName $ServerName
+    Start-ServerInstance -ServerName $ServerName
+}
+
+# Define a function to update a server instance
+function Update-ServerInstance {
+    param (
+        [string]$ServerName,
+        [string]$AppID,
+        [string]$InstallDir
+    )
+    Write-Log "Updating server instance: $ServerName..."
+    Stop-ServerInstance -ServerName $ServerName
+    Update-Game -AppName $ServerName -AppID $AppID -InstallDir $InstallDir
+    Start-ServerInstance -ServerName $ServerName
 }
 
 # Update AppID file at the start of the script - Disabled for now as cloudflare security setup by SteamDB, the function has been removed, though Install.ps1 contains a copy
@@ -326,5 +410,5 @@ foreach ($game in $games) {
     Update-Game -AppName $game.Name -AppID $game.AppID -InstallDir $game.InstallDir
 }
 
-Logging "All games updated/installed! Exiting in 10 seconds..."
+Write-Log "All games updated/installed! Exiting in 10 seconds..."
 Start-Sleep -Seconds 10

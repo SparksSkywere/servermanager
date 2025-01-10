@@ -46,6 +46,47 @@ function Get-UserConfirmation {
     return ($result -eq 'Yes')
 }
 
+# Function to connect to the PID console
+function Connect-PIDConsole {
+    param (
+        [int]$ProcessId
+    )
+    try {
+        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        $process | Out-Host
+    } catch {
+        Write-Host "Failed to connect to process (PID: $ProcessId): $_" -ForegroundColor Red
+    }
+}
+
+# Function to remove a server instance
+function Remove-ServerInstance {
+    param (
+        [string]$ServerName
+    )
+    Logging "Removing server instance: $ServerName..."
+    # ...existing code...
+}
+
+# Function to remove module installations
+function Remove-ModuleInstallations {
+    Write-Host "Removing installed PowerShell modules..."
+    try {
+        # Remove SecretManagement module if it was installed by our installer
+        if (Get-Module -ListAvailable -Name "Microsoft.PowerShell.SecretManagement") {
+            Uninstall-Module -Name "Microsoft.PowerShell.SecretManagement" -AllVersions -Force
+        }
+        
+        # Clean up local modules directory
+        $localModulePath = Join-Path $SteamCMDPath "Servermanager\Modules"
+        if (Test-Path $localModulePath) {
+            Remove-Item -Path $localModulePath -Recurse -Force
+        }
+    } catch {
+        Write-Host "Error removing modules: $($_.Exception.Message)"
+    }
+}
+
 # MAIN UNINSTALLATION PROCESS
 # Step 1: Fetch the installation directory from 'servermanager' subkey
 if (Test-Path -Path $serverManagerRegistryPath) {
@@ -107,6 +148,19 @@ $scriptBlock = @"
         # Only remove the SteamCMD directory if the user confirmed
         if (`$env:UNINSTALL_STEAMCMD -eq 'True') {
             Remove-Directory -dir '$($SteamCMDPath)'
+        } else {
+            # Remove specific Servermanager components
+            `$itemsToRemove = @(
+                '$($SteamCMDPath)\Servermanager\config',
+                '$($SteamCMDPath)\Servermanager\Modules',
+                '$($SteamCMDPath)\Servermanager\logs',
+                '$($SteamCMDPath)\Servermanager\AppID.txt',
+                '$($SteamCMDPath)\Servermanager\Install-Log.txt'
+            )
+
+            foreach (`$item in `$itemsToRemove) {
+                Remove-Directory -dir `$item
+            }
         }
 
         # Remove the Servermanager directory
@@ -120,10 +174,13 @@ $scriptBlock = @"
 
         Write-Host 'Process complete.'
     } catch {
-        Write-Host 'Error during process: $($_.Exception.Message)'
+        Write-Host 'Error during process: `$(`$_.Exception.Message)'
         exit
     }
 "@
+
+# Remove installed modules before elevation
+Remove-ModuleInstallations
 
 # Set environment variable for use in the elevated script
 if ($uninstallSteamCMD) {
