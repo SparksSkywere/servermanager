@@ -306,7 +306,7 @@ function Install-RequiredModules {
         }
 
         # Verify ServerManager module path exists before importing
-        $serverManagerPath = Join-Path $ServerManagerDir "Modules\ServerManager\ServerManager.psm1"
+        $serverManagerPath = Join-Path $ServerManagerDir "Modules\ServerManager.psm1"
         if (Test-Path $serverManagerPath) {
             Import-Module $serverManagerPath -Force -ErrorAction Stop
             Write-Host "ServerManager module imported successfully."
@@ -492,7 +492,7 @@ New-Servermanager -dir $SteamCMDPath
 New-Servermanager -dir $ServerManagerDir
 
 # Create the Modules directory structure
-$ModulesDir = Join-Path $ServerManagerDir "Modules\ServerManager"
+$ModulesDir = Join-Path $ServerManagerDir "Modules"
 New-Servermanager -dir $ModulesDir
 
 # Update the Git repository into the Servermanager directory (either pull or clone)
@@ -557,7 +557,7 @@ try {
         'InstallDate' = (Get-Date).ToString('o')
         'LastUpdate' = (Get-Date).ToString('o')
         'WebPort' = '8080'
-        'ModulePath' = "$ServerManagerDir\Modules\ServerManager"
+        'ModulePath' = "$ServerManagerDir\Modules"
         'LogPath' = "$ServerManagerDir\logs"
     }
 
