@@ -1,5 +1,5 @@
 # Add module import at the start
-$serverManagerPath = Join-Path $PSScriptRoot "Modules\ServerManager\ServerManager.psm1"
+$serverManagerPath = Join-Path $PSScriptRoot "Modules\ServerManager.psm1"
 Import-Module $serverManagerPath -Force
 
 Add-Type -AssemblyName System.Windows.Forms

@@ -76,7 +76,7 @@ try {
 
     # Validate required subdirectories
     $requiredPaths = @(
-        (Join-Path $rootDir "Modules\ServerManager"),
+        (Join-Path $rootDir "Modules"),
         (Join-Path $scriptDir "webserver.ps1")
     )
 
@@ -130,7 +130,7 @@ try {
     }
 
     # Continue with module import
-    $modulePath = Join-Path -Path $serverDir -ChildPath "Modules\ServerManager"
+    $modulePath = Join-Path -Path $serverDir -ChildPath "Modules"
     Write-Host "Looking for module at: $modulePath" -ForegroundColor Cyan
     
     if (-not (Test-Path $modulePath)) {

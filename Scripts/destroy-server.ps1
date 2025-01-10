@@ -1,6 +1,6 @@
 Add-Type -AssemblyName System.Windows.Forms
 
-$serverManagerPath = Join-Path $PSScriptRoot "..\Modules\ServerManager\ServerManager.psm1"
+$serverManagerPath = Join-Path $PSScriptRoot "..\Modules\ServerManager.psm1"
 Import-Module $serverManagerPath -Force
 
 # Function to remove a game server

@@ -1,4 +1,4 @@
-using module WebSocketServer
+using module "..\Modules\WebSocketServer.psm1"
 
 # Add port verification before starting WebSocket server
 $wsPort = 8081

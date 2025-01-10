@@ -328,8 +328,8 @@ function Set-InitialAuthConfig {
     Write-Log "Starting authentication configuration setup"
     
     try {
-        # Import security module
-        Import-Module (Join-Path $ServerManagerDir "Modules\ServerManager\Security.psm1") -Force
+        # Update security module path
+        Import-Module (Join-Path $ServerManagerDir "Modules\Security.psm1") -Force
         
         $configDir = Join-Path $ServerManagerDir "config"
         $usersFile = Join-Path $configDir "users.xml"

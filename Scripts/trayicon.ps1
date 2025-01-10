@@ -33,7 +33,6 @@ $script:trayIcon = New-Object System.Windows.Forms.NotifyIcon
     $powershellPath = (Get-Process -Id $PID).MainModule.FileName
     $iconPaths = @(
         (Join-Path $PSScriptRoot "..\icons\servermanager.ico"),
-        (Join-Path $PSScriptRoot "servermanager.ico"),
         $powershellPath
     )
 

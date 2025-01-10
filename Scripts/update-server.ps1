@@ -1,5 +1,5 @@
 # Update module import path
-$serverManagerPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "Modules\ServerManager\ServerManager.psm1"
+$serverManagerPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "Modules\ServerManager.psm1"
 Import-Module $serverManagerPath -Force
 
 # Set process name
