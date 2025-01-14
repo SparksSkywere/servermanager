@@ -30,4 +30,7 @@ function Remove-ServerNetwork {
     }
 }
 
+# Remove any private folder references
+# ...existing code...
+
 Export-ModuleMember -Function New-ServerNetwork, Remove-ServerNetwork

@@ -95,6 +95,15 @@ try {
     exit 1
 }
 
+# Remove any private path references in module loading
+$registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+$modulesPath = Join-Path (Get-ItemProperty -Path $registryPath).servermanagerdir "Modules"
+
+# Load modules directly from Modules directory
+Get-ChildItem -Path $modulesPath -Filter "*.psm1" | ForEach-Object {
+    Import-Module $_.FullName -Force
+}
+
 # Create required directories
 @("$rootDir\logs", "$rootDir\instances") | ForEach-Object {
     if (-not (Test-Path $_)) {
@@ -171,7 +180,7 @@ try {
             $serverReady = $true
         } catch {
             Start-Sleep -Seconds 1
-            $attempts++
+            $attempts++ 
         }
     }
     

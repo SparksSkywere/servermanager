@@ -1,3 +1,19 @@
+# Remove any private folder references and use direct imports
+$registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+
+# Import required modules directly
+$requiredModules = @(
+    "Logging.psm1",
+    "Security.psm1"
+)
+
+foreach ($module in $requiredModules) {
+    $modulePath = Join-Path $PSScriptRoot $module
+    if (Test-Path $modulePath) {
+        Import-Module $modulePath -Force
+    }
+}
+
 function Get-ServerInstanceMetrics {
     param (
         [Parameter(Mandatory = $true)]

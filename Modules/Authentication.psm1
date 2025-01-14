@@ -1,4 +1,20 @@
+# Remove any private module references at the start
 $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+
+# Direct module imports - no folder structure
+$requiredModules = @(
+    "Security.psm1",
+    "Network.psm1"
+)
+
+# Import modules directly from Modules directory
+foreach ($module in $requiredModules) {
+    $modulePath = Join-Path $PSScriptRoot $module
+    if (Test-Path $modulePath) {
+        Import-Module $modulePath -Force
+    }
+}
+
 $serverManagerDir = (Get-ItemProperty -Path $registryPath).servermanagerdir
 
 function Test-Credentials {
@@ -101,4 +117,7 @@ function Get-AuthConfig {
     throw "Authentication configuration not found"
 }
 
-Export-ModuleMember -Function Test-Credentials
+# Remove any private folder references if they exist
+# ...existing code...
+
+Export-ModuleMember -Function *

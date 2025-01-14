@@ -262,62 +262,96 @@ function New-AppIDFile {
     }
 }
 
-# Function to install required PowerShell modules
+# Modify Install-RequiredModules function to match actual repository structure
 function Install-RequiredModules {
+    param([string]$ServerManagerDir)
+    
     Write-Host "Installing required PowerShell modules..."
     
-    # Ensure TLS 1.2 is used
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    
     try {
-        # List of required modules with their minimum versions
-        $modules = @(
-            @{
-                Name = "Microsoft.PowerShell.SecretManagement"
-                MinimumVersion = "1.1.0"
-            }
-        )
-
-        # First ensure NuGet is installed as a package provider
-        if (!(Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
-            Write-Host "Installing NuGet package provider..."
-            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
+        # Verify module directory exists
+        $modulesPath = Join-Path $ServerManagerDir "Modules"
+        
+        if (-not (Test-Path $modulesPath)) {
+            Write-Host "Error: Modules directory not found at: $modulesPath" -ForegroundColor Red
+            Write-Host "Please ensure Git repository was cloned correctly." -ForegroundColor Yellow
+            return
         }
 
-        # Set PSGallery as trusted
-        if ((Get-PSRepository -Name "PSGallery").InstallationPolicy -ne "Trusted") {
-            Write-Host "Setting PSGallery as trusted..."
-            Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted
+        # Install SecretManagement if needed
+        if (-not (Get-Module -ListAvailable -Name "Microsoft.PowerShell.SecretManagement")) {
+            Write-Host "Installing SecretManagement module..."
+            Install-Module -Name "Microsoft.PowerShell.SecretManagement" -Force -Scope CurrentUser
         }
 
-        foreach ($module in $modules) {
-            try {
-                if (-not (Get-Module -ListAvailable -Name $module.Name | 
-                         Where-Object { $_.Version -ge $module.MinimumVersion })) {
-                    Write-Host "Installing $($module.Name) module version $($module.MinimumVersion)..."
-                    Install-Module -Name $module.Name -Force -AllowClobber -Scope CurrentUser -MinimumVersion $module.MinimumVersion -Repository PSGallery
-                    Write-Host "$($module.Name) module installed successfully."
-                } else {
-                    Write-Host "$($module.Name) module is already installed with required version."
-                }
-            } catch {
-                Write-Host "Failed to install $($module.Name) module: $($_.Exception.Message)" -ForegroundColor Red
-            }
+        # Import all modules from the Modules directory
+        Get-ChildItem -Path $modulesPath -Filter "*.psm1" | ForEach-Object {
+            Write-Host "Importing module: $($_.Name)"
+            Import-Module $_.FullName -Force -ErrorAction Stop
         }
-
-        # Verify ServerManager module path exists before importing
-        $serverManagerPath = Join-Path $ServerManagerDir "Modules\ServerManager.psm1"
-        if (Test-Path $serverManagerPath) {
-            Import-Module $serverManagerPath -Force -ErrorAction Stop
-            Write-Host "ServerManager module imported successfully."
-        } else {
-            Write-Host "Warning: ServerManager.psm1 not found at: $serverManagerPath" -ForegroundColor Yellow
-            # Create empty module file
-            New-Item -ItemType File -Path $serverManagerPath -Force
-        }
-    } catch {
+    }
+    catch {
         Write-Host "Module installation error: $($_.Exception.Message)" -ForegroundColor Red
-        # Continue installation despite module errors
+        throw
+    }
+}
+
+# Add this function after Install-RequiredModules and before Set-InitialAuthConfig
+function Initialize-EncryptionKey {
+    $encryptionKeyPath = "C:\ProgramData\ServerManager"
+    $keyFile = Join-Path $encryptionKeyPath "encryption.key"
+
+    try {
+        # Create directory if it doesn't exist
+        if (-not (Test-Path $encryptionKeyPath)) {
+            New-Item -Path $encryptionKeyPath -ItemType Directory -Force | Out-Null
+            
+            # Set appropriate permissions
+            $acl = Get-Acl $encryptionKeyPath
+            $acl.SetAccessRuleProtection($true, $false)
+            
+            # Add SYSTEM with full control
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                "SYSTEM", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
+            $acl.AddAccessRule($rule)
+            
+            # Add Administrators with full control
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                "Administrators", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
+            $acl.AddAccessRule($rule)
+            
+            Set-Acl $encryptionKeyPath $acl
+        }
+
+        # Generate and save encryption key if it doesn't exist
+        if (-not (Test-Path $keyFile)) {
+            $key = New-Object byte[] 32
+            $rng = [System.Security.Cryptography.RNGCryptoServiceProvider]::Create()
+            $rng.GetBytes($key)
+            $key | Set-Content -Path $keyFile -Encoding Byte
+            
+            # Set restrictive permissions on the key file
+            $acl = Get-Acl $keyFile
+            $acl.SetAccessRuleProtection($true, $false)
+            
+            # Only SYSTEM and Administrators should have access
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                "SYSTEM", "FullControl", "Allow")
+            $acl.AddAccessRule($rule)
+            
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                "Administrators", "FullControl", "Allow")
+            $acl.AddAccessRule($rule)
+            
+            Set-Acl $keyFile $acl
+        }
+        
+        Write-Host "Encryption key setup completed successfully" -ForegroundColor Green
+        return $true
+    }
+    catch {
+        Write-Host "Failed to initialize encryption key: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
     }
 }
 
@@ -328,6 +362,11 @@ function Set-InitialAuthConfig {
     Write-Log "Starting authentication configuration setup"
     
     try {
+        # Initialize encryption key before proceeding
+        if (-not (Initialize-EncryptionKey)) {
+            throw "Failed to initialize encryption key"
+        }
+        
         # Update security module path
         Import-Module (Join-Path $ServerManagerDir "Modules\Security.psm1") -Force
         
@@ -486,20 +525,108 @@ if (-not (Test-ValidPath $SteamCMDPath)) {
     exit 1
 }
 
-# Ensure the SteamCMD directory exists (non-admin)
-$ServerManagerDir = Join-Path $SteamCMDPath "Servermanager"
+# Create only the base SteamCMD directory if it doesn't exist
 New-Servermanager -dir $SteamCMDPath
-New-Servermanager -dir $ServerManagerDir
 
-# Create the Modules directory structure
-$ModulesDir = Join-Path $ServerManagerDir "Modules"
-New-Servermanager -dir $ModulesDir
+# Define ServerManager directory
+$ServerManagerDir = Join-Path $SteamCMDPath "Servermanager"
 
-# Update the Git repository into the Servermanager directory (either pull or clone)
+# 1. Create registry entries FIRST
+try {
+    Write-Host "Creating registry entries..." -ForegroundColor Cyan
+    if (-not (Test-Path "HKLM:\Software\SkywereIndustries")) {
+        New-Item -Path "HKLM:\Software\SkywereIndustries" -Force | Out-Null
+    }
+    if (-not (Test-Path $registryPath)) {
+        New-Item -Path $registryPath -Force | Out-Null
+    }
+    
+    $registryValues = @{
+        'CurrentVersion' = $CurrentVersion
+        'SteamCMDPath' = $SteamCMDPath
+        'Servermanagerdir' = $ServerManagerDir
+        'InstallDate' = (Get-Date).ToString('o')
+        'LastUpdate' = (Get-Date).ToString('o')
+        'WebPort' = '8080'
+        'ModulePath' = "$ServerManagerDir\Modules"
+        'LogPath' = "$ServerManagerDir\logs"
+    }
+
+    foreach ($key in $registryValues.Keys) {
+        Set-ItemProperty -Path $registryPath -Name $key -Value $registryValues[$key] -Force
+    }
+    
+    Write-Host "Registry entries created successfully." -ForegroundColor Green
+} catch {
+    Write-Host "Failed to create registry entries: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Please ensure you're running as administrator." -ForegroundColor Yellow
+    exit 1
+}
+
+# 2. Install Git and clone repository
+Install-Git
+
+Write-Host "Cloning/Updating Git repository..."
 Update-GitRepo -repoUrl $gitRepoUrl -destination $ServerManagerDir
 
-# Install required PowerShell modules after Git repo is cloned
-Install-RequiredModules
+# Wait for file system
+Start-Sleep -Seconds 2
+
+# 3. Verify Git clone was successful
+if (-not (Test-Path $ServerManagerDir)) {
+    Write-Host "Error: Git clone failed - ServerManager directory not found" -ForegroundColor Red
+    exit 1
+}
+
+$ModulesDir = Join-Path $ServerManagerDir "Modules"
+if (-not (Test-Path $ModulesDir)) {
+    Write-Host "Error: Git clone failed - Modules directory not found" -ForegroundColor Red
+    exit 1
+}
+
+# 4. Install and import modules
+# Modify Install-RequiredModules function call to be simpler
+function Install-RequiredModules {
+    param([string]$ServerManagerDir)
+    
+    Write-Host "Installing required PowerShell modules..."
+    
+    try {
+        # Verify module directory exists
+        $modulesPath = Join-Path $ServerManagerDir "Modules"
+        
+        if (-not (Test-Path $modulesPath)) {
+            Write-Host "Error: Modules directory not found at: $modulesPath" -ForegroundColor Red
+            Write-Host "Please ensure Git repository was cloned correctly." -ForegroundColor Yellow
+            return
+        }
+
+        # Install SecretManagement if needed
+        if (-not (Get-Module -ListAvailable -Name "Microsoft.PowerShell.SecretManagement")) {
+            Write-Host "Installing SecretManagement module..."
+            Install-Module -Name "Microsoft.PowerShell.SecretManagement" -Force -Scope CurrentUser
+        }
+
+        # Import all modules from the Modules directory
+        Get-ChildItem -Path $modulesPath -Filter "*.psm1" | ForEach-Object {
+            Write-Host "Importing module: $($_.Name)"
+            Import-Module $_.FullName -Force -ErrorAction Stop
+        }
+    }
+    catch {
+        Write-Host "Module installation error: $($_.Exception.Message)" -ForegroundColor Red
+        throw
+    }
+}
+
+try {
+    Install-RequiredModules -ServerManagerDir $ServerManagerDir
+} catch {
+    Write-Host "Failed to install required modules: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
+
+# 5. Continue with rest of installation
 
 # Create the AppID.txt file
 New-AppIDFile -serverManagerDir $ServerManagerDir
@@ -538,43 +665,6 @@ if (-Not (Test-Path $steamCmdExe)) {
 } else {
     Write-Host "SteamCMD executable already exists."
 }
-
-# Replace the registry validation and creation section
-try {
-    Write-Host "Creating registry entries..." -ForegroundColor Cyan
-    if (-not (Test-Path "HKLM:\Software\SkywereIndustries")) {
-        New-Item -Path "HKLM:\Software\SkywereIndustries" -Force | Out-Null
-    }
-    if (-not (Test-Path $registryPath)) {
-        New-Item -Path $registryPath -Force | Out-Null
-    }
-    
-    # Create registry values directly instead of using a script block
-    $registryValues = @{
-        'CurrentVersion' = $CurrentVersion
-        'SteamCMDPath' = $SteamCMDPath
-        'Servermanagerdir' = $ServerManagerDir
-        'InstallDate' = (Get-Date).ToString('o')
-        'LastUpdate' = (Get-Date).ToString('o')
-        'WebPort' = '8080'
-        'ModulePath' = "$ServerManagerDir\Modules"
-        'LogPath' = "$ServerManagerDir\logs"
-    }
-
-    foreach ($key in $registryValues.Keys) {
-        Set-ItemProperty -Path $registryPath -Name $key -Value $registryValues[$key] -Force
-    }
-    
-    Write-Host "Registry entries created successfully." -ForegroundColor Green
-} catch {
-    Write-Host "Failed to create registry entries: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "Please ensure you're running as administrator." -ForegroundColor Yellow
-    Read-Host "Press Enter to exit"
-    exit 1
-}
-
-# Install Git
-Install-Git
 
 # Run the SteamCMD update (non-admin)
 Update-SteamCmd -steamCmdPath $steamCmdExe

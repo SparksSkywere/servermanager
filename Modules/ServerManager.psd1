@@ -5,6 +5,9 @@
     Author = 'SkywereIndustries'
     Description = 'Server Manager Module'
     PowerShellVersion = '5.1'
-    FunctionsToExport = @('*')
-    PrivateData = @{}
+    # Remove any NestedModules or ScriptsToProcess that might reference private paths
+    FunctionsToExport = '*'
+    CmdletsToExport = '*'
+    VariablesToExport = '*'
+    AliasesToExport = '*'
 }

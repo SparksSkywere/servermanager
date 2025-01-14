@@ -1,3 +1,6 @@
+# Remove any private folder references at the top of the file
+$registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+
 function Write-ServerLog {
     param (
         [Parameter(Mandatory = $true)]
@@ -7,7 +10,6 @@ function Write-ServerLog {
         [string]$ServerName = ''
     )
 
-    $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
     $logDir = Join-Path (Get-ItemProperty -Path $registryPath).servermanagerdir "logs"
     
     if (-not (Test-Path $logDir)) {
@@ -41,7 +43,6 @@ function Clear-OldLogs {
         [int]$DaysToKeep = 30
     )
 
-    $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
     $logDir = Join-Path (Get-ItemProperty -Path $registryPath).servermanagerdir "logs"
 
     if (Test-Path $logDir) {

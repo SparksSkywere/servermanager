@@ -87,6 +87,32 @@ function Remove-ModuleInstallations {
     }
 }
 
+# Function to remove encryption key
+function Remove-EncryptionKey {
+    $encryptionKeyPath = "C:\ProgramData\ServerManager"
+    $keyFile = Join-Path $encryptionKeyPath "encryption.key"
+    
+    try {
+        if (Test-Path $keyFile) {
+            # Securely delete the encryption key file
+            $bytes = New-Object byte[] (Get-Item $keyFile).Length
+            $rng = [System.Security.Cryptography.RNGCryptoServiceProvider]::Create()
+            $rng.GetBytes($bytes)
+            Set-Content -Path $keyFile -Value $bytes -Encoding Byte -Force
+            Remove-Item -Path $keyFile -Force
+        }
+        
+        if (Test-Path $encryptionKeyPath) {
+            Remove-Item -Path $encryptionKeyPath -Force -Recurse
+        }
+        
+        Write-Host "Encryption key cleanup completed successfully."
+    }
+    catch {
+        Write-Host "Error during encryption key cleanup: $($_.Exception.Message)"
+    }
+}
+
 # MAIN UNINSTALLATION PROCESS
 # Step 1: Fetch the installation directory from 'servermanager' subkey
 if (Test-Path -Path $serverManagerRegistryPath) {
@@ -142,8 +168,37 @@ $scriptBlock = @"
         }
     }
 
+    # Define function to remove encryption key inside elevated context
+    function Remove-EncryptionKey {
+        `$encryptionKeyPath = "C:\ProgramData\ServerManager"
+        `$keyFile = Join-Path `$encryptionKeyPath "encryption.key"
+        
+        try {
+            if (Test-Path `$keyFile) {
+                # Securely delete the encryption key file
+                `$bytes = New-Object byte[] (Get-Item `$keyFile).Length
+                `$rng = [System.Security.Cryptography.RNGCryptoServiceProvider]::Create()
+                `$rng.GetBytes(`$bytes)
+                Set-Content -Path `$keyFile -Value `$bytes -Encoding Byte -Force
+                Remove-Item -Path `$keyFile -Force
+            }
+            
+            if (Test-Path `$encryptionKeyPath) {
+                Remove-Item -Path `$encryptionKeyPath -Force -Recurse
+            }
+            
+            Write-Host "Encryption key cleanup completed successfully."
+        }
+        catch {
+            Write-Host "Error during encryption key cleanup: `$($_.Exception.Message)"
+        }
+    }
+
     try {
         Write-Host 'Starting process'
+
+        # Remove encryption key first
+        Remove-EncryptionKey
 
         # Only remove the SteamCMD directory if the user confirmed
         if (`$env:UNINSTALL_STEAMCMD -eq 'True') {

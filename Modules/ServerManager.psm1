@@ -4,17 +4,23 @@ using namespace System.Collections.Generic
 # Initialize error handling
 $ErrorActionPreference = 'Stop'
 
-# Import required modules
-$privateModules = @(
-    "Network.psm1"
+# Direct module imports
+$requiredModules = @(
+    "Network.psm1",
+    "Authentication.psm1",
+    "Logging.psm1",
+    "Security.psm1",
+    "ServerInstances.psm1",
+    "ServerOperations.psm1",
+    "WebSocketServer.psm1"
 )
 
-$privateModules | ForEach-Object {
-    $modulePath = Join-Path $PSScriptRoot "private\$_"
+foreach ($module in $requiredModules) {
+    $modulePath = Join-Path $PSScriptRoot $module
     if (Test-Path $modulePath) {
-        . $modulePath
+        Import-Module $modulePath -Force
     } else {
-        Write-Warning "Private module not found: $_"
+        Write-Warning "Required module not found: $module"
     }
 }
 
@@ -212,12 +218,6 @@ class ServerManager {
     }
 }
 
-# Import all private functions
-$privatePath = Join-Path $PSScriptRoot "private"
-Get-ChildItem -Path $privatePath -Filter "*.psm1" | ForEach-Object {
-    Import-Module $_.FullName -Force
-}
-
 # Server management functions
 function New-ServerInstance {
     param (
@@ -377,25 +377,5 @@ function Stop-ServerInstance {
     }
 }
 
-# Import all public functions
-$publicFunctions = @( Get-ChildItem -Path $PSScriptRoot\public\*.ps1 -ErrorAction SilentlyContinue )
-$privateFunctions = @( Get-ChildItem -Path $PSScriptRoot\private\*.ps1 -ErrorAction SilentlyContinue )
-
-# Import all .ps1 files
-foreach ($file in @($publicFunctions + $privateFunctions)) {
-    try {
-        . $file.FullName
-    }
-    catch {
-        Write-Error -Message "Failed to import function $($file.FullName): $_"
-    }
-}
-
-# Import private functions
-Get-ChildItem -Path $PSScriptRoot\private\*.psm1 | ForEach-Object { . $_.FullName }
-
-# Import public functions
-Get-ChildItem -Path $PSScriptRoot\public\*.psm1 | ForEach-Object { . $_.FullName }
-
-# Export public functions
-Export-ModuleMember -Function *-*
+# Export all functions directly
+Export-ModuleMember -Function *-* -Class ServerContainer, ServerConnection, ServerManager
