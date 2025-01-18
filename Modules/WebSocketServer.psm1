@@ -110,17 +110,36 @@ class WebSocketClient {
     }
 }
 
-# Create and export functions to instantiate the classes
-function New-WebSocketServer {
-    return [WebSocketServer]::new()
+# Ensure these functions are defined at the module level with proper scope
+function Global:New-WebSocketServer {
+    [CmdletBinding()]
+    [OutputType([WebSocketServer])]
+    param (
+        [Parameter(Mandatory=$false)]
+        [int]$Port = 8080,
+        [Parameter(Mandatory=$false)]
+        [string]$HostName = "localhost"
+    )
+    
+    $server = [WebSocketServer]::new()
+    if ($server.Initialize($Port, $HostName)) {
+        return $server
+    }
+    throw "Failed to initialize WebSocket server"
 }
 
-function New-WebSocketClient {
-    param([string]$ServerUrl)
+function Global:New-WebSocketClient {
+    [CmdletBinding()]
+    [OutputType([WebSocketClient])]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$ServerUrl
+    )
+    
     return [WebSocketClient]::new($ServerUrl)
 }
 
-# Export only the functions, not the classes
+# Explicitly export functions and make them visible
 Export-ModuleMember -Function New-WebSocketServer, New-WebSocketClient
 
 # Add type data for classes if needed

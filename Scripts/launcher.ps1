@@ -37,11 +37,15 @@ function Stop-AllComponents {
         }
 }
 
-# Register cleanup on script exit
-trap {
+# Replace the trap handler with a Ctrl+C handler
+$null = [Console]::TreatControlCAsInput = $true
+
+# Add cleanup on PowerShell exit
+$exitScript = {
+    Write-Host "Cleaning up processes..." -ForegroundColor Yellow
     Stop-AllComponents
-    exit
 }
+Register-EngineEvent PowerShell.Exiting -Action $exitScript | Out-Null
 
 # Check for admin privileges
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -112,146 +116,230 @@ $coreModules = @(
     "ServerManager.psm1"
 )
 
-foreach ($module in $coreModules) {
-    $modulePath = Join-Path $modulesPath $module
-    if (Test-Path $modulePath) {
-        try {
-            Write-Host "Loading core module: $module"
-            Import-Module $modulePath -Force -ErrorAction Stop
-        } catch {
-            Write-Host "Error loading module $module : $($_.Exception.Message)" -ForegroundColor Red
-        }
-    } else {
-        Write-Host "Core module not found: $module" -ForegroundColor Yellow
-    }
+# Define required functions for each module
+$Global:requiredFunctions = @{
+    "Network.psm1" = @(
+        "New-ServerNetwork",
+        "Remove-ServerNetwork"
+    )
+    "WebSocketServer.psm1" = @(
+        "New-WebSocketServer",
+        "New-WebSocketClient"
+    )
+    "ServerManager.psm1" = @(
+        "New-GameServer",
+        "Start-GameServer",
+        "Stop-GameServer",
+        "New-ServerInstance",
+        "Start-ServerInstance",
+        "Stop-ServerInstance",
+        "Get-ServerInstances",
+        "Get-ServerStatus"
+    )
 }
 
-# Then load any remaining modules
-Get-ChildItem -Path $modulesPath -Filter "*.psm1" | 
-    Where-Object { $_.Name -notin $coreModules } | 
-    ForEach-Object {
-        try {
-            Write-Host "Loading additional module: $($_.Name)"
-            Import-Module $_.FullName -Force -ErrorAction Stop
-        } catch {
-            Write-Host "Error loading module $($_.Name): $($_.Exception.Message)" -ForegroundColor Red
+# Improved module validation function
+function Test-ModuleExports {
+    param (
+        [string]$ModulePath,
+        [string[]]$RequiredFunctions
+    )
+    
+    try {
+        if (-not $RequiredFunctions) {
+            Write-Host "No required functions specified for $ModulePath" -ForegroundColor Yellow
+            return $true
         }
-    }
 
-# Create NetworkManager function if module not available
-if (-not (Get-Command 'New-ServerNetwork' -ErrorAction SilentlyContinue)) {
-    function New-ServerNetwork {
-        param(
-            [string]$ServerName,
-            [int]$Port
-        )
-        Write-Host "Creating network configuration for $ServerName on port $Port"
-        # Add any necessary network configuration here
+        Write-Host "Testing module: $ModulePath" -ForegroundColor Cyan
+        Write-Host "Required functions: $($RequiredFunctions -join ', ')" -ForegroundColor Cyan
+        
+        $moduleInfo = Import-Module -Name $ModulePath -Force -PassThru -ErrorAction Stop
+        if (-not $moduleInfo) {
+            throw "Failed to import module for validation"
+        }
+
+        $exportedFunctions = $moduleInfo.ExportedFunctions.Keys
+        Write-Host "Exported functions: $($exportedFunctions -join ', ')" -ForegroundColor Gray
+        
+        $missingFunctions = $RequiredFunctions | Where-Object { $_ -notin $exportedFunctions }
+        
+        if ($missingFunctions) {
+            throw "Missing required functions: $($missingFunctions -join ', ')"
+        }
+        
         return $true
     }
-}
-
-# Create required directories
-@("$rootDir\logs", "$rootDir\instances") | ForEach-Object {
-    if (-not (Test-Path $_)) {
-        New-Item -ItemType Directory -Path $_ -Force | Out-Null
+    catch {
+        Write-Host "Module validation failed for $ModulePath : $($_.Exception.Message)" -ForegroundColor Red
+        return $false
     }
 }
 
-# Import module and start web server
+# Clear any existing modules first
+Get-Module | Where-Object { $_.Path -like "*$modulesPath*" } | Remove-Module -Force
+
+# Add before module loading
+Write-Host "Module path: $modulesPath" -ForegroundColor Cyan
+
+# Add before module loading section
+Write-Host "Clearing module cache..." -ForegroundColor Cyan
+Get-Module | Where-Object { $_.Path -like "*$modulesPath*" } | Remove-Module -Force
+Remove-Module Network, WebSocketServer, ServerManager -ErrorAction SilentlyContinue
+
+# Define required functions as array, not hashtable
+[string[]]$requiredFunctions = @(
+    "New-ServerNetwork",
+    "New-WebSocketServer",
+    "New-GameServer"
+)
+
+# Modified module loading section
+$moduleLoadingSuccess = $true
+foreach ($module in $coreModules) {
+    $modulePath = Join-Path $modulesPath $module
+    Write-Host "Attempting to load module: $modulePath" -ForegroundColor Cyan
+    
+    if (Test-Path $modulePath) {
+        try {
+            Write-Host "`nValidating core module: $module" -ForegroundColor Cyan
+            
+            # Import module with scope options
+            $moduleInfo = Import-Module -Name $modulePath -Global -Force -PassThru -Verbose -ErrorAction Stop -DisableNameChecking
+            
+            if ($moduleInfo) {
+                Write-Host "Module imported: $($moduleInfo.Name)" -ForegroundColor Green
+                Write-Host "Exported functions: $($moduleInfo.ExportedFunctions.Keys -join ', ')" -ForegroundColor Gray
+                
+                # Force functions into global scope
+                $moduleInfo.ExportedFunctions.Keys | ForEach-Object {
+                    $null = New-Item -Path Function::Global:$_ -Value (Get-Content Function::$_) -Force
+                }
+                
+                Write-Host "Successfully loaded $module" -ForegroundColor Green
+            } else {
+                throw "Module import returned null"
+            }
+        }
+        catch {
+            $moduleLoadingSuccess = $false
+            Write-Host "Error loading module $module : $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host $_.ScriptStackTrace -ForegroundColor Red
+            break
+        }
+    }
+    else {
+        $moduleLoadingSuccess = $false
+        Write-Host "Core module not found: $modulePath" -ForegroundColor Red
+        break
+    }
+}
+
+# Modified verification step
+Write-Host "`nVerifying function availability:" -ForegroundColor Cyan
+foreach ($funcName in $requiredFunctions) {
+    $cmd = Get-Command -Name $funcName -ErrorAction SilentlyContinue
+    if ($cmd) {
+        Write-Host "Function $funcName : Available" -ForegroundColor Green
+    } else {
+        Write-Host "Function $funcName : Missing" -ForegroundColor Red
+        $moduleLoadingSuccess = $false
+    }
+}
+
+# Verify modules are loaded before continuing
+Write-Host "`nVerifying loaded modules:" -ForegroundColor Cyan
+$loadedModules = Get-Module | Where-Object { $_.Path -like "*$modulesPath*" }
+foreach ($module in $loadedModules) {
+    Write-Host "Loaded $($module.Name) with functions:" -ForegroundColor Green
+    $module.ExportedFunctions.Keys | ForEach-Object {
+        Write-Host "  - $_" -ForegroundColor Gray
+    }
+}
+
+if (-not $moduleLoadingSuccess) {
+    throw "Critical module loading failed. Cannot continue."
+}
+
+# Verify required functions are available
+$requiredFunctions = @(
+    "New-ServerNetwork",
+    "New-WebSocketServer",
+    "New-GameServer"
+)
+
+$missingFunctions = $requiredFunctions | Where-Object {
+    -not (Get-Command $_ -ErrorAction SilentlyContinue)
+}
+
+if ($missingFunctions) {
+    throw "Missing required functions: $($missingFunctions -join ', ')"
+}
+
+Write-Host "`nAll required modules and functions verified. Continuing with launch...`n" -ForegroundColor Green
+
+# Add error action preference to catch more errors
+$ErrorActionPreference = 'Stop'
+
+# Create log directory if it doesn't exist
+$logDir = Join-Path $rootDir "logs"
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+}
+
+# Define log files
+$webServerLog = Join-Path $logDir "webserver.log"
+$trayIconLog = Join-Path $logDir "trayicon.log"
+
+# Modified web server launch section
 try {
-    # Simplified HTTP listener setup
     Write-Host "Setting up HTTP listener..." -ForegroundColor Cyan
     
-    # Remove existing URL reservation
-    $null = netsh http delete urlacl url=http://localhost:8080/ 2>$null
+    # Create required directories
+    $logDir = Join-Path $rootDir "logs"
+    New-Item -ItemType Directory -Path $logDir -Force -ErrorAction SilentlyContinue | Out-Null
     
-    # Add new URL reservation
-    $result = netsh http add urlacl url=http://localhost:8080/ user=Everyone
-    Write-Host "URL reservation result: $result" -ForegroundColor Yellow
-    
-    # Verify URL reservation
-    Write-Host "Current URL reservations:" -ForegroundColor Cyan
-    netsh http show urlacl | Select-String "8080"
-    
-    # Check port availability
-    $portCheck = Test-NetConnection -ComputerName localhost -Port 8080 -WarningAction SilentlyContinue
-    if ($portCheck.TcpTestSucceeded) {
-        Write-Host "Warning: Port 8080 is already in use" -ForegroundColor Yellow
-        Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue | 
-            ForEach-Object {
-                $process = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
-                Write-Host "Process using port: $($process.ProcessName) (PID: $($process.Id))" -ForegroundColor Yellow
-            }
-    }
-
-    # Remove redundant module import
-    if (-not (Get-Command 'New-ServerNetwork' -ErrorAction SilentlyContinue)) {
-        throw "Required module 'Network' is not loaded. Please check module installation."
-    }
-    
-    # Create firewall rule for the web server
-    New-ServerNetwork -ServerName "WebInterface" -Port 8080 | Out-Null
-    
-    # Start web server in a new PowerShell process
+    # Start web server
     $webserverPath = Join-Path -Path $PSScriptRoot -ChildPath "webserver.ps1"
-    $trayIconPath = Join-Path -Path $PSScriptRoot -ChildPath "trayicon.ps1"
-
     if (-not (Test-Path $webserverPath)) {
         throw "WebServer script not found at: $webserverPath"
-    }
-
-    if (-not (Test-Path $trayIconPath)) {
-        throw "TrayIcon script not found at: $trayIconPath"
     }
 
     $webServerProcess = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$webserverPath`"" -PassThru -WindowStyle Hidden
     $Global:ProcessTracker.WebServer = $webServerProcess.Id
     
-    Write-Host "Web server started with PID: $($webServerProcess.Id)" -ForegroundColor Green
-    
     # Wait for web server to be ready
-    $maxAttempts = 10
+    $maxAttempts = 30
     $attempts = 0
     $serverReady = $false
     
     while (-not $serverReady -and $attempts -lt $maxAttempts) {
         try {
-            $test = New-Object Net.Sockets.TcpClient('localhost', 8080)
-            $test.Close()
+            $tcpClient = New-Object Net.Sockets.TcpClient
+            $tcpClient.Connect("localhost", 8080)
             $serverReady = $true
-        } catch {
+            $tcpClient.Close()
+        }
+        catch {
             Start-Sleep -Seconds 1
-            $attempts++ 
+            $attempts++
+            Write-Host "Waiting for web server... Attempt $attempts of $maxAttempts" -ForegroundColor Yellow
         }
     }
-    
+
     if (-not $serverReady) {
-        throw "Web server failed to start after $maxAttempts attempts"
+        throw "Web server failed to respond after $maxAttempts attempts"
     }
-    
-    # Start tray icon in a new PowerShell process
-    $trayIconStartInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $trayIconStartInfo.FileName = "powershell.exe"
-    $trayIconStartInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$trayIconPath`""
-    $trayIconStartInfo.UseShellExecute = $false
-    $trayIconStartInfo.RedirectStandardOutput = $true
-    $trayIconStartInfo.RedirectStandardError = $true
-    $trayProcess = [System.Diagnostics.Process]::Start($trayIconStartInfo)
+
+    # Start tray icon
+    $trayIconPath = Join-Path -Path $PSScriptRoot -ChildPath "trayicon.ps1"
+    if (-not (Test-Path $trayIconPath)) {
+        throw "TrayIcon script not found at: $trayIconPath"
+    }
+
+    $trayProcess = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$trayIconPath`"" -PassThru
     $Global:ProcessTracker.TrayIcon = $trayProcess.Id
-    
-    Write-Host "Tray icon started with PID: $($trayProcess.Id)" -ForegroundColor Green
-    
-    # Allow some time for the tray icon to initialize
-    Start-Sleep -Seconds 2
-    
-    # Verify tray icon process is still running
-    $trayProcess.Refresh()
-    if ($trayProcess.HasExited) {
-        throw "TrayIcon process failed to start properly. Exit code: $($trayProcess.ExitCode)"
-    }
-    
-    # Display connection information
+
     Write-Host "`n=================================" -ForegroundColor Green
     Write-Host "Server Manager is ready!" -ForegroundColor Green
     Write-Host "=================================" -ForegroundColor Green
@@ -259,29 +347,40 @@ try {
     Write-Host "The server manager is now running in the background" -ForegroundColor Cyan
     Write-Host "Use the tray icon to manage the server" -ForegroundColor Cyan
     Write-Host "Press Ctrl+C to stop all components`n"
-    
-    # Monitor child processes and keep script running
+
+    # Main loop with Ctrl+C handling
     while ($true) {
-        Start-Sleep -Seconds 2
-        
-        $webServerProcess = Get-Process -Id $Global:ProcessTracker.WebServer -ErrorAction SilentlyContinue
-        $trayIconProcess = Get-Process -Id $Global:ProcessTracker.TrayIcon -ErrorAction SilentlyContinue
-        
-        if (-not $webServerProcess -or -not $trayIconProcess) {
-            $errorMsg = ""
-            if (-not $webServerProcess) {
-                $errorMsg += "WebServer process (PID: $($Global:ProcessTracker.WebServer)) has stopped unexpectedly. "
+        if ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq "C" -and $key.Modifiers -eq "Control") {
+                Write-Host "`nCtrl+C detected. Stopping all components..." -ForegroundColor Yellow
+                Stop-AllComponents
+                exit 0
             }
-            if (-not $trayIconProcess) {
-                $errorMsg += "TrayIcon process (PID: $($Global:ProcessTracker.TrayIcon)) has stopped unexpectedly."
+        }
+
+        Start-Sleep -Milliseconds 100
+
+        # Check if processes are still running
+        try {
+            $webServerProcess.Refresh()
+            $trayProcess.Refresh()
+            
+            if ($webServerProcess.HasExited -or $trayProcess.HasExited) {
+                throw "A critical process has stopped unexpectedly"
             }
-            throw $errorMsg.Trim()
+        }
+        catch {
+            Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+            Stop-AllComponents
+            exit 1
         }
     }
-    
-} catch {
+}
+catch {
     Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
     Stop-AllComponents
     Read-Host "Press Enter to exit"
     exit 1
 }
+
