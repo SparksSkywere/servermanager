@@ -2,6 +2,9 @@
 <html>
 <head>
     <title>Server Manager Dashboard</title>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="css/dashboard.css">
     <!-- Add Chart.js for statistics -->
@@ -19,6 +22,7 @@
                 <li><a href="#servers">Servers</a></li>
                 <li><a href="#monitoring">Monitoring</a></li>
                 <li><a href="#settings">Settings</a></li>
+                <li id="adminButton" style="display: none;"><a href="admin.html">Administration</a></li>
                 <li class="logout"><a href="#" onclick="logout()">Logout</a></li>
             </ul>
         </nav>
@@ -112,7 +116,7 @@
     <div id="notification" class="notification"></div>
 
     <script type="module">
-        import { checkAuth, logout } from './js/auth.js';
+        import { checkAuth, logout, isAdmin } from './js/auth.js';
         import { showNotification } from './js/utils.js';
         import API from './js/api.js';
 
@@ -120,6 +124,12 @@
         window.logout = logout;
         window.refreshAll = refreshDashboard;
         window.executeBulkAction = executeBulkAction;
+
+        // Modified logout function
+        async function logout() {
+            sessionStorage.clear();
+            window.location.replace('login.html');
+        }
 
         // Performance chart initialization
         const perfCtx = document.getElementById('performanceChart').getContext('2d');
@@ -241,11 +251,60 @@
             return `${days}d ${hours}h ${minutes}m`;
         }
 
+        // Add session verification
+        document.addEventListener('DOMContentLoaded', async () => {
+            if (!sessionStorage.getItem('auth_token')) {
+                window.location.replace('login.html');
+                return;
+            }
+
+            try {
+                await checkAuth(); // Verify token is still valid
+                const username = sessionStorage.getItem('username') || 'User';
+                document.getElementById('username').textContent = username;
+                
+                const adminStatus = await isAdmin();
+                console.log('Checking admin status:', adminStatus);
+                
+                if (adminStatus) {
+                    console.log('Showing admin button');
+                    document.getElementById('adminButton').style.display = 'block';
+                } else {
+                    console.log('User is not admin');
+                }
+                
+                refreshDashboard();
+                setInterval(refreshDashboard, 30000);
+            } catch (error) {
+                console.error('Authentication error:', error);
+                sessionStorage.clear();
+                window.location.replace('login.html');
+            }
+        });
+
+        // Add periodic token verification
+        setInterval(async () => {
+            try {
+                await checkAuth();
+            } catch (error) {
+                sessionStorage.clear();
+                window.location.replace('login.html');
+            }
+        }, 60000); // Check every minute
+
         // Initialize dashboard
-        document.getElementById('username').textContent = 
-            sessionStorage.getItem('username') || 'User';
-        refreshDashboard();
-        setInterval(refreshDashboard, 30000); // Update every 30 seconds
+        document.addEventListener('DOMContentLoaded', async () => {
+            const username = sessionStorage.getItem('username') || 'User';
+            document.getElementById('username').textContent = username;
+            
+            // Check if user is admin and show admin button if true
+            if (await isAdmin()) {
+                document.getElementById('adminButton').style.display = 'block';
+            }
+            
+            refreshDashboard();
+            setInterval(refreshDashboard, 30000);
+        });
     </script>
 </body>
 </html>

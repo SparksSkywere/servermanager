@@ -2,6 +2,16 @@ param(
     [string]$LogPath
 )
 
+# Hide console window
+Add-Type -Name Window -Namespace Console -MemberDefinition '
+[DllImport("Kernel32.dll")]
+public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")]
+public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+'
+$consolePtr = [Console.Window]::GetConsoleWindow()
+[void][Console.Window]::ShowWindow($consolePtr, 0)
+
 # Start logging
 Start-Transcript -Path $LogPath -Force
 
@@ -75,6 +85,23 @@ try {
     $exitItem.Add_Click({
         $script:trayIcon.Visible = $false
         Stop-Transcript
+        [System.Windows.Forms.Application]::Exit()
+    })
+    
+    # Add separator and close button
+    $null = $script:contextMenu.Items.Add("-")
+    $closeButton = $script:contextMenu.Items.Add("Close Server Manager")
+    $closeButton.Add_Click({
+        Write-Host "Initiating full shutdown..."
+        
+        # Run kill-webserver.ps1 with admin privileges
+        $killScriptPath = Join-Path $PSScriptRoot "kill-webserver.ps1"
+        if (Test-Path $killScriptPath) {
+            Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$killScriptPath`"" -Verb RunAs -Wait
+        }
+        
+        # Close tray icon
+        $script:trayIcon.Visible = $false
         [System.Windows.Forms.Application]::Exit()
     })
     

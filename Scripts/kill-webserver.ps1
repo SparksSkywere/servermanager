@@ -7,6 +7,71 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 Write-Host "Stopping Server Manager..." -ForegroundColor Yellow
 
+# Get root directory and log paths
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$rootDir = Split-Path -Parent $scriptDir
+$logDir = Join-Path $rootDir "logs"
+
+# Stop any PowerShell transcripts first
+try {
+    Stop-Transcript -ErrorAction SilentlyContinue
+} catch { }
+
+# Force close any open log files
+$logFiles = @(
+    "main.log",
+    "webserver.log",
+    "trayicon.log",
+    "updates.log"
+)
+
+# More aggressive log file cleanup
+foreach ($logFile in $logFiles) {
+    $logPath = Join-Path $logDir $logFile
+    if (Test-Path $logPath) {
+        try {
+            [System.GC]::Collect()
+            [System.GC]::WaitForPendingFinalizers()
+            
+            # Stop any PowerShell transcripts
+            Stop-Transcript -ErrorAction SilentlyContinue
+            
+            # Force close file handles
+            $handles = Get-Process | 
+                Where-Object { $_.Modules.FileName -contains $logPath } | 
+                ForEach-Object { $_.Handle }
+            
+            foreach ($handle in $handles) {
+                $null = [System.Runtime.InteropServices.Marshal]::FreeHGlobal($handle)
+            }
+            
+            Start-Sleep -Milliseconds 500
+            
+            # Delete and recreate file
+            Remove-Item -Path $logPath -Force -ErrorAction Stop
+            New-Item -Path $logPath -ItemType File -Force | Out-Null
+        } catch {
+            Write-Warning "Failed to cleanup log file $logFile : $_"
+        }
+    }
+}
+
+# Kill all related processes
+$processNames = @(
+    "*webserver*",
+    "*trayicon*",
+    "*launcher*"
+)
+
+foreach ($processName in $processNames) {
+    Get-Process -Name "powershell*" | 
+        Where-Object { $_.MainWindowTitle -like $processName -or $_.CommandLine -like "*$processName*" } | 
+        ForEach-Object {
+            Write-Host "Stopping process: $($_.Id)" -ForegroundColor Cyan
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        }
+}
+
 # Find and stop any running web server jobs
 $webserverJobs = Get-Job | Where-Object { $_.Name -like "*webserver*" -or $_.Command -like "*webserver.ps1*" }
 if ($webserverJobs) {
@@ -21,84 +86,54 @@ if ($webserverProcesses) {
     $webserverProcesses | Stop-Process -Force
 }
 
-# Remove firewall rule
-try {
-    $firewallRule = Get-NetFirewallRule -DisplayName "WebInterface_TCP_8080" -ErrorAction SilentlyContinue
-    if ($firewallRule) {
-        Write-Host "Removing firewall rule..." -ForegroundColor Cyan
-        Remove-NetFirewallRule -DisplayName "WebInterface_TCP_8080" -ErrorAction Stop
+# Remove firewall rule silently
+Get-NetFirewallRule -DisplayName "WebInterface_TCP_8080" -ErrorAction SilentlyContinue | 
+    Remove-NetFirewallRule -ErrorAction SilentlyContinue
+
+# Cleanup HTTP listener quietly
+$urls = @(
+    "http://+:8080/",
+    "http://localhost:8080/",
+    "http://*:8080/",
+    "http://0.0.0.0:8080/"
+)
+
+foreach ($url in $urls) {
+    $null = netsh http delete urlacl url=$url 2>$null
+}
+
+$null = netsh http delete sslcert ipport=0.0.0.0:8080 2>$null
+$null = netsh http delete sslcert ipport=127.0.0.1:8080 2>$null
+
+# Restart HTTP service quietly
+$null = Stop-Service -Name HTTP -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+$null = Start-Service -Name HTTP -ErrorAction SilentlyContinue
+
+# Kill processes using port 8080 silently
+Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue | 
+    ForEach-Object { 
+        Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue 
     }
-} catch {
-    Write-Host "Error removing firewall rule: $($_.Exception.Message)" -ForegroundColor Red
-}
 
-# Add netsh commands to clean up HTTP listener
-Write-Host "Cleaning up HTTP listener..." -ForegroundColor Cyan
-try {
-    # Remove URL reservation
-    $null = netsh http delete urlacl url=http://+:8080/
-    $null = netsh http delete urlacl url=http://localhost:8080/
-    
-    # Delete SSL certificate bindings if they exist
-    $null = netsh http delete sslcert ipport=0.0.0.0:8080
-    $null = netsh http delete sslcert ipport=127.0.0.1:8080
-} catch {
-    Write-Host "Error cleaning up HTTP listener: $($_.Exception.Message)" -ForegroundColor Yellow
-}
+# Additional cleanup: Remove any leftover PID files
+Remove-Item -Path "$env:TEMP\servermanager_*.pid" -Force -ErrorAction SilentlyContinue
 
-# Enhanced HTTP listener cleanup
-Write-Host "Performing thorough HTTP listener cleanup..." -ForegroundColor Cyan
-try {
-    # Force stop HTTP listener service
-    Stop-Service -Name HTTP -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
-    Start-Service -Name HTTP
+Start-Sleep -Seconds 1
 
-    # Remove all possible URL reservations for port 8080
-    $urls = @(
-        "http://+:8080/",
-        "http://localhost:8080/",
-        "http://*:8080/",
-        "http://0.0.0.0:8080/"
-    )
-    
-    foreach ($url in $urls) {
-        netsh http delete urlacl url=$url 2>$null
-    }
-    
-    # Kill any process that might be holding port 8080
-    $connections = Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue
-    foreach ($conn in $connections) {
-        $process = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
-        if ($process) {
-            Write-Host "Killing process: $($process.ProcessName) (PID: $($process.Id))" -ForegroundColor Yellow
-            Stop-Process -Id $process.Id -Force
-        }
-    }
-    
-    # Wait to ensure everything is cleaned up
-    Start-Sleep -Seconds 3
-} catch {
-    Write-Host "Warning during cleanup: $($_.Exception.Message)" -ForegroundColor Yellow
-}
-
-# Kill any process using port 8080
-$processesUsingPort = Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue | 
-    Select-Object -ExpandProperty OwningProcess | 
-    ForEach-Object { Get-Process -Id $_ }
-
-if ($processesUsingPort) {
-    Write-Host "Found processes using port 8080. Stopping them..." -ForegroundColor Cyan
-    $processesUsingPort | Stop-Process -Force
-}
-
-# Check if port 8080 is still in use
+# Final port check
 $portInUse = Test-NetConnection -ComputerName localhost -Port 8080 -WarningAction SilentlyContinue
-if ($portInUse.TcpTestSucceeded) {
-    Write-Host "Warning: Port 8080 is still in use by another process" -ForegroundColor Yellow
+if (-not $portInUse.TcpTestSucceeded) {
+    Write-Host "Server Manager stopped successfully" -ForegroundColor Green
 } else {
-    Write-Host "Port 8080 is now free" -ForegroundColor Green
+    Write-Host "Warning: Port 8080 is still in use" -ForegroundColor Yellow
+    
+    # Force kill any remaining processes using port 8080
+    Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue | 
+        ForEach-Object { 
+            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue 
+        }
 }
 
-Write-Host "`nServer Manager has been stopped successfully" -ForegroundColor Green
+Write-Host "Cleanup complete" -ForegroundColor Green
 Start-Sleep -Seconds 2

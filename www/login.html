@@ -2,6 +2,9 @@
 <html>
 <head>
     <title>Login - Server Manager</title>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="css/login.css">
 </head>
@@ -32,6 +35,14 @@
     </div>
 
     <script>
+        // Clear any existing sessions when login page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            sessionStorage.clear();
+            if (window.history && window.history.pushState) {
+                window.history.pushState('', document.title, window.location.pathname);
+            }
+        });
+
         document.getElementById('loginForm').addEventListener('submit', async function(event) {
             event.preventDefault();
             
@@ -64,13 +75,14 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    // Store authentication data
+                    // Ensure isAdmin is stored as a string 'true' or 'false'
                     sessionStorage.setItem('auth_token', data.token);
                     sessionStorage.setItem('username', data.username);
-                    sessionStorage.setItem('isAdmin', data.isAdmin);
+                    sessionStorage.setItem('isAdmin', data.isAdmin.toString());
+                    console.log('Login successful, isAdmin:', data.isAdmin);
                     
                     // Redirect to dashboard
-                    window.location.href = data.redirectUrl;
+                    window.location.replace(data.redirectUrl); // Use replace instead of href
                 } else {
                     error.textContent = data.error || 'Authentication failed';
                 }

@@ -1,5 +1,5 @@
 # Set title and clear screen
-$host.ui.RawUI.WindowTitle = "Server Manager Launcher"
+$host.ui.RawUI.WindowTitle = "Server Manager"
 Clear-Host
 
 # Set error action preference and initialize
@@ -20,8 +20,28 @@ if (-not (Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 }
 
-# Start transcript for main logging
-Start-Transcript -Path $logPaths.Main -Append
+# Create a script-level variable for the log file stream
+$script:logStream = $null
+
+# Initialize log file with proper sharing
+try {
+    # Delete existing log if it exists
+    if (Test-Path $logPaths.Main) {
+        Remove-Item $logPaths.Main -Force -ErrorAction Stop
+    }
+    
+    # Create new log file with FileShare.ReadWrite
+    $script:logStream = [System.IO.File]::Open(
+        $logPaths.Main,
+        [System.IO.FileMode]::Create,
+        [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::ReadWrite
+    )
+    $script:logWriter = New-Object System.IO.StreamWriter($script:logStream)
+    $script:logWriter.AutoFlush = $true
+} catch {
+    Write-Warning "Failed to initialize log file: $_"
+}
 
 # Store process IDs for cleanup
 $Global:ProcessTracker = @{
@@ -29,9 +49,33 @@ $Global:ProcessTracker = @{
     TrayIcon = $null
 }
 
+# Modified Write-StatusMessage function
+function Write-StatusMessage {
+    param(
+        [string]$Message,
+        [string]$Color = 'White',
+        [switch]$Verbose
+    )
+    
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logMessage = "[$timestamp] $Message"
+    
+    try {
+        if ($script:logWriter) {
+            $script:logWriter.WriteLine($logMessage)
+        }
+    } catch {
+        Write-Warning "Log write failed: $_"
+    }
+    
+    if (-not $Verbose) {
+        Write-Host $Message -ForegroundColor $Color
+    }
+}
+
 # Function to cleanup processes
 function Stop-AllComponents {
-    Write-Host "Stopping all components..." -ForegroundColor Cyan
+    Write-StatusMessage "Stopping all components..." "Yellow"
     
     $processes = @($Global:ProcessTracker.WebServer, $Global:ProcessTracker.TrayIcon)
     foreach ($processToStop in $processes) {
@@ -56,6 +100,8 @@ function Stop-AllComponents {
         ForEach-Object {
             Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
         }
+    
+    Write-StatusMessage "Cleanup complete." "Green"
 }
 
 # Replace the trap handler with a Ctrl+C handler
@@ -63,14 +109,14 @@ $null = [Console]::TreatControlCAsInput = $true
 
 # Add cleanup on PowerShell exit
 $exitScript = {
-    Write-Host "Cleaning up processes..." -ForegroundColor Yellow
+    Write-StatusMessage "Cleaning up processes..." "Yellow"
     Stop-AllComponents
 }
 Register-EngineEvent PowerShell.Exiting -Action $exitScript | Out-Null
 
 # Check for admin privileges
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "Please run this script as Administrator" -ForegroundColor Red
+    Write-StatusMessage "Please run this script as Administrator" "Red"
     Read-Host "Press Enter to exit"
     exit 1
 }
@@ -93,7 +139,7 @@ try {
     # Clean up path (remove any trailing slashes and quotes)
     $serverDir = $serverDir.Trim('"', ' ', '\')
     
-    Write-Host "Server Directory: $serverDir" -ForegroundColor Cyan
+    Write-StatusMessage "Server Directory: $serverDir" "Cyan"
     
     if (-not (Test-Path $serverDir)) {
         throw "Server directory not found: $serverDir"
@@ -112,10 +158,10 @@ try {
     }
 
 } catch {
-    Write-Host "Error accessing Server Manager installation: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "Registry Path: $registryPath" -ForegroundColor Yellow
-    Write-Host "Server Directory: $serverDir" -ForegroundColor Yellow
-    Write-Host "Please ensure Server Manager is properly installed by running install.ps1"
+    Write-StatusMessage "Error accessing Server Manager installation: $($_.Exception.Message)" "Red"
+    Write-StatusMessage "Registry Path: $registryPath" "Yellow"
+    Write-StatusMessage "Server Directory: $serverDir" "Yellow"
+    Write-StatusMessage "Please ensure Server Manager is properly installed by running install.ps1"
     Read-Host "Press Enter to exit"
     exit 1
 }
@@ -168,12 +214,12 @@ function Test-ModuleExports {
     
     try {
         if (-not $RequiredFunctions) {
-            Write-Host "No required functions specified for $ModulePath" -ForegroundColor Yellow
+            Write-StatusMessage "No required functions specified for $ModulePath" "Yellow"
             return $true
         }
 
-        Write-Host "Testing module: $ModulePath" -ForegroundColor Cyan
-        Write-Host "Required functions: $($RequiredFunctions -join ', ')" -ForegroundColor Cyan
+        Write-StatusMessage "Testing module: $ModulePath" "Cyan"
+        Write-StatusMessage "Required functions: $($RequiredFunctions -join ', ')" "Cyan"
         
         $moduleInfo = Import-Module -Name $ModulePath -Force -PassThru -ErrorAction Stop
         if (-not $moduleInfo) {
@@ -181,7 +227,7 @@ function Test-ModuleExports {
         }
 
         $exportedFunctions = $moduleInfo.ExportedFunctions.Keys
-        Write-Host "Exported functions: $($exportedFunctions -join ', ')" -ForegroundColor Gray
+        Write-StatusMessage "Exported functions: $($exportedFunctions -join ', ')" "Gray"
         
         $missingFunctions = $RequiredFunctions | Where-Object { $_ -notin $exportedFunctions }
         
@@ -192,7 +238,7 @@ function Test-ModuleExports {
         return $true
     }
     catch {
-        Write-Host "Module validation failed for $ModulePath : $($_.Exception.Message)" -ForegroundColor Red
+        Write-StatusMessage "Module validation failed for $ModulePath : $($_.Exception.Message)" "Red"
         return $false
     }
 }
@@ -201,10 +247,10 @@ function Test-ModuleExports {
 Get-Module | Where-Object { $_.Path -like "*$modulesPath*" } | Remove-Module -Force
 
 # Add before module loading
-Write-Host "Module path: $modulesPath" -ForegroundColor Cyan
+Write-StatusMessage "Module path: $modulesPath" "Cyan"
 
 # Add before module loading section
-Write-Host "Clearing module cache..." -ForegroundColor Cyan
+Write-StatusMessage "Clearing module cache..." "Cyan"
 Get-Module | Where-Object { $_.Path -like "*$modulesPath*" } | Remove-Module -Force
 Remove-Module Network, WebSocketServer, ServerManager -ErrorAction SilentlyContinue
 
@@ -219,62 +265,66 @@ Remove-Module Network, WebSocketServer, ServerManager -ErrorAction SilentlyConti
 $moduleLoadingSuccess = $true
 foreach ($module in $coreModules) {
     $modulePath = Join-Path $modulesPath $module
-    Write-Host "Attempting to load module: $modulePath" -ForegroundColor Cyan
+    Write-StatusMessage "Loading module: $module" -Color Cyan
+    Write-StatusMessage "Module path: $modulePath" -Color Gray -Verbose
     
     if (Test-Path $modulePath) {
         try {
-            Write-Host "`nValidating core module: $module" -ForegroundColor Cyan
+            # First try to import without -Verbose to check for errors
+            $moduleInfo = Import-Module -Name $modulePath -Global -Force -PassThru -ErrorAction Stop -DisableNameChecking
             
-            # Import module with scope options
-            $moduleInfo = Import-Module -Name $modulePath -Global -Force -PassThru -Verbose -ErrorAction Stop -DisableNameChecking
-            
-            if ($moduleInfo) {
-                Write-Host "Module imported: $($moduleInfo.Name)" -ForegroundColor Green
-                Write-Host "Exported functions: $($moduleInfo.ExportedFunctions.Keys -join ', ')" -ForegroundColor Gray
+            if ($null -eq $moduleInfo) {
+                Write-StatusMessage "Module failed to load. Attempting verbose import for debugging..." -Color Yellow
                 
-                # Force functions into global scope
-                $moduleInfo.ExportedFunctions.Keys | ForEach-Object {
-                    $null = New-Item -Path Function::Global:$_ -Value (Get-Content Function::$_) -Force
+                # Try again with verbose output for debugging
+                $verbosePreference = 'Continue'
+                $moduleInfo = Import-Module -Name $modulePath -Global -Force -PassThru -Verbose -ErrorAction Stop -DisableNameChecking
+                $verbosePreference = 'SilentlyContinue'
+                
+                if ($null -eq $moduleInfo) {
+                    throw "Module import returned null after verbose attempt"
                 }
-                
-                Write-Host "Successfully loaded $module" -ForegroundColor Green
-            } else {
-                throw "Module import returned null"
             }
-        }
-        catch {
+            
+            # Verify module was loaded
+            $loadedModule = Get-Module $module.Replace('.psm1', '') -ErrorAction SilentlyContinue
+            if ($null -eq $loadedModule) {
+                throw "Module appears to be loaded but Get-Module returns null"
+            }
+            
+            Write-StatusMessage "Module $module loaded successfully ($($loadedModule.ExportedFunctions.Count) functions)" -Color Green
+            # Log functions to file only
+            Write-StatusMessage "Exported functions: $($loadedModule.ExportedFunctions.Keys -join ', ')" -Color Gray -Verbose
+            
+        } catch {
             $moduleLoadingSuccess = $false
-            Write-Host "Error loading module $module : $($_.Exception.Message)" -ForegroundColor Red
-            Write-Host $_.ScriptStackTrace -ForegroundColor Red
+            Write-StatusMessage "Error loading module $module" -Color Red
+            Write-StatusMessage "Error details: $($_.Exception.Message)" -Color Red
+            Write-StatusMessage "Stack trace: $($_.ScriptStackTrace)" -Color Red -Verbose
             break
         }
-    }
-    else {
+    } else {
         $moduleLoadingSuccess = $false
-        Write-Host "Core module not found: $modulePath" -ForegroundColor Red
+        Write-StatusMessage "Core module not found: $modulePath" -Color Red
         break
     }
 }
 
-# Modified verification step
-Write-Host "`nVerifying function availability:" -ForegroundColor Cyan
-foreach ($funcName in $requiredFunctions) {
-    $cmd = Get-Command -Name $funcName -ErrorAction SilentlyContinue
-    if ($cmd) {
-        Write-Host "Function $funcName : Available" -ForegroundColor Green
-    } else {
-        Write-Host "Function $funcName : Missing" -ForegroundColor Red
-        $moduleLoadingSuccess = $false
-    }
+# Simplified verification output
+if ($moduleLoadingSuccess) {
+    Write-StatusMessage "All modules loaded successfully" -Color Green
+} else {
+    throw "Module loading failed. Check logs for details."
 }
 
-# Verify modules are loaded before continuing
-Write-Host "`nVerifying loaded modules:" -ForegroundColor Cyan
+# Modified verification section - only write function details to log
+Write-StatusMessage "`nVerifying loaded modules:" "Cyan"
 $loadedModules = Get-Module | Where-Object { $_.Path -like "*$modulesPath*" }
 foreach ($module in $loadedModules) {
-    Write-Host "Loaded $($module.Name) with functions:" -ForegroundColor Green
+    Write-StatusMessage "Module $($module.Name) verified" "Green"
+    # Log functions to file only
     $module.ExportedFunctions.Keys | ForEach-Object {
-        Write-Host "  - $_" -ForegroundColor Gray
+        Write-StatusMessage "  - $_" "Gray" -Verbose
     }
 }
 
@@ -297,7 +347,7 @@ if ($missingFunctions) {
     throw "Missing required functions: $($missingFunctions -join ', ')"
 }
 
-Write-Host "`nAll required modules and functions verified. Continuing with launch...`n" -ForegroundColor Green
+Write-StatusMessage "`nAll required modules and functions verified. Continuing with launch...`n" "Green"
 
 # Add error action preference to catch more errors
 $ErrorActionPreference = 'Stop'
@@ -317,11 +367,10 @@ function Start-WebServer {
     $webserverPath = Join-Path $PSScriptRoot "webserver.ps1"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = "powershell.exe"
-    $startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$webserverPath`" -LogPath `"$($logPaths.WebServer)`""
+    $startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$webserverPath`" -LogPath `"$($logPaths.WebServer)`"" 
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
-    $startInfo.WindowStyle = 'Hidden'
     
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
@@ -336,11 +385,11 @@ function Start-TrayIcon {
     $trayIconPath = Join-Path $PSScriptRoot "trayicon.ps1"
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = "powershell.exe"
-    $startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -Sta -WindowStyle Hidden -File `"$trayIconPath`" -LogPath `"$($logPaths.TrayIcon)`""
+    $startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Sta -File `"$trayIconPath`" -LogPath `"$($logPaths.TrayIcon)`""
     $startInfo.UseShellExecute = $true
-    $startInfo.WindowStyle = 'Hidden'
+    $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
     
-    Write-Host "Starting tray icon with arguments: $($startInfo.Arguments)"
+    Write-StatusMessage "Starting tray icon..." -Color Cyan
     
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
@@ -359,95 +408,43 @@ function Start-TrayIcon {
 }
 
 try {
-    # Launch components with validation
-    Write-Host "Starting Web Server..." -ForegroundColor Cyan
+    Write-StatusMessage "Initializing Server Manager..." -Color Cyan
+    
+    # Start components
     $webServerProcess = Start-WebServer
-    
-    # Validate web server started
     Start-Sleep -Seconds 2
-    if ($webServerProcess.HasExited) {
-        throw "Web server failed to start. Check logs at: $($logPaths.WebServer)"
-    }
-    
-    # Test web server connection
-    $maxAttempts = 30
-    $attempts = 0
-    $serverReady = $false
-    
-    while (-not $serverReady -and $attempts -lt $maxAttempts) {
-        try {
-            $tcpClient = New-Object System.Net.Sockets.TcpClient
-            $tcpClient.Connect("localhost", 8080)
-            $tcpClient.Close()
-            $serverReady = $true
-            Write-Host "Web server is responding!" -ForegroundColor Green
-            break
-        }
-        catch {
-            Start-Sleep -Milliseconds 500
-            $attempts++
-            Write-Host "Waiting for web server... Attempt $attempts of $maxAttempts" -ForegroundColor Yellow
-        }
-    }
-    
-    if (-not $serverReady) {
-        throw "Web server failed to respond after $maxAttempts attempts"
-    }
-    
-    Write-Host "Starting Tray Icon..." -ForegroundColor Cyan
     $trayProcess = Start-TrayIcon
     
-    # Validate tray icon started
-    Start-Sleep -Seconds 2
-    if ($trayProcess.HasExited) {
-        throw "Tray icon failed to start. Check logs at: $($logPaths.TrayIcon)"
-    }
-    
-    Write-Host "`nServer Manager components started successfully!" -ForegroundColor Green
-    Write-Host "Access web interface at: http://localhost:8080/" -ForegroundColor Cyan
-    Write-Host "Use the tray icon for quick access" -ForegroundColor Cyan
-    Write-Host "Logs directory: $logDir" -ForegroundColor Gray
-    
-    # Monitor processes with improved error handling
+    # Final status message
+    Write-StatusMessage "`nServer Manager is running!" -Color Green
+    Write-StatusMessage "Web Interface: http://localhost:8080/" -Color Cyan
+    Write-StatusMessage "Use the tray icon for management" -Color Cyan
+    Write-StatusMessage "Check logs at: $logDir" -Color Gray
+
+    # Silent monitoring loop
     while ($true) {
         Start-Sleep -Milliseconds 500
-        
         try {
-            # Check web server
-            if (-not (Get-Process -Id $webServerProcess.Id -ErrorAction Stop)) {
-                throw "Web server process terminated unexpectedly"
-            }
-            
-            # Check tray icon
-            if (-not (Get-Process -Id $trayProcess.Id -ErrorAction Stop)) {
-                throw "Tray icon process terminated unexpectedly"
-            }
-            
-            # Check for Ctrl+C
-            if ([Console]::KeyAvailable) {
-                $key = [Console]::ReadKey($true)
-                if ($key.Key -eq "C" -and $key.Modifiers -eq "Control") {
-                    Write-Host "`nShutting down..." -ForegroundColor Yellow
-                    Stop-AllComponents
-                    break
-                }
-            }
+            $null = Get-Process -Id $webServerProcess.Id, $trayProcess.Id -ErrorAction Stop
         }
         catch {
-            if ($_.Exception.Message -match "Cannot find a process") {
-                Write-Host "Process monitoring error: $($_.Exception.Message)" -ForegroundColor Red
-                Stop-AllComponents
-                break
-            }
-            throw
+            Write-StatusMessage "Component stopped unexpectedly" -Color Red
+            Stop-AllComponents
+            break
         }
     }
 }
 catch {
-    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+    Write-StatusMessage "Error: $($_.Exception.Message)" -Color Red
     Stop-AllComponents
 }
 finally {
-    Stop-Transcript
+    if ($script:logWriter) {
+        $script:logWriter.Dispose()
+    }
+    if ($script:logStream) {
+        $script:logStream.Dispose()
+    }
+    Stop-Transcript -ErrorAction SilentlyContinue
 }
 

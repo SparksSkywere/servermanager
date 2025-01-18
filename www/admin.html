@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Panel - Server Manager</title>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <h2>Admin Panel</h2>
+                <span id="username"></span>
+            </div>
+            <ul class="nav-links">
+                <li><a href="dashboard.html">Back to Dashboard</a></li>
+                <li class="active"><a href="#users">User Management</a></li>
+                <li><a href="#settings">System Settings</a></li>
+                <li class="logout"><a href="#" onclick="logout()">Logout</a></li>
+            </ul>
+        </nav>
+
+        <main class="content">
+            <div class="header">
+                <h1>Administration</h1>
+            </div>
+
+            <div class="admin-section">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>User Management</h2>
+                        <button class="btn btn-primary" onclick="showAddUserModal()">Add User</button>
+                    </div>
+                    <div class="user-list" id="userList">
+                        <!-- Users will be populated here -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="admin-section">
+                <div class="card">
+                    <div class="card-header">
+                        <h2>System Settings</h2>
+                    </div>
+                    <div class="settings-form">
+                        <form id="systemSettingsForm" onsubmit="saveSystemSettings(event)">
+                            <div class="form-group">
+                                <label>Auto-Update Enabled:</label>
+                                <input type="checkbox" id="autoUpdate">
+                            </div>
+                            <div class="form-group">
+                                <label>Backup Schedule (hours):</label>
+                                <input type="number" id="backupSchedule" min="1" max="168">
+                            </div>
+                            <button type="submit" class="btn">Save Settings</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Add User Modal -->
+    <div id="addUserModal" class="modal">
+        <div class="modal-content">
+            <h2>Add New User</h2>
+            <form id="addUserForm" onsubmit="addUser(event)">
+                <div class="form-group">
+                    <label>Username:</label>
+                    <input type="text" id="newUsername" required>
+                </div>
+                <div class="form-group">
+                    <label>Password:</label>
+                    <input type="password" id="newPassword" required>
+                </div>
+                <div class="form-group">
+                    <label>Is Administrator:</label>
+                    <input type="checkbox" id="isAdmin">
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary">Add User</button>
+                    <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="module">
+        import { checkAuth, logout, isAdmin } from './js/auth.js';
+        import { showNotification } from './js/utils.js';
+        import API from './js/api.js';
+
+        // Make functions globally available
+        window.logout = logout;
+        window.showAddUserModal = showAddUserModal;
+        window.closeModal = closeModal;
+        window.addUser = addUser;
+        window.saveSystemSettings = saveSystemSettings;
+
+        // Check if user is admin, redirect if not
+        async function checkAdminAccess() {
+            if (!await isAdmin()) {
+                window.location.href = 'dashboard.html';
+                return false;
+            }
+            return true;
+        }
+
+        async function loadUsers() {
+            try {
+                const users = await API.getUsers();
+                const userList = document.getElementById('userList');
+                userList.innerHTML = users.map(user => `
+                    <div class="user-item">
+                        <div class="user-info">
+                            <span>${user.username}</span>
+                            <span class="badge ${user.isAdmin ? 'admin' : ''}">${user.isAdmin ? 'Admin' : 'User'}</span>
+                        </div>
+                        <div class="user-actions">
+                            <button onclick="resetPassword('${user.username}')" class="btn">Reset Password</button>
+                            <button onclick="deleteUser('${user.username}')" class="btn btn-danger">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                showNotification(error.message, 'error');
+            }
+        }
+
+        async function loadSystemSettings() {
+            try {
+                const settings = await API.getSystemSettings();
+                document.getElementById('autoUpdate').checked = settings.autoUpdate;
+                document.getElementById('backupSchedule').value = settings.backupSchedule;
+            } catch (error) {
+                showNotification(error.message, 'error');
+            }
+        }
+
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', async () => {
+            if (!sessionStorage.getItem('auth_token')) {
+                window.location.replace('login.html');
+                return;
+            }
+
+            try {
+                await checkAuth();
+                if (!await isAdmin()) {
+                    window.location.replace('dashboard.html');
+                    return;
+                }
+            } catch (error) {
+                sessionStorage.clear();
+                window.location.replace('login.html');
+                return;
+            }
+
+            loadUsers();
+            loadSystemSettings();
+        });
+
+        // Add periodic token verification
+        setInterval(async () => {
+            try {
+                await checkAuth();
+                if (!await isAdmin()) {
+                    window.location.replace('dashboard.html');
+                }
+            } catch (error) {
+                sessionStorage.clear();
+                window.location.replace('login.html');
+            }
+        }, 60000);
+
+        // Implement the required functions
+        async function addUser(event) {
+            event.preventDefault();
+            // Implementation here
+        }
+
+        async function saveSystemSettings(event) {
+            event.preventDefault();
+            // Implementation here
+        }
+
+        function showAddUserModal() {
+            document.getElementById('addUserModal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('addUserModal').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
