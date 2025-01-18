@@ -2,6 +2,27 @@
 $host.ui.RawUI.WindowTitle = "Server Manager Launcher"
 Clear-Host
 
+# Set error action preference and initialize
+$ErrorActionPreference = 'Stop'
+$rootDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$logDir = Join-Path $rootDir "logs"
+
+# Create structured log directories
+$logPaths = @{
+    Main = Join-Path $logDir "main.log"
+    WebServer = Join-Path $logDir "webserver.log"
+    TrayIcon = Join-Path $logDir "trayicon.log"
+    Updates = Join-Path $logDir "updates.log"
+}
+
+# Ensure log directory exists
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+}
+
+# Start transcript for main logging
+Start-Transcript -Path $logPaths.Main -Append
+
 # Store process IDs for cleanup
 $Global:ProcessTracker = @{
     WebServer = $null
@@ -291,59 +312,75 @@ if (-not (Test-Path $logDir)) {
 $webServerLog = Join-Path $logDir "webserver.log"
 $trayIconLog = Join-Path $logDir "trayicon.log"
 
-# Modified web server launch section
-try {
-    Write-Host "Setting up HTTP listener..." -ForegroundColor Cyan
+# Launch web server
+function Start-WebServer {
+    $webserverPath = Join-Path $PSScriptRoot "webserver.ps1"
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = "powershell.exe"
+    $startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$webserverPath`" -LogPath `"$($logPaths.WebServer)`""
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.WindowStyle = 'Hidden'
     
-    # Clear any existing processes
-    Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue | 
-        ForEach-Object {
-            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
-        }
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $null = $process.Start()
     
-    # Clear any existing flag file
-    $flagFile = Join-Path $env:TEMP "webserver_ready.flag"
-    if (Test-Path $flagFile) {
-        Remove-Item $flagFile -Force
+    $Global:ProcessTracker.WebServer = $process.Id
+    return $process
+}
+
+# Launch tray icon
+function Start-TrayIcon {
+    $trayIconPath = Join-Path $PSScriptRoot "trayicon.ps1"
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = "powershell.exe"
+    $startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -Sta -WindowStyle Hidden -File `"$trayIconPath`" -LogPath `"$($logPaths.TrayIcon)`""
+    $startInfo.UseShellExecute = $true
+    $startInfo.WindowStyle = 'Hidden'
+    
+    Write-Host "Starting tray icon with arguments: $($startInfo.Arguments)"
+    
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $null = $process.Start()
+    
+    # Give the process time to start and initialize
+    Start-Sleep -Seconds 3
+    
+    if ($process.HasExited) {
+        $log = Get-Content -Path $logPaths.TrayIcon -ErrorAction SilentlyContinue
+        throw "Tray icon process failed to start.`nLog:`n$($log -join "`n")"
     }
     
-    # Grant URL permissions
-    $null = netsh http add urlacl url=http://+:8080/ user=Everyone
+    $Global:ProcessTracker.TrayIcon = $process.Id
+    return $process
+}
+
+try {
+    # Launch components with validation
+    Write-Host "Starting Web Server..." -ForegroundColor Cyan
+    $webServerProcess = Start-WebServer
     
-    $webserverPath = Join-Path -Path $scriptDir -ChildPath "webserver.ps1"
-    Write-Host "WebServer Path: $webserverPath" -ForegroundColor Gray
+    # Validate web server started
+    Start-Sleep -Seconds 2
+    if ($webServerProcess.HasExited) {
+        throw "Web server failed to start. Check logs at: $($logPaths.WebServer)"
+    }
     
-    # Start web server with window visible for debugging
-    $webServerProcess = Start-Process powershell -ArgumentList "-NoExit -NoProfile -ExecutionPolicy Bypass -File `"$webserverPath`"" -PassThru -WindowStyle Normal
-    $Global:ProcessTracker.WebServer = $webServerProcess.Id
-    
-    Write-Host "Web Server Process ID: $($webServerProcess.Id)" -ForegroundColor Gray
-    
-    # Wait for web server to be ready
+    # Test web server connection
     $maxAttempts = 30
     $attempts = 0
     $serverReady = $false
     
     while (-not $serverReady -and $attempts -lt $maxAttempts) {
-        $webServerProcess.Refresh()
-        if ($webServerProcess.HasExited) {
-            $logContent = Get-Content -Path (Join-Path $env:TEMP "webserver.log") -Tail 20 -ErrorAction SilentlyContinue
-            throw "Web server process terminated unexpectedly. Exit Code: $($webServerProcess.ExitCode)`nLog:`n$($logContent -join "`n")"
-        }
-        
-        # Try both flag file and port test
-        if (Test-Path $flagFile) {
-            $serverReady = $true
-            Write-Host "Web server ready flag detected!" -ForegroundColor Green
-            break
-        }
-        
         try {
             $tcpClient = New-Object System.Net.Sockets.TcpClient
             $tcpClient.Connect("localhost", 8080)
             $tcpClient.Close()
             $serverReady = $true
-            Write-Host "Web server port is responding!" -ForegroundColor Green
+            Write-Host "Web server is responding!" -ForegroundColor Green
             break
         }
         catch {
@@ -352,61 +389,65 @@ try {
             Write-Host "Waiting for web server... Attempt $attempts of $maxAttempts" -ForegroundColor Yellow
         }
     }
-
+    
     if (-not $serverReady) {
         throw "Web server failed to respond after $maxAttempts attempts"
     }
-
-    # Start tray icon
-    $trayIconPath = Join-Path -Path $PSScriptRoot -ChildPath "trayicon.ps1"
-    if (-not (Test-Path $trayIconPath)) {
-        throw "TrayIcon script not found at: $trayIconPath"
+    
+    Write-Host "Starting Tray Icon..." -ForegroundColor Cyan
+    $trayProcess = Start-TrayIcon
+    
+    # Validate tray icon started
+    Start-Sleep -Seconds 2
+    if ($trayProcess.HasExited) {
+        throw "Tray icon failed to start. Check logs at: $($logPaths.TrayIcon)"
     }
-
-    $trayProcess = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$trayIconPath`"" -PassThru
-    $Global:ProcessTracker.TrayIcon = $trayProcess.Id
-
-    Write-Host "`n=================================" -ForegroundColor Green
-    Write-Host "Server Manager is ready!" -ForegroundColor Green
-    Write-Host "=================================" -ForegroundColor Green
-    Write-Host "`nLocal Connection URL: http://localhost:8080/`n"
-    Write-Host "The server manager is now running in the background" -ForegroundColor Cyan
-    Write-Host "Use the tray icon to manage the server" -ForegroundColor Cyan
-    Write-Host "Press Ctrl+C to stop all components`n"
-
-    # Main loop with Ctrl+C handling
+    
+    Write-Host "`nServer Manager components started successfully!" -ForegroundColor Green
+    Write-Host "Access web interface at: http://localhost:8080/" -ForegroundColor Cyan
+    Write-Host "Use the tray icon for quick access" -ForegroundColor Cyan
+    Write-Host "Logs directory: $logDir" -ForegroundColor Gray
+    
+    # Monitor processes with improved error handling
     while ($true) {
-        if ([Console]::KeyAvailable) {
-            $key = [Console]::ReadKey($true)
-            if ($key.Key -eq "C" -and $key.Modifiers -eq "Control") {
-                Write-Host "`nCtrl+C detected. Stopping all components..." -ForegroundColor Yellow
-                Stop-AllComponents
-                exit 0
-            }
-        }
-
-        Start-Sleep -Milliseconds 100
-
-        # Check if processes are still running
+        Start-Sleep -Milliseconds 500
+        
         try {
-            $webServerProcess.Refresh()
-            $trayProcess.Refresh()
+            # Check web server
+            if (-not (Get-Process -Id $webServerProcess.Id -ErrorAction Stop)) {
+                throw "Web server process terminated unexpectedly"
+            }
             
-            if ($webServerProcess.HasExited -or $trayProcess.HasExited) {
-                throw "A critical process has stopped unexpectedly"
+            # Check tray icon
+            if (-not (Get-Process -Id $trayProcess.Id -ErrorAction Stop)) {
+                throw "Tray icon process terminated unexpectedly"
+            }
+            
+            # Check for Ctrl+C
+            if ([Console]::KeyAvailable) {
+                $key = [Console]::ReadKey($true)
+                if ($key.Key -eq "C" -and $key.Modifiers -eq "Control") {
+                    Write-Host "`nShutting down..." -ForegroundColor Yellow
+                    Stop-AllComponents
+                    break
+                }
             }
         }
         catch {
-            Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
-            Stop-AllComponents
-            exit 1
+            if ($_.Exception.Message -match "Cannot find a process") {
+                Write-Host "Process monitoring error: $($_.Exception.Message)" -ForegroundColor Red
+                Stop-AllComponents
+                break
+            }
+            throw
         }
     }
 }
 catch {
     Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
     Stop-AllComponents
-    Read-Host "Press Enter to exit"
-    exit 1
+}
+finally {
+    Stop-Transcript
 }
 

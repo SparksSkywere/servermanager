@@ -1,9 +1,29 @@
-# Force STA thread model
-if (-not [System.Threading.Thread]::CurrentThread.GetApartmentState() -eq 'STA') {
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -WindowStyle Hidden
-    exit
+param(
+    [string]$LogPath
+)
+
+# Start logging
+Start-Transcript -Path $LogPath -Force
+
+# Ensure STA thread model
+if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
+    Write-Host "Current thread is not STA. Restarting in STA mode..."
+    $argList = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-WindowStyle", "Hidden",
+        "-Sta",
+        "-File", "`"$($MyInvocation.MyCommand.Path)`"",
+        "-LogPath", "`"$LogPath`""
+    )
+    Start-Process powershell -ArgumentList $argList -WindowStyle Hidden
+    Stop-Transcript
+    exit 0
 }
 
+Write-Host "Running in STA mode, continuing with tray icon creation..."
+
+# Add required assemblies
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -25,113 +45,76 @@ trap {
 # Create application context first
 $script:appContext = New-Object System.Windows.Forms.ApplicationContext
 
-# Create tray icon
-$script:trayIcon = New-Object System.Windows.Forms.NotifyIcon
+try {
+    # Create tray icon and context menu
+    $script:trayIcon = New-Object System.Windows.Forms.NotifyIcon
+    $script:contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
+    
+    # Set up tray icon
     $script:trayIcon.Text = "Server Manager"
     
-    # Load icon with fallback
-    $powershellPath = (Get-Process -Id $PID).MainModule.FileName
-    $iconPaths = @(
-        (Join-Path $PSScriptRoot "..\icons\servermanager.ico"),
-        $powershellPath
-    )
-
-    $iconLoaded = $false
-    foreach ($path in $iconPaths) {
-        try {
-            if (Test-Path $path) {
-                $script:trayIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($path)
-                $iconLoaded = $true
-                break
-            }
-        } catch { continue }
+    # Load icon
+    $iconPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "icons\servermanager.ico"
+    if (Test-Path $iconPath) {
+        Write-Host "Loading icon from: $iconPath"
+        $script:trayIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
+    } else {
+        Write-Host "Using default PowerShell icon"
+        $script:trayIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon((Get-Process -Id $PID).MainModule.FileName)
     }
-
-    if (-not $iconLoaded) {
-        Write-Warning "Could not load any icons, using default PowerShell icon"
-        $script:trayIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($powershellPath)
-    }
-
-    # Create context menu
-    $script:contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
-
-    # Open Website menu item
-    $openWebsiteMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
-    $openWebsiteMenuItem.Text = "Open Dashboard"
-    $openWebsiteMenuItem.Add_Click({
-        try {
-            Start-Process "http://localhost:8080"
-        } catch {
-            [System.Windows.Forms.MessageBox]::Show("Failed to open dashboard: $($_.Exception.Message)", "Error", 
-                [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-        }
-    }.GetNewClosure())
-    $script:contextMenu.Items.Add($openWebsiteMenuItem)
-
-    # Add separator
-    $script:contextMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
-
-    # Exit menu item
-    $exitMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
-    $exitMenuItem.Text = "Exit"
-    $exitMenuItem.Add_Click({
-        $script:exitRequested = $true
-        try {
-            if ($null -ne $script:appContext) {
-                $script:appContext.ExitThread()
-            }
-            if ($null -ne $script:trayIcon) {
-                $script:trayIcon.Visible = $false
-            }
-            [System.Windows.Forms.Application]::Exit()
-            # Give the application time to cleanup
-            Start-Sleep -Milliseconds 500
-            Stop-Process $PID -Force
-        } catch {
-            Write-Error "Failed to exit cleanly: $($_.Exception.Message)"
-            Stop-Process $PID -Force
-        }
-    }.GetNewClosure())
-    $script:contextMenu.Items.Add($exitMenuItem)
-
-    # Set context menu and make tray icon visible
+    
+    # Set up menu items
+    $openItem = $script:contextMenu.Items.Add("Open Dashboard")
+    $openItem.Add_Click({
+        Start-Process "http://localhost:8080"
+    })
+    
+    $script:contextMenu.Items.Add("-")
+    
+    $exitItem = $script:contextMenu.Items.Add("Exit")
+    $exitItem.Add_Click({
+        $script:trayIcon.Visible = $false
+        Stop-Transcript
+        [System.Windows.Forms.Application]::Exit()
+    })
+    
+    # Configure tray icon
     $script:trayIcon.ContextMenuStrip = $script:contextMenu
     $script:trayIcon.Visible = $true
-
+    
+    # Show startup notification
+    $script:trayIcon.ShowBalloonTip(
+        2000,
+        "Server Manager",
+        "Server Manager is running. Click to open dashboard.",
+        [System.Windows.Forms.ToolTipIcon]::Info
+    )
+    
     # Add double-click handler
     $script:trayIcon.Add_MouseDoubleClick({
-        if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
-            try {
-                Start-Process "http://localhost:8080"
-            } catch {
-                [System.Windows.Forms.MessageBox]::Show("Failed to open dashboard: $($_.Exception.Message)", "Error",
-                    [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-            }
-        }
+        Start-Process "http://localhost:8080"
     })
-
-    # Show balloon tip on startup with error handling
-    try {
-        $script:trayIcon.ShowBalloonTip(
-            5000,
-            "Server Manager",
-            "Server Manager is running in the background. Right-click the tray icon for options.",
-            [System.Windows.Forms.ToolTipIcon]::Info
-        )
-    } catch {
-        Write-Warning "Failed to show balloon tip: $($_.Exception.Message)"
+    
+    Write-Host "Tray icon initialized successfully"
+    
+    # Start message loop
+    [System.Windows.Forms.Application]::Run()
+}
+catch {
+    Write-Error "Error in tray icon: $($_.Exception.Message)"
+    Write-Error $_.ScriptStackTrace
+    if ($script:trayIcon) {
+        $script:trayIcon.Visible = $false
+        $script:trayIcon.Dispose()
     }
-
-    # Register cleanup on application exit
-    [System.Windows.Forms.Application]::ApplicationExit += {
-        if ($script:trayIcon) {
-            $script:trayIcon.Visible = $false
-            $script:trayIcon.Dispose()
-        }
-        if ($script:contextMenu) {
-            $script:contextMenu.Dispose()
-        }
+    throw
+}
+finally {
+    if ($script:trayIcon) {
+        $script:trayIcon.Dispose()
     }
+    Stop-Transcript
+}
 
 # Cleanup resources
 if (-not $script:exitRequested) {
