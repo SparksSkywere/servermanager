@@ -144,70 +144,73 @@
     <div id="notification" class="notification"></div>
 
     <script type="module">
-        import { checkAuth, logout, isAdmin } from './js/auth.js';
+        import { checkAuth, logout as authLogout, isAdmin } from './js/auth.js';
         import { showNotification } from './js/utils.js';
         import API from './js/api.js';
         import { Dashboard } from './js/dashboard.js';
-        import { controlServer, executeBulkAction } from './js/serverControls.js';
+        import { controlServer as importedControlServer, executeBulkAction as importedBulkAction } from './js/serverControls.js';
 
         let dashboard;
+        let initializationInProgress = false;
+
+        // Expose functions to global scope
+        window.controlServer = importedControlServer;
+        window.executeBulkAction = importedBulkAction;
+        window.logout = () => {
+            console.log('Logout called');
+            authLogout();
+        };
 
         async function initDashboard() {
+            if (initializationInProgress) {
+                console.log('Initialization already in progress');
+                return;
+            }
+
+            initializationInProgress = true;
             console.log('Initializing dashboard...');
+
             try {
-                const token = sessionStorage.getItem('auth_token');
-                console.log('Current token status:', token ? 'Present' : 'Missing');
-
-                if (!token) {
-                    console.log('No token found, redirecting to login');
-                    window.location.replace('login.html');
-                    return;
-                }
-
                 const isAuthenticated = await checkAuth();
                 console.log('Authentication check result:', isAuthenticated);
 
                 if (!isAuthenticated) {
-                    throw new Error('Authentication failed');
+                    console.log('Authentication failed, redirecting to login');
+                    sessionStorage.clear();
+                    window.location.replace('login.html');
+                    return;
                 }
 
-                const username = sessionStorage.getItem('username') || 'User';
+                const username = sessionStorage.getItem('username');
+                if (!username) {
+                    throw new Error('No username found');
+                }
+
                 document.getElementById('username').textContent = username;
                 
-                const adminStatus = await isAdmin();
-                console.log('Admin status check completed:', adminStatus);
-                
-                updateAdminVisibility();
+                const adminButton = document.getElementById('adminButton');
+                adminButton.style.display = await isAdmin() ? 'block' : 'none';
+
                 dashboard = new Dashboard();
+                console.log('Dashboard initialized successfully');
 
             } catch (error) {
                 console.error('Dashboard initialization error:', error);
+                sessionStorage.clear();
                 window.location.replace('login.html');
+            } finally {
+                initializationInProgress = false;
             }
         }
 
-        // Make functions globally available
-        window.logout = () => {
-            sessionStorage.clear();
-            window.location.href = 'login.html';
-        };
-        window.controlServer = controlServer;
-        window.executeBulkAction = executeBulkAction;
-
-        document.addEventListener('DOMContentLoaded', initDashboard);
-
-        function updateAdminVisibility() {
-            const adminStatus = sessionStorage.getItem('isAdmin');
-            const adminButton = document.getElementById('adminButton');
-            
-            if (adminStatus === 'true') {
-                adminButton.style.display = 'block';
-            } else {
-                adminButton.style.display = 'none';
-            }
+        // Ensure DOM is loaded before initialization
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initDashboard);
+        } else {
+            await initDashboard();
         }
 
-        // Add admin link handler
+        // Admin link handler
         document.getElementById('adminLink')?.addEventListener('click', async (event) => {
             event.preventDefault();
             try {
@@ -223,7 +226,7 @@
             }
         });
 
-        // Add theme toggle handler
+        // Theme toggle handler
         document.getElementById('themeToggle')?.addEventListener('change', (e) => {
             document.documentElement.setAttribute('data-theme', e.target.checked ? 'dark' : 'light');
         });

@@ -84,7 +84,10 @@ try {
     $exitItem = $script:contextMenu.Items.Add("Exit")
     $exitItem.Add_Click({
         $script:trayIcon.Visible = $false
-        Stop-Transcript
+        # Properly stop transcript if running
+        if ([System.Management.Automation.Host.PSHost].GetProperty('IsTranscribing', [System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Static)) {
+            Stop-Transcript -ErrorAction SilentlyContinue
+        }
         [System.Windows.Forms.Application]::Exit()
     })
     
@@ -94,14 +97,21 @@ try {
     $closeButton.Add_Click({
         Write-Host "Initiating full shutdown..."
         
-        # Run kill-webserver.ps1 with admin privileges
-        $killScriptPath = Join-Path $PSScriptRoot "kill-webserver.ps1"
-        if (Test-Path $killScriptPath) {
-            Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$killScriptPath`"" -Verb RunAs -Wait
+        # Hide the tray icon immediately
+        $script:trayIcon.Visible = $false
+        
+        # Properly stop transcript if running
+        if ([System.Management.Automation.Host.PSHost].GetProperty('IsTranscribing', [System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Static)) {
+            Stop-Transcript -ErrorAction SilentlyContinue
         }
         
-        # Close tray icon
-        $script:trayIcon.Visible = $false
+        # Start kill-webserver.ps1 without waiting
+        $killScriptPath = Join-Path $PSScriptRoot "kill-webserver.ps1"
+        if (Test-Path $killScriptPath) {
+            Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$killScriptPath`"" -Verb RunAs -WindowStyle Hidden
+        }
+        
+        # Exit immediately
         [System.Windows.Forms.Application]::Exit()
     })
     
@@ -140,7 +150,10 @@ finally {
     if ($script:trayIcon) {
         $script:trayIcon.Dispose()
     }
-    Stop-Transcript
+    # Properly stop transcript if running
+    if ([System.Management.Automation.Host.PSHost].GetProperty('IsTranscribing', [System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Static)) {
+        Stop-Transcript -ErrorAction SilentlyContinue
+    }
 }
 
 # Cleanup resources

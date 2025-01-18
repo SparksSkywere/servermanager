@@ -7,15 +7,36 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 Write-Host "Stopping Server Manager..." -ForegroundColor Yellow
 
+# Kill the launcher process first
+Get-Process -Name "powershell*" | 
+    Where-Object { $_.MainWindowTitle -like "*launcher*" -or $_.CommandLine -like "*launcher.ps1*" } | 
+    ForEach-Object {
+        Write-Host "Stopping launcher process: $($_.Id)" -ForegroundColor Cyan
+        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    }
+
 # Get root directory and log paths
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rootDir = Split-Path -Parent $scriptDir
 $logDir = Join-Path $rootDir "logs"
 
+# Add function to safely stop transcripts
+function Stop-TranscriptSafely {
+    try {
+        $transcribing = [System.Management.Automation.Host.PSHost].GetProperty(
+            'IsTranscribing',
+            [System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Static
+        )
+        if ($transcribing) {
+            Stop-Transcript -ErrorAction SilentlyContinue
+        }
+    } catch {
+        # Ignore any errors
+    }
+}
+
 # Stop any PowerShell transcripts first
-try {
-    Stop-Transcript -ErrorAction SilentlyContinue
-} catch { }
+Stop-TranscriptSafely
 
 # Force close any open log files
 $logFiles = @(
@@ -34,7 +55,7 @@ foreach ($logFile in $logFiles) {
             [System.GC]::WaitForPendingFinalizers()
             
             # Stop any PowerShell transcripts
-            Stop-Transcript -ErrorAction SilentlyContinue
+            Stop-TranscriptSafely
             
             # Force close file handles
             $handles = Get-Process | 
