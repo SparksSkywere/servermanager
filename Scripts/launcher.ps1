@@ -295,18 +295,29 @@ $trayIconLog = Join-Path $logDir "trayicon.log"
 try {
     Write-Host "Setting up HTTP listener..." -ForegroundColor Cyan
     
-    # Create required directories
-    $logDir = Join-Path $rootDir "logs"
-    New-Item -ItemType Directory -Path $logDir -Force -ErrorAction SilentlyContinue | Out-Null
+    # Clear any existing processes
+    Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue | 
+        ForEach-Object {
+            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+        }
     
-    # Start web server
-    $webserverPath = Join-Path -Path $PSScriptRoot -ChildPath "webserver.ps1"
-    if (-not (Test-Path $webserverPath)) {
-        throw "WebServer script not found at: $webserverPath"
+    # Clear any existing flag file
+    $flagFile = Join-Path $env:TEMP "webserver_ready.flag"
+    if (Test-Path $flagFile) {
+        Remove-Item $flagFile -Force
     }
-
-    $webServerProcess = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$webserverPath`"" -PassThru -WindowStyle Hidden
+    
+    # Grant URL permissions
+    $null = netsh http add urlacl url=http://+:8080/ user=Everyone
+    
+    $webserverPath = Join-Path -Path $scriptDir -ChildPath "webserver.ps1"
+    Write-Host "WebServer Path: $webserverPath" -ForegroundColor Gray
+    
+    # Start web server with window visible for debugging
+    $webServerProcess = Start-Process powershell -ArgumentList "-NoExit -NoProfile -ExecutionPolicy Bypass -File `"$webserverPath`"" -PassThru -WindowStyle Normal
     $Global:ProcessTracker.WebServer = $webServerProcess.Id
+    
+    Write-Host "Web Server Process ID: $($webServerProcess.Id)" -ForegroundColor Gray
     
     # Wait for web server to be ready
     $maxAttempts = 30
@@ -314,14 +325,29 @@ try {
     $serverReady = $false
     
     while (-not $serverReady -and $attempts -lt $maxAttempts) {
-        try {
-            $tcpClient = New-Object Net.Sockets.TcpClient
-            $tcpClient.Connect("localhost", 8080)
+        $webServerProcess.Refresh()
+        if ($webServerProcess.HasExited) {
+            $logContent = Get-Content -Path (Join-Path $env:TEMP "webserver.log") -Tail 20 -ErrorAction SilentlyContinue
+            throw "Web server process terminated unexpectedly. Exit Code: $($webServerProcess.ExitCode)`nLog:`n$($logContent -join "`n")"
+        }
+        
+        # Try both flag file and port test
+        if (Test-Path $flagFile) {
             $serverReady = $true
+            Write-Host "Web server ready flag detected!" -ForegroundColor Green
+            break
+        }
+        
+        try {
+            $tcpClient = New-Object System.Net.Sockets.TcpClient
+            $tcpClient.Connect("localhost", 8080)
             $tcpClient.Close()
+            $serverReady = $true
+            Write-Host "Web server port is responding!" -ForegroundColor Green
+            break
         }
         catch {
-            Start-Sleep -Seconds 1
+            Start-Sleep -Milliseconds 500
             $attempts++
             Write-Host "Waiting for web server... Attempt $attempts of $maxAttempts" -ForegroundColor Yellow
         }
