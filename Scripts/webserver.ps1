@@ -49,9 +49,9 @@ try {
         # Set up cancellation token
         $exitEvent = [System.Threading.EventWaitHandle]::new($false, [System.Threading.EventResetMode]::ManualReset)
         
-        # Register handler for Ctrl+C
+        # Register handler for Ctrl+C with explicit method signature
         [Console]::TreatControlCAsInput = $true
-        $null = [System.Threading.Tasks.Task]::Run({
+        $action = [Action]{
             while ($true) {
                 if ([Console]::KeyAvailable) {
                     $key = [Console]::ReadKey($true)
@@ -62,7 +62,8 @@ try {
                 }
                 Start-Sleep -Milliseconds 100
             }
-        })
+        }
+        $null = [System.Threading.Tasks.Task]::Factory.StartNew($action)
         
         # Main request handling loop
         while (-not $exitEvent.WaitOne(100)) {
