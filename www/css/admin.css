@@ -1,0 +1,62 @@
+/* Core admin panel styles */
+.admin-section {
+    margin-bottom: 2rem;
+}
+
+.user-list {
+    display: grid;
+    gap: 1rem;
+}
+
+.user-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.user-info {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.badge.admin {
+    background: #ff5722;
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-content {
+    background: white;
+    padding: 2rem;
+    border-radius: 8px;
+    min-width: 300px;
+}
+
+/* Admin specific buttons */
+.btn-admin {
+    background: #ff5722;
+    color: white;
+}
+
+.btn-admin:hover {
+    background: #f4511e;
+}

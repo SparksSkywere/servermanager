@@ -1,3 +1,31 @@
+/* Admin button styles - add at the top for highest priority */
+#adminButton {
+    display: block !important;
+    visibility: visible !important;
+    background-color: #ff5722 !important;
+    margin: 1rem 0 !important;
+    padding: 0.5rem !important;
+    border-radius: 4px !important;
+    opacity: 1 !important;
+}
+
+#adminButton a {
+    color: white !important;
+    font-weight: bold !important;
+    text-decoration: none !important;
+    opacity: 1 !important;
+}
+
+/* Reset default styles */
+body {
+    background-color: var(--background);
+    color: var(--text-primary);
+}
+
+:root {
+    --sidebar-width: 250px;
+}
+
 .stats-overview {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -80,6 +108,7 @@
     position: fixed;
     width: var(--sidebar-width);
     height: 100vh;
+    overflow-y: auto;
 }
 
 .sidebar-header {
@@ -90,6 +119,12 @@
 
 .nav-links {
     list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.nav-links li {
+    margin-bottom: 0.5rem;
 }
 
 .nav-links a {
@@ -112,12 +147,13 @@
 .content {
     margin-left: var(--sidebar-width);
     padding: 2rem;
+    background: #f5f5f5;
 }
 
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.5rem;
     margin-bottom: 2rem;
 }
 
@@ -144,14 +180,14 @@
 .charts-container {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-    gap: 1rem;
+    gap: 1.5rem;
     margin-bottom: 2rem;
 }
 
 .chart-card {
     background: white;
     border-radius: 8px;
-    padding: 1rem;
+    padding: 1.5rem;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
@@ -202,3 +238,113 @@
     overflow-y: auto;
     font-family: monospace;
 }
+
+#adminButton {
+    display: block !important;
+    visibility: visible !important;
+    background-color: #ff5722;
+    margin-top: 1rem;
+    border-radius: 4px;
+}
+
+#adminButton a {
+    color: white !important;
+    font-weight: bold;
+}
+
+#adminButton:hover {
+    background-color: #f4511e;
+}
+
+#adminButton[style*="display: block"] {
+    display: block !important;
+}
+
+/* Dashboard grid layout */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 1rem;
+    padding: 1rem;
+}
+
+.visualization-card {
+    background: var(--card-bg);
+    border-radius: 3px;
+    box-shadow: var(--shadow);
+    padding: 1rem;
+}
+
+.visualization-card .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 1rem;
+}
+
+.visualization-card .title {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+/* Time range selector */
+.time-range {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+}
+
+/* Chart containers */
+.chart-container {
+    height: 300px;
+    position: relative;
+}
+
+/* Stats panels */
+.stat-panel {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    padding: 1rem;
+}
+
+.stat-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 1rem;
+    background: var(--card-bg);
+    border-radius: 3px;
+    border: 1px solid var(--border-color);
+}
+
+.stat-value {
+    font-size: 2rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.stat-label {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+/* Server status indicators */
+.status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 0.5rem;
+}
+
+.status-indicator.running { background-color: var(--success-color); }
+.status-indicator.stopped { background-color: var(--error-color); }
+.status-indicator.warning { background-color: var(--warning-color); }

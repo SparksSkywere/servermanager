@@ -1,13 +1,11 @@
 <!DOCTYPE html>
-<html>
+<html data-theme="light">
 <head>
     <title>Server Manager Dashboard</title>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
-    <link rel="stylesheet" href="css/style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="css/theme.css">
     <link rel="stylesheet" href="css/dashboard.css">
-    <!-- Add Chart.js for statistics -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -22,92 +20,122 @@
                 <li><a href="#servers">Servers</a></li>
                 <li><a href="#monitoring">Monitoring</a></li>
                 <li><a href="#settings">Settings</a></li>
-                <li id="adminButton" style="display: none;"><a href="admin.html">Administration</a></li>
+                <li id="adminButton">
+                    <a href="admin.html" onclick="return false;" id="adminLink">Administration</a>
+                </li>
                 <li class="logout"><a href="#" onclick="logout()">Logout</a></li>
             </ul>
         </nav>
 
         <main class="content">
-            <div class="header">
-                <div class="header-title">
-                    <h1>Dashboard Overview</h1>
-                    <span id="last-update"></span>
-                </div>
-                <div class="header-actions">
-                    <button class="btn" onclick="refreshAll()">Refresh</button>
-                    <button class="btn btn-primary" onclick="location.href='create-server.html'">New Server</button>
-                </div>
-            </div>
-
-            <!-- Statistics Overview -->
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon servers"></div>
-                    <div class="stat-info">
-                        <h3>Total Servers</h3>
-                        <div class="stat-value" id="totalServers">0</div>
-                    </div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon running"></div>
-                    <div class="stat-info">
-                        <h3>Running</h3>
-                        <div class="stat-value" id="runningServers">0</div>
-                    </div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon cpu"></div>
-                    <div class="stat-info">
-                        <h3>CPU Usage</h3>
-                        <div class="stat-value" id="cpuUsage">0%</div>
-                    </div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon memory"></div>
-                    <div class="stat-info">
-                        <h3>Memory Usage</h3>
-                        <div class="stat-value" id="memoryUsage">0%</div>
+            <div class="dashboard-header">
+                <div class="time-controls">
+                    <select id="refreshRate">
+                        <option value="10">10s</option>
+                        <option value="30">30s</option>
+                        <option value="60">1m</option>
+                    </select>
+                    <div class="theme-toggle">
+                        <input type="checkbox" id="themeToggle">
+                        <label for="themeToggle">Dark Mode</label>
                     </div>
                 </div>
             </div>
 
-            <!-- Performance Charts -->
-            <div class="charts-container">
-                <div class="chart-card"></div>
-                    <h3>System Performance</h3>
-                    <canvas id="performanceChart"></canvas>
-                </div>
-                <div class="chart-card">
-                    <h3>Server Status Distribution</h3>
-                    <canvas id="statusChart"></canvas>
-                </div>
-            </div>
-
-            <!-- Server List -->
-            <div class="server-management">
-                <div class="card">
-                    <div class="card-header">
-                        <h2>Server Management</h2>
-                        <div class="card-actions">
-                            <select id="bulkAction">
-                                <option value="">Bulk Actions...</option>
-                                <option value="start">Start Selected</option>
-                                <option value="stop">Stop Selected</option>
-                                <option value="restart">Restart Selected</option>
-                            </select>
-                            <button class="btn" onclick="executeBulkAction()">Apply</button>
+            <div class="dashboard-grid">
+                <!-- System Overview -->
+                <div class="visualization-card span-2">
+                    <div class="header">
+                        <h2 class="title">System Overview</h2>
+                    </div>
+                    <div class="stat-panel">
+                        <div class="stat-card">
+                            <div class="stat-icon servers"></div>
+                            <div class="stat-info">
+                                <h3>Total Servers</h3>
+                                <div class="stat-value" id="totalServers">0</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon running"></div>
+                            <div class="stat-info">
+                                <h3>Running</h3>
+                                <div class="stat-value" id="runningServers">0</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon cpu"></div>
+                            <div class="stat-info">
+                                <h3>CPU Usage</h3>
+                                <div class="stat-value" id="cpuUsage">0%</div>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-icon memory"></div>
+                            <div class="stat-info">
+                                <h3>Memory Usage</h3>
+                                <div class="stat-value" id="memoryUsage">0%</div>
+                            </div>
                         </div>
                     </div>
-                    <div class="server-list" id="serverList">
-                        <!-- Servers will be populated here -->
+                </div>
+
+                <!-- CPU Usage -->
+                <div class="visualization-card">
+                    <div class="header">
+                        <h2 class="title">CPU Usage</h2>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="cpuChart"></canvas>
                     </div>
                 </div>
-            </div>
 
-            <!-- Activity Log -->
-            <div class="activity-log">
-                <h3>Recent Activity</h3>
-                <div id="activityLog" class="log-container"></div>
+                <!-- Memory Usage -->
+                <div class="visualization-card">
+                    <div class="header">
+                        <h2 class="title">Memory Usage</h2>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="memoryChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Server Status -->
+                <div class="visualization-card">
+                    <div class="header">
+                        <h2 class="title">Server Status</h2>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="statusChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Server List -->
+                <div class="server-management">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Server Management</h2>
+                            <div class="card-actions">
+                                <select id="bulkAction">
+                                    <option value="">Bulk Actions...</option>
+                                    <option value="start">Start Selected</option>
+                                    <option value="stop">Stop Selected</option>
+                                    <option value="restart">Restart Selected</option>
+                                </select>
+                                <button class="btn" onclick="executeBulkAction()">Apply</button>
+                            </div>
+                        </div>
+                        <div class="server-list" id="serverList">
+                            <!-- Servers will be populated here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Activity Log -->
+                <div class="activity-log">
+                    <h3>Recent Activity</h3>
+                    <div id="activityLog" class="log-container"></div>
+                </div>
             </div>
         </main>
     </div>
@@ -119,191 +147,85 @@
         import { checkAuth, logout, isAdmin } from './js/auth.js';
         import { showNotification } from './js/utils.js';
         import API from './js/api.js';
+        import { Dashboard } from './js/dashboard.js';
+        import { controlServer, executeBulkAction } from './js/serverControls.js';
 
-        // Make functions globally available
-        window.logout = logout;
-        window.refreshAll = refreshDashboard;
-        window.executeBulkAction = executeBulkAction;
+        let dashboard;
 
-        // Modified logout function
-        async function logout() {
-            sessionStorage.clear();
-            window.location.replace('login.html');
-        }
-
-        // Performance chart initialization
-        const perfCtx = document.getElementById('performanceChart').getContext('2d');
-        const perfChart = new Chart(perfCtx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: 'CPU Usage',
-                    data: [],
-                    borderColor: 'rgb(75, 192, 192)',
-                    tension: 0.1
-                }, {
-                    label: 'Memory Usage',
-                    data: [],
-                    borderColor: 'rgb(255, 99, 132)',
-                    tension: 0.1
-                }]
-            }
-        });
-
-        // Status chart initialization
-        const statusCtx = document.getElementById('statusChart').getContext('2d');
-        const statusChart = new Chart(statusCtx, {
-            type: 'doughnut',
-            data: {
-                labels: ['Running', 'Stopped', 'Error'],
-                datasets: [{
-                    data: [0, 0, 0],
-                    backgroundColor: ['#4CAF50', '#FFA726', '#F44336']
-                }]
-            }
-        });
-
-        async function refreshDashboard() {
+        async function initDashboard() {
+            console.log('Initializing dashboard...');
             try {
-                const stats = await API.getSystemStats();
-                updateDashboardStats(stats);
-                
-                const servers = await API.getServers();
-                updateServerList(servers);
-                updateCharts(stats, servers);
-                
-                document.getElementById('last-update').textContent = 
-                    `Last updated: ${new Date().toLocaleTimeString()}`;
-                
-                showNotification('Dashboard updated successfully', 'success');
-            } catch (error) {
-                showNotification(error.message, 'error');
-            }
-        }
+                const token = sessionStorage.getItem('auth_token');
+                console.log('Current token status:', token ? 'Present' : 'Missing');
 
-        function updateDashboardStats(stats) {
-            document.getElementById('totalServers').textContent = stats.totalServers;
-            document.getElementById('runningServers').textContent = stats.runningServers;
-            document.getElementById('cpuUsage').textContent = `${stats.cpuUsage.toFixed(1)}%`;
-            document.getElementById('memoryUsage').textContent = `${stats.memoryUsage.toFixed(1)}%`;
-        }
+                if (!token) {
+                    console.log('No token found, redirecting to login');
+                    window.location.replace('login.html');
+                    return;
+                }
 
-        function updateServerList(servers) {
-            const serverList = document.getElementById('serverList');
-            serverList.innerHTML = servers.map(server => `
-                <div class="server-item ${server.status.toLowerCase()}">
-                    <div class="server-info">
-                        <input type="checkbox" name="serverSelect" value="${server.name}">
-                        <h4>${server.name}</h4>
-                        <span class="status">${server.status}</span>
-                    </div>
-                    <div class="server-stats">
-                        <span>CPU: ${server.cpuUsage}%</span>
-                        <span>Memory: ${server.memoryUsage}%</span>
-                        <span>Uptime: ${formatUptime(server.uptime)}</span>
-                    </div>
-                    <div class="server-actions">
-                        <button onclick="controlServer('start', '${server.name}')" 
-                                ${server.status === 'Running' ? 'disabled' : ''}>Start</button>
-                        <button onclick="controlServer('stop', '${server.name}')"
-                                ${server.status === 'Stopped' ? 'disabled' : ''}>Stop</button>
-                        <button onclick="controlServer('restart', '${server.name}')"
-                                ${server.status === 'Stopped' ? 'disabled' : ''}>Restart</button>
-                    </div>
-                </div>
-            `).join('');
-        }
+                const isAuthenticated = await checkAuth();
+                console.log('Authentication check result:', isAuthenticated);
 
-        function updateCharts(stats, servers) {
-            // Update performance chart
-            const now = new Date().toLocaleTimeString();
-            perfChart.data.labels.push(now);
-            perfChart.data.datasets[0].data.push(stats.cpuUsage);
-            perfChart.data.datasets[1].data.push(stats.memoryUsage);
-            
-            // Keep only last 10 data points
-            if (perfChart.data.labels.length > 10) {
-                perfChart.data.labels.shift();
-                perfChart.data.datasets.forEach(dataset => dataset.data.shift());
-            }
-            perfChart.update();
+                if (!isAuthenticated) {
+                    throw new Error('Authentication failed');
+                }
 
-            // Update status chart
-            const statusCounts = servers.reduce((acc, server) => {
-                acc[server.status]++;
-                return acc;
-            }, { Running: 0, Stopped: 0, Error: 0 });
-
-            statusChart.data.datasets[0].data = [
-                statusCounts.Running,
-                statusCounts.Stopped,
-                statusCounts.Error
-            ];
-            statusChart.update();
-        }
-
-        function formatUptime(seconds) {
-            if (!seconds) return 'N/A';
-            const days = Math.floor(seconds / 86400);
-            const hours = Math.floor((seconds % 86400) / 3600);
-            const minutes = Math.floor((seconds % 3600) / 60);
-            return `${days}d ${hours}h ${minutes}m`;
-        }
-
-        // Add session verification
-        document.addEventListener('DOMContentLoaded', async () => {
-            if (!sessionStorage.getItem('auth_token')) {
-                window.location.replace('login.html');
-                return;
-            }
-
-            try {
-                await checkAuth(); // Verify token is still valid
                 const username = sessionStorage.getItem('username') || 'User';
                 document.getElementById('username').textContent = username;
                 
                 const adminStatus = await isAdmin();
-                console.log('Checking admin status:', adminStatus);
+                console.log('Admin status check completed:', adminStatus);
                 
-                if (adminStatus) {
-                    console.log('Showing admin button');
-                    document.getElementById('adminButton').style.display = 'block';
-                } else {
-                    console.log('User is not admin');
-                }
-                
-                refreshDashboard();
-                setInterval(refreshDashboard, 30000);
+                updateAdminVisibility();
+                dashboard = new Dashboard();
+
             } catch (error) {
-                console.error('Authentication error:', error);
-                sessionStorage.clear();
+                console.error('Dashboard initialization error:', error);
                 window.location.replace('login.html');
+            }
+        }
+
+        // Make functions globally available
+        window.logout = () => {
+            sessionStorage.clear();
+            window.location.href = 'login.html';
+        };
+        window.controlServer = controlServer;
+        window.executeBulkAction = executeBulkAction;
+
+        document.addEventListener('DOMContentLoaded', initDashboard);
+
+        function updateAdminVisibility() {
+            const adminStatus = sessionStorage.getItem('isAdmin');
+            const adminButton = document.getElementById('adminButton');
+            
+            if (adminStatus === 'true') {
+                adminButton.style.display = 'block';
+            } else {
+                adminButton.style.display = 'none';
+            }
+        }
+
+        // Add admin link handler
+        document.getElementById('adminLink')?.addEventListener('click', async (event) => {
+            event.preventDefault();
+            try {
+                const adminCheck = await API.verifyAdmin();
+                if (adminCheck.isAdmin) {
+                    window.location.href = 'admin.html';
+                } else {
+                    showNotification('Access denied: Admin privileges required', 'error');
+                }
+            } catch (error) {
+                console.error('Admin navigation error:', error);
+                showNotification('Failed to verify admin access', 'error');
             }
         });
 
-        // Add periodic token verification
-        setInterval(async () => {
-            try {
-                await checkAuth();
-            } catch (error) {
-                sessionStorage.clear();
-                window.location.replace('login.html');
-            }
-        }, 60000); // Check every minute
-
-        // Initialize dashboard
-        document.addEventListener('DOMContentLoaded', async () => {
-            const username = sessionStorage.getItem('username') || 'User';
-            document.getElementById('username').textContent = username;
-            
-            // Check if user is admin and show admin button if true
-            if (await isAdmin()) {
-                document.getElementById('adminButton').style.display = 'block';
-            }
-            
-            refreshDashboard();
-            setInterval(refreshDashboard, 30000);
+        // Add theme toggle handler
+        document.getElementById('themeToggle')?.addEventListener('change', (e) => {
+            document.documentElement.setAttribute('data-theme', e.target.checked ? 'dark' : 'light');
         });
     </script>
 </body>

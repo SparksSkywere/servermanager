@@ -1,59 +1,59 @@
 <!DOCTYPE html>
-<html>
+<html data-theme="light">
 <head>
-    <title>Create Server - Server Manager</title>
+    <title>Create New Server</title>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="css/theme.css">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <div class="container">
         <div class="card">
-            <h1>Create New Server</h1>
-            <div id="error" class="error"></div>
-            <form onsubmit="createServer(event)">
-                <div class="form-group">
-                    <label for="serverName">Server Name:</label>
+            <h2>Create New Server</h2>
+            <form id="createServerForm" class="form-group">
+                <div class="form-field">
+                    <label for="serverName">Server Name</label>
                     <input type="text" id="serverName" required>
                 </div>
-                <div class="form-group">
-                    <label for="appId">Application ID:</label>
-                    <input type="text" id="appId" required>
+                <div class="form-field">
+                    <label for="serverType">Server Type</label>
+                    <select id="serverType" required>
+                        <option value="windows">Windows</option>
+                        <option value="linux">Linux</option>
+                    </select>
                 </div>
-                <div class="form-group">
-                    <label for="installDir">Installation Directory:</label>
-                    <input type="text" id="installDir" required>
+                <div class="form-field">
+                    <label for="serverPath">Server Path</label>
+                    <input type="text" id="serverPath" required>
                 </div>
-                <button type="submit" class="btn">Create Server</button>
-                <button type="button" class="btn" onclick="location.href='index.html'">Cancel</button>
+                <div class="form-actions">
+                    <button type="button" onclick="history.back()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Server</button>
+                </div>
             </form>
         </div>
     </div>
 
-    <script src="js/api.js"></script>
-    <script>
-        function showError(message) {
-            const errorDiv = document.getElementById('error');
-            errorDiv.textContent = message;
-            errorDiv.style.display = 'block';
-        }
+    <script type="module">
+        import API from './js/api.js';
+        import { showNotification } from './js/utils.js';
 
-        async function createServer(event) {
-            event.preventDefault();
-            
-            const serverName = document.getElementById('serverName').value;
-            const appId = document.getElementById('appId').value;
-            const installDir = document.getElementById('installDir').value;
-
+        document.getElementById('createServerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
             try {
-                await API.createServer({
-                    name: serverName,
-                    appId: appId,
-                    installDir: installDir
-                });
-                window.location.href = 'index.html';
+                const serverData = {
+                    name: document.getElementById('serverName').value,
+                    type: document.getElementById('serverType').value,
+                    path: document.getElementById('serverPath').value
+                };
+
+                await API.createServer(serverData);
+                showNotification('Server created successfully', 'success');
+                setTimeout(() => window.location.href = 'dashboard.html', 1000);
             } catch (error) {
-                showError(error.message);
+                showNotification(error.message, 'error');
             }
-        }
+        });
     </script>
 </body>
 </html>

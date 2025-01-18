@@ -82,22 +82,29 @@ function Test-FileCredentials {
     param($Username, $Password)
     try {
         $config = Get-AuthConfig
-        if (!$config.File.Enabled) { return $false }
+        if (!$config.File.Enabled) { return @{success = $false} }
 
         $usersFile = $config.File.Path
-        if (!(Test-Path $usersFile)) { return $false }
+        if (!(Test-Path $usersFile)) { return @{success = $false} }
 
         $users = Import-Clixml -Path $usersFile
         $user = $users | Where-Object { $_.Username -eq $Username }
         
-        if (!$user) { return $false }
+        if (!$user) { return @{success = $false} }
 
         $hashedPassword = Get-HashString $Password
-        return $user.PasswordHash -eq $hashedPassword
+        if ($user.PasswordHash -eq $hashedPassword) {
+            return @{
+                success = $true
+                isAdmin = [bool]($user.IsAdmin) -or [bool]($user.Permissions.IsAdmin)
+                username = $Username
+            }
+        }
+        return @{success = $false}
     }
     catch {
         Write-Error "File authentication error: $($_.Exception.Message)"
-        return $false
+        return @{success = $false}
     }
 }
 

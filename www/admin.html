@@ -100,14 +100,46 @@
         window.addUser = addUser;
         window.saveSystemSettings = saveSystemSettings;
 
-        // Check if user is admin, redirect if not
-        async function checkAdminAccess() {
-            if (!await isAdmin()) {
-                window.location.href = 'dashboard.html';
-                return false;
+        // Immediate authentication check when page loads
+        async function initAdminPage() {
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                if (!token) {
+                    window.location.replace('login.html');
+                    return;
+                }
+
+                const response = await fetch('/api/verify-admin', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Admin verification failed');
+                }
+
+                const data = await response.json();
+                if (!data.isAdmin) {
+                    window.location.replace('dashboard.html');
+                    return;
+                }
+
+                // Set username
+                document.getElementById('username').textContent = sessionStorage.getItem('username');
+
+                // Load admin page content
+                await Promise.all([
+                    loadUsers(),
+                    loadSystemSettings()
+                ]);
+
+            } catch (error) {
+                console.error('Admin initialization error:', error);
+                window.location.replace('dashboard.html');
             }
-            return true;
         }
+
+        // Initialize the page
+        document.addEventListener('DOMContentLoaded', initAdminPage);
 
         async function loadUsers() {
             try {
@@ -139,29 +171,6 @@
                 showNotification(error.message, 'error');
             }
         }
-
-        // Initialize page
-        document.addEventListener('DOMContentLoaded', async () => {
-            if (!sessionStorage.getItem('auth_token')) {
-                window.location.replace('login.html');
-                return;
-            }
-
-            try {
-                await checkAuth();
-                if (!await isAdmin()) {
-                    window.location.replace('dashboard.html');
-                    return;
-                }
-            } catch (error) {
-                sessionStorage.clear();
-                window.location.replace('login.html');
-                return;
-            }
-
-            loadUsers();
-            loadSystemSettings();
-        });
 
         // Add periodic token verification
         setInterval(async () => {

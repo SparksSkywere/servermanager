@@ -38,6 +38,7 @@
         // Clear any existing sessions when login page loads
         document.addEventListener('DOMContentLoaded', () => {
             sessionStorage.clear();
+            console.log('Session cleared on login page load');
             if (window.history && window.history.pushState) {
                 window.history.pushState('', document.title, window.location.pathname);
             }
@@ -56,6 +57,7 @@
             submitButton.disabled = true;
             
             try {
+                console.log('Attempting login...');
                 const response = await fetch('/api/auth', {
                     method: 'POST',
                     headers: {
@@ -64,31 +66,35 @@
                     body: JSON.stringify({
                         username: document.getElementById('username').value,
                         password: document.getElementById('password').value,
-                        authType: 'File'  // Changed to use file-based auth
+                        authType: 'Local'  // Force local auth type
                     })
                 });
                 
-                if (!response.ok) {
-                    throw new Error(response.status === 401 ? 'Invalid credentials' : 'Authentication failed');
-                }
-                
+                console.log('Login response status:', response.status);
                 const data = await response.json();
+                console.log('Login response data:', { ...data, token: data.token ? '[HIDDEN]' : null });
                 
-                if (data.success) {
-                    // Ensure isAdmin is stored as a string 'true' or 'false'
+                if (response.ok && data.token) {
+                    // Store the auth data
+                    sessionStorage.clear(); // Clear any old data first
                     sessionStorage.setItem('auth_token', data.token);
                     sessionStorage.setItem('username', data.username);
-                    sessionStorage.setItem('isAdmin', data.isAdmin.toString());
-                    console.log('Login successful, isAdmin:', data.isAdmin);
+                    sessionStorage.setItem('isAdmin', data.isAdmin ? 'true' : 'false');
                     
-                    // Redirect to dashboard
-                    window.location.replace(data.redirectUrl); // Use replace instead of href
+                    console.log('Auth data stored:', {
+                        username: data.username,
+                        isAdmin: data.isAdmin,
+                        hasToken: !!data.token
+                    });
+                    
+                    // Redirect to dashboard using replace
+                    window.location.replace('dashboard.html');
                 } else {
-                    error.textContent = data.error || 'Authentication failed';
+                    throw new Error(data.message || 'Authentication failed');
                 }
             } catch (err) {
-                error.textContent = err.message;
                 console.error('Login error:', err);
+                error.textContent = err.message;
             } finally {
                 loading.style.display = 'none';
                 submitButton.disabled = false;

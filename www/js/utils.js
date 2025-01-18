@@ -19,12 +19,21 @@ export function formatBytes(bytes) {
 }
 
 export function showNotification(message, type = 'info') {
-    const notification = document.createElement('div');
-    notification.className = `notification ${type}`;
+    const notification = document.getElementById('notification');
     notification.textContent = message;
-    document.body.appendChild(notification);
-    
+    notification.className = `notification ${type}`;
+    notification.style.display = 'block';
+
     setTimeout(() => {
-        notification.remove();
-    }, 5000);
+        notification.classList.add('hiding');
+        setTimeout(() => {
+            notification.style.display = 'none';
+            notification.classList.remove('hiding');
+        }, 300);
+    }, 3000);
+}
+
+export function handleApiError(error) {
+    console.error('API Error:', error);
+    showNotification(error.message || 'An error occurred', 'error');
 }

@@ -446,31 +446,56 @@ function Set-InitialAuthConfig {
         $salt = New-Salt
         $hash = Get-SecureHash -SecurePassword $adminPass -Salt $salt
         
-        # Create users file with encrypted credentials
+        # Modified user object structure
         $users = @(
             @{
                 Username = $adminUser
                 PasswordHash = $hash
                 Salt = $salt
-                IsAdmin = $true
+                IsAdmin = $true  # Explicitly set to true
                 Created = Get-Date -Format "o"
                 LastModified = Get-Date -Format "o"
+                Type = "Admin"   # Add explicit type
+                Enabled = $true  # Add enabled status
+                Permissions = @{  # Add detailed permissions
+                    IsAdmin = $true
+                    CanManageUsers = $true
+                    CanManageServers = $true
+                }
             }
         )
         
-        $users | Export-Clixml -Path $usersFile
+        # Create config directory if it doesn't exist
+        $configDir = Join-Path $ServerManagerDir "config"
+        if (-not (Test-Path $configDir)) {
+            New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+        }
+
+        # Export with specific encoding and format
+        $usersFile = Join-Path $configDir "users.xml"
+        $users | Export-Clixml -Path $usersFile -Force
+
+        # Also create an admin config file to ensure admin status is preserved
+        $adminConfig = @{
+            AdminUsers = @($adminUser)
+            LastModified = Get-Date -Format "o"
+        }
         
-        # Protect the users file
+        $adminConfigFile = Join-Path $configDir "admin.xml"
+        $adminConfig | Export-Clixml -Path $adminConfigFile -Force
+
+        # Protect both files
         Protect-ConfigFile -FilePath $usersFile
+        Protect-ConfigFile -FilePath $adminConfigFile
         
-        Write-Host "`nAuthentication setup completed successfully!" -ForegroundColor Green
-        Write-Host "Root admin account created with enhanced security" -ForegroundColor Cyan
         Write-Log "Authentication configuration completed successfully"
+        Write-Host "`nAdmin account created successfully with username: $adminUser" -ForegroundColor Green
         
+        return $true
     }
     catch {
-        Write-Log "Failed to configure authentication: $($_.Exception.Message)" -Level "ERROR"
-        throw "Failed to configure authentication. Error: $($_.Exception.Message)"
+        Write-Log "Failed to configure authentication: $($_.Exception.Message)"
+        throw
     }
     finally {
         # Clear sensitive data from memory
