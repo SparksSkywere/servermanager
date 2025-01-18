@@ -132,4 +132,5 @@ function Remove-ServerInstance {
     return $false
 }
 
+# Export all functions
 Export-ModuleMember -Function *

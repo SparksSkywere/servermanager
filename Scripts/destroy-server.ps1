@@ -46,8 +46,26 @@ function Remove-ServerInstance {
     param (
         [string]$ServerName
     )
-    Logging "Removing server instance: $ServerName..."
-    # ...existing code...
+    
+    try {
+        $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+        $serverManagerDir = (Get-ItemProperty -Path $registryPath).servermanagerdir
+        
+        # Stop server if running
+        Stop-ServerInstance -ServerName $ServerName
+        
+        # Remove configuration
+        $configFile = Join-Path $serverManagerDir "servers\$ServerName.json"
+        if (Test-Path $configFile) {
+            Remove-Item $configFile -Force
+        }
+        
+        Write-ServerLog -Message "Removed server instance: $ServerName" -Level Info -ServerName $ServerName
+    }
+    catch {
+        Write-ServerLog -Message "Failed to remove server instance: $_" -Level Error -ServerName $ServerName
+        throw
+    }
 }
 
 # Function to connect to the PID console

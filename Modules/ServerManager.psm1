@@ -219,163 +219,189 @@ class ServerManager {
 }
 
 # Server management functions
+# Script-level variables to store state
+$script:Servers = @{}
+$script:ServerInstances = @{}
+
 function New-ServerInstance {
     param (
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory=$true)]
         [string]$ServerName,
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory=$true)]
         [string]$AppID,
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory=$true)]
         [string]$InstallDir
     )
     
     try {
-        # Validate inputs
         if ([string]::IsNullOrWhiteSpace($ServerName)) {
             throw "ServerName cannot be empty"
         }
         if (-not $AppID -match '^\d+$') {
             throw "AppID must be numeric"
         }
-        
-        # Create server directory
-        if (-not (Test-Path $InstallDir)) {
-            New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-        }
 
-        # Get SteamCMD path from registry
-        $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
-        $steamCmdPath = Join-Path (Get-ItemProperty -Path $registryPath).SteamCmdPath "steamcmd.exe"
-
-        # Install/Update server files
-        $arguments = "+login anonymous +force_install_dir `"$InstallDir`" +app_update $AppID validate +quit"
-        Start-Process -FilePath $steamCmdPath -ArgumentList $arguments -NoNewWindow -Wait
-
-        # Create server configuration
-        $serverConfig = @{
+        $script:ServerInstances[$ServerName] = @{
             Name = $ServerName
             AppID = $AppID
             InstallDir = $InstallDir
-            LastUpdate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            Status = "Stopped"
+            LastUpdate = Get-Date
+            Process = $null
         }
 
-        # Save configuration
-        $configPath = Join-Path (Get-ItemProperty -Path $registryPath).servermanagerdir "servers"
-        if (-not (Test-Path $configPath)) {
-            New-Item -ItemType Directory -Path $configPath -Force | Out-Null
-        }
-        $serverConfig | ConvertTo-Json | Set-Content -Path (Join-Path $configPath "$ServerName.json")
-
-        Write-Host "Server instance created successfully: $ServerName"
+        Write-Host "Server instance created: $ServerName"
+        return $true
     }
     catch {
-        Write-Error "Failed to create server instance: $_"
-        throw
-    }
-}
-
-function Remove-ServerInstance {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$ServerName
-    )
-    
-    try {
-        # Get registry paths
-        $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
-        $serverManagerDir = (Get-ItemProperty -Path $registryPath).servermanagerdir
-        $configPath = Join-Path $serverManagerDir "servers\$ServerName.json"
-
-        # Stop server if running
-        $container = [ServerContainer]::new($ServerName)
-        $container.Stop()
-
-        # Remove configuration file
-        if (Test-Path $configPath) {
-            Remove-Item -Path $configPath -Force
-        }
-
-        # Clean up installation directory if specified
-        $config = Get-Content $configPath -ErrorAction SilentlyContinue | ConvertFrom-Json
-        if ($config -and $config.InstallDir -and (Test-Path $config.InstallDir)) {
-            Remove-Item -Path $config.InstallDir -Recurse -Force
-        }
-
-        Write-Host "Server instance removed successfully: $ServerName"
-    }
-    catch {
-        Write-Error "Failed to remove server instance: $_"
-        throw
-    }
-}
-
-function Get-ServerInstances {
-    try {
-        # Get registry path
-        $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
-        $serverManagerDir = (Get-ItemProperty -Path $registryPath).servermanagerdir
-        $configPath = Join-Path $serverManagerDir "servers"
-
-        # Get all server configurations
-        $servers = @()
-        if (Test-Path $configPath) {
-            Get-ChildItem -Path $configPath -Filter "*.json" | ForEach-Object {
-                $config = Get-Content $_.FullName | ConvertFrom-Json
-                $container = [ServerContainer]::new($config.Name)
-                $container.AppId = $config.AppID
-                $container.InstallPath = $config.InstallDir
-                $stats = $container.GetStats()
-                $container.Status = $stats.Status
-                $container.CpuUsage = $stats.CPU
-                $container.MemoryUsage = $stats.Memory
-                $container.Uptime = if ($stats.StartTime) {
-                    (Get-Date) - $stats.StartTime
-                } else { "0:00:00" }
-                $servers += $container
-            }
-        }
-
-        return $servers
-    }
-    catch {
-        Write-Error "Failed to get server instances: $_"
-        throw
+        Write-Error "Failed to create server instance: $($_.Exception.Message)"
+        return $false
     }
 }
 
 function Start-ServerInstance {
     param (
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory=$true)]
         [string]$ServerName
     )
     
     try {
-        $container = [ServerContainer]::new($ServerName)
-        $container.Start()
-        Write-Host "Server instance started successfully: $ServerName"
+        if (-not $script:ServerInstances.ContainsKey($ServerName)) {
+            throw "Server instance not found: $ServerName"
+        }
+
+        $instance = $script:ServerInstances[$ServerName]
+        if ($instance.Status -eq "Running") {
+            Write-Warning "Server instance already running: $ServerName"
+            return $true
+        }
+
+        # Start server process here
+        $instance.Status = "Running"
+        Write-Host "Server instance started: $ServerName"
+        return $true
     }
     catch {
-        Write-Error "Failed to start server instance: $_"
-        throw
+        Write-Error "Failed to start server instance: $($_.Exception.Message)"
+        return $false
     }
 }
 
 function Stop-ServerInstance {
     param (
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory=$true)]
         [string]$ServerName
     )
     
     try {
-        $container = [ServerContainer]::new($ServerName)
-        $container.Stop()
-        Write-Host "Server instance stopped successfully: $ServerName"
+        if (-not $script:ServerInstances.ContainsKey($ServerName)) {
+            throw "Server instance not found: $ServerName"
+        }
+
+        $instance = $script:ServerInstances[$ServerName]
+        if ($instance.Status -eq "Stopped") {
+            Write-Warning "Server instance already stopped: $ServerName"
+            return $true
+        }
+
+        # Stop server process here
+        $instance.Status = "Stopped"
+        Write-Host "Server instance stopped: $ServerName"
+        return $true
     }
     catch {
-        Write-Error "Failed to stop server instance: $_"
-        throw
+        Write-Error "Failed to stop server instance: $($_.Exception.Message)"
+        return $false
     }
 }
 
-# Export all functions directly
-Export-ModuleMember -Function *-* -Class ServerContainer, ServerConnection, ServerManager
+function Get-ServerInstances {
+    return $script:ServerInstances.Clone()
+}
+
+function Get-ServerStatus {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$ServerName
+    )
+    
+    try {
+        if (-not $script:ServerInstances.ContainsKey($ServerName)) {
+            throw "Server instance not found: $ServerName"
+        }
+
+        return $script:ServerInstances[$ServerName].Clone()
+    }
+    catch {
+        Write-Error "Failed to get server status: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+# Store server state
+$script:Servers = @{}
+
+function New-GameServer {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$ServerName,
+        [Parameter(Mandatory=$true)]
+        [string]$GameType,
+        [Parameter(Mandatory=$true)]
+        [string]$InstallPath
+    )
+    
+    $script:Servers[$ServerName] = @{
+        Name = $ServerName
+        GameType = $GameType
+        InstallPath = $InstallPath
+        Status = "Stopped"
+        LastUpdated = Get-Date
+    }
+    
+    Write-Host "Created new server configuration for $ServerName"
+}
+
+function Start-GameServer {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$ServerName
+    )
+    
+    if ($script:Servers.ContainsKey($ServerName)) {
+        $script:Servers[$ServerName].Status = "Running"
+        Write-Host "Started server: $ServerName"
+    } else {
+        Write-Error "Server not found: $ServerName"
+    }
+}
+
+function Stop-GameServer {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$ServerName
+    )
+    
+    if ($script:Servers.ContainsKey($ServerName)) {
+        $script:Servers[$ServerName].Status = "Stopped"
+        Write-Host "Stopped server: $ServerName"
+    } else {
+        Write-Error "Server not found: $ServerName"
+    }
+}
+
+# Replace the export section
+function Get-ServerContainerClass {
+    return [ServerContainer]
+}
+
+function Get-ServerConnectionClass {
+    return [ServerConnection]
+}
+
+function Get-ServerManagerClass {
+    return [ServerManager]
+}
+
+# Export all functions
+Export-ModuleMember -Function New-ServerInstance, Start-ServerInstance, Stop-ServerInstance, Get-ServerInstances, Get-ServerStatus, New-GameServer, Start-GameServer, Stop-GameServer

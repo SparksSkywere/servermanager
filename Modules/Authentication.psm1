@@ -1,4 +1,3 @@
-# Remove any private module references at the start
 $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
 
 # Direct module imports - no folder structure
@@ -116,8 +115,5 @@ function Get-AuthConfig {
     }
     throw "Authentication configuration not found"
 }
-
-# Remove any private folder references if they exist
-# ...existing code...
 
 Export-ModuleMember -Function *

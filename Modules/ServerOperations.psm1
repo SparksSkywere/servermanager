@@ -48,4 +48,5 @@ function Get-ServerOperation {
     return $operations | Where-Object { $_.Id -eq $OperationId }
 }
 
+# Export all functions
 Export-ModuleMember -Function *

@@ -1,7 +1,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 
 # Add module import at the start
-$serverManagerPath = Join-Path $PSScriptRoot "..\Modules\ServerManager\ServerManager.psm1"
+$serverManagerPath = Join-Path $PSScriptRoot "..\Modules\ServerManager.psm1"
 Import-Module $serverManagerPath -Force
 
 # Function to create a new game server
@@ -69,8 +69,35 @@ function New-ServerInstance {
         [string]$AppID,
         [string]$InstallDir
     )
-    Logging "Creating server instance: $ServerName..."
-    # ...existing code...
+    
+    try {
+        # Get registry paths
+        $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+        $serverManagerDir = (Get-ItemProperty -Path $registryPath).servermanagerdir
+        
+        # Create server instance
+        $configDir = Join-Path $serverManagerDir "servers"
+        if (-not (Test-Path $configDir)) {
+            New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+        }
+        
+        $configFile = Join-Path $configDir "$ServerName.json"
+        $config = @{
+            Name = $ServerName
+            AppID = $AppID
+            InstallDir = $InstallDir
+            Created = Get-Date -Format "o"
+            LastUpdate = Get-Date -Format "o"
+        }
+        
+        $config | ConvertTo-Json | Set-Content -Path $configFile
+        Write-ServerLog -Message "Created new server instance: $ServerName" -Level Info -ServerName $ServerName
+        return $config
+    }
+    catch {
+        Write-ServerLog -Message "Failed to create server instance: $_" -Level Error -ServerName $ServerName
+        throw
+    }
 }
 
 # Function to connect to the PID console

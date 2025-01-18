@@ -13,7 +13,7 @@ function Test-Administrator {
     $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
     $adminRole = (New-Object Security.Principal.WindowsPrincipal $currentUser).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     return $adminRole
-}
+} 
 
 # Function to run a script block with elevated privileges (for registry changes)
 function Start-ElevatedProcess {
@@ -266,33 +266,56 @@ function New-AppIDFile {
 function Install-RequiredModules {
     param([string]$ServerManagerDir)
     
-    Write-Host "Installing required PowerShell modules..."
+    Write-Host "Installing required PowerShell modules..." -ForegroundColor Cyan
     
     try {
-        # Verify module directory exists
         $modulesPath = Join-Path $ServerManagerDir "Modules"
         
         if (-not (Test-Path $modulesPath)) {
-            Write-Host "Error: Modules directory not found at: $modulesPath" -ForegroundColor Red
-            Write-Host "Please ensure Git repository was cloned correctly." -ForegroundColor Yellow
-            return
+            throw "Modules directory not found at: $modulesPath"
         }
 
         # Install SecretManagement if needed
         if (-not (Get-Module -ListAvailable -Name "Microsoft.PowerShell.SecretManagement")) {
-            Write-Host "Installing SecretManagement module..."
             Install-Module -Name "Microsoft.PowerShell.SecretManagement" -Force -Scope CurrentUser
         }
 
-        # Import all modules from the Modules directory
-        Get-ChildItem -Path $modulesPath -Filter "*.psm1" | ForEach-Object {
-            Write-Host "Importing module: $($_.Name)"
-            Import-Module $_.FullName -Force -ErrorAction Stop
+        # Only load modules needed for installation
+        $installModules = @(
+            "Security"     # Needed for encryption and authentication setup
+            "Logging"      # Needed for installation logging
+        )
+
+        $successCount = 0
+        foreach ($moduleName in $installModules) {
+            $modulePath = Join-Path $modulesPath "$moduleName.psm1"
+            if (Test-Path $modulePath) {
+                try {
+                    Write-Host "Importing installation module: $moduleName"
+                    Import-Module -Name $modulePath -Force -Global -ErrorAction Stop
+                    $successCount++
+                } catch {
+                    Write-Host "Error importing module $moduleName : $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "Full Error: $($_)" -ForegroundColor Red
+                }
+            } else {
+                Write-Host "Critical module not found: $modulePath" -ForegroundColor Red
+                return $false
+            }
         }
+
+        # Verify core modules were loaded
+        if ($successCount -ne $installModules.Count) {
+            Write-Host "Not all required installation modules were loaded." -ForegroundColor Red
+            return $false
+        }
+
+        Write-Host "Successfully loaded installation modules." -ForegroundColor Green
+        return $true
     }
     catch {
         Write-Host "Module installation error: $($_.Exception.Message)" -ForegroundColor Red
-        throw
+        return $false
     }
 }
 
@@ -508,39 +531,59 @@ function Test-AdminPrivileges {
     }
 }
 
+# Function to show completion dialog
+function Show-CompletionDialog {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Server Manager Installer"
+    $form.Width = 350
+    $form.Height = 150
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.StartPosition = 'CenterScreen'
+
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = "SteamCMD successfully installed and set up!"
+    $label.AutoSize = $true
+    $label.TextAlign = 'MiddleCenter'
+    $label.Location = New-Object System.Drawing.Point(
+        [math]::Max(0, ($form.ClientSize.Width - $label.PreferredWidth) / 2), 
+        30
+    )
+
+    $button = New-Object System.Windows.Forms.Button
+    $button.Text = "OK"
+    $button.Width = 80
+    $button.Height = 30
+    $button.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $button.Location = New-Object System.Drawing.Point(
+        [math]::Max(0, ($form.ClientSize.Width - $button.Width) / 2),
+        70
+    )
+
+    $form.Controls.AddRange(@($label, $button))
+    $form.AcceptButton = $button
+    $form.ShowDialog()
+}
+
 # MAIN SCRIPT FLOW
-Test-AdminPrivileges
-
-$SteamCMDPath = Select-FolderDialog
-if (-Not $SteamCMDPath) {
-    Write-Host "No directory selected, exiting..."
-    exit
-}
-
-Write-Log "Selected installation directory: $SteamCMDPath"
-
-# Validate paths before proceeding
-if (-not (Test-ValidPath $SteamCMDPath)) {
-    Write-Host "Invalid SteamCMD path selected" -ForegroundColor Red
-    exit 1
-}
-
-# Create only the base SteamCMD directory if it doesn't exist
-New-Servermanager -dir $SteamCMDPath
-
-# Define ServerManager directory
-$ServerManagerDir = Join-Path $SteamCMDPath "Servermanager"
-
-# 1. Create registry entries FIRST
 try {
-    Write-Host "Creating registry entries..." -ForegroundColor Cyan
-    if (-not (Test-Path "HKLM:\Software\SkywereIndustries")) {
-        New-Item -Path "HKLM:\Software\SkywereIndustries" -Force | Out-Null
+    Test-AdminPrivileges
+
+    $SteamCMDPath = Select-FolderDialog
+    if (-Not $SteamCMDPath -or -not (Test-ValidPath $SteamCMDPath)) {
+        throw "Invalid or no directory selected"
     }
-    if (-not (Test-Path $registryPath)) {
-        New-Item -Path $registryPath -Force | Out-Null
+
+    Write-Log "Selected installation directory: $SteamCMDPath"
+    New-Servermanager -dir $SteamCMDPath
+
+    $ServerManagerDir = Join-Path $SteamCMDPath "Servermanager"
+    $global:logFilePath = Join-Path $ServerManagerDir "Install-Log.txt"
+
+    # Create registry structure
+    if (-not (Test-RegistryAccess)) {
+        throw "Insufficient registry access"
     }
-    
+
     $registryValues = @{
         'CurrentVersion' = $CurrentVersion
         'SteamCMDPath' = $SteamCMDPath
@@ -552,170 +595,44 @@ try {
         'LogPath' = "$ServerManagerDir\logs"
     }
 
+    New-Item -Path "HKLM:\Software\SkywereIndustries" -Force | Out-Null
+    New-Item -Path $registryPath -Force | Out-Null
     foreach ($key in $registryValues.Keys) {
         Set-ItemProperty -Path $registryPath -Name $key -Value $registryValues[$key] -Force
     }
-    
-    Write-Host "Registry entries created successfully." -ForegroundColor Green
-} catch {
-    Write-Host "Failed to create registry entries: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "Please ensure you're running as administrator." -ForegroundColor Yellow
-    exit 1
-}
 
-# 2. Install Git and clone repository
-Install-Git
+    # Git operations
+    Install-Git
+    Update-GitRepo -repoUrl $gitRepoUrl -destination $ServerManagerDir
 
-Write-Host "Cloning/Updating Git repository..."
-Update-GitRepo -repoUrl $gitRepoUrl -destination $ServerManagerDir
-
-# Wait for file system
-Start-Sleep -Seconds 2
-
-# 3. Verify Git clone was successful
-if (-not (Test-Path $ServerManagerDir)) {
-    Write-Host "Error: Git clone failed - ServerManager directory not found" -ForegroundColor Red
-    exit 1
-}
-
-$ModulesDir = Join-Path $ServerManagerDir "Modules"
-if (-not (Test-Path $ModulesDir)) {
-    Write-Host "Error: Git clone failed - Modules directory not found" -ForegroundColor Red
-    exit 1
-}
-
-# 4. Install and import modules
-# Modify Install-RequiredModules function call to be simpler
-function Install-RequiredModules {
-    param([string]$ServerManagerDir)
-    
-    Write-Host "Installing required PowerShell modules..."
-    
-    try {
-        # Verify module directory exists
-        $modulesPath = Join-Path $ServerManagerDir "Modules"
-        
-        if (-not (Test-Path $modulesPath)) {
-            Write-Host "Error: Modules directory not found at: $modulesPath" -ForegroundColor Red
-            Write-Host "Please ensure Git repository was cloned correctly." -ForegroundColor Yellow
-            return
-        }
-
-        # Install SecretManagement if needed
-        if (-not (Get-Module -ListAvailable -Name "Microsoft.PowerShell.SecretManagement")) {
-            Write-Host "Installing SecretManagement module..."
-            Install-Module -Name "Microsoft.PowerShell.SecretManagement" -Force -Scope CurrentUser
-        }
-
-        # Import all modules from the Modules directory
-        Get-ChildItem -Path $modulesPath -Filter "*.psm1" | ForEach-Object {
-            Write-Host "Importing module: $($_.Name)"
-            Import-Module $_.FullName -Force -ErrorAction Stop
-        }
+    # Module installation
+    if (-not (Install-RequiredModules -ServerManagerDir $ServerManagerDir)) {
+        throw "Module installation failed"
     }
-    catch {
-        Write-Host "Module installation error: $($_.Exception.Message)" -ForegroundColor Red
-        throw
-    }
-}
 
-try {
-    Install-RequiredModules -ServerManagerDir $ServerManagerDir
-} catch {
-    Write-Host "Failed to install required modules: $($_.Exception.Message)" -ForegroundColor Red
-    exit 1
-}
-
-# 5. Continue with rest of installation
-
-# Create the AppID.txt file
-New-AppIDFile -serverManagerDir $ServerManagerDir
-
-# Set log file paths inside the Servermanager directory AFTER the Git repository is updated
-$global:logFilePath = Join-Path $ServerManagerDir "Install-Log.txt"
-
-# Ensure the log file is created before we start writing
-if (-not (Test-Path $global:logFilePath)) {
-    New-Item -ItemType File -Path $global:logFilePath -Force
-}
-
-Write-Log "Log file path set to: $global:logFilePath"
-
-# Write all logs from memory to the log file
-Write-LogToFile -logFilePath $global:logFilePath
-
-# Download SteamCMD if steamcmd.exe does not exist (non-admin)
-$steamCmdZip = Join-Path $SteamCMDPath "steamcmd.zip"
-$steamCmdExe = Join-Path $SteamCMDPath "steamcmd.exe"
-
-if (-Not (Test-Path $steamCmdExe)) {
-    try {
-        Write-Host "Downloading SteamCMD from $steamCmdUrl..."
-        Invoke-WebRequest -Uri $steamCmdUrl -OutFile $steamCmdZip -ErrorAction Stop
-        Write-Host "Successfully downloaded SteamCMD to $steamCmdZip"
-
-        Write-Host "Unzipping SteamCMD to $SteamCMDPath..."
+    # SteamCMD installation
+    $steamCmdExe = Join-Path $SteamCMDPath "steamcmd.exe"
+    if (-Not (Test-Path $steamCmdExe)) {
+        $steamCmdZip = Join-Path $SteamCMDPath "steamcmd.zip"
+        Invoke-WebRequest -Uri $steamCmdUrl -OutFile $steamCmdZip
         Expand-Archive -Path $steamCmdZip -DestinationPath $SteamCMDPath -Force
-        Write-Host "Successfully unzipped SteamCMD"
         Remove-Item -Path $steamCmdZip -Force
-    } catch {
-        Write-Log "Failed to download or unzip SteamCMD: $($_.Exception.Message)"
-        exit
     }
-} else {
-    Write-Host "SteamCMD executable already exists."
+
+    Update-SteamCmd -steamCmdPath $steamCmdExe
+    New-AppIDFile -serverManagerDir $ServerManagerDir
+    Set-InitialAuthConfig -ServerManagerDir $ServerManagerDir
+
+    Write-Log "Installation completed successfully"
+    Write-LogToFile -logFilePath $global:logFilePath
+
+    Show-CompletionDialog
+}
+catch {
+    Write-Host "Installation failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Log "Installation failed: $($_.Exception.Message)"
+    Write-LogToFile -logFilePath $global:logFilePath
+    exit 1
 }
 
-# Run the SteamCMD update (non-admin)
-Update-SteamCmd -steamCmdPath $steamCmdExe
-
-# Add before the final success message
-Write-Host "`nSetting up authentication..." -ForegroundColor Cyan
-Set-InitialAuthConfig -ServerManagerDir $ServerManagerDir
-
-# Finalise and exit
-Write-Log "SteamCMD successfully installed to $SteamCMDPath"
-Write-LogToFile -logFilePath $global:logFilePath
-
-Add-Type -AssemblyName System.Windows.Forms
-
-# Create the pop-up window
-$form = New-Object System.Windows.Forms.Form
-$form.Text = "Server Manager Installer"
-$form.Width = 350
-$form.Height = 150
-$form.FormBorderStyle = 'FixedDialog'
-$form.StartPosition = 'CenterScreen'
-
-# Create a label
-$label = New-Object System.Windows.Forms.Label
-$label.Text = "SteamCMD successfully installed and set up!"
-$label.AutoSize = $true
-$label.TextAlign = 'MiddleCenter'
-
-# Calculate position to center the label horizontally
-[int]$labelX = [math]::Max(0, (($form.ClientSize.Width - $label.PreferredWidth) / 2))
-[int]$labelY = 30
-$label.Location = New-Object System.Drawing.Point($labelX, $labelY)
-
-# Create a close button
-$button = New-Object System.Windows.Forms.Button
-$button.Text = "OK"
-$button.Width = 80
-$button.Height = 30
-$button.DialogResult = [System.Windows.Forms.DialogResult]::OK
-
-# Calculate position to center the button horizontally
-[int]$buttonX = [math]::Max(0, (($form.ClientSize.Width - $button.Width) / 2))
-[int]$buttonY = 70
-$button.Location = New-Object System.Drawing.Point($buttonX, $buttonY)
-
-# Add controls to the form
-$form.Controls.Add($label)
-$form.Controls.Add($button)
-
-# Show the form as a dialog box
-$form.AcceptButton = $button
-$form.ShowDialog()
-
-Exit
+exit 0

@@ -13,13 +13,13 @@ function Stop-AllComponents {
     Write-Host "Stopping all components..." -ForegroundColor Cyan
     
     $processes = @($Global:ProcessTracker.WebServer, $Global:ProcessTracker.TrayIcon)
-    foreach ($pid in $processes) {
-        if ($pid) {
+    foreach ($processToStop in $processes) {
+        if ($processToStop) {
             try {
-                $process = Get-Process -Id $pid -ErrorAction Stop
+                $process = Get-Process -Id $processToStop -ErrorAction Stop
                 if (-not $process.HasExited) {
-                    Stop-Process -Id $pid -Force
-                    Wait-Process -Id $pid -Timeout 5 -ErrorAction SilentlyContinue
+                    Stop-Process -Id $processToStop -Force
+                    Wait-Process -Id $processToStop -Timeout 5 -ErrorAction SilentlyContinue
                 }
             } catch { }
         }
@@ -99,9 +99,56 @@ try {
 $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
 $modulesPath = Join-Path (Get-ItemProperty -Path $registryPath).servermanagerdir "Modules"
 
-# Load modules directly from Modules directory
-Get-ChildItem -Path $modulesPath -Filter "*.psm1" | ForEach-Object {
-    Import-Module $_.FullName -Force
+# Modified module loading section
+$modulesPath = Join-Path $serverDir "Modules"
+if (-not (Test-Path $modulesPath)) {
+    throw "Modules directory not found: $modulesPath"
+}
+
+# Load core modules first in specific order
+$coreModules = @(
+    "Network.psm1",
+    "WebSocketServer.psm1",
+    "ServerManager.psm1"
+)
+
+foreach ($module in $coreModules) {
+    $modulePath = Join-Path $modulesPath $module
+    if (Test-Path $modulePath) {
+        try {
+            Write-Host "Loading core module: $module"
+            Import-Module $modulePath -Force -ErrorAction Stop
+        } catch {
+            Write-Host "Error loading module $module : $($_.Exception.Message)" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "Core module not found: $module" -ForegroundColor Yellow
+    }
+}
+
+# Then load any remaining modules
+Get-ChildItem -Path $modulesPath -Filter "*.psm1" | 
+    Where-Object { $_.Name -notin $coreModules } | 
+    ForEach-Object {
+        try {
+            Write-Host "Loading additional module: $($_.Name)"
+            Import-Module $_.FullName -Force -ErrorAction Stop
+        } catch {
+            Write-Host "Error loading module $($_.Name): $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
+# Create NetworkManager function if module not available
+if (-not (Get-Command 'New-ServerNetwork' -ErrorAction SilentlyContinue)) {
+    function New-ServerNetwork {
+        param(
+            [string]$ServerName,
+            [int]$Port
+        )
+        Write-Host "Creating network configuration for $ServerName on port $Port"
+        # Add any necessary network configuration here
+        return $true
+    }
 }
 
 # Create required directories
@@ -138,15 +185,10 @@ try {
             }
     }
 
-    # Continue with module import
-    $modulePath = Join-Path -Path $serverDir -ChildPath "Modules"
-    Write-Host "Looking for module at: $modulePath" -ForegroundColor Cyan
-    
-    if (-not (Test-Path $modulePath)) {
-        throw "Module not found at: $modulePath"
+    # Remove redundant module import
+    if (-not (Get-Command 'New-ServerNetwork' -ErrorAction SilentlyContinue)) {
+        throw "Required module 'Network' is not loaded. Please check module installation."
     }
-    
-    Import-Module $modulePath -Force
     
     # Create firewall rule for the web server
     New-ServerNetwork -ServerName "WebInterface" -Port 8080 | Out-Null

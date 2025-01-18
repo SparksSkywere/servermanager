@@ -1,4 +1,3 @@
-# Remove any private folder references at the top of the file
 $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
 
 function Write-ServerLog {

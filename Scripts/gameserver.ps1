@@ -46,7 +46,21 @@ function Create-ServerInstance {
         [string]$ProcessName,
         [string]$Arguments
     )
-    # ...existing code...
+    
+    try {
+        $process = Start-Process -FilePath $ProcessName -ArgumentList $Arguments -PassThru
+        if ($process) {
+            # Record PID
+            $pidEntry = "$($process.Id) - $ServerName"
+            Add-Content -Path $pidFilePath -Value $pidEntry
+            Write-Output "Server instance created: $ServerName (PID: $($process.Id))"
+            return $process
+        }
+    }
+    catch {
+        Write-Output "Failed to create server instance: $_"
+        return $null
+    }
 }
 
 # Function to remove a server instance
@@ -54,7 +68,24 @@ function Remove-ServerInstance {
     param (
         [string]$ServerName
     )
-    # ...existing code...
+    
+    try {
+        # Get PID from file
+        $pidEntry = Get-Content $pidFilePath | Where-Object { $_ -like "* - $ServerName" }
+        if ($pidEntry) {
+            $processId = [int]($pidEntry -split ' - ')[0]
+            Stop-Process -Id $processId -Force
+            
+            # Remove PID entry
+            $pids = Get-Content $pidFilePath | Where-Object { $_ -ne $pidEntry }
+            Set-Content -Path $pidFilePath -Value $pids
+            
+            Write-Output "Server instance removed: $ServerName"
+        }
+    }
+    catch {
+        Write-Output "Failed to remove server instance: $_"
+    }
 }
 
 # Retrieve Server Manager directory path from the registry

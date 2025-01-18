@@ -3,96 +3,126 @@ using namespace System.Net
 using namespace System.Text
 
 class WebSocketServer {
-    [int]$Port
-    [HttpListener]$Listener
-    [System.Collections.ArrayList]$Clients
-    [scriptblock]$OnClientConnect
-    [scriptblock]$OnClientDisconnect
-
-    WebSocketServer([int]$port) {
-        $this.Port = $port
-        $this.Listener = [HttpListener]::new()
-        $this.Listener.Prefixes.Add("http://localhost:$port/")
-        $this.Clients = [System.Collections.ArrayList]::new()
+    hidden [System.Net.Sockets.TcpListener]$Server
+    hidden [bool]$IsRunning
+    hidden [hashtable]$Connections
+    
+    WebSocketServer() {
+        $this.IsRunning = $false
+        $this.Connections = @{}
     }
-
-    [void]Start() {
-        $this.Listener.Start()
-        Write-Host "WebSocket server started on port $($this.Port)"
-
-        while ($this.Listener.IsListening) {
-            $context = $this.Listener.GetContext()
-            if ($context.Request.Headers["Upgrade"] -eq "websocket") {
-                $this.HandleWebSocket($context)
-            }
-        }
-    }
-
-    [void]Stop() {
-        $this.Listener.Stop()
-        $this.Listener.Close()
-    }
-
-    hidden [void]HandleWebSocket($context) {
-        $client = $null
+    
+    [bool] Initialize([int]$Port = 8080, [string]$HostName = "localhost") {
         try {
-            $webSocket = $context.AcceptWebSocketAsync().Result
-            $client = [WebSocketClient]::new($webSocket.WebSocket)
-            $this.Clients.Add($client)
-            
-            if ($this.OnClientConnect) {
-                $this.OnClientConnect.Invoke($client)
-            }
-
-            while ($client.WebSocket.State -eq [WebSocketState]::Open) {
-                $buffer = [byte[]]::new(4096)
-                $received = $client.WebSocket.ReceiveAsync($buffer, [System.Threading.CancellationToken]::None).Result
-                if ($received.Count -gt 0) {
-                    $message = [Encoding]::UTF8.GetString($buffer, 0, $received.Count)
-                    $client.OnMessage($message)
-                }
-            }
+            $endpoint = [IPEndPoint]::new([IPAddress]::Parse($HostName), $Port)
+            $this.Server = [System.Net.Sockets.TcpListener]::new($endpoint)
+            Write-Host "WebSocket Server initialized on $($HostName):$Port"
+            return $true
         }
         catch {
-            Write-Host "WebSocket error: $($_.Exception.Message)"
-        }
-        finally {
-            if ($this.OnClientDisconnect) {
-                $this.OnClientDisconnect.Invoke($client)
-            }
-            $this.Clients.Remove($client)
+            Write-Error "Failed to initialize WebSocket server: $($_.Exception.Message)"
+            return $false
         }
     }
-
-    [void]Broadcast([string]$message) {
-        foreach ($client in $this.Clients) {
-            $client.Send($message)
+    
+    [void] Start() {
+        if (-not $this.Server) {
+            throw "WebSocket server not initialized"
+        }
+        
+        try {
+            $this.Server.Start()
+            $this.IsRunning = $true
+            Write-Host "WebSocket Server started"
+        }
+        catch {
+            Write-Error "Failed to start WebSocket server: $($_.Exception.Message)"
+            throw
+        }
+    }
+    
+    [void] Stop() {
+        if ($this.Server -and $this.IsRunning) {
+            try {
+                $this.Server.Stop()
+                $this.IsRunning = $false
+                Write-Host "WebSocket Server stopped"
+            }
+            catch {
+                Write-Error "Failed to stop WebSocket server: $($_.Exception.Message)"
+                throw
+            }
+        }
+    }
+    
+    [hashtable] GetStatus() {
+        return @{
+            IsRunning = $this.IsRunning
+            ConnectionCount = $this.Connections.Count
+            ServerObject = $this.Server
         }
     }
 }
 
 class WebSocketClient {
-    [WebSocket]$WebSocket
-    [scriptblock]$OnMessageReceived
-
-    WebSocketClient([WebSocket]$webSocket) {
-        $this.WebSocket = $webSocket
+    hidden [System.Net.WebSockets.ClientWebSocket]$Socket
+    hidden [string]$Id
+    hidden [string]$ServerUrl
+    
+    WebSocketClient([string]$serverUrl) {
+        $this.Socket = [ClientWebSocket]::new()
+        $this.Id = [Guid]::NewGuid().ToString()
+        $this.ServerUrl = $serverUrl
     }
-
-    [void]Send([string]$message) {
-        $buffer = [Encoding]::UTF8.GetBytes($message)
-        $this.WebSocket.SendAsync($buffer, [WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None)
-    }
-
-    [void]OnMessage([string]$message) {
-        if ($this.OnMessageReceived) {
-            $this.OnMessageReceived.Invoke($message)
+    
+    [void] Connect() {
+        if ($this.Socket.State -ne [WebSocketState]::None) {
+            throw "WebSocket is not in initial state"
+        }
+        
+        try {
+            $task = $this.Socket.ConnectAsync([Uri]::new($this.ServerUrl), [Threading.CancellationToken]::None)
+            $task.Wait()
+            Write-Host "Connected to WebSocket server at $($this.ServerUrl)"
+        }
+        catch {
+            Write-Error "Failed to connect to WebSocket server: $($_.Exception.Message)"
+            throw
         }
     }
-
-    [void]Close() {
-        $this.WebSocket.CloseAsync([WebSocketCloseStatus]::NormalClosure, "Closing", [System.Threading.CancellationToken]::None)
+    
+    [void] Disconnect() {
+        if ($this.Socket.State -eq [WebSocketState]::Open) {
+            try {
+                $task = $this.Socket.CloseAsync([WebSocketCloseStatus]::NormalClosure, "Client disconnecting", [Threading.CancellationToken]::None)
+                $task.Wait()
+                Write-Host "Disconnected from WebSocket server"
+            }
+            catch {
+                Write-Error "Failed to disconnect from WebSocket server: $($_.Exception.Message)"
+                throw
+            }
+        }
+    }
+    
+    [string] GetId() {
+        return $this.Id
     }
 }
 
-Export-ModuleMember -Class WebSocketServer, WebSocketClient
+# Create and export functions to instantiate the classes
+function New-WebSocketServer {
+    return [WebSocketServer]::new()
+}
+
+function New-WebSocketClient {
+    param([string]$ServerUrl)
+    return [WebSocketClient]::new($ServerUrl)
+}
+
+# Export only the functions, not the classes
+Export-ModuleMember -Function New-WebSocketServer, New-WebSocketClient
+
+# Add type data for classes if needed
+Update-TypeData -TypeName WebSocketServer -MemberType NoteProperty -MemberName IsWebSocketServer -Value $true -Force
+Update-TypeData -TypeName WebSocketClient -MemberType NoteProperty -MemberName IsWebSocketClient -Value $true -Force
