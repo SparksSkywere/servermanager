@@ -84,6 +84,22 @@ trap {
     throw
 }
 
+# Add registry access function
+function Get-ServerManagerRegistry {
+    $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
+    if (Test-Path $registryPath) {
+        try {
+            $properties = Get-ItemProperty -Path $registryPath
+            return $properties
+        }
+        catch {
+            Write-Host "Failed to read registry: $($_.Exception.Message)" -ForegroundColor Red
+            return $null
+        }
+    }
+    return $null
+}
+
 # Modified try block for the main logic
 try {
     Write-Host "Creating tray icon components..."
@@ -91,8 +107,14 @@ try {
     # Set up tray icon
     $script:trayIcon.Text = "Server Manager"
     
-    # Load icon with verification
-    $iconPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "icons\servermanager.ico"
+    # Load icon with verification using registry path
+    $regInfo = Get-ServerManagerRegistry
+    if ($null -eq $regInfo) {
+        throw "Failed to read Server Manager registry settings"
+    }
+
+    $serverManagerDir = $regInfo.Servermanagerdir
+    $iconPath = Join-Path $serverManagerDir "icons\servermanager.ico"
     Write-Host "Attempting to load icon from: $iconPath"
     
     $icon = if (Test-Path $iconPath) {
@@ -105,6 +127,7 @@ try {
         }
     }
     else {
+        Write-Host "Icon not found at $iconPath, using default"
         [System.Drawing.Icon]::ExtractAssociatedIcon((Get-Process -Id $PID).MainModule.FileName)
     }
     

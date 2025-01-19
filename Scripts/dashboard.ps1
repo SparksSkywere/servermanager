@@ -410,7 +410,6 @@ $form.Controls.AddRange(@($listView, $buttonPanel))
 
 # Create a timer for auto-refresh (every 3 minutes)
 $timer = New-Object System.Windows.Forms.Timer
-$form.Controls.AddRange(@($listView, $buttonPanel))
 $timer.Interval = 180000  # 3 minutes in milliseconds
 $timer.Add_Tick({ Update-ServerList })
 $timer.Start()
@@ -418,33 +417,13 @@ $timer.Start()
 # Connect WebSocket when form loads
 $form.Add_Shown({
     Connect-WebSocket
+    Start-KeepAlivePing
 })
 
 # Initial update
 Update-ServerList
 
-# Show the form
-$form.ShowDialog()
-
-
-# Create a timer for auto-refresh (every 3 minutes)
-$timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 180000  # 3 minutes in milliseconds
-$timer.Add_Tick({ Update-ServerList })
-$timer.Start()
-
-# Connect WebSocket when form loads
-$form.Add_Shown({
-    Connect-WebSocket
-})
-
-# Initial update
-Update-ServerList
-
-# Show the form
-$form.ShowDialog()
-
-# Modify form closing event to cleanup WebSocket
+# Modify form closing event to cleanup WebSocket and timers
 $form.Add_FormClosing({
     if ($script:webSocketClient -ne $null) {
         try {
@@ -461,7 +440,12 @@ $form.Add_FormClosing({
             $script:webSocketClient.Dispose()
         }
     }
+    $timer.Stop()
+    $timer.Dispose()
 })
+
+# Show the form
+$form.ShowDialog()
 
 # Add keep-alive ping function
 function Start-KeepAlivePing {
