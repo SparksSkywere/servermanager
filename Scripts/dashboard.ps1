@@ -1,3 +1,61 @@
+# Add at the very beginning of the file, before any other code
+# Function to show or hide the console window
+function Show-Console {
+    param ([Switch]$Show, [Switch]$Hide)
+    if (-not ("Console.Window" -as [type])) {
+        Add-Type -Name Window -Namespace Console -MemberDefinition '
+        [DllImport("Kernel32.dll")]
+        public static extern IntPtr GetConsoleWindow();
+
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+        '
+    }
+    $consolePtr = [Console.Window]::GetConsoleWindow()
+    $nCmdShow = if ($Show) { 5 } elseif ($Hide) { 0 } else { return }
+    [Console.Window]::ShowWindow($consolePtr, $nCmdShow) | Out-Null
+    $global:DebugLoggingEnabled = $Show.IsPresent
+    Write-DashboardLog "Console visibility set to: $($Show.IsPresent)" -Level DEBUG
+}
+
+# Add enhanced logging function at the beginning
+$logDir = Join-Path $PSScriptRoot "..\logs"
+if (-not (Test-Path $logDir)) {
+    New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+}
+$logFile = Join-Path $logDir "dashboard.log"
+
+function Write-DashboardLog {
+    param(
+        [string]$Message,
+        [string]$Level = "INFO"
+    )
+    try {
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        "$timestamp [$Level] - $Message" | Add-Content -Path $logFile -ErrorAction Stop
+        
+        # Only write to host if debugging is enabled and it's an error or debug message
+        if ($global:DebugLoggingEnabled -and ($Level -eq "ERROR" -or $Level -eq "DEBUG")) {
+            $color = if ($Level -eq "ERROR") { "Red" } else { "Yellow" }
+            Write-Host "[$Level] $Message" -ForegroundColor $color
+        }
+    }
+    catch {
+        # If we can't write to the log file, try to write to the Windows Event Log
+        try {
+            Write-EventLog -LogName Application -Source "ServerManager" -EventId 1001 -EntryType Error -Message "Failed to write to log file: $Message"
+        }
+        catch {
+            # If all logging fails, we can't do much else
+        }
+    }
+}
+
+# Hide the console immediately
+Show-Console -Hide
+
+$host.UI.RawUI.WindowStyle = 'Hidden'
+
 # Get registry values for paths
 $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
 $serverManagerDir = (Get-ItemProperty -Path $registryPath).servermanagerdir
@@ -117,7 +175,7 @@ function Connect-WebSocket {
 
             # Check WebSocket ready file with better error handling
             $wsReadyFile = Join-Path $env:TEMP "websocket_ready.flag"
-            Write-Host "Checking WebSocket ready file: $wsReadyFile"
+            Write-DashboardLog "Checking WebSocket ready file: $wsReadyFile" -Level DEBUG
             
             if (-not (Test-Path $wsReadyFile)) {
                 throw "WebSocket ready file not found: $wsReadyFile"
@@ -125,14 +183,14 @@ function Connect-WebSocket {
 
             # Read and validate WebSocket configuration
             $wsConfig = Get-Content $wsReadyFile | ConvertFrom-Json
-            Write-Host "WebSocket config loaded: $($wsConfig | ConvertTo-Json)"
+            Write-DashboardLog "WebSocket config loaded: $($wsConfig | ConvertTo-Json)" -Level DEBUG
             
             if ($wsConfig.status -ne "ready") {
                 throw "WebSocket server not ready. Status: $($wsConfig.status)"
             }
 
             # Test TCP connection first
-            Write-Host "Testing TCP connection to localhost:$($wsConfig.port)"
+            Write-DashboardLog "Testing TCP connection to localhost:$($wsConfig.port)" -Level DEBUG
             $tcpClient = New-Object System.Net.Sockets.TcpClient
             $connectionTimeout = $tcpClient.BeginConnect("localhost", $wsConfig.port, $null, $null)
             $connected = $connectionTimeout.AsyncWaitHandle.WaitOne(1000)
@@ -141,12 +199,12 @@ function Connect-WebSocket {
                 $tcpClient.Close()
                 throw "Failed to establish TCP connection to WebSocket server"
             }
-            Write-Host "TCP connection successful"
+            Write-DashboardLog "TCP connection successful" -Level DEBUG
 
             # Create and configure WebSocket with longer timeout
             $webSocket = New-Object System.Net.WebSockets.ClientWebSocket
             $wsUri = "ws://localhost:$($wsConfig.port)/ws"
-            Write-Host "Attempting WebSocket connection to $wsUri"
+            Write-DashboardLog "Attempting WebSocket connection to $wsUri" -Level DEBUG
             
             $cancelToken = New-Object System.Threading.CancellationToken
             $connectTask = $webSocket.ConnectAsync([System.Uri]::new($wsUri), $cancelToken)
@@ -157,7 +215,7 @@ function Connect-WebSocket {
             }
 
             if ($webSocket.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
-                Write-Host "WebSocket connected successfully"
+                Write-DashboardLog "WebSocket connected successfully" -Level DEBUG
                 $script:webSocketClient = $webSocket
                 $script:isWebSocketConnected = $true
                 $statusLabel.Text = "WebSocket: Connected"
@@ -169,7 +227,7 @@ function Connect-WebSocket {
                 throw "WebSocket failed to connect. State: $($webSocket.State)"
             }
         } catch {
-            Write-Host "Connection attempt $retryCount failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-DashboardLog "Connection attempt $retryCount failed: $($_.Exception.Message)" -Level ERROR
             if ($retryCount -lt $maxRetries) {
                 Start-Sleep -Seconds $retryDelay
             } else {
@@ -282,7 +340,7 @@ function Update-ServerList {
                 [System.Threading.CancellationToken]::None
             ).Wait()
         } catch {
-            Write-Host "Failed to send WebSocket update: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-DashboardLog "Failed to send WebSocket update: $($_.Exception.Message)" -Level ERROR
             $script:isWebSocketConnected = $false
         }
     }
@@ -398,7 +456,7 @@ function Sync-AllDashboards {
                 [System.Threading.CancellationToken]::None
             ).Wait()
         } catch {
-            Write-Host "Failed to send sync command: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-DashboardLog "Failed to send sync command: $($_.Exception.Message)" -Level ERROR
             $script:isWebSocketConnected = $false
         }
     }
@@ -427,7 +485,7 @@ function Start-KeepAlivePing {
                 ).Wait(1000)
             }
             catch {
-                Write-Host "Ping failed: $($_.Exception.Message)"
+                Write-DashboardLog "Ping failed: $($_.Exception.Message)" -Level ERROR
                 $script:isWebSocketConnected = $false
                 $statusLabel.Text = "WebSocket: Disconnected"
                 $statusLabel.ForeColor = [System.Drawing.Color]::Red
@@ -453,8 +511,9 @@ $form.Add_Shown({
 # Initial update
 Update-ServerList
 
-# Modify form closing event to cleanup WebSocket and timers
+# Modify form closing event to include logging
 $form.Add_FormClosing({
+    Write-DashboardLog "Dashboard closing, performing cleanup..." -Level DEBUG
     if ($script:webSocketClient -ne $null) {
         try {
             # Attempt graceful closure
@@ -464,14 +523,16 @@ $form.Add_FormClosing({
                 [System.Threading.CancellationToken]::None
             )
             $closeTask.Wait(1000)
+            Write-DashboardLog "WebSocket closed successfully" -Level DEBUG
         } catch {
-            Write-Host "Error closing WebSocket: $($_.Exception.Message)"
+            Write-DashboardLog "Error closing WebSocket: $($_.Exception.Message)" -Level ERROR
         } finally {
             $script:webSocketClient.Dispose()
         }
     }
     $timer.Stop()
     $timer.Dispose()
+    Write-DashboardLog "Dashboard closed successfully" -Level DEBUG
 })
 
 # Show the form

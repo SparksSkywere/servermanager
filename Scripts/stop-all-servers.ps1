@@ -1,3 +1,15 @@
+# Hide console window
+Add-Type -Name Window -Namespace Console -MemberDefinition '
+[DllImport("Kernel32.dll")]
+public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")]
+public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+'
+$consolePtr = [Console.Window]::GetConsoleWindow()
+[void][Console.Window]::ShowWindow($consolePtr, 0)
+
+$host.UI.RawUI.WindowStyle = 'Hidden'
+
 # Add module import at the start
 $serverManagerPath = Join-Path $PSScriptRoot "Modules\ServerManager.psm1"
 Import-Module $serverManagerPath -Force

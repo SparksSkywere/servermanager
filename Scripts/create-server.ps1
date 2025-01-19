@@ -1,3 +1,44 @@
+# Hide console window properly
+Add-Type -Name Window -Namespace Console -MemberDefinition '
+[DllImport("Kernel32.dll")]
+public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")]
+public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+'
+$consolePtr = [Console.Window]::GetConsoleWindow()
+if ($consolePtr -ne [IntPtr]::Zero) {
+    [Console.Window]::ShowWindow($consolePtr, 0)
+}
+
+$host.UI.RawUI.WindowStyle = 'Hidden'
+Add-Type -AssemblyName System.Windows.Forms
+
+# Add logging setup
+$logDir = Join-Path $PSScriptRoot "..\logs"
+if (-not (Test-Path $logDir)) {
+    New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+}
+$logFile = Join-Path $logDir "create-server.log"
+
+function Write-CreateServerLog {
+    param(
+        [string]$Message,
+        [string]$Level = "INFO"
+    )
+    try {
+        if ($Level -eq "ERROR" -or $Level -eq "DEBUG") {
+            $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            "$timestamp [$Level] - $Message" | Add-Content -Path $logFile -ErrorAction Stop
+        }
+    }
+    catch {
+        try {
+            Write-EventLog -LogName Application -Source "ServerManager" -EventId 1001 -EntryType Error -Message "Failed to write to log file: $Message"
+        }
+        catch { }
+    }
+}
+
 Add-Type -AssemblyName System.Windows.Forms
 
 # Add module import at the start

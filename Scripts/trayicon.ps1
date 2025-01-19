@@ -12,225 +12,154 @@ public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
 $consolePtr = [Console.Window]::GetConsoleWindow()
 [void][Console.Window]::ShowWindow($consolePtr, 0)
 
-# Start logging with verbose output
-Start-Transcript -Path $LogPath -Force
-Write-Host "Starting tray icon script at $(Get-Date)"
+$host.UI.RawUI.WindowStyle = 'Hidden'
 
-# Ensure STA thread model
-if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
-    Write-Host "Current thread is not STA. Restarting in STA mode..."
-    $argList = @(
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-WindowStyle", "Hidden",
-        "-Sta",
-        "-File", "`"$($MyInvocation.MyCommand.Path)`"",
-        "-LogPath", "`"$LogPath`""
+# Add logging setup
+$logDir = Join-Path $PSScriptRoot "..\logs"
+if (-not (Test-Path $logDir)) {
+    New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+}
+$logFile = Join-Path $logDir "trayicon.log"
+
+function Write-TrayLog {
+    param(
+        [string]$Message,
+        [string]$Level = "INFO"
     )
-    Start-Process powershell -ArgumentList $argList -WindowStyle Hidden
-    Stop-Transcript
-    exit 0
+    try {
+        if ($Level -eq "ERROR" -or $Level -eq "DEBUG") {
+            $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            "$timestamp [$Level] - $Message" | Add-Content -Path $logFile -ErrorAction Stop
+        }
+    }
+    catch {
+        try {
+            Write-EventLog -LogName Application -Source "ServerManager" -EventId 1001 -EntryType Error -Message "Failed to write to log file: $Message"
+        }
+        catch { }
+    }
 }
 
-Write-Host "Running in STA mode, continuing with tray icon creation..."
+# Force STA threading
+if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
+    Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$($MyInvocation.MyCommand.Path)`"" -WindowStyle Hidden
+    exit
+}
 
-# Initialize variables in script scope with proper checks
-Write-Host "Initializing variables..."
+# Configure PowerShell window
+$host.UI.RawUI.WindowTitle = "Server Manager Tray"
+$host.UI.RawUI.WindowStyle = 'Hidden'
+
+# Add logging setup
+$logDir = Join-Path $PSScriptRoot "..\logs"
+if (-not (Test-Path $logDir)) {
+    New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+}
+$logFile = Join-Path $logDir "trayicon.log"
+
+function Write-TrayLog {
+    param(
+        [string]$Message,
+        [string]$Level = "INFO"
+    )
+    try {
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        "$timestamp [$Level] - $Message" | Add-Content -Path $logFile -ErrorAction Stop
+    }
+    catch {
+        # Fallback to Windows Event Log if file logging fails
+        try {
+            Write-EventLog -LogName Application -Source "ServerManager" -EventId 1001 -EntryType Error -Message $Message
+        }
+        catch { }
+    }
+}
+
+Write-TrayLog "Starting tray icon initialization..." -Level DEBUG
+
 try {
-    # Add required assemblies first
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
 
-    $script:trayIcon = $null
-    $script:contextMenu = $null
-    $script:appContext = $null
-    $script:exitRequested = $false
-
-    # Create application context first
-    $script:appContext = New-Object System.Windows.Forms.ApplicationContext
-    if ($null -eq $script:appContext) {
-        throw "Failed to create ApplicationContext"
-    }
-
-    # Create tray icon and verify
     $script:trayIcon = New-Object System.Windows.Forms.NotifyIcon
-    if ($null -eq $script:trayIcon) {
-        throw "Failed to create NotifyIcon"
-    }
-
-    # Create context menu and verify
-    $script:contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
-    if ($null -eq $script:contextMenu) {
-        throw "Failed to create ContextMenuStrip"
-    }
-
-    Write-Host "Components initialized successfully"
-}
-catch {
-    Write-Host "Failed to initialize components: $($_.Exception.Message)" -ForegroundColor Red
-    if ($script:trayIcon) { $script:trayIcon.Dispose() }
-    if ($script:contextMenu) { $script:contextMenu.Dispose() }
-    if ($script:appContext) { $script:appContext.Dispose() }
-    Stop-Transcript
-    throw
-}
-
-trap {
-    Write-Error "Critical error in tray icon: $($_.Exception.Message)"
-    if ($script:trayIcon) {
-        $script:trayIcon.Visible = $false
-        $script:trayIcon.Dispose()
-    }
-    throw
-}
-
-# Add registry access function
-function Get-ServerManagerRegistry {
-    $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
-    if (Test-Path $registryPath) {
-        try {
-            $properties = Get-ItemProperty -Path $registryPath
-            return $properties
-        }
-        catch {
-            Write-Host "Failed to read registry: $($_.Exception.Message)" -ForegroundColor Red
-            return $null
-        }
-    }
-    return $null
-}
-
-# Modified try block for the main logic
-try {
-    Write-Host "Creating tray icon components..."
-    
-    # Set up tray icon
     $script:trayIcon.Text = "Server Manager"
     
-    # Load icon with verification using registry path
-    $regInfo = Get-ServerManagerRegistry
-    if ($null -eq $regInfo) {
-        throw "Failed to read Server Manager registry settings"
+    # Get icon from registry path
+    $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+    $serverManagerDir = (Get-ItemProperty -Path $registryPath -ErrorAction Stop).servermanagerdir
+    $iconPath = Join-Path $serverManagerDir "icons\servermanager.ico"
+    
+    if (Test-Path $iconPath) {
+        Write-TrayLog "Loading icon from: $iconPath" -Level DEBUG
+        $script:trayIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
+    } else {
+        Write-TrayLog "Using default PowerShell icon" -Level DEBUG
+        $script:trayIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon([System.Windows.Forms.Application]::ExecutablePath)
     }
 
-    $serverManagerDir = $regInfo.Servermanagerdir
-    $iconPath = Join-Path $serverManagerDir "icons\servermanager.ico"
-    Write-Host "Attempting to load icon from: $iconPath"
-    
-    $icon = if (Test-Path $iconPath) {
+    $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
+
+    $openDashboardMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
+    $openDashboardMenuItem.Text = "Open Dashboard"
+    $openDashboardMenuItem.Add_Click({
         try {
-            [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
+            Start-Process "http://localhost:8080"
+            Write-TrayLog "Web dashboard opened" -Level DEBUG
         }
         catch {
-            Write-Host "Failed to load custom icon, using default"
-            [System.Drawing.Icon]::ExtractAssociatedIcon((Get-Process -Id $PID).MainModule.FileName)
+            Write-TrayLog "Failed to open web dashboard: $($_.Exception.Message)" -Level ERROR
+            [System.Windows.Forms.MessageBox]::Show("Failed to open dashboard. Please ensure the web server is running.", "Error")
         }
-    }
-    else {
-        Write-Host "Icon not found at $iconPath, using default"
-        [System.Drawing.Icon]::ExtractAssociatedIcon((Get-Process -Id $PID).MainModule.FileName)
-    }
-    
-    if ($null -eq $icon) {
-        throw "Failed to load any icon"
-    }
-    
-    $script:trayIcon.Icon = $icon
-    
-    # Set up menu items with null checks
-    if ($null -ne $script:contextMenu) {
-        $openItem = $script:contextMenu.Items.Add("Open Web Dashboard")
-        if ($null -ne $openItem) {
-            $openItem.Add_Click({ 
-                try {
-                    Start-Process "http://localhost:8080"
-                } catch {
-                    Write-Host "Error opening web dashboard: $($_.Exception.Message)" -ForegroundColor Red
-                }
-            })
-        }
-        
-        $openPSFormItem = $script:contextMenu.Items.Add("Open Admin Dashboard")
-        if ($null -ne $openPSFormItem) {
-            $openPSFormItem.Add_Click({
-                $dashboardPath = Join-Path (Split-Path -Parent $PSScriptRoot) "Scripts\dashboard.ps1"
-                if (Test-Path $dashboardPath) {
-                    Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$dashboardPath`"" -WindowStyle Normal
-                } else {
-                    [System.Windows.Forms.MessageBox]::Show("Dashboard script not found at: $dashboardPath", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-                }
-            })
-        }
-        
-        $script:contextMenu.Items.Add("-")
-        
-        $exitItem = $script:contextMenu.Items.Add("Close Server Manager")
-        if ($null -ne $exitItem) {
-            $exitItem.Add_Click({
-                Write-Host "Closing Server Manager..."
-                $script:trayIcon.Visible = $false
-                $script:exitRequested = $true
-                $processPath = Join-Path (Split-Path -Parent $PSScriptRoot) "Stop-ServerManager.cmd"
-                Start-Process -FilePath $processPath -WindowStyle Hidden
-                [System.Windows.Forms.Application]::Exit()
-            })
-        }
-    }
+    })
 
-    # Configure tray icon with null checks
-    if ($null -ne $script:trayIcon -and $null -ne $script:contextMenu) {
-        $script:trayIcon.ContextMenuStrip = $script:contextMenu
-        $script:trayIcon.Visible = $true
-        
-        # Add double-click handler
-        $script:trayIcon.Add_MouseDoubleClick({
-            Start-Process "http://localhost:8080"
-        })
-        
-        Write-Host "Starting application message loop..."
-        [System.Windows.Forms.Application]::Run($script:appContext)
-    }
-    else {
-        throw "Tray icon or context menu is null"
-    }
+    $openPSFormItem = New-Object System.Windows.Forms.ToolStripMenuItem
+    $openPSFormItem.Text = "Open Admin Console"
+    $openPSFormItem.Add_Click({
+        try {
+            $dashboardPath = Join-Path $serverManagerDir "Scripts\dashboard.ps1"
+            if (Test-Path $dashboardPath) {
+                Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$dashboardPath`"" -WindowStyle Normal
+                Write-TrayLog "Admin console opened" -Level DEBUG
+            } else {
+                throw "Dashboard script not found: $dashboardPath"
+            }
+        }
+        catch {
+            Write-TrayLog "Failed to open admin console: $($_.Exception.Message)" -Level ERROR
+            [System.Windows.Forms.MessageBox]::Show("Failed to open admin console: $($_.Exception.Message)", "Error")
+        }
+    })
+
+    $exitMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
+    $exitMenuItem.Text = "Exit"
+    $exitMenuItem.Add_Click({
+        Write-TrayLog "Exiting via menu item" -Level DEBUG
+        $script:trayIcon.Visible = $false
+        [System.Windows.Forms.Application]::Exit()
+    })
+
+    $contextMenu.Items.AddRange(@($openDashboardMenuItem, $openPSFormItem, $exitMenuItem))
+    $script:trayIcon.ContextMenuStrip = $contextMenu
+    $script:trayIcon.Visible = $true
+
+    Write-TrayLog "Tray icon initialized successfully" -Level DEBUG
+
+    # Create a dummy form to keep the application running
+    $dummyForm = New-Object System.Windows.Forms.Form
+    $dummyForm.WindowState = [System.Windows.Forms.FormWindowState]::Minimized
+    $dummyForm.ShowInTaskbar = $false
+    
+    # Run the application
+    [System.Windows.Forms.Application]::Run($dummyForm)
 }
 catch {
-    Write-Host "Critical error in tray icon setup: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
-    
-    # Cleanup on error
-    if ($null -ne $script:trayIcon) { 
-        $script:trayIcon.Visible = $false
-        $script:trayIcon.Dispose() 
-    }
-    if ($null -ne $script:contextMenu) { $script:contextMenu.Dispose() }
-    if ($null -ne $script:appContext) { $script:appContext.Dispose() }
-    
-    Stop-Transcript
+    Write-TrayLog "Critical error in tray icon: $($_.Exception.Message)" -Level ERROR
+    Write-TrayLog $_.ScriptStackTrace -Level ERROR
     throw
 }
 finally {
     if ($script:trayIcon) {
-        $script:trayIcon.Dispose()
-    }
-    # Properly stop transcript if running
-    if ([System.Management.Automation.Host.PSHost].GetProperty('IsTranscribing', [System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Static)) {
-        Stop-Transcript -ErrorAction SilentlyContinue
-    }
-}
-
-# Cleanup resources
-if (-not $script:exitRequested) {
-    if ($null -ne $script:contextMenu) {
-        $script:contextMenu.Dispose()
-    }
-    if ($null -ne $script:trayIcon) {
         $script:trayIcon.Visible = $false
         $script:trayIcon.Dispose()
     }
-    if ($null -ne $script:appContext) {
-        $script:appContext.Dispose()
-    }
-    # Cleanup event handlers
-    Get-EventSubscriber | Unregister-Event
 }

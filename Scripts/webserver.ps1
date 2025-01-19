@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$VerbosePreference = 'Continue'
+$VerbosePreference = 'SilentlyContinue'  # Changed from 'Continue'
 
 try {
     # Get registry and paths
@@ -20,11 +20,13 @@ try {
     
     $logPath = Join-Path $logsDir "webserver.log"
     
+    # Modified Write-ServerLog function
     function Write-ServerLog {
         param([string]$Message, [string]$Level = "INFO")
-        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        "$timestamp [$Level] - $Message" | Add-Content -Path $logPath
-        Write-Host "[$Level] $Message"
+        if ($Level -eq "ERROR" -or $Level -eq "DEBUG") {
+            $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            "$timestamp [$Level] - $Message" | Add-Content -Path $logPath
+        }
     }
     
     Write-ServerLog "Starting web server..."

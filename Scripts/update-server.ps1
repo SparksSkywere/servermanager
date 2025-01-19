@@ -5,6 +5,18 @@ Import-Module $serverManagerPath -Force
 # Set process name
 $host.ui.RawUI.WindowTitle = "Steam Game Server Updater"
 
+# Hide console window
+Add-Type -Name Window -Namespace Console -MemberDefinition '
+[DllImport("Kernel32.dll")]
+public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")]
+public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+'
+$consolePtr = [Console.Window]::GetConsoleWindow()
+[void][Console.Window]::ShowWindow($consolePtr, 0)
+
+$host.UI.RawUI.WindowStyle = 'Hidden'
+
 # Define the registry path where SteamCMD is installed
 $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
 
@@ -412,3 +424,76 @@ foreach ($game in $games) {
 
 Write-Log "All games updated/installed! Exiting in 10 seconds..."
 Start-Sleep -Seconds 10
+
+# Add logging setup
+$logDir = Join-Path $PSScriptRoot "..\logs"
+if (-not (Test-Path $logDir)) {
+    New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+}
+$logFile = Join-Path $logDir "update-server.log"
+
+function Write-UpdateLog {
+    param(
+        [string]$Message,
+        [string]$Level = "INFO"
+    )
+    try {
+        if ($Level -eq "ERROR" -or $Level -eq "DEBUG") {
+            $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            "$timestamp [$Level] - $Message" | Add-Content -Path $logFile -ErrorAction Stop
+        }
+    }
+    catch {
+        try {
+            Write-EventLog -LogName Application -Source "ServerManager" -EventId 1001 -EntryType Error -Message "Failed to write to log file: $Message"
+        }
+        catch { }
+    }
+}
+
+function Update-GameServer {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$ServerName
+    )
+
+    try {
+        $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+        $serverManagerDir = (Get-ItemProperty -Path $registryPath).servermanagerdir
+        $configPath = Join-Path $serverManagerDir "servers\$ServerName.json"
+
+        if (Test-Path $configPath) {
+            $config = Get-Content $configPath | ConvertFrom-Json
+            Write-UpdateLog "Updating server: $ServerName" -Level DEBUG
+            
+            # Add your SteamCMD update logic here
+            # Example:
+            # & $steamCmdPath +login anonymous +app_update $config.AppID +quit
+            
+            Write-UpdateLog "Update completed for $ServerName" -Level DEBUG
+        }
+        else {
+            Write-UpdateLog "Server configuration not found: $ServerName" -Level ERROR
+            throw "Server configuration not found"
+        }
+    }
+    catch {
+        Write-UpdateLog "Update failed for $ServerName : $($_.Exception.Message)" -Level ERROR
+        throw
+    }
+}
+
+# Execute with error handling
+if ($args.Count -gt 0) {
+    try {
+        Update-GameServer -ServerName $args[0]
+    }
+    catch {
+        Write-UpdateLog "Critical error: $($_.Exception.Message)" -Level ERROR
+        exit 1
+    }
+}
+else {
+    Write-UpdateLog "No server name provided" -Level ERROR
+    exit 1
+}

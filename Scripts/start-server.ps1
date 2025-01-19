@@ -2,6 +2,18 @@
 $serverManagerPath = Join-Path $PSScriptRoot "Modules\ServerManager.psm1"
 Import-Module $serverManagerPath -Force
 
+# Hide console window
+Add-Type -Name Window -Namespace Console -MemberDefinition '
+[DllImport("Kernel32.dll")]
+public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")]
+public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+'
+$consolePtr = [Console.Window]::GetConsoleWindow()
+[void][Console.Window]::ShowWindow($consolePtr, 0)
+
+$host.UI.RawUI.WindowStyle = 'Hidden'
+
 function Start-GameServer {
     param(
         [Parameter(Mandatory = $true)]
@@ -21,6 +33,9 @@ function Start-GameServer {
             $process = Start-Process -FilePath "$($config.InstallDir)\$($config.ExecutablePath)" `
                                    -ArgumentList $config.StartupArgs `
                                    -WorkingDirectory $config.InstallDir `
+                                   -WindowStyle Hidden `
+                                   -RedirectStandardOutput (Join-Path $logDir "$ServerName.log") `
+                                   -RedirectStandardError (Join-Path $logDir "$ServerName.error.log") `
                                    -PassThru
 
             # Log the PID

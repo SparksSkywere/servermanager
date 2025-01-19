@@ -362,19 +362,34 @@ if (-not (Test-Path $logDir)) {
 $webServerLog = Join-Path $logDir "webserver.log"
 $trayIconLog = Join-Path $logDir "trayicon.log"
 
-# Launch web server
-function Start-WebServer {
-    $webserverPath = Join-Path $PSScriptRoot "webserver.ps1"
+# Modify process creation for child scripts
+function Start-HiddenProcess {
+    param(
+        [string]$FilePath,
+        [string]$ArgumentList,
+        [switch]$NoWindow
+    )
+    
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = "powershell.exe"
-    $startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$webserverPath`" -LogPath `"$($logPaths.WebServer)`"" 
+    $startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$FilePath`" $ArgumentList"
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+    $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
     
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
     $null = $process.Start()
+    
+    return $process
+}
+
+# Update the Start-WebServer function
+function Start-WebServer {
+    $webserverPath = Join-Path $PSScriptRoot "webserver.ps1"
+    $process = Start-HiddenProcess -FilePath $webserverPath -ArgumentList "-LogPath `"$($logPaths.WebServer)`""
     
     $Global:ProcessTracker.WebServer = $process.Id
 
@@ -396,20 +411,12 @@ function Start-WebServer {
     throw "Web server failed to initialize within $maxWaitTime seconds"
 }
 
-# Launch tray icon
+# Update the Start-TrayIcon function
 function Start-TrayIcon {
     $trayIconPath = Join-Path $PSScriptRoot "trayicon.ps1"
-    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $startInfo.FileName = "powershell.exe"
-    $startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Sta -File `"$trayIconPath`" -LogPath `"$($logPaths.TrayIcon)`""
-    $startInfo.UseShellExecute = $true
-    $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $process = Start-HiddenProcess -FilePath $trayIconPath -ArgumentList "-LogPath `"$($logPaths.TrayIcon)`"" -NoWindow
     
     Write-StatusMessage "Starting tray icon..." -Color Cyan
-    
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $startInfo
-    $null = $process.Start()
     
     # Give the process time to start and initialize
     Start-Sleep -Seconds 3
