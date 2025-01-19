@@ -408,6 +408,36 @@ function Sync-AllDashboards {
 $buttonPanel.Controls.AddRange(@($addButton, $removeButton, $importButton, $refreshButton, $syncButton))
 $form.Controls.AddRange(@($listView, $buttonPanel))
 
+# Add keep-alive ping function
+function Start-KeepAlivePing {
+    if (-not $script:webSocketClient) { return }
+    
+    $pingTimer = New-Object System.Windows.Forms.Timer
+    $pingTimer.Interval = 30000 # 30 seconds
+    $pingTimer.Add_Tick({
+        if ($script:webSocketClient.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
+            try {
+                $buffer = [byte[]]::new(0)
+                $segment = [System.ArraySegment[byte]]::new($buffer)
+                $script:webSocketClient.SendAsync(
+                    $segment,
+                    [System.Net.WebSockets.WebSocketMessageType]::Binary,
+                    $true,
+                    [System.Threading.CancellationToken]::None
+                ).Wait(1000)
+            }
+            catch {
+                Write-Host "Ping failed: $($_.Exception.Message)"
+                $script:isWebSocketConnected = $false
+                $statusLabel.Text = "WebSocket: Disconnected"
+                $statusLabel.ForeColor = [System.Drawing.Color]::Red
+                $pingTimer.Stop()
+            }
+        }
+    })
+    $pingTimer.Start()
+}
+
 # Create a timer for auto-refresh (every 3 minutes)
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 180000  # 3 minutes in milliseconds
@@ -446,33 +476,3 @@ $form.Add_FormClosing({
 
 # Show the form
 $form.ShowDialog()
-
-# Add keep-alive ping function
-function Start-KeepAlivePing {
-    if (-not $script:webSocketClient) { return }
-    
-    $pingTimer = New-Object System.Windows.Forms.Timer
-    $pingTimer.Interval = 30000 # 30 seconds
-    $pingTimer.Add_Tick({
-        if ($script:webSocketClient.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
-            try {
-                $buffer = [byte[]]::new(0)
-                $segment = [System.ArraySegment[byte]]::new($buffer)
-                $script:webSocketClient.SendAsync(
-                    $segment,
-                    [System.Net.WebSockets.WebSocketMessageType]::Binary,
-                    $true,
-                    [System.Threading.CancellationToken]::None
-                ).Wait(1000)
-            }
-            catch {
-                Write-Host "Ping failed: $($_.Exception.Message)"
-                $script:isWebSocketConnected = $false
-                $statusLabel.Text = "WebSocket: Disconnected"
-                $statusLabel.ForeColor = [System.Drawing.Color]::Red
-                $pingTimer.Stop()
-            }
-        }
-    })
-    $pingTimer.Start()
-}
