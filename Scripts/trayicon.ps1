@@ -12,8 +12,9 @@ public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
 $consolePtr = [Console.Window]::GetConsoleWindow()
 [void][Console.Window]::ShowWindow($consolePtr, 0)
 
-# Start logging
+# Start logging with verbose output
 Start-Transcript -Path $LogPath -Force
+Write-Host "Starting tray icon script at $(Get-Date)"
 
 # Ensure STA thread model
 if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
@@ -33,15 +34,46 @@ if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
 
 Write-Host "Running in STA mode, continuing with tray icon creation..."
 
-# Add required assemblies
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
+# Initialize variables in script scope with proper checks
+Write-Host "Initializing variables..."
+try {
+    # Add required assemblies first
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
 
-# Initialize variables in script scope
-$script:trayIcon = $null
-$script:contextMenu = $null
-$script:appContext = $null
-$script:exitRequested = $false
+    $script:trayIcon = $null
+    $script:contextMenu = $null
+    $script:appContext = $null
+    $script:exitRequested = $false
+
+    # Create application context first
+    $script:appContext = New-Object System.Windows.Forms.ApplicationContext
+    if ($null -eq $script:appContext) {
+        throw "Failed to create ApplicationContext"
+    }
+
+    # Create tray icon and verify
+    $script:trayIcon = New-Object System.Windows.Forms.NotifyIcon
+    if ($null -eq $script:trayIcon) {
+        throw "Failed to create NotifyIcon"
+    }
+
+    # Create context menu and verify
+    $script:contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
+    if ($null -eq $script:contextMenu) {
+        throw "Failed to create ContextMenuStrip"
+    }
+
+    Write-Host "Components initialized successfully"
+}
+catch {
+    Write-Host "Failed to initialize components: $($_.Exception.Message)" -ForegroundColor Red
+    if ($script:trayIcon) { $script:trayIcon.Dispose() }
+    if ($script:contextMenu) { $script:contextMenu.Dispose() }
+    if ($script:appContext) { $script:appContext.Dispose() }
+    Stop-Transcript
+    throw
+}
 
 trap {
     Write-Error "Critical error in tray icon: $($_.Exception.Message)"
@@ -52,98 +84,106 @@ trap {
     throw
 }
 
-# Create application context first
-$script:appContext = New-Object System.Windows.Forms.ApplicationContext
-
+# Modified try block for the main logic
 try {
-    # Create tray icon and context menu
-    $script:trayIcon = New-Object System.Windows.Forms.NotifyIcon
-    $script:contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
+    Write-Host "Creating tray icon components..."
     
     # Set up tray icon
     $script:trayIcon.Text = "Server Manager"
     
-    # Load icon
+    # Load icon with verification
     $iconPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "icons\servermanager.ico"
-    if (Test-Path $iconPath) {
-        Write-Host "Loading icon from: $iconPath"
-        $script:trayIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
-    } else {
-        Write-Host "Using default PowerShell icon"
-        $script:trayIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon((Get-Process -Id $PID).MainModule.FileName)
+    Write-Host "Attempting to load icon from: $iconPath"
+    
+    $icon = if (Test-Path $iconPath) {
+        try {
+            [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
+        }
+        catch {
+            Write-Host "Failed to load custom icon, using default"
+            [System.Drawing.Icon]::ExtractAssociatedIcon((Get-Process -Id $PID).MainModule.FileName)
+        }
+    }
+    else {
+        [System.Drawing.Icon]::ExtractAssociatedIcon((Get-Process -Id $PID).MainModule.FileName)
     }
     
-    # Set up menu items
-    $openItem = $script:contextMenu.Items.Add("Open Dashboard")
-    $openItem.Add_Click({
-        Start-Process "http://localhost:8080"
-    })
+    if ($null -eq $icon) {
+        throw "Failed to load any icon"
+    }
     
-    $script:contextMenu.Items.Add("-")
+    $script:trayIcon.Icon = $icon
     
-    $exitItem = $script:contextMenu.Items.Add("Exit")
-    $exitItem.Add_Click({
-        $script:trayIcon.Visible = $false
-        # Properly stop transcript if running
-        if ([System.Management.Automation.Host.PSHost].GetProperty('IsTranscribing', [System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Static)) {
-            Stop-Transcript -ErrorAction SilentlyContinue
-        }
-        [System.Windows.Forms.Application]::Exit()
-    })
-    
-    # Add separator and close button
-    $null = $script:contextMenu.Items.Add("-")
-    $closeButton = $script:contextMenu.Items.Add("Close Server Manager")
-    $closeButton.Add_Click({
-        Write-Host "Initiating full shutdown..."
-        
-        # Hide the tray icon immediately
-        $script:trayIcon.Visible = $false
-        
-        # Properly stop transcript if running
-        if ([System.Management.Automation.Host.PSHost].GetProperty('IsTranscribing', [System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Static)) {
-            Stop-Transcript -ErrorAction SilentlyContinue
+    # Set up menu items with null checks
+    if ($null -ne $script:contextMenu) {
+        $openItem = $script:contextMenu.Items.Add("Open Web Dashboard")
+        if ($null -ne $openItem) {
+            $openItem.Add_Click({ 
+                try {
+                    Start-Process "http://localhost:8080"
+                } catch {
+                    Write-Host "Error opening web dashboard: $($_.Exception.Message)" -ForegroundColor Red
+                }
+            })
         }
         
-        # Start kill-webserver.ps1 without waiting
-        $killScriptPath = Join-Path $PSScriptRoot "kill-webserver.ps1"
-        if (Test-Path $killScriptPath) {
-            Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$killScriptPath`"" -Verb RunAs -WindowStyle Hidden
+        $openPSFormItem = $script:contextMenu.Items.Add("Open Admin Dashboard")
+        if ($null -ne $openPSFormItem) {
+            $openPSFormItem.Add_Click({
+                $dashboardPath = Join-Path (Split-Path -Parent $PSScriptRoot) "Scripts\dashboard.ps1"
+                if (Test-Path $dashboardPath) {
+                    Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$dashboardPath`"" -WindowStyle Normal
+                } else {
+                    [System.Windows.Forms.MessageBox]::Show("Dashboard script not found at: $dashboardPath", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+                }
+            })
         }
         
-        # Exit immediately
-        [System.Windows.Forms.Application]::Exit()
-    })
-    
-    # Configure tray icon
-    $script:trayIcon.ContextMenuStrip = $script:contextMenu
-    $script:trayIcon.Visible = $true
-    
-    # Show startup notification
-    $script:trayIcon.ShowBalloonTip(
-        2000,
-        "Server Manager",
-        "Server Manager is running. Click to open dashboard.",
-        [System.Windows.Forms.ToolTipIcon]::Info
-    )
-    
-    # Add double-click handler
-    $script:trayIcon.Add_MouseDoubleClick({
-        Start-Process "http://localhost:8080"
-    })
-    
-    Write-Host "Tray icon initialized successfully"
-    
-    # Start message loop
-    [System.Windows.Forms.Application]::Run()
+        $script:contextMenu.Items.Add("-")
+        
+        $exitItem = $script:contextMenu.Items.Add("Close Server Manager")
+        if ($null -ne $exitItem) {
+            $exitItem.Add_Click({
+                Write-Host "Closing Server Manager..."
+                $script:trayIcon.Visible = $false
+                $script:exitRequested = $true
+                $processPath = Join-Path (Split-Path -Parent $PSScriptRoot) "Stop-ServerManager.cmd"
+                Start-Process -FilePath $processPath -WindowStyle Hidden
+                [System.Windows.Forms.Application]::Exit()
+            })
+        }
+    }
+
+    # Configure tray icon with null checks
+    if ($null -ne $script:trayIcon -and $null -ne $script:contextMenu) {
+        $script:trayIcon.ContextMenuStrip = $script:contextMenu
+        $script:trayIcon.Visible = $true
+        
+        # Add double-click handler
+        $script:trayIcon.Add_MouseDoubleClick({
+            Start-Process "http://localhost:8080"
+        })
+        
+        Write-Host "Starting application message loop..."
+        [System.Windows.Forms.Application]::Run($script:appContext)
+    }
+    else {
+        throw "Tray icon or context menu is null"
+    }
 }
 catch {
-    Write-Error "Error in tray icon: $($_.Exception.Message)"
-    Write-Error $_.ScriptStackTrace
-    if ($script:trayIcon) {
+    Write-Host "Critical error in tray icon setup: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
+    
+    # Cleanup on error
+    if ($null -ne $script:trayIcon) { 
         $script:trayIcon.Visible = $false
-        $script:trayIcon.Dispose()
+        $script:trayIcon.Dispose() 
     }
+    if ($null -ne $script:contextMenu) { $script:contextMenu.Dispose() }
+    if ($null -ne $script:appContext) { $script:appContext.Dispose() }
+    
+    Stop-Transcript
     throw
 }
 finally {

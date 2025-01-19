@@ -377,7 +377,23 @@ function Start-WebServer {
     $null = $process.Start()
     
     $Global:ProcessTracker.WebServer = $process.Id
-    return $process
+
+    # Wait for web server to be ready
+    $maxWaitTime = 30 # seconds
+    $elapsed = 0
+    $readyFile = Join-Path $env:TEMP "webserver_ready.flag"
+    
+    while ($elapsed -lt $maxWaitTime) {
+        if (Test-Path $readyFile) {
+            Write-StatusMessage "Web server is ready" -Color Green
+            Remove-Item $readyFile -Force
+            return $process
+        }
+        Start-Sleep -Seconds 1
+        $elapsed++
+    }
+    
+    throw "Web server failed to initialize within $maxWaitTime seconds"
 }
 
 # Launch tray icon
@@ -407,11 +423,14 @@ function Start-TrayIcon {
     return $process
 }
 
+# Modify the launch sequence
 try {
     Write-StatusMessage "Initializing Server Manager..." -Color Cyan
     
-    # Start components
+    # Start web server first and wait for ready state
     $webServerProcess = Start-WebServer
+    
+    # Only start tray icon after web server is confirmed running
     Start-Sleep -Seconds 2
     $trayProcess = Start-TrayIcon
     
@@ -445,6 +464,5 @@ finally {
     if ($script:logStream) {
         $script:logStream.Dispose()
     }
-    Stop-Transcript -ErrorAction SilentlyContinue
 }
 

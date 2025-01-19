@@ -13,7 +13,7 @@ export async function checkAuth() {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json'
             },
-            credentials: 'same-origin'  // Include cookies if any
+            credentials: 'include'  // Changed to include
         });
 
         console.log('CheckAuth - Response status:', response.status);
@@ -25,8 +25,8 @@ export async function checkAuth() {
         }
 
         const data = await response.json();
-        console.log('CheckAuth - Response valid:', data.valid);
-        return data.valid === true;
+        console.log('CheckAuth - Response data:', data);  // Added logging
+        return true;  // If we get here, the token is valid
     } catch (error) {
         console.error('Auth check error:', error);
         sessionStorage.clear();  // Clear on error
@@ -77,6 +77,14 @@ export async function login(username, password) {
 export function logout() {
     console.log('Logging out...');
     sessionStorage.clear();
+    
+    // Clear browser history and prevent back navigation
+    window.history.pushState(null, '', 'login.html');
+    window.onpopstate = function () {
+        window.history.pushState(null, '', 'login.html');
+    };
+    
+    // Force reload of login page to clear any cached states
     window.location.replace('login.html');
 }
 

@@ -139,8 +139,37 @@ function Global:New-WebSocketClient {
     return [WebSocketClient]::new($ServerUrl)
 }
 
+function New-WebSocketServer {
+    param(
+        [int]$Port = 8080
+    )
+    
+    $listener = [TcpListener]::new([IPAddress]::Any, $Port)
+    $listener.Start()
+    
+    Write-Host "WebSocket server started on port $Port"
+    return $listener
+}
+
+function Send-WebSocketMessage {
+    param(
+        [System.Net.WebSockets.WebSocket]$WebSocket,
+        [string]$Message
+    )
+    
+    $buffer = [System.Text.Encoding]::UTF8.GetBytes($Message)
+    $segment = [ArraySegment[byte]]::new($buffer)
+    
+    $WebSocket.SendAsync(
+        $segment,
+        [WebSocketMessageType]::Text,
+        $true,
+        [System.Threading.CancellationToken]::None
+    ).Wait()
+}
+
 # Explicitly export functions and make them visible
-Export-ModuleMember -Function New-WebSocketServer, New-WebSocketClient
+Export-ModuleMember -Function New-WebSocketServer, New-WebSocketClient, Send-WebSocketMessage
 
 # Add type data for classes if needed
 Update-TypeData -TypeName WebSocketServer -MemberType NoteProperty -MemberName IsWebSocketServer -Value $true -Force

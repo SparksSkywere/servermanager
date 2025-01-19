@@ -7,6 +7,11 @@ try {
     $serverManagerDir = (Get-ItemProperty -Path $registryPath -ErrorAction Stop).servermanagerdir
     $serverManagerDir = $serverManagerDir.Trim('"', ' ', '\')
     
+    # Import required modules
+    $modulesPath = Join-Path $serverManagerDir "Modules"
+    Import-Module (Join-Path $modulesPath "WebSocketServer.psm1") -Force
+    Import-Module (Join-Path $modulesPath "Network.psm1") -Force
+    
     # Setup logging
     $logsDir = Join-Path $serverManagerDir "logs"
     if (-not (Test-Path $logsDir)) {
@@ -23,28 +28,132 @@ try {
     }
     
     Write-ServerLog "Starting web server..."
+    Write-ServerLog "Loaded required modules" -Level "INFO"
 
-    # Ensure URL reservation exists
+    # Initialize WebSocket server
     try {
-        $null = netsh http show urlacl url=http://+:8080/
-    }
-    catch {
-        Write-ServerLog "Adding URL reservation..." -Level "WARN"
-        $null = netsh http add url=http://+:8080/ user=Everyone
-    }
-    
-    # Set up HTTP listener with more permissive binding
-    $http = [System.Net.HttpListener]::new()
-    $http.Prefixes.Add("http://+:8080/")
-    
-    try {
+        # First, check if port is already in use
+        $testClient = New-Object System.Net.Sockets.TcpClient
+        try {
+            $testClient.Connect("localhost", 8081)
+            throw "Port 8081 is already in use"
+        }
+        catch [System.Net.Sockets.SocketException] {
+            # Port is available
+            Write-ServerLog "Port 8081 is available" -Level "INFO"
+        }
+        finally {
+            $testClient.Dispose()
+        }
+
+        # Create WebSocket ready flag with port info
+        $wsReadyFile = Join-Path $env:TEMP "websocket_ready.flag"
+        $wsConfig = @{
+            status = "ready"
+            port = 8081
+            timestamp = Get-Date -Format "o"
+        }
+        $wsConfig | ConvertTo-Json | Out-File -FilePath $wsReadyFile -Force
+        Write-ServerLog "WebSocket ready flag created" -Level "INFO"
+
+        # Create TCP listener for WebSocket
+        $wsListener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, 8081)
+        $wsListener.Start()
+        Write-ServerLog "WebSocket listener started on port 8081" -Level "INFO"
+
+        # Create cancellation token
+        $cancelSource = New-Object System.Threading.CancellationTokenSource
+
+        # Modified WebSocket task creation
+        try {
+            $taskFactory = [System.Threading.Tasks.Task]::Factory
+            
+            # Create action with proper signature
+            $action = [Action[object]] {
+                param($state)
+                
+                try {
+                    while (-not $cancelSource.Token.IsCancellationRequested) {
+                        if ($wsListener.Pending()) {
+                            $client = $wsListener.AcceptTcpClient()
+                            Write-ServerLog "New WebSocket connection accepted" -Level "INFO"
+                            
+                            # Handle WebSocket upgrade
+                            $stream = $client.GetStream()
+                            $reader = New-Object System.IO.StreamReader($stream)
+                            $writer = New-Object System.IO.StreamWriter($stream)
+                            $writer.AutoFlush = $true
+                            
+                            # Read the HTTP request for WebSocket upgrade
+                            $request = ""
+                            while (($line = $reader.ReadLine()) -ne "") {
+                                $request += "$line`r`n"
+                            }
+                            
+                            if ($request -match "Upgrade: websocket") {
+                                # Extract WebSocket key
+                                $key = [regex]::Match($request, "Sec-WebSocket-Key: (.+)").Groups[1].Value
+                                
+                                # Calculate accept key
+                                $guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+                                $concatenated = $key + $guid
+                                $sha1 = [System.Security.Cryptography.SHA1]::Create()
+                                $hash = $sha1.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($concatenated))
+                                $base64 = [Convert]::ToBase64String($hash)
+                                
+                                # Send WebSocket upgrade response
+                                $response = "HTTP/1.1 101 Switching Protocols`r`n"
+                                $response += "Upgrade: websocket`r`n"
+                                $response += "Connection: Upgrade`r`n"
+                                $response += "Sec-WebSocket-Accept: $base64`r`n`r`n"
+                                
+                                $writer.Write($response)
+                                Write-ServerLog "WebSocket upgrade completed" -Level "INFO"
+                            }
+                        }
+                        Start-Sleep -Milliseconds 100
+                    }
+                }
+                catch {
+                    Write-ServerLog "WebSocket error: $($_.Exception.Message)" -Level "ERROR"
+                }
+            }
+
+            # Start the task with proper parameters
+            $task = $taskFactory.StartNew(
+                $action,                  # The action to run
+                $null,                    # State object (null in this case)
+                $cancelSource.Token,      # Cancellation token
+                [System.Threading.Tasks.TaskCreationOptions]::LongRunning,
+                [System.Threading.Tasks.TaskScheduler]::Default
+            )
+
+            Write-ServerLog "WebSocket task started successfully" -Level "INFO"
+        }
+        catch {
+            Write-ServerLog "Failed to start WebSocket task: $($_.Exception.Message)" -Level "ERROR"
+            throw
+        }
+
+        # Set up HTTP listener on original port
+        try {
+            $null = netsh http show urlacl url=http://+:8080/
+        }
+        catch {
+            Write-ServerLog "Adding URL reservation..." -Level "WARN"
+            $null = netsh http add url=http://+:8080/ user=Everyone
+        }
+        
+        $http = [System.Net.HttpListener]::new()
+        $http.Prefixes.Add("http://+:8080/")
+        
         Write-ServerLog "Starting HTTP listener..."
         $http.Start()
         
-        # Signal that we're ready
-        $flagFile = Join-Path $env:TEMP "webserver_ready.flag"
-        "ready" | Out-File -FilePath $flagFile -Force
-        Write-ServerLog "Server is ready!"
+        # Signal that HTTP server is ready
+        $httpReadyFile = Join-Path $env:TEMP "webserver_ready.flag"
+        "ready" | Out-File -FilePath $httpReadyFile -Force
+        Write-ServerLog "HTTP Server is ready!"
 
         # Define web root directory
         $webRoot = Join-Path $serverManagerDir "www"
@@ -224,8 +333,8 @@ try {
             $http.Dispose()
         }
         
-        if (Test-Path $flagFile) {
-            Remove-Item $flagFile -Force
+        if (Test-Path $httpReadyFile) {
+            Remove-Item $httpReadyFile -Force
         }
         
         Write-ServerLog "Server shutdown complete" -Level "INFO"
@@ -237,8 +346,19 @@ try {
         exit 1
     }
 }
-catch {
-    Write-ServerLog "Fatal error: $($_.Exception.Message)" -Level "ERROR"
-    Write-ServerLog $_.ScriptStackTrace -Level "ERROR"
-    exit 1
+finally {
+    if ($wsListener) {
+        $wsListener.Stop()
+    }
+    if ($cancelSource) {
+        $cancelSource.Cancel()
+        $cancelSource.Dispose()
+    }
+    # Remove flag files
+    if (Test-Path $wsReadyFile) {
+        Remove-Item $wsReadyFile -Force
+    }
+    if (Test-Path $httpReadyFile) {
+        Remove-Item $httpReadyFile -Force
+    }
 }

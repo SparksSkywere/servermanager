@@ -40,6 +40,12 @@
         let loginInProgress = false;
 
         async function checkExistingAuth() {
+            // Don't check auth if we just got redirected from dashboard
+            if (document.referrer.includes('dashboard.html')) {
+                console.log('Skipping auth check - redirected from dashboard');
+                return false;
+            }
+
             console.log('Checking existing auth...');
             try {
                 if (await checkAuth()) {

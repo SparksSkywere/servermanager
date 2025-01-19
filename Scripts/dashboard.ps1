@@ -1,7 +1,13 @@
-# Add module import at the start
-$serverManagerPath = Join-Path $PSScriptRoot "Modules\ServerManager.psm1"
-Import-Module $serverManagerPath -Force
+# Get registry values for paths
+$registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+$serverManagerDir = (Get-ItemProperty -Path $registryPath).servermanagerdir
 
+# Import required modules
+$modulesPath = Join-Path $serverManagerDir "Modules"
+Import-Module (Join-Path $modulesPath "ServerManager.psm1") -Force
+Import-Module (Join-Path $modulesPath "Authentication.psm1") -Force
+
+# Add Windows Forms and Drawing assemblies
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -16,35 +22,46 @@ $listView = New-Object System.Windows.Forms.ListView
 $listView.View = [System.Windows.Forms.View]::Details
 $listView.Size = New-Object System.Drawing.Size(760,400)
 $listView.Location = New-Object System.Drawing.Point(20,20)
+$listView.FullRowSelect = $true
+$listView.GridLines = $true
 
-# Add columns
+# Add columns to match web dashboard
 $listView.Columns.Add("Server Name", 150)
 $listView.Columns.Add("Status", 100)
 $listView.Columns.Add("CPU Usage", 100)
 $listView.Columns.Add("Memory Usage", 100)
 $listView.Columns.Add("Uptime", 150)
 
-# Create buttons
+# Create buttons panel
+$buttonPanel = New-Object System.Windows.Forms.Panel
+$buttonPanel.Location = New-Object System.Drawing.Point(20,440)
+$buttonPanel.Size = New-Object System.Drawing.Size(760,40)
+
+# Create buttons with similar functionality to web dashboard
 $addButton = New-Object System.Windows.Forms.Button
-$addButton.Location = New-Object System.Drawing.Point(20,440)
+$addButton.Location = New-Object System.Drawing.Point(0,0)
 $addButton.Size = New-Object System.Drawing.Size(100,30)
 $addButton.Text = "Add Server"
 $addButton.Add_Click({
-    # Launch create-server.ps1
-    & "$PSScriptRoot\create-server.ps1"
+    $createServerPath = Join-Path $serverManagerDir "Scripts\create-server.ps1"
+    if (Test-Path $createServerPath) {
+        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$createServerPath`"" -WindowStyle Normal
+    }
 })
 
 $removeButton = New-Object System.Windows.Forms.Button
-$removeButton.Location = New-Object System.Drawing.Point(130,440)
+$removeButton.Location = New-Object System.Drawing.Point(110,0)
 $removeButton.Size = New-Object System.Drawing.Size(100,30)
 $removeButton.Text = "Remove Server"
 $removeButton.Add_Click({
-    # Launch destroy-server.ps1
-    & "$PSScriptRoot\destroy-server.ps1"
+    $destroyServerPath = Join-Path $serverManagerDir "Scripts\destroy-server.ps1"
+    if (Test-Path $destroyServerPath) {
+        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$destroyServerPath`"" -WindowStyle Normal
+    }
 })
 
 $importButton = New-Object System.Windows.Forms.Button
-$importButton.Location = New-Object System.Drawing.Point(240,440)
+$importButton.Location = New-Object System.Drawing.Point(220,0)
 $importButton.Size = New-Object System.Drawing.Size(100,30)
 $importButton.Text = "Import Server"
 $importButton.Add_Click({
@@ -52,7 +69,7 @@ $importButton.Add_Click({
 })
 
 $refreshButton = New-Object System.Windows.Forms.Button
-$refreshButton.Location = New-Object System.Drawing.Point(350,440)
+$refreshButton.Location = New-Object System.Drawing.Point(330,0)
 $refreshButton.Size = New-Object System.Drawing.Size(100,30)
 $refreshButton.Text = "Refresh"
 $refreshButton.Add_Click({
@@ -61,125 +78,214 @@ $refreshButton.Add_Click({
 
 # Add sync button next to refresh button
 $syncButton = New-Object System.Windows.Forms.Button
-$syncButton.Location = New-Object System.Drawing.Point(460,440)
+$syncButton.Location = New-Object System.Drawing.Point(440,0)
 $syncButton.Size = New-Object System.Drawing.Size(100,30)
 $syncButton.Text = "Sync All"
 $syncButton.Add_Click({
     Sync-AllDashboards
 })
 
-function Sync-AllDashboards {
-    Update-ServerList
-    $updateData = @{
-        Type = "ForcedSync"
-        Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+# Add WebSocket client with connection state tracking
+$script:webSocketClient = $null
+$script:isWebSocketConnected = $false
+
+# Define WebSocket connection parameters with new port
+$wsUri = "ws://localhost:8081/ws"  # Changed to match new WebSocket port
+$webSocket = $null
+
+# Add status label to the form (add this near the form creation code)
+$statusLabel = New-Object System.Windows.Forms.Label
+$statusLabel.Location = New-Object System.Drawing.Point(20, 530)
+$statusLabel.Size = New-Object System.Drawing.Size(760, 20)
+$statusLabel.Text = "WebSocket: Disconnected"
+$statusLabel.ForeColor = [System.Drawing.Color]::Red
+$form.Controls.Add($statusLabel)
+
+# Modified Connect-WebSocket function with retry logic and more debugging
+function Connect-WebSocket {
+    $maxRetries = 5
+    $retryCount = 0
+    $retryDelay = 2
+    $connected = $false
+
+    while (-not $connected -and $retryCount -lt $maxRetries) {
+        try {
+            $retryCount++
+            $statusLabel.Text = "WebSocket: Attempting connection (Try $retryCount of $maxRetries)..."
+            $statusLabel.ForeColor = [System.Drawing.Color]::Blue
+            $form.Refresh()
+
+            # Check WebSocket ready file with better error handling
+            $wsReadyFile = Join-Path $env:TEMP "websocket_ready.flag"
+            Write-Host "Checking WebSocket ready file: $wsReadyFile"
+            
+            if (-not (Test-Path $wsReadyFile)) {
+                throw "WebSocket ready file not found: $wsReadyFile"
+            }
+
+            # Read and validate WebSocket configuration
+            $wsConfig = Get-Content $wsReadyFile | ConvertFrom-Json
+            Write-Host "WebSocket config loaded: $($wsConfig | ConvertTo-Json)"
+            
+            if ($wsConfig.status -ne "ready") {
+                throw "WebSocket server not ready. Status: $($wsConfig.status)"
+            }
+
+            # Test TCP connection first
+            Write-Host "Testing TCP connection to localhost:$($wsConfig.port)"
+            $tcpClient = New-Object System.Net.Sockets.TcpClient
+            $connectionTimeout = $tcpClient.BeginConnect("localhost", $wsConfig.port, $null, $null)
+            $connected = $connectionTimeout.AsyncWaitHandle.WaitOne(1000)
+            
+            if (-not $connected) {
+                $tcpClient.Close()
+                throw "Failed to establish TCP connection to WebSocket server"
+            }
+            Write-Host "TCP connection successful"
+
+            # Create and configure WebSocket with longer timeout
+            $webSocket = New-Object System.Net.WebSockets.ClientWebSocket
+            $wsUri = "ws://localhost:$($wsConfig.port)/ws"
+            Write-Host "Attempting WebSocket connection to $wsUri"
+            
+            $cancelToken = New-Object System.Threading.CancellationToken
+            $connectTask = $webSocket.ConnectAsync([System.Uri]::new($wsUri), $cancelToken)
+            
+            # Increase timeout to 10 seconds
+            if (-not $connectTask.Wait(10000)) {
+                throw "WebSocket connection timed out after 10 seconds"
+            }
+
+            if ($webSocket.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
+                Write-Host "WebSocket connected successfully"
+                $script:webSocketClient = $webSocket
+                $script:isWebSocketConnected = $true
+                $statusLabel.Text = "WebSocket: Connected"
+                $statusLabel.ForeColor = [System.Drawing.Color]::Green
+                $connected = $true
+                
+                Start-WebSocketListener
+            } else {
+                throw "WebSocket failed to connect. State: $($webSocket.State)"
+            }
+        } catch {
+            Write-Host "Connection attempt $retryCount failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            if ($retryCount -lt $maxRetries) {
+                Start-Sleep -Seconds $retryDelay
+            } else {
+                $statusLabel.Text = "WebSocket: Connection failed after $maxRetries attempts"
+                $statusLabel.ForeColor = [System.Drawing.Color]::Red
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Could not connect to WebSocket server. Please ensure Server Manager is properly initialized.`n`nError: $($_.Exception.Message)",
+                    "Connection Error",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                )
+            }
+        } finally {
+            if ($tcpClient -and $tcpClient.Connected) {
+                $tcpClient.Close()
+            }
+        }
     }
-    
-    $jsonData = $updateData | ConvertTo-Json
-    $buffer = [System.Text.Encoding]::UTF8.GetBytes($jsonData)
-    $webSocketClient.SendAsync(
-        [System.ArraySegment[byte]]::new($buffer),
-        [System.Net.WebSockets.WebSocketMessageType]::Text,
-        $true,
-        [System.Threading.CancellationToken]::None
-    ).Wait()
 }
 
-# Add WebSocket client
-$webSocketClient = New-Object System.Net.WebSockets.ClientWebSocket
-$webSocketUri = New-Object System.Uri("ws://localhost:8081")
+# Add new function to handle WebSocket listening
+function Start-WebSocketListener {
+    $buffer = [byte[]]::new(4096)
+    $receiveTask = $script:webSocketClient.ReceiveAsync(
+        [System.ArraySegment[byte]]::new($buffer),
+        [System.Threading.CancellationToken]::None
+    )
 
-function Connect-WebSocket {
-    try {
-        $webSocketClient.ConnectAsync($webSocketUri, [System.Threading.CancellationToken]::None).Wait()
-        
-        # Start listening for updates
-        $buffer = [byte[]]::new(4096)
-        $receiveTask = $webSocketClient.ReceiveAsync(
-            [System.ArraySegment[byte]]::new($buffer),
-            [System.Threading.CancellationToken]::None
-        )
-        
-        # Handle received updates
-        $receiveTask.ContinueWith({
-            param($Task)
+    $receiveTask.ContinueWith({
+        param($Task)
+        if ($Task.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion) {
             if ($Task.Result.Count -gt 0) {
                 $jsonData = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $Task.Result.Count)
                 $updateData = $jsonData | ConvertFrom-Json
                 
-                # Update UI on UI thread
                 $form.Invoke({
                     Update-ServerList
                 })
+                
+                # Continue listening
+                Start-WebSocketListener
             }
-        })
-    } catch {
-        Write-Host "WebSocket connection failed: $($_.Exception.Message)" -ForegroundColor Red
-    }
+        } else {
+            $form.Invoke({
+                $statusLabel.Text = "WebSocket: Disconnected"
+                $statusLabel.ForeColor = [System.Drawing.Color]::Red
+                $script:isWebSocketConnected = $false
+            })
+        }
+    })
 }
 
 # Function to update the server list
 function Update-ServerList {
     $listView.Items.Clear()
     
-    # Get the registry path
-    $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+    # Get the PIDS.txt file path from registry
+    $pidFile = Join-Path $serverManagerDir "PIDS.txt"
     
-    if (Test-Path $registryPath) {
-        $serverManagerDir = (Get-ItemProperty -Path $registryPath).servermanagerdir
-        $pidFile = Join-Path $serverManagerDir "PIDS.txt"
-        
-        if (Test-Path $pidFile) {
-            $servers = Get-Content $pidFile
-            foreach ($server in $servers) {
-                $serverInfo = $server -split ' - '
-                if ($serverInfo.Count -ge 2) {
-                    $processId = $serverInfo[0]
-                    $name = $serverInfo[1]
+    if (Test-Path $pidFile) {
+        $servers = Get-Content $pidFile
+        foreach ($server in $servers) {
+            $serverInfo = $server -split ' - '
+            if ($serverInfo.Count -ge 2) {
+                $processId = $serverInfo[0]
+                $name = $serverInfo[1]
+                
+                $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+                $status = if ($process) { "Running" } else { "Stopped" }
+                
+                if ($process) {
+                    $cpu = [math]::Round($process.CPU, 2)
+                    $memory = [math]::Round($process.WorkingSet64 / 1MB, 2)
+                    $uptime = (Get-Date) - $process.StartTime
                     
-                    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-                    $status = if ($process) { "Running" } else { "Stopped" }
+                    $item = New-Object System.Windows.Forms.ListViewItem($name)
+                    $item.SubItems.Add($status)
+                    $item.SubItems.Add("$cpu%")
+                    $item.SubItems.Add("$memory MB")
+                    $item.SubItems.Add("$($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m")
                     
-                    if ($process) {
-                        $cpu = [math]::Round($process.CPU, 2)
-                        $memory = [math]::Round($process.WorkingSet64 / 1MB, 2)
-                        $uptime = (Get-Date) - $process.StartTime
-                        
-                        $item = New-Object System.Windows.Forms.ListViewItem($name)
-                        $item.SubItems.Add($status)
-                        $item.SubItems.Add("$cpu%")
-                        $item.SubItems.Add("$memory MB")
-                        $item.SubItems.Add("$($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m")
-                        
-                        $listView.Items.Add($item)
-                    }
+                    $listView.Items.Add($item)
                 }
             }
         }
     }
     
-    # Broadcast update to other clients
-    $updateData = @{
-        Type = "ServerListUpdate"
-        Servers = $listView.Items | ForEach-Object {
-            @{
-                Name = $_.Text
-                Status = $_.SubItems[1].Text
-                CPU = $_.SubItems[2].Text
-                Memory = $_.SubItems[3].Text
-                Uptime = $_.SubItems[4].Text
+    # Only attempt to broadcast if WebSocket is connected
+    if ($script:isWebSocketConnected -and $script:webSocketClient.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
+        try {
+            $updateData = @{
+                Type = "ServerListUpdate"
+                Servers = $listView.Items | ForEach-Object {
+                    @{
+                        Name = $_.Text
+                        Status = $_.SubItems[1].Text
+                        CPU = $_.SubItems[2].Text
+                        Memory = $_.SubItems[3].Text
+                        Uptime = $_.SubItems[4].Text
+                    }
+                }
             }
+            
+            $jsonData = $updateData | ConvertTo-Json
+            $buffer = [System.Text.Encoding]::UTF8.GetBytes($jsonData)
+            $script:webSocketClient.SendAsync(
+                [System.ArraySegment[byte]]::new($buffer),
+                [System.Net.WebSockets.WebSocketMessageType]::Text,
+                $true,
+                [System.Threading.CancellationToken]::None
+            ).Wait()
+        } catch {
+            Write-Host "Failed to send WebSocket update: $($_.Exception.Message)" -ForegroundColor Yellow
+            $script:isWebSocketConnected = $false
         }
     }
-    
-    $jsonData = $updateData | ConvertTo-Json
-    $buffer = [System.Text.Encoding]::UTF8.GetBytes($jsonData)
-    $webSocketClient.SendAsync(
-        [System.ArraySegment[byte]]::new($buffer),
-        [System.Net.WebSockets.WebSocketMessageType]::Text,
-        $true,
-        [System.Threading.CancellationToken]::None
-    ).Wait()
 }
 
 # Add the Import Server function
@@ -273,16 +379,53 @@ function Import-ExistingServer {
     $importForm.ShowDialog()
 }
 
+# Modify Sync-AllDashboards to handle WebSocket disconnection
+function Sync-AllDashboards {
+    Update-ServerList
+    if ($script:isWebSocketConnected -and $script:webSocketClient.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
+        try {
+            $updateData = @{
+                Type = "ForcedSync"
+                Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            }
+            
+            $jsonData = $updateData | ConvertTo-Json
+            $buffer = [System.Text.Encoding]::UTF8.GetBytes($jsonData)
+            $script:webSocketClient.SendAsync(
+                [System.ArraySegment[byte]]::new($buffer),
+                [System.Net.WebSockets.WebSocketMessageType]::Text,
+                $true,
+                [System.Threading.CancellationToken]::None
+            ).Wait()
+        } catch {
+            Write-Host "Failed to send sync command: $($_.Exception.Message)" -ForegroundColor Yellow
+            $script:isWebSocketConnected = $false
+        }
+    }
+}
+
 # Add controls to form
-$form.Controls.Add($listView)
-$form.Controls.Add($addButton)
-$form.Controls.Add($removeButton)
-$form.Controls.Add($importButton)
-$form.Controls.Add($refreshButton)
-$form.Controls.Add($syncButton)  # Add the new sync button
+$buttonPanel.Controls.AddRange(@($addButton, $removeButton, $importButton, $refreshButton, $syncButton))
+$form.Controls.AddRange(@($listView, $buttonPanel))
+
+# Create a timer for auto-refresh (every 3 minutes)
+$timer = New-Object System.Windows.Forms.Timer
+$form.Controls.AddRange(@($listView, $buttonPanel))
+$timer.Interval = 180000  # 3 minutes in milliseconds
+$timer.Add_Tick({ Update-ServerList })
+$timer.Start()
+
+# Connect WebSocket when form loads
+$form.Add_Shown({
+    Connect-WebSocket
+})
 
 # Initial update
 Update-ServerList
+
+# Show the form
+$form.ShowDialog()
+
 
 # Create a timer for auto-refresh (every 3 minutes)
 $timer = New-Object System.Windows.Forms.Timer
@@ -295,5 +438,27 @@ $form.Add_Shown({
     Connect-WebSocket
 })
 
+# Initial update
+Update-ServerList
+
 # Show the form
 $form.ShowDialog()
+
+# Modify form closing event to cleanup WebSocket
+$form.Add_FormClosing({
+    if ($script:webSocketClient -ne $null) {
+        try {
+            # Attempt graceful closure
+            $closeTask = $script:webSocketClient.CloseAsync(
+                [System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure,
+                "Closing",
+                [System.Threading.CancellationToken]::None
+            )
+            $closeTask.Wait(1000)
+        } catch {
+            Write-Host "Error closing WebSocket: $($_.Exception.Message)"
+        } finally {
+            $script:webSocketClient.Dispose()
+        }
+    }
+})
