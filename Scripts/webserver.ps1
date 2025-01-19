@@ -80,42 +80,100 @@ try {
                             
                             # Handle WebSocket upgrade
                             $stream = $client.GetStream()
-                            $reader = New-Object System.IO.StreamReader($stream)
-                            $writer = New-Object System.IO.StreamWriter($stream)
-                            $writer.AutoFlush = $true
+                            $buffer = New-Object byte[] 8192
+                            $encoding = [System.Text.Encoding]::UTF8
+                            $requestBuilder = New-Object System.Text.StringBuilder
                             
-                            # Read the HTTP request for WebSocket upgrade
-                            $request = ""
-                            while (($line = $reader.ReadLine()) -ne "") {
-                                $request += "$line`r`n"
-                            }
+                            # Read the complete HTTP request
+                            do {
+                                $bytesRead = $stream.Read($buffer, 0, $buffer.Length)
+                                if ($bytesRead -gt 0) {
+                                    $requestBuilder.Append($encoding.GetString($buffer, 0, $bytesRead)) | Out-Null
+                                }
+                            } while ($stream.DataAvailable)
+                            
+                            $request = $requestBuilder.ToString()
+                            Write-ServerLog "Received WebSocket request" -Level "INFO"
                             
                             if ($request -match "Upgrade: websocket") {
                                 # Extract WebSocket key
-                                $key = [regex]::Match($request, "Sec-WebSocket-Key: (.+)").Groups[1].Value
+                                $key = [regex]::Match($request, "Sec-WebSocket-Key: (.+)").Groups[1].Value.Trim()
+                                Write-ServerLog "WebSocket key: $key" -Level "INFO"
                                 
-                                # Calculate accept key
-                                $guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-                                $concatenated = $key + $guid
-                                $sha1 = [System.Security.Cryptography.SHA1]::Create()
-                                $hash = $sha1.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($concatenated))
-                                $base64 = [Convert]::ToBase64String($hash)
-                                
-                                # Send WebSocket upgrade response
-                                $response = "HTTP/1.1 101 Switching Protocols`r`n"
-                                $response += "Upgrade: websocket`r`n"
-                                $response += "Connection: Upgrade`r`n"
-                                $response += "Sec-WebSocket-Accept: $base64`r`n`r`n"
-                                
-                                $writer.Write($response)
-                                Write-ServerLog "WebSocket upgrade completed" -Level "INFO"
+                                if ($key) {
+                                    # Calculate accept key
+                                    $guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+                                    $concatenated = $key + $guid
+                                    $sha1 = [System.Security.Cryptography.SHA1]::Create()
+                                    $hash = $sha1.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($concatenated))
+                                    $base64 = [Convert]::ToBase64String($hash)
+                                    
+                                    # Send WebSocket upgrade response
+                                    $response = "HTTP/1.1 101 Switching Protocols`r`n"
+                                    $response += "Upgrade: websocket`r`n"
+                                    $response += "Connection: Upgrade`r`n"
+                                    $response += "Sec-WebSocket-Accept: $base64`r`n"
+                                    $response += "Sec-WebSocket-Protocol: chat`r`n`r`n"
+                                    
+                                    $responseBytes = [System.Text.Encoding]::UTF8.GetBytes($response)
+                                    $stream.Write($responseBytes, 0, $responseBytes.Length)
+                                    $stream.Flush()
+                                    
+                                    Write-ServerLog "WebSocket upgrade completed" -Level "INFO"
+                                    
+                                    # Handle WebSocket communication
+                                    try {
+                                        while (-not $cancelSource.Token.IsCancellationRequested) {
+                                            if ($stream.DataAvailable) {
+                                                $header = New-Object byte[] 2
+                                                $count = $stream.Read($header, 0, 2)
+                                                
+                                                if ($count -eq 2) {
+                                                    $opcode = $header[0] -band 0x0F
+                                                    $length = $header[1] -band 0x7F
+                                                    
+                                                    if ($opcode -eq 8) {
+                                                        # Close frame received
+                                                        break
+                                                    }
+                                                    
+                                                    # Send ping response every 30 seconds
+                                                    if ((Get-Date).Second % 30 -eq 0) {
+                                                        $pingFrame = [byte[]]@(0x89, 0x00) # WebSocket ping frame
+                                                        $stream.Write($pingFrame, 0, 2)
+                                                        $stream.Flush()
+                                                    }
+                                                    
+                                                    # Echo message back
+                                                    $messageData = @{
+                                                        type = "echo"
+                                                        timestamp = Get-Date -Format "o"
+                                                        message = "Connection active"
+                                                    } | ConvertTo-Json
+                                                    
+                                                    $messageBytes = [System.Text.Encoding]::UTF8.GetBytes($messageData)
+                                                    $stream.WriteByte(0x81) # Text frame
+                                                    $stream.WriteByte($messageBytes.Length)
+                                                    $stream.Write($messageBytes, 0, $messageBytes.Length)
+                                                    $stream.Flush()
+                                                }
+                                            }
+                                            Start-Sleep -Milliseconds 100
+                                        }
+                                    }
+                                    catch {
+                                        Write-ServerLog "WebSocket communication error: $($_.Exception.Message)" -Level "ERROR"
+                                    }
+                                }
                             }
+                            
+                            $client.Close()
                         }
                         Start-Sleep -Milliseconds 100
                     }
                 }
                 catch {
-                    Write-ServerLog "WebSocket error: $($_.Exception.Message)" -Level "ERROR"
+                    Write-ServerLog "WebSocket handling error: $($_.Exception.Message)" -Level "ERROR"
                 }
             }
 
