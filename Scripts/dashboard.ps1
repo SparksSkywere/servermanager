@@ -143,6 +143,20 @@ $syncButton.Add_Click({
     Sync-AllDashboards
 })
 
+# Add new agent button next to sync button
+$agentButton = New-Object System.Windows.Forms.Button
+$agentButton.Location = New-Object System.Drawing.Point(550,0)
+$agentButton.Size = New-Object System.Drawing.Size(100,30)
+$agentButton.Text = "Add Agent"
+$agentButton.Add_Click({
+    $agentFormPath = Join-Path $serverManagerDir "Scripts\agent-form.ps1"
+    if (Test-Path $agentFormPath) {
+        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$agentFormPath`"" -WindowStyle Normal
+    } else {
+        [System.Windows.Forms.MessageBox]::Show("Agent form script not found.", "Error")
+    }
+})
+
 # Add WebSocket client with connection state tracking
 $script:webSocketClient = $null
 $script:isWebSocketConnected = $false
@@ -463,7 +477,7 @@ function Sync-AllDashboards {
 }
 
 # Add controls to form
-$buttonPanel.Controls.AddRange(@($addButton, $removeButton, $importButton, $refreshButton, $syncButton))
+$buttonPanel.Controls.AddRange(@($addButton, $removeButton, $importButton, $refreshButton, $syncButton, $agentButton))
 $form.Controls.AddRange(@($listView, $buttonPanel))
 
 # Add keep-alive ping function
