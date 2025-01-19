@@ -100,7 +100,7 @@ try {
     $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
 
     $openDashboardMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
-    $openDashboardMenuItem.Text = "Open Dashboard"
+    $openDashboardMenuItem.Text = "Open Web Dashboard"
     $openDashboardMenuItem.Add_Click({
         try {
             Start-Process "http://localhost:8080"
@@ -113,7 +113,7 @@ try {
     })
 
     $openPSFormItem = New-Object System.Windows.Forms.ToolStripMenuItem
-    $openPSFormItem.Text = "Open Admin Console"
+    $openPSFormItem.Text = "Open Powershell Dashboard"
     $openPSFormItem.Add_Click({
         try {
             $dashboardPath = Join-Path $serverManagerDir "Scripts\dashboard.ps1"

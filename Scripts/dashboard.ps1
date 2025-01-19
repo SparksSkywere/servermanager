@@ -72,14 +72,25 @@ Add-Type -AssemblyName System.Drawing
 # Create the main form
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Server Manager Dashboard"
-$form.Size = New-Object System.Drawing.Size(800,600)
+$form.Size = New-Object System.Drawing.Size(1200,700)
 $form.StartPosition = "CenterScreen"
 
-# Create the server list view
+# Remove existing tab control setup and create main layout panel
+$mainPanel = New-Object System.Windows.Forms.TableLayoutPanel
+$mainPanel.Size = New-Object System.Drawing.Size(1160,480)
+$mainPanel.Location = New-Object System.Drawing.Point(20,20)
+$mainPanel.ColumnCount = 2
+$mainPanel.RowCount = 1
+$mainPanel.Dock = [System.Windows.Forms.DockStyle]::None
+$mainPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 70)))
+$mainPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 30)))
+$mainPanel.CellBorderStyle = [System.Windows.Forms.TableLayoutPanelCellBorderStyle]::Single
+
+# Move existing ListView to servers tab
 $listView = New-Object System.Windows.Forms.ListView
 $listView.View = [System.Windows.Forms.View]::Details
-$listView.Size = New-Object System.Drawing.Size(760,400)
-$listView.Location = New-Object System.Drawing.Point(20,20)
+$listView.Size = New-Object System.Drawing.Size(750,400)
+$listView.Location = New-Object System.Drawing.Point(5,5)
 $listView.FullRowSelect = $true
 $listView.GridLines = $true
 
@@ -90,10 +101,65 @@ $listView.Columns.Add("CPU Usage", 100)
 $listView.Columns.Add("Memory Usage", 100)
 $listView.Columns.Add("Uptime", 150)
 
+# Modify ListView settings
+$listView.Dock = [System.Windows.Forms.DockStyle]::Fill
+$listView.Size = New-Object System.Drawing.Size(800,470)
+
+# Create left panel for server list
+$serversPanel = New-Object System.Windows.Forms.Panel
+$serversPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$serversPanel.Controls.Add($listView)
+
+# Create host information panel
+$hostPanel = New-Object System.Windows.Forms.TableLayoutPanel
+$hostPanel.ColumnCount = 2
+$hostPanel.RowCount = 6
+$hostPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$hostPanel.Padding = New-Object System.Windows.Forms.Padding(10)
+$hostPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 30)))
+$hostPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 70)))
+
+# Function to create metric labels
+function New-MetricLabel {
+    param($text)
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = $text
+    $label.AutoSize = $true
+    $label.Margin = New-Object System.Windows.Forms.Padding(5)
+    return $label
+}
+
+# Add metric rows
+$metrics = @{
+    "CPU Usage" = "Loading..."
+    "Memory Usage" = "Loading..."
+    "Disk Usage" = "Loading..."
+    "GPU Info" = "Loading..."
+    "Network Usage" = "Loading..."
+    "System Uptime" = "Loading..."
+}
+
+$row = 0
+$metrics.GetEnumerator() | ForEach-Object {
+    $hostPanel.Controls.Add((New-MetricLabel $_.Key), 0, $row)
+    $valueLabel = New-MetricLabel $_.Value
+    $valueLabel.Name = "lbl$($_.Key -replace '\s','')"
+    $hostPanel.Controls.Add($valueLabel, 1, $row)
+    $row++
+}
+
+# Modify host panel settings
+$hostPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$hostPanel.AutoSize = $true
+
+# Add panels to main layout
+$mainPanel.Controls.Add($serversPanel, 0, 0)
+$mainPanel.Controls.Add($hostPanel, 1, 0)
+
 # Create buttons panel
 $buttonPanel = New-Object System.Windows.Forms.Panel
-$buttonPanel.Location = New-Object System.Drawing.Point(20,440)
-$buttonPanel.Size = New-Object System.Drawing.Size(760,40)
+$buttonPanel.Location = New-Object System.Drawing.Point(20,520)
+$buttonPanel.Size = New-Object System.Drawing.Size(1160,40)
 
 # Create buttons with similar functionality to web dashboard
 $addButton = New-Object System.Windows.Forms.Button
@@ -132,6 +198,7 @@ $refreshButton.Size = New-Object System.Drawing.Size(100,30)
 $refreshButton.Text = "Refresh"
 $refreshButton.Add_Click({
     Update-ServerList
+    Update-HostInformation
 })
 
 # Add sync button next to refresh button
@@ -167,8 +234,8 @@ $webSocket = $null
 
 # Add status label to the form (add this near the form creation code)
 $statusLabel = New-Object System.Windows.Forms.Label
-$statusLabel.Location = New-Object System.Drawing.Point(20, 530)
-$statusLabel.Size = New-Object System.Drawing.Size(760, 20)
+$statusLabel.Location = New-Object System.Drawing.Point(20, 630)
+$statusLabel.Size = New-Object System.Drawing.Size(1160, 20)
 $statusLabel.Text = "WebSocket: Disconnected"
 $statusLabel.ForeColor = [System.Drawing.Color]::Red
 $form.Controls.Add($statusLabel)
@@ -454,6 +521,7 @@ function Import-ExistingServer {
 # Modify Sync-AllDashboards to handle WebSocket disconnection
 function Sync-AllDashboards {
     Update-ServerList
+    Update-HostInformation
     if ($script:isWebSocketConnected -and $script:webSocketClient.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
         try {
             $updateData = @{
@@ -476,9 +544,103 @@ function Sync-AllDashboards {
     }
 }
 
+# Add the function to get GPU information
+function Get-GPUInfo {
+    try {
+        $gpu = Get-WmiObject Win32_VideoController | Select-Object -First 1
+        return "$($gpu.Name) - $('{0:N0}' -f ($gpu.AdapterRAM/1MB))MB"
+    } catch {
+        return "GPU information unavailable"
+    }
+}
+
+# Replace the Get-NetworkUsage function with this new version
+function Get-NetworkUsage {
+    try {
+        # Store previous values in script-level variables if they don't exist
+        if (-not $script:previousNetworkStats) {
+            $script:previousNetworkStats = @{}
+            $script:previousNetworkTime = Get-Date
+        }
+
+        $adapter = Get-NetAdapter | Where-Object Status -eq "Up" | Select-Object -First 1
+        $currentStats = $adapter | Get-NetAdapterStatistics
+        $currentTime = Get-Date
+
+        # Calculate time difference in seconds
+        $timeDiff = ($currentTime - $script:previousNetworkTime).TotalSeconds
+
+        if ($timeDiff -gt 0 -and $script:previousNetworkStats.ContainsKey($adapter.Name)) {
+            $prevStats = $script:previousNetworkStats[$adapter.Name]
+            
+            # Calculate bytes per second
+            $receiveBps = ($currentStats.ReceivedBytes - $prevStats.ReceivedBytes) / $timeDiff
+            $sentBps = ($currentStats.SentBytes - $prevStats.SentBytes) / $timeDiff
+
+            # Convert to Mbps (Megabits per second)
+            $receiveMbps = [Math]::Round(($receiveBps * 8) / 1MB, 2)
+            $sentMbps = [Math]::Round(($sentBps * 8) / 1MB, 2)
+
+            # Store current values for next calculation
+            $script:previousNetworkStats[$adapter.Name] = $currentStats
+            $script:previousNetworkTime = $currentTime
+
+            return "Down: $receiveMbps Mbps Up: $sentMbps Mbps"
+        }
+
+        # Store initial values
+        $script:previousNetworkStats[$adapter.Name] = $currentStats
+        $script:previousNetworkTime = $currentTime
+        return "Calculating..."
+
+    } catch {
+        return "Network statistics unavailable"
+    }
+}
+
+# Update the Update-HostInformation function with corrected string formatting
+function Update-HostInformation {
+    try {
+        # CPU Usage
+        $cpu = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples.CookedValue
+        $lblCPUUsage = $hostPanel.Controls["lblCPUUsage"]
+        $lblCPUUsage.Text = "$([Math]::Round($cpu, 2))%"
+
+        # Memory Usage
+        $memory = Get-CimInstance Win32_OperatingSystem
+        $memoryUsage = 100 - [Math]::Round(($memory.FreePhysicalMemory/$memory.TotalVisibleMemorySize)*100, 2)
+        $lblMemoryUsage = $hostPanel.Controls["lblMemoryUsage"]
+        $lblMemoryUsage.Text = "$memoryUsage% ($([Math]::Round($memory.TotalVisibleMemorySize/1MB, 2))GB Total)"
+
+        # Disk Usage
+        $disk = Get-PSDrive C
+        $diskUsage = 100 - [Math]::Round(($disk.Free/$disk.Used)*100, 2)
+        $lblDiskUsage = $hostPanel.Controls["lblDiskUsage"]
+        $diskFreeGB = [Math]::Round($disk.Free/1GB, 2)
+        $lblDiskUsage.Text = "$diskUsage% ($diskFreeGB GB Free)"
+
+        # GPU Info
+        $lblGPUInfo = $hostPanel.Controls["lblGPUInfo"]
+        $lblGPUInfo.Text = Get-GPUInfo
+
+        # Network Usage
+        $lblNetworkUsage = $hostPanel.Controls["lblNetworkUsage"]
+        $lblNetworkUsage.Text = Get-NetworkUsage
+
+        # System Uptime
+        $uptime = (Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+        $lblSystemUptime = $hostPanel.Controls["lblSystemUptime"]
+        $lblSystemUptime.Text = "$($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m"
+
+    } catch {
+        Write-DashboardLog "Error updating host information: $($_.Exception.Message)" -Level ERROR
+    }
+}
+
 # Add controls to form
 $buttonPanel.Controls.AddRange(@($addButton, $removeButton, $importButton, $refreshButton, $syncButton, $agentButton))
-$form.Controls.AddRange(@($listView, $buttonPanel))
+$form.Controls.Clear()
+$form.Controls.AddRange(@($mainPanel, $buttonPanel, $statusLabel))
 
 # Add keep-alive ping function
 function Start-KeepAlivePing {
@@ -510,24 +672,107 @@ function Start-KeepAlivePing {
     $pingTimer.Start()
 }
 
-# Create a timer for auto-refresh (every 3 minutes)
-$timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 180000  # 3 minutes in milliseconds
-$timer.Add_Tick({ Update-ServerList })
-$timer.Start()
+# Remove any existing timer definitions first
+# Add performance optimization variables
+$script:lastServerListUpdate = [DateTime]::MinValue
+$script:lastFullUpdate = [DateTime]::MinValue
+$script:cpuCounter = (New-Object System.Diagnostics.PerformanceCounter("Processor", "% Processor Time", "_Total"))
+$script:updateThrottle = 2  # Seconds between updates
 
-# Connect WebSocket when form loads
+# Replace refresh timer with optimized version
+$refreshTimer = New-Object System.Windows.Forms.Timer
+$refreshTimer.Interval = 1000 # 1 second interval
+$refreshTimer.Add_Tick({
+    try {
+        $currentTime = Get-Date
+        
+        # Update high-frequency items (CPU, Memory)
+        if (($currentTime - $script:lastFullUpdate).TotalSeconds -ge $script:updateThrottle) {
+            # Get CPU more efficiently
+            $cpu = $script:cpuCounter.NextValue()
+            
+            # Update CPU immediately
+            $lblCPUUsage = $hostPanel.Controls["lblCPUUsage"]
+            $lblCPUUsage.Text = "$([Math]::Round($cpu, 1))%"
+            
+            # Memory update (relatively fast operation)
+            $memInfo = Get-CimInstance Win32_OperatingSystem -Property FreePhysicalMemory,TotalVisibleMemorySize
+            $memoryUsage = 100 - [Math]::Round(($memInfo.FreePhysicalMemory/$memInfo.TotalVisibleMemorySize)*100, 2)
+            $lblMemoryUsage = $hostPanel.Controls["lblMemoryUsage"]
+            $lblMemoryUsage.Text = "$memoryUsage% ($([Math]::Round($memInfo.TotalVisibleMemorySize/1MB, 2))GB Total)"
+            
+            $script:lastFullUpdate = $currentTime
+        }
+
+        # Update low-frequency items every 5 seconds
+        if (($currentTime - $script:lastServerListUpdate).TotalSeconds -ge 5) {
+            # Update disk info
+            $disk = Get-PSDrive C
+            $diskUsage = 100 - [Math]::Round(($disk.Free/$disk.Used)*100, 2)
+            $lblDiskUsage = $hostPanel.Controls["lblDiskUsage"]
+            $lblDiskUsage.Text = "$diskUsage% ($([Math]::Round($disk.Free/1GB, 2))GB Free)"
+            
+            # Network and GPU updates
+            $lblNetworkUsage = $hostPanel.Controls["lblNetworkUsage"]
+            $lblNetworkUsage.Text = Get-NetworkUsage
+            
+            $lblGPUInfo = $hostPanel.Controls["lblGPUInfo"]
+            $lblGPUInfo.Text = Get-GPUInfo
+            
+            # Update uptime (cheap operation)
+            $uptime = (Get-Date) - (Get-CimInstance Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime
+            $lblSystemUptime = $hostPanel.Controls["lblSystemUptime"]
+            $lblSystemUptime.Text = "$($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m"
+            
+            # Update server list
+            Update-ServerList
+            
+            $script:lastServerListUpdate = $currentTime
+        }
+    }
+    catch {
+        Write-DashboardLog "Error updating dashboard: $($_.Exception.Message)" -Level ERROR
+    }
+})
+
+# Modify form shown event
 $form.Add_Shown({
     Connect-WebSocket
     Start-KeepAlivePing
+    $refreshTimer.Start()
 })
 
 # Initial update
 Update-ServerList
+Update-HostInformation
 
 # Modify form closing event to include logging
 $form.Add_FormClosing({
     Write-DashboardLog "Dashboard closing, performing cleanup..." -Level DEBUG
+    
+    if ($refreshTimer) {
+        $refreshTimer.Stop()
+        $refreshTimer.Dispose()
+    }
+
+    # Remove all event subscribers
+    Get-EventSubscriber | Unregister-Event
+    
+    # Stop and clean up background job
+    if ($script:backgroundJob) {
+        Stop-Job -Job $script:backgroundJob
+        Remove-Job -Job $script:backgroundJob
+    }
+
+    # Stop and clean up runspace
+    if ($script:powerShell) {
+        $script:powerShell.Stop()
+        $script:powerShell.Dispose()
+    }
+    if ($script:runspace) {
+        $script:runspace.AsyncWaitHandle.Close()
+    }
+
     if ($script:webSocketClient -ne $null) {
         try {
             # Attempt graceful closure
@@ -543,6 +788,9 @@ $form.Add_FormClosing({
         } finally {
             $script:webSocketClient.Dispose()
         }
+    }
+    if ($script:cpuCounter) {
+        $script:cpuCounter.Dispose()
     }
     $timer.Stop()
     $timer.Dispose()
