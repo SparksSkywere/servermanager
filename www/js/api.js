@@ -1,6 +1,13 @@
 import CONFIG from './config.js';
 
 class API {
+    constructor() {
+        this.baseUrl = '/api';
+        this.webSocket = null;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+    }
+
     static getBaseUrl() {
         return CONFIG.API_BASE_URL;
     }
@@ -16,6 +23,32 @@ class API {
         }
         
         return isJson ? response.json() : response;
+    }
+
+    async request(endpoint, options = {}) {
+        const defaultOptions = {
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${sessionStorage.getItem('auth_token')}`
+            }
+        };
+
+        try {
+            const response = await fetch(
+                `${this.baseUrl}${endpoint}`,
+                { ...defaultOptions, ...options }
+            );
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.message || 'API request failed');
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('API request error:', error);
+            throw error;
+        }
     }
 
     static async getAuthMethods() {
@@ -41,14 +74,8 @@ class API {
         return response;
     }
 
-    static async verifyAdmin() {
-        const response = await fetch(`${this.getBaseUrl()}/verify-admin`, {
-            headers: {
-                'Authorization': `Bearer ${sessionStorage.getItem('auth_token')}`,
-                'Content-Type': 'application/json'
-            }
-        });
-        return this.handleResponse(response);
+    async verifyAdmin() {
+        return this.request('/admin/verify');
     }
 
     static async getUsers() {
@@ -73,21 +100,15 @@ class API {
         return this.handleResponse(response);
     }
 
-    static async getServers() {
-        const response = await fetch('/api/servers', {
-            headers: { 'Authorization': `Bearer ${sessionStorage.getItem('auth_token')}` }
-        });
-        if (!response.ok) throw new Error('Failed to fetch servers');
-        return await response.json();
+    async getServers() {
+        return this.request('/servers');
     }
 
-    static async controlServer(action, serverName) {
-        const response = await fetch(`/api/servers/${serverName}/${action}`, {
+    async controlServer(serverId, action) {
+        return this.request('/server/control', {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${sessionStorage.getItem('auth_token')}` }
+            body: JSON.stringify({ serverId, action })
         });
-        if (!response.ok) throw new Error(`Failed to ${action} server`);
-        return await response.json();
     }
 
     static async createServer(serverData) {
@@ -111,6 +132,58 @@ class API {
         if (!response.ok) throw new Error('Failed to delete server');
         return await response.json();
     }
+
+    connectWebSocket() {
+        if (this.webSocket?.readyState === WebSocket.OPEN) return;
+
+        this.webSocket = new WebSocket(`ws://${window.location.host}/ws`);
+
+        this.webSocket.onopen = () => {
+            console.log('WebSocket connected');
+            this.reconnectAttempts = 0;
+        };
+
+        this.webSocket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                this.handleWebSocketMessage(data);
+            } catch (error) {
+                console.error('WebSocket message error:', error);
+            }
+        };
+
+        this.webSocket.onclose = () => {
+            console.log('WebSocket disconnected');
+            if (this.reconnectAttempts < this.maxReconnectAttempts) {
+                this.reconnectAttempts++;
+                setTimeout(() => this.connectWebSocket(), 5000);
+            }
+        };
+
+        this.webSocket.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+    }
+
+    handleWebSocketMessage(data) {
+        switch (data.type) {
+            case 'metrics':
+                window.dashboard?.updateDashboardMetrics(data);
+                break;
+            case 'serverUpdate':
+                window.dashboard?.updateServerList();
+                break;
+            case 'log':
+                window.dashboard?.addActivityLogEntry(data.message);
+                break;
+            default:
+                console.log('Unknown WebSocket message type:', data.type);
+        }
+    }
+
+    async getMetrics() {
+        return this.request('/metrics');
+    }
 }
 
-export default API;
+export default new API();
