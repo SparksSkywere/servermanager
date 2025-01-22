@@ -113,6 +113,98 @@ function Remove-EncryptionKey {
     }
 }
 
+# Add service cleanup function
+function Remove-ServerManagerService {
+    Write-Host "Checking for Server Manager service..." -ForegroundColor Cyan
+    try {
+        $service = Get-Service -Name "ServerManagerService" -ErrorAction SilentlyContinue
+        if ($service) {
+            Write-Host "Found Server Manager service, stopping and removing..." -ForegroundColor Yellow
+            Stop-Service -Name "ServerManagerService" -Force
+            $null = sc.exe delete "ServerManagerService"
+            Write-Host "Service removed successfully" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "Error removing service: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+# Add firewall rules cleanup
+function Remove-FirewallRules {
+    Write-Host "Cleaning up firewall rules..." -ForegroundColor Cyan
+    $rules = @(
+        "ServerManager_HTTP_8080",
+        "ServerManager_WebSocket_8081",
+        "ServerManager_*"  # Catch-all for any other rules we might have created
+    )
+
+    foreach ($rule in $rules) {
+        Get-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue | 
+        Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    }
+}
+
+# Add scheduled tasks cleanup
+function Remove-ScheduledTasks {
+    Write-Host "Cleaning up scheduled tasks..." -ForegroundColor Cyan
+    $tasks = @(
+        "\ServerManager\*"
+    )
+
+    foreach ($task in $tasks) {
+        Get-ScheduledTask -TaskPath $task -ErrorAction SilentlyContinue |
+        Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
+    }
+}
+
+# Add function to clean up program data
+function Remove-ProgramData {
+    Write-Host "Cleaning up program data..." -ForegroundColor Cyan
+    $paths = @(
+        "C:\ProgramData\ServerManager",
+        "$env:LOCALAPPDATA\ServerManager",
+        "$env:APPDATA\ServerManager"
+    )
+
+    foreach ($path in $paths) {
+        if (Test-Path $path) {
+            Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# Add function to clean up temp files
+function Remove-TempFiles {
+    Write-Host "Cleaning up temporary files..." -ForegroundColor Cyan
+    $tempFiles = @(
+        "$env:TEMP\websocket_ready.flag",
+        "$env:TEMP\webserver_ready.flag",
+        "$env:TEMP\servermanager_*.pid",
+        "$env:TEMP\servermanager_*.log"
+    )
+
+    foreach ($file in $tempFiles) {
+        Remove-Item -Path $file -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Add port cleanup
+function Remove-PortReservations {
+    Write-Host "Cleaning up port reservations..." -ForegroundColor Cyan
+    $ports = @(8080, 8081)
+    
+    foreach ($port in $ports) {
+        # Remove URL ACL
+        $null = netsh http delete urlacl url=http://+:$port/
+        
+        # Force kill any processes using these ports
+        Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | 
+        ForEach-Object {
+            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # MAIN UNINSTALLATION PROCESS
 # Step 1: Fetch the installation directory from 'servermanager' subkey
 if (Test-Path -Path $serverManagerRegistryPath) {
@@ -194,23 +286,132 @@ $scriptBlock = @"
         }
     }
 
-    try {
-        Write-Host 'Starting process'
+    # Add service cleanup function
+    function Remove-ServerManagerService {
+        Write-Host "Checking for Server Manager service..." -ForegroundColor Cyan
+        try {
+            `$service = Get-Service -Name "ServerManagerService" -ErrorAction SilentlyContinue
+            if (`$service) {
+                Write-Host "Found Server Manager service, stopping and removing..." -ForegroundColor Yellow
+                Stop-Service -Name "ServerManagerService" -Force
+                `$null = sc.exe delete "ServerManagerService"
+                Write-Host "Service removed successfully" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "Error removing service: `$($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
 
-        # Remove encryption key first
+    # Add firewall rules cleanup
+    function Remove-FirewallRules {
+        Write-Host "Cleaning up firewall rules..." -ForegroundColor Cyan
+        `$rules = @(
+            "ServerManager_HTTP_8080",
+            "ServerManager_WebSocket_8081",
+            "ServerManager_*"  # Catch-all for any other rules we might have created
+        )
+
+        foreach (`$rule in `$rules) {
+            Get-NetFirewallRule -DisplayName `$rule -ErrorAction SilentlyContinue | 
+            Remove-NetFirewallRule -ErrorAction SilentlyContinue
+        }
+    }
+
+    # Add scheduled tasks cleanup
+    function Remove-ScheduledTasks {
+        Write-Host "Cleaning up scheduled tasks..." -ForegroundColor Cyan
+        `$tasks = @(
+            "\ServerManager\*"
+        )
+
+        foreach (`$task in `$tasks) {
+            Get-ScheduledTask -TaskPath `$task -ErrorAction SilentlyContinue |
+            Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
+        }
+    }
+
+    # Add function to clean up program data
+    function Remove-ProgramData {
+        Write-Host "Cleaning up program data..." -ForegroundColor Cyan
+        `$paths = @(
+            "C:\ProgramData\ServerManager",
+            "`$env:LOCALAPPDATA\ServerManager",
+            "`$env:APPDATA\ServerManager"
+        )
+
+        foreach (`$path in `$paths) {
+            if (Test-Path `$path) {
+                Remove-Item -Path `$path -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Add function to clean up temp files
+    function Remove-TempFiles {
+        Write-Host "Cleaning up temporary files..." -ForegroundColor Cyan
+        `$tempFiles = @(
+            "`$env:TEMP\websocket_ready.flag",
+            "`$env:TEMP\webserver_ready.flag",
+            "`$env:TEMP\servermanager_*.pid",
+            "`$env:TEMP\servermanager_*.log"
+        )
+
+        foreach (`$file in `$tempFiles) {
+            Remove-Item -Path `$file -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # Add port cleanup
+    function Remove-PortReservations {
+        Write-Host "Cleaning up port reservations..." -ForegroundColor Cyan
+        `$ports = @(8080, 8081)
+        
+        foreach (`$port in `$ports) {
+            # Remove URL ACL
+            `$null = netsh http delete urlacl url=http://+:`$port/
+            
+            # Force kill any processes using these ports
+            Get-NetTCPConnection -LocalPort `$port -ErrorAction SilentlyContinue | 
+            ForEach-Object {
+                Stop-Process -Id `$.OwningProcess -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    try {
+        Write-Host 'Starting uninstallation process' -ForegroundColor Cyan
+
+        # Stop and remove service first
+        Remove-ServerManagerService
+
+        # Kill any running processes
+        Write-Host "Stopping any running Server Manager processes..." -ForegroundColor Cyan
+        Get-Process -Name "powershell" | 
+            Where-Object { `$.CommandLine -like "*servermanager*" } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+
+        # Remove service and scheduled tasks
+        Remove-ServerManagerService
+        Remove-ScheduledTasks
+
+        # Clean up firewall rules
+        Remove-FirewallRules
+
+        # Remove encryption key and program data
         Remove-EncryptionKey
+        Remove-ProgramData
+
+        # Clean up ports and temp files
+        Remove-PortReservations
+        Remove-TempFiles
 
         # Only remove the SteamCMD directory if the user confirmed
         if (`$env:UNINSTALL_STEAMCMD -eq 'True') {
             Remove-Directory -dir '$($SteamCMDPath)'
         } else {
-            # Remove specific Servermanager components
+            # Remove only Server Manager components
             `$itemsToRemove = @(
-                '$($SteamCMDPath)\Servermanager\config',
-                '$($SteamCMDPath)\Servermanager\Modules',
-                '$($SteamCMDPath)\Servermanager\logs',
-                '$($SteamCMDPath)\Servermanager\AppID.txt',
-                '$($SteamCMDPath)\Servermanager\Install-Log.txt'
+                (Join-Path '$($SteamCMDPath)' "Servermanager")
             )
 
             foreach (`$item in `$itemsToRemove) {
@@ -218,19 +419,20 @@ $scriptBlock = @"
             }
         }
 
-        # Remove the Servermanager directory
-        Remove-Directory -dir '$($SteamCMDPath)\Servermanager'
-
-        # Step 3: Remove 'servermanager' registry key
+        # Remove registry keys
         Remove-RegistryKey -regPath 'HKLM:\Software\SkywereIndustries\servermanager'
-
-        # Step 4: Remove the parent key 'SkywereIndustries' if it exists and is empty
         Remove-RegistryKey -regPath 'HKLM:\Software\SkywereIndustries'
 
-        Write-Host 'Process complete.'
-    } catch {
-        Write-Host 'Error during process: `$(`$_.Exception.Message)'
-        exit
+        Write-Host "`nUninstallation completed successfully!" -ForegroundColor Green
+        Write-Host "All Server Manager components have been removed." -ForegroundColor Green
+        
+        if (`$env:UNINSTALL_STEAMCMD -ne 'True') {
+            Write-Host "SteamCMD has been preserved at: $($SteamCMDPath)" -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "Error during uninstallation: `$(`$_.Exception.Message)" -ForegroundColor Red
+        exit 1
     }
 "@
 

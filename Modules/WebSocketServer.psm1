@@ -168,8 +168,25 @@ function Send-WebSocketMessage {
     ).Wait()
 }
 
+function Test-WebSocketConnection {
+    param(
+        [int]$Port = 8081,
+        [string]$HostName = "localhost"
+    )
+    
+    try {
+        $tcpClient = New-Object System.Net.Sockets.TcpClient
+        $connected = $tcpClient.ConnectAsync($Host, $Port).Wait(2000)
+        $tcpClient.Close()
+        return $connected
+    }
+    catch {
+        return $false
+    }
+}
+
 # Explicitly export functions and make them visible
-Export-ModuleMember -Function New-WebSocketServer, New-WebSocketClient, Send-WebSocketMessage
+Export-ModuleMember -Function New-WebSocketServer, New-WebSocketClient, Send-WebSocketMessage, Test-WebSocketConnection
 
 # Add type data for classes if needed
 Update-TypeData -TypeName WebSocketServer -MemberType NoteProperty -MemberName IsWebSocketServer -Value $true -Force

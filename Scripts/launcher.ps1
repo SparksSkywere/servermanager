@@ -1,6 +1,16 @@
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+param(
+    [switch]$AsService
+)
+
 # Set title and clear screen
 $host.ui.RawUI.WindowTitle = "Server Manager"
 Clear-Host
+
+# Add early in the script
+$script:IsService = $AsService -or ([System.Environment]::UserInteractive -eq $false)
 
 # Set error action preference and initialize
 $ErrorActionPreference = 'Stop'
@@ -386,32 +396,10 @@ function Start-HiddenProcess {
     return $process
 }
 
-# Update the Start-WebServer function
-function Start-WebServer {
-    $webserverPath = Join-Path $PSScriptRoot "webserver.ps1"
-    $process = Start-HiddenProcess -FilePath $webserverPath -ArgumentList "-LogPath `"$($logPaths.WebServer)`""
-    
-    $Global:ProcessTracker.WebServer = $process.Id
+# Add service support detection
+$script:ServiceName = "ServerManagerService"
 
-    # Wait for web server to be ready
-    $maxWaitTime = 30 # seconds
-    $elapsed = 0
-    $readyFile = Join-Path $env:TEMP "webserver_ready.flag"
-    
-    while ($elapsed -lt $maxWaitTime) {
-        if (Test-Path $readyFile) {
-            Write-StatusMessage "Web server is ready" -Color Green
-            Remove-Item $readyFile -Force
-            return $process
-        }
-        Start-Sleep -Seconds 1
-        $elapsed++
-    }
-    
-    throw "Web server failed to initialize within $maxWaitTime seconds"
-}
-
-# Update the Start-TrayIcon function
+# Move Start-TrayIcon function definition before Initialize-ServerManager
 function Start-TrayIcon {
     $trayIconPath = Join-Path $PSScriptRoot "trayicon.ps1"
     $process = Start-HiddenProcess -FilePath $trayIconPath -ArgumentList "-LogPath `"$($logPaths.TrayIcon)`"" -NoWindow
@@ -428,6 +416,306 @@ function Start-TrayIcon {
     
     $Global:ProcessTracker.TrayIcon = $process.Id
     return $process
+}
+
+# Add new launcher initialization function
+function Initialize-ServerManager {
+    param (
+        [switch]$AsService
+    )
+    
+    Write-StatusMessage "Initializing Server Manager..." "Cyan"
+    
+    # Get server manager directory from registry first
+    try {
+        $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+        $serverManagerDir = (Get-ItemProperty -Path $registryPath -ErrorAction Stop).servermanagerdir
+        
+        if ([string]::IsNullOrWhiteSpace($serverManagerDir)) {
+            throw "Server Manager directory path is empty in registry"
+        }
+        
+        # Clean up path
+        $serverManagerDir = $serverManagerDir.Trim('"', ' ', '\')
+        Write-StatusMessage "Server Manager Directory: $serverManagerDir" "Cyan"
+        
+        if (-not (Test-Path $serverManagerDir)) {
+            throw "Server Manager directory not found: $serverManagerDir"
+        }
+    }
+    catch {
+        throw "Failed to get Server Manager directory: $($_.Exception.Message)"
+    }
+    
+    # Ensure directories exist
+    $dirs = @(
+        (Join-Path $serverManagerDir "logs"),
+        (Join-Path $serverManagerDir "config"),
+        (Join-Path $serverManagerDir "temp")
+    )
+    
+    foreach ($dir in $dirs) {
+        if (-not (Test-Path $dir)) {
+            New-Item -Path $dir -ItemType Directory -Force | Out-Null
+        }
+    }
+
+    # Kill any existing instances
+    Get-Process -Name "powershell" | 
+        Where-Object { $_.CommandLine -like "*webserver.ps1*" -or $_.CommandLine -like "*dashboard.ps1*" } |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+
+    # Clear any stale ready flags
+    Remove-Item -Path "$env:TEMP\websocket_ready.flag" -ErrorAction SilentlyContinue
+    Remove-Item -Path "$env:TEMP\webserver_ready.flag" -ErrorAction SilentlyContinue
+
+    # Start web server with proper verification
+    try {
+        Write-StatusMessage "Starting web server component..." "Cyan"
+        $webServerProcess = Start-WebServer
+        Write-StatusMessage "Waiting for web server initialization..." "Cyan"
+        
+        # Wait for both HTTP and WebSocket servers
+        $maxWait = 30
+        $waited = 0
+        $ready = $false
+        
+        while (-not $ready -and $waited -lt $maxWait) {
+            Start-Sleep -Seconds 1
+            $waited++
+            
+            # Check if process is still running
+            if ($webServerProcess.HasExited) {
+                throw "Web server process terminated unexpectedly"
+            }
+            
+            # Check ready flags
+            $wsReadyFile = Join-Path $env:TEMP "websocket_ready.flag"
+            $httpReadyFile = Join-Path $env:TEMP "webserver_ready.flag"
+            
+            Write-StatusMessage "Checking ready flags... (attempt $waited/$maxWait)" "Cyan" -Verbose
+            Write-StatusMessage "WebSocket flag: $(Test-Path $wsReadyFile), HTTP flag: $(Test-Path $httpReadyFile)" "Gray" -Verbose
+            
+            if ((Test-Path $wsReadyFile) -and (Test-Path $httpReadyFile)) {
+                try {
+                    $wsConfig = Get-Content $wsReadyFile -Raw | ConvertFrom-Json
+                    Write-StatusMessage "WebSocket config loaded: $($wsConfig | ConvertTo-Json)" "Gray" -Verbose
+                    
+                    if ($wsConfig.status -eq "ready") {
+                        # Test actual connection
+                        $tcpClient = New-Object System.Net.Sockets.TcpClient
+                        try {
+                            Write-StatusMessage "Testing connection to port $($wsConfig.port)..." "Gray" -Verbose
+                            if ($tcpClient.ConnectAsync("localhost", $wsConfig.port).Wait(2000)) {
+                                $ready = $true
+                                Write-StatusMessage "Web server initialization complete" "Green"
+                                break
+                            }
+                        }
+                        catch {
+                            Write-StatusMessage "Connection test failed: $_" "Yellow" -Verbose
+                        }
+                        finally {
+                            $tcpClient.Dispose()
+                        }
+                    }
+                }
+                catch {
+                    Write-StatusMessage "Error verifying WebSocket: $_" "Yellow" -Verbose
+                }
+            }
+            Write-StatusMessage "Waiting for server initialization... ($waited/$maxWait)" "Cyan"
+        }
+        
+        if (-not $ready) {
+            # Collect diagnostic information
+            $diagnostics = @{
+                ProcessRunning = -not $webServerProcess.HasExited
+                ProcessExitCode = if ($webServerProcess.HasExited) { $webServerProcess.ExitCode } else { "N/A" }
+                WsReadyExists = Test-Path $wsReadyFile
+                HttpReadyExists = Test-Path $httpReadyFile
+                WsReadyContent = if (Test-Path $wsReadyFile) { Get-Content $wsReadyFile -Raw } else { "N/A" }
+                HttpReadyContent = if (Test-Path $httpReadyFile) { Get-Content $httpReadyFile -Raw } else { "N/A" }
+            }
+            
+            Write-StatusMessage "Initialization diagnostic data: $($diagnostics | ConvertTo-Json)" "Yellow" -Verbose
+            throw "Server initialization timed out after $maxWait seconds"
+        }
+
+        if ($ready) {
+            # Start tray icon first
+            $trayProcess = Start-TrayIcon
+            Write-StatusMessage "Tray icon started successfully" "Green"
+            
+            # Show dashboard selection if not running as service
+            if (-not $AsService) {
+                $dashboardChoice = Show-DashboardDialog
+                switch ($dashboardChoice) {
+                    "Web" {
+                        Start-Process "http://localhost:8080"
+                    }
+                    "PowerShell" {
+                        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\dashboard.ps1`""
+                    }
+                }
+            }
+        }
+
+        return $true
+    }
+    catch {
+        Write-StatusMessage "Failed to initialize Server Manager: $_" "Red"
+        throw
+    }
+}
+
+# Add dashboard selection dialog
+function Show-DashboardDialog {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Select Dashboard Type"
+    $form.Size = New-Object System.Drawing.Size(300,150)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $webButton = New-Object System.Windows.Forms.Button
+    $webButton.Location = New-Object System.Drawing.Point(50,20)
+    $webButton.Size = New-Object System.Drawing.Size(200,30)
+    $webButton.Text = "Web Dashboard"
+    $webButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $webButton.Add_Click({ $form.Tag = "Web"; $form.Close() })
+    $form.Controls.Add($webButton)
+
+    $psButton = New-Object System.Windows.Forms.Button
+    $psButton.Location = New-Object System.Drawing.Point(50,60)
+    $psButton.Size = New-Object System.Drawing.Size(200,30)
+    $psButton.Text = "PowerShell Dashboard"
+    $psButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $psButton.Add_Click({ $form.Tag = "PowerShell"; $form.Close() })
+    $form.Controls.Add($psButton)
+
+    $form.ShowDialog() | Out-Null
+    return $form.Tag
+}
+
+# Add service installation support
+function Install-ServerManagerService {
+    $servicePath = Join-Path $serverManagerDir "service.ps1"
+    $serviceContent = @"
+`$PSScriptRoot = Split-Path -Parent `$MyInvocation.MyCommand.Path
+`$launcherPath = Join-Path `$PSScriptRoot 'Scripts\launcher.ps1'
+& `$launcherPath -AsService
+"@
+    
+    $serviceContent | Set-Content -Path $servicePath -Force
+    
+    $params = @{
+        Name = $script:ServiceName
+        BinaryPathName = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$servicePath`""
+        DisplayName = "Server Manager Service"
+        StartupType = "Automatic"
+        Description = "Manages game servers and provides web interface"
+    }
+    
+    New-Service @params
+}
+
+# Modify Start-WebServer to be more robust
+function Start-WebServer {
+    $webserverPath = Join-Path $PSScriptRoot "webserver.ps1"
+    
+    # Create process with proper configuration
+    $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+    $pinfo.FileName = "powershell.exe"
+    $pinfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$webserverPath`""
+    $pinfo.UseShellExecute = $false
+    $pinfo.RedirectStandardOutput = $true
+    $pinfo.RedirectStandardError = $true
+    $pinfo.CreateNoWindow = $false  # Changed to show window for debugging
+    
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $pinfo
+    
+    # Add enhanced output handling
+    $stdoutEvent = Register-ObjectEvent -InputObject $process -EventName OutputDataReceived -Action {
+        param($sender, $eventArgs)
+        if ($eventArgs.Data) {
+            Write-StatusMessage "WebServer: $($eventArgs.Data)" "Gray"
+            # Log to specific file for debugging
+            Add-Content -Path (Join-Path $logDir "webserver_debug.log") -Value "OUTPUT: $($eventArgs.Data)"
+        }
+    }
+    
+    $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
+        param($sender, $eventArgs)
+        if ($eventArgs.Data) {
+            Write-StatusMessage "WebServer Error: $($eventArgs.Data)" "Red"
+            # Log to specific file for debugging
+            Add-Content -Path (Join-Path $logDir "webserver_debug.log") -Value "ERROR: $($eventArgs.Data)"
+        }
+    }
+    
+    Write-StatusMessage "Starting web server process..." "Cyan"
+    
+    # Start process with error handling
+    try {
+        $process.Start() | Out-Null
+        $process.BeginOutputReadLine()
+        $process.BeginErrorReadLine()
+        
+        Write-StatusMessage "Web server process started with PID: $($process.Id)" "Green"
+        
+        # Wait a moment for initial startup
+        Start-Sleep -Seconds 2
+        
+        if ($process.HasExited) {
+            throw "Web server process terminated immediately"
+        }
+        
+        $Global:ProcessTracker.WebServer = $process.Id
+        return $process
+    }
+    catch {
+        Write-StatusMessage "Failed to start web server: $($_.Exception.Message)" "Red"
+        throw
+    }
+}
+
+# Main execution block
+try {
+    if ($script:IsService) {
+        Initialize-ServerManager -AsService
+    } else {
+        Initialize-ServerManager
+    }
+    
+    # Monitor loop
+    while ($true) {
+        Start-Sleep -Seconds 5
+        
+        # Check process health - Change $pid to $processId
+        $processes = @($Global:ProcessTracker.WebServer)
+        foreach ($processId in $processes) {
+            if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {
+                Write-StatusMessage "Process $processId stopped unexpectedly" "Red"
+                if ($script:IsService) {
+                    Restart-Service -Name $script:ServiceName
+                } else {
+                    Stop-AllComponents
+                    throw "Critical process stopped"
+                }
+            }
+        }
+    }
+}
+catch {
+    Write-StatusMessage "Fatal error: $_" "Red"
+    Stop-AllComponents
+    if (-not $script:IsService) {
+        Read-Host "Press Enter to exit"
+    }
+    exit 1
 }
 
 # Modify the launch sequence

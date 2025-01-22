@@ -8,6 +8,42 @@ $steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
 $gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"
 
+# Add this right after the initial variable definitions
+function Get-InstallationOptions {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Server Manager Installation Options"
+    $form.Size = New-Object System.Drawing.Size(400,200)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $serviceCheckbox = New-Object System.Windows.Forms.CheckBox
+    $serviceCheckbox.Text = "Install as Windows Service"
+    $serviceCheckbox.Location = New-Object System.Drawing.Point(20,20)
+    $serviceCheckbox.Size = New-Object System.Drawing.Size(350,20)
+    $form.Controls.Add($serviceCheckbox)
+
+    $infoLabel = New-Object System.Windows.Forms.Label
+    $infoLabel.Text = "Running as a service allows Server Manager to start automatically with Windows."
+    $infoLabel.Location = New-Object System.Drawing.Point(20,50)
+    $infoLabel.Size = New-Object System.Drawing.Size(350,40)
+    $form.Controls.Add($infoLabel)
+
+    $okButton = New-Object System.Windows.Forms.Button
+    $okButton.Text = "Continue"
+    $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $okButton.Location = New-Object System.Drawing.Point(150,100)
+    $form.Controls.Add($okButton)
+    $form.AcceptButton = $okButton
+
+    $result = $form.ShowDialog()
+    
+    return @{
+        InstallService = ($result -eq [System.Windows.Forms.DialogResult]::OK -and $serviceCheckbox.Checked)
+    }
+}
+
 # Function to check if the current user is an administrator
 function Test-Administrator {
     $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -593,6 +629,10 @@ function Show-CompletionDialog {
 try {
     Test-AdminPrivileges
 
+    # Get installation options first - Remove the parentheses
+    $installOptions = Get-InstallationOptions
+    Write-Log "Installation options selected: Service install = $($installOptions.InstallService)"
+
     $SteamCMDPath = Select-FolderDialog
     if (-Not $SteamCMDPath -or -not (Test-ValidPath $SteamCMDPath)) {
         throw "Invalid or no directory selected"
@@ -647,6 +687,52 @@ try {
     Update-SteamCmd -steamCmdPath $steamCmdExe
     New-AppIDFile -serverManagerDir $ServerManagerDir
     Set-InitialAuthConfig -ServerManagerDir $ServerManagerDir
+
+    # After completing the basic installation, handle service setup if requested
+    if ($installOptions.InstallService) {
+        Write-Log "Setting up Windows Service..."
+        try {
+            # Create service script
+            $serviceScript = @"
+#Requires -RunAsAdministrator
+`$PSScriptRoot = Split-Path -Parent `$MyInvocation.MyCommand.Path
+`$launcherPath = Join-Path `$PSScriptRoot "Scripts\launcher.ps1"
+& `$launcherPath -AsService
+"@
+            $serviceScriptPath = Join-Path $ServerManagerDir "service.ps1"
+            $serviceScript | Set-Content -Path $serviceScriptPath -Force
+
+            # Create service
+            $serviceName = "ServerManagerService"
+            $displayName = "Server Manager Service"
+            $binPath = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$serviceScriptPath`""
+
+            if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
+                Write-Log "Removing existing service..."
+                Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+                $null = sc.exe delete $serviceName
+                Start-Sleep -Seconds 2
+            }
+
+            Write-Log "Creating new service..."
+            $null = New-Service -Name $serviceName `
+                              -DisplayName $displayName `
+                              -Description "Manages game servers and provides web interface" `
+                              -BinaryPathName $binPath `
+                              -StartupType Automatic
+
+            Write-Log "Service installation completed"
+            
+            # Start the service
+            Write-Log "Starting service..."
+            Start-Service -Name $serviceName
+            Write-Log "Service started successfully"
+        }
+        catch {
+            Write-Log "Failed to install service: $($_.Exception.Message)"
+            throw
+        }
+    }
 
     Write-Log "Installation completed successfully"
     Write-LogToFile -logFilePath $global:logFilePath
