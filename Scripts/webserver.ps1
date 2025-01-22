@@ -55,7 +55,18 @@ try {
             port = 8081
             timestamp = Get-Date -Format "o"
         }
+        Write-ServerLog "Creating WebSocket ready flag at: $wsReadyFile" -Level "DEBUG"
+        Write-ServerLog "WebSocket config: $($wsConfig | ConvertTo-Json)" -Level "DEBUG"
         $wsConfig | ConvertTo-Json | Out-File -FilePath $wsReadyFile -Force
+
+        # Verify the file was created
+        if (Test-Path $wsReadyFile) {
+            Write-ServerLog "WebSocket ready flag created successfully" -Level "DEBUG"
+            Write-ServerLog "Content: $(Get-Content $wsReadyFile)" -Level "DEBUG"
+        } else {
+            Write-ServerLog "Failed to create WebSocket ready flag!" -Level "ERROR"
+        }
+
         Write-ServerLog "WebSocket ready flag created" -Level "INFO"
 
         # Create TCP listener for WebSocket

@@ -250,80 +250,78 @@ function Connect-WebSocket {
     while (-not $connected -and $retryCount -lt $maxRetries) {
         try {
             $retryCount++
-            $statusLabel.Text = "WebSocket: Attempting connection (Try $retryCount of $maxRetries)..."
-            $statusLabel.ForeColor = [System.Drawing.Color]::Blue
-            $form.Refresh()
+            Write-DashboardLog "Connection attempt $retryCount of $maxRetries" -Level DEBUG
+            
+            $form.Invoke({
+                $statusLabel.Text = "WebSocket: Attempting connection (Try $retryCount of $maxRetries)..."
+                $statusLabel.ForeColor = [System.Drawing.Color]::Blue
+                $form.Refresh()
+            })
 
-            # Check WebSocket ready file with better error handling
+            # Check WebSocket ready file
             $wsReadyFile = Join-Path $env:TEMP "websocket_ready.flag"
-            Write-DashboardLog "Checking WebSocket ready file: $wsReadyFile" -Level DEBUG
+            Write-DashboardLog "Checking WebSocket ready file at: $wsReadyFile" -Level DEBUG
             
             if (-not (Test-Path $wsReadyFile)) {
-                throw "WebSocket ready file not found: $wsReadyFile"
+                Write-DashboardLog "WebSocket ready file not found, waiting..." -Level DEBUG
+                Start-Sleep -Seconds 2
+                continue
             }
 
-            # Read and validate WebSocket configuration
-            $wsConfig = Get-Content $wsReadyFile | ConvertFrom-Json
-            Write-DashboardLog "WebSocket config loaded: $($wsConfig | ConvertTo-Json)" -Level DEBUG
+            $wsConfigContent = Get-Content $wsReadyFile -Raw
+            Write-DashboardLog "WebSocket config content: $wsConfigContent" -Level DEBUG
             
-            if ($wsConfig.status -ne "ready") {
-                throw "WebSocket server not ready. Status: $($wsConfig.status)"
+            $wsConfig = $wsConfigContent | ConvertFrom-Json
+            if (-not $wsConfig -or $wsConfig.status -ne "ready") {
+                throw "WebSocket server not ready. Config: $wsConfigContent"
             }
 
             # Test TCP connection first
-            Write-DashboardLog "Testing TCP connection to localhost:$($wsConfig.port)" -Level DEBUG
             $tcpClient = New-Object System.Net.Sockets.TcpClient
-            $connectionTimeout = $tcpClient.BeginConnect("localhost", $wsConfig.port, $null, $null)
-            $connected = $connectionTimeout.AsyncWaitHandle.WaitOne(1000)
+            Write-DashboardLog "Testing TCP connection to localhost:$($wsConfig.port)" -Level DEBUG
             
-            if (-not $connected) {
-                $tcpClient.Close()
-                throw "Failed to establish TCP connection to WebSocket server"
+            if (-not ($tcpClient.ConnectAsync("localhost", $wsConfig.port).Wait(2000))) {
+                throw "TCP connection timeout"
             }
-            Write-DashboardLog "TCP connection successful" -Level DEBUG
+            $tcpClient.Close()
 
-            # Create and configure WebSocket with longer timeout
+            # Create WebSocket connection
             $webSocket = New-Object System.Net.WebSockets.ClientWebSocket
             $wsUri = "ws://localhost:$($wsConfig.port)/ws"
-            Write-DashboardLog "Attempting WebSocket connection to $wsUri" -Level DEBUG
-            
-            $cancelToken = New-Object System.Threading.CancellationToken
-            $connectTask = $webSocket.ConnectAsync([System.Uri]::new($wsUri), $cancelToken)
-            
-            # Increase timeout to 10 seconds
-            if (-not $connectTask.Wait(10000)) {
-                throw "WebSocket connection timed out after 10 seconds"
+            Write-DashboardLog "Connecting to WebSocket at $wsUri" -Level DEBUG
+
+            $connectTask = $webSocket.ConnectAsync([System.Uri]::new($wsUri), [System.Threading.CancellationToken]::None)
+            if (-not $connectTask.Wait(5000)) {
+                throw "WebSocket connection timeout"
             }
 
             if ($webSocket.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
                 Write-DashboardLog "WebSocket connected successfully" -Level DEBUG
                 $script:webSocketClient = $webSocket
                 $script:isWebSocketConnected = $true
-                $statusLabel.Text = "WebSocket: Connected"
-                $statusLabel.ForeColor = [System.Drawing.Color]::Green
-                $connected = $true
                 
+                $form.Invoke({
+                    $statusLabel.Text = "WebSocket: Connected"
+                    $statusLabel.ForeColor = [System.Drawing.Color]::Green
+                })
+                
+                $connected = $true
                 Start-WebSocketListener
             } else {
                 throw "WebSocket failed to connect. State: $($webSocket.State)"
             }
-        } catch {
-            Write-DashboardLog "Connection attempt $retryCount failed: $($_.Exception.Message)" -Level ERROR
+        }
+        catch {
+            Write-DashboardLog "Connection attempt failed: $($_.Exception.Message)" -Level ERROR
+            Write-DashboardLog $_.ScriptStackTrace -Level DEBUG
+            
             if ($retryCount -lt $maxRetries) {
                 Start-Sleep -Seconds $retryDelay
             } else {
-                $statusLabel.Text = "WebSocket: Connection failed after $maxRetries attempts"
-                $statusLabel.ForeColor = [System.Drawing.Color]::Red
-                [System.Windows.Forms.MessageBox]::Show(
-                    "Could not connect to WebSocket server. Please ensure Server Manager is properly initialized.`n`nError: $($_.Exception.Message)",
-                    "Connection Error",
-                    [System.Windows.Forms.MessageBoxButtons]::OK,
-                    [System.Windows.Forms.MessageBoxIcon]::Warning
-                )
-            }
-        } finally {
-            if ($tcpClient -and $tcpClient.Connected) {
-                $tcpClient.Close()
+                $form.Invoke({
+                    $statusLabel.Text = "WebSocket: Connection failed after $maxRetries attempts"
+                    $statusLabel.ForeColor = [System.Drawing.Color]::Red
+                })
             }
         }
     }

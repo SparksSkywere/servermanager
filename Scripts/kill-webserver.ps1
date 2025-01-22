@@ -142,19 +142,50 @@ Remove-Item -Path "$env:TEMP\servermanager_*.pid" -Force -ErrorAction SilentlyCo
 
 Start-Sleep -Seconds 1
 
-# Final port check
-$portInUse = Test-NetConnection -ComputerName localhost -Port 8080 -WarningAction SilentlyContinue
-if (-not $portInUse.TcpTestSucceeded) {
-    Write-Host "Server Manager stopped successfully" -ForegroundColor Green
-} else {
-    Write-Host "Warning: Port 8080 is still in use" -ForegroundColor Yellow
-    
-    # Force kill any remaining processes using port 8080
-    Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue | 
-        ForEach-Object { 
-            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue 
+# Replace the final port check section with this more aggressive version
+# Kill any processes using port 8080 or 8081
+$portsToCheck = @(8080, 8081)
+foreach ($port in $portsToCheck) {
+    try {
+        $processes = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | 
+            Select-Object -ExpandProperty OwningProcess
+        
+        if ($processes) {
+            Write-Host "Found processes using port $port. Forcefully terminating..." -ForegroundColor Yellow
+            foreach ($processId in $processes) {
+                try {
+                    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+                    if ($process) {
+                        Write-Host "Terminating process: $($process.Name) (PID: $processId)" -ForegroundColor Cyan
+                        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+                    }
+                } catch {
+                    # If normal termination fails, use taskkill
+                    $null = taskkill /F /PID $processId 2>$null
+                }
+            }
+            
+            # Wait briefly for processes to terminate
+            Start-Sleep -Seconds 1
+            
+            # Double-check if port is still in use
+            $stillInUse = Test-NetConnection -ComputerName localhost -Port $port -WarningAction SilentlyContinue
+            if ($stillInUse.TcpTestSucceeded) {
+                # Use netstat to find any remaining processes
+                $netstatOutput = netstat -ano | Select-String ":$port"
+                foreach ($line in $netstatOutput) {
+                    if ($line -match "\s+(\d+)$") {
+                        $processId = $matches[1]
+                        $null = taskkill /F /PID $processId 2>$null
+                    }
+                }
+            }
         }
+    } catch {
+        # Ignore any errors and continue
+    }
 }
 
+Write-Host "Server Manager stopped successfully" -ForegroundColor Green
 Write-Host "Cleanup complete" -ForegroundColor Green
 Start-Sleep -Seconds 2
