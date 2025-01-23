@@ -133,9 +133,33 @@ try {
     $exitMenuItem = New-Object System.Windows.Forms.ToolStripMenuItem
     $exitMenuItem.Text = "Exit"
     $exitMenuItem.Add_Click({
-        Write-TrayLog "Exiting via menu item" -Level DEBUG
-        $script:trayIcon.Visible = $false
-        [System.Windows.Forms.Application]::Exit()
+        try {
+            Write-TrayLog "Starting exit process..." -Level DEBUG
+            
+            # Show console window during cleanup
+            $consolePtr = [Console.Window]::GetConsoleWindow()
+            [void][Console.Window]::ShowWindow($consolePtr, 1)
+            
+            # Remove tray icon immediately
+            $script:trayIcon.Visible = $false
+            $script:trayIcon.Dispose()
+            
+            # Run kill-webserver script
+            $stopScript = Join-Path $serverManagerDir "Scripts\kill-webserver.ps1"
+            if (Test-Path $stopScript) {
+                Write-TrayLog "Running kill-webserver script..." -Level DEBUG
+                & "$stopScript"
+            }
+
+            Write-TrayLog "Exit process complete" -Level DEBUG
+            [System.Windows.Forms.Application]::Exit()
+            exit
+        }
+        catch {
+            Write-TrayLog "Error during exit: $($_.Exception.Message)" -Level ERROR
+            [System.Windows.Forms.MessageBox]::Show("Error during shutdown: $($_.Exception.Message)", "Error")
+            exit 1
+        }
     })
 
     $contextMenu.Items.AddRange(@($openDashboardMenuItem, $openPSFormItem, $exitMenuItem))

@@ -372,7 +372,7 @@ if (-not (Test-Path $logDir)) {
 $webServerLog = Join-Path $logDir "webserver.log"
 $trayIconLog = Join-Path $logDir "trayicon.log"
 
-# Modify process creation for child scripts
+# Modified Start-HiddenProcess function
 function Start-HiddenProcess {
     param(
         [string]$FilePath,
@@ -380,20 +380,42 @@ function Start-HiddenProcess {
         [switch]$NoWindow
     )
     
-    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $startInfo.FileName = "powershell.exe"
-    $startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$FilePath`" $ArgumentList"
-    $startInfo.UseShellExecute = $false
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
-    $startInfo.CreateNoWindow = $true
-    $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-    
     $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $startInfo
-    $null = $process.Start()
+    $process.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $process.StartInfo.FileName = "powershell.exe"
+    $process.StartInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$FilePath`" $ArgumentList"
+    $process.StartInfo.UseShellExecute = $false
+    $process.StartInfo.RedirectStandardOutput = $true
+    $process.StartInfo.RedirectStandardError = $true
+    $process.StartInfo.CreateNoWindow = $true
+    $process.StartInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
     
-    return $process
+    try {
+        $null = $process.Start()
+        $process.BeginOutputReadLine()
+        $process.BeginErrorReadLine()
+        
+        # Register event handlers for output
+        $null = Register-ObjectEvent -InputObject $process -EventName OutputDataReceived -Action {
+            param($sender, $e)
+            if ($e.Data) {
+                Write-StatusMessage $e.Data "Gray" -Verbose
+            }
+        }
+        
+        $null = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
+            param($sender, $e)
+            if ($e.Data) {
+                Write-StatusMessage "ERROR: $($e.Data)" "Red" -Verbose
+            }
+        }
+        
+        return $process
+    }
+    catch {
+        Write-StatusMessage "Failed to start process: $_" "Red"
+        throw
+    }
 }
 
 # Add service support detection
@@ -416,6 +438,25 @@ function Start-TrayIcon {
     
     $Global:ProcessTracker.TrayIcon = $process.Id
     return $process
+}
+
+# Add process name setting and window hiding function
+function Set-ProcessProperties {
+    param(
+        [switch]$HideConsole
+    )
+    
+    if ($HideConsole) {
+        Write-StatusMessage "Hiding console window..." "Gray"
+        Add-Type -Name Window -Namespace Console -MemberDefinition '
+            [DllImport("Kernel32.dll")]
+            public static extern IntPtr GetConsoleWindow();
+            [DllImport("user32.dll")]
+            public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+        '
+        $consolePtr = [Console.Window]::GetConsoleWindow()
+        [void][Console.Window]::ShowWindow($consolePtr, 0)
+    }
 }
 
 # Add new launcher initialization function
@@ -543,22 +584,29 @@ function Initialize-ServerManager {
         }
 
         if ($ready) {
+            Write-StatusMessage "Starting components..." "Cyan"
+            
             # Start tray icon first
             $trayProcess = Start-TrayIcon
             Write-StatusMessage "Tray icon started successfully" "Green"
             
-            # Show dashboard selection if not running as service
+            # Final initialization messages
+            Write-StatusMessage "`nServer Manager initialized successfully!" "Green"
+            Write-StatusMessage "Web Interface available at: http://localhost:8080/" "Cyan"
+            Write-StatusMessage "System tray icon active for management" "Cyan"
+            Write-StatusMessage "Logs directory: $logDir" "Gray"
+            
+            # Give user time to read messages if not in service mode
             if (-not $AsService) {
-                $dashboardChoice = Show-DashboardDialog
-                switch ($dashboardChoice) {
-                    "Web" {
-                        Start-Process "http://localhost:8080"
-                    }
-                    "PowerShell" {
-                        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\dashboard.ps1`""
-                    }
-                }
+                Start-Sleep -Seconds 3
+                Write-StatusMessage "Console window will be hidden in 3 seconds..." "Yellow"
+                Start-Sleep -Seconds 3
             }
+            
+            # Hide console window after initialization
+            Set-ProcessProperties -HideConsole
+            
+            return $true
         }
 
         return $true
@@ -685,8 +733,11 @@ function Start-WebServer {
 # Main execution block
 try {
     if ($script:IsService) {
+        # Service mode - no console needed
+        Set-ProcessProperties -HideConsole
         Initialize-ServerManager -AsService
     } else {
+        # Interactive mode - show console during initialization
         Initialize-ServerManager
     }
     
@@ -713,7 +764,8 @@ catch {
     Write-StatusMessage "Fatal error: $_" "Red"
     Stop-AllComponents
     if (-not $script:IsService) {
-        Read-Host "Press Enter to exit"
+        Write-StatusMessage "Press Enter to exit..." "Red"
+        Read-Host
     }
     exit 1
 }
@@ -729,11 +781,8 @@ try {
     Start-Sleep -Seconds 2
     $trayProcess = Start-TrayIcon
     
-    # Final status message
-    Write-StatusMessage "`nServer Manager is running!" -Color Green
-    Write-StatusMessage "Web Interface: http://localhost:8080/" -Color Cyan
-    Write-StatusMessage "Use the tray icon for management" -Color Cyan
-    Write-StatusMessage "Check logs at: $logDir" -Color Gray
+    # Hide console and set process name
+    Set-ProcessProperties
 
     # Silent monitoring loop
     while ($true) {
