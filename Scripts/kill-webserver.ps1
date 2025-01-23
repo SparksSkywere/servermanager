@@ -126,8 +126,32 @@ foreach ($url in $urls) {
 $null = netsh http delete sslcert ipport=0.0.0.0:8080 2>$null
 $null = netsh http delete sslcert ipport=127.0.0.1:8080 2>$null
 
-# Restart HTTP service quietly
-$null = Stop-Service -Name HTTP -Force -ErrorAction SilentlyContinue
+# Restart HTTP service with retry mechanism
+$maxAttempts = 10
+$attempt = 0
+$stopped = $false
+
+Write-Host "Stopping HTTP Service..." -ForegroundColor Yellow
+Stop-Service -Name HTTP -Force -ErrorAction SilentlyContinue
+
+while ($attempt -lt $maxAttempts) {
+    $service = Get-Service -Name HTTP
+    if ($service.Status -eq 'Stopped') {
+        $stopped = $true
+        break
+    }
+    $attempt++
+    Write-Host "Attempt ${attempt} of ${maxAttempts}: Waiting for HTTP Service to stop..." -ForegroundColor Cyan
+    Start-Sleep -Seconds 1
+}
+
+if (-not $stopped) {
+    Write-Host "Force terminating HTTP Service after $maxAttempts attempts..." -ForegroundColor Red
+    # Use more aggressive methods to stop the service
+    $null = taskkill /F /FI "SERVICES eq HTTP" 2>$null
+}
+
+# Wait a moment before starting the service again
 Start-Sleep -Seconds 1
 $null = Start-Service -Name HTTP -ErrorAction SilentlyContinue
 
