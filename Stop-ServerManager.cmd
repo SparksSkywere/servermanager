@@ -1,2 +1,2 @@
 @echo off
-powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& '%~dp0/Scripts/kill-webserver.ps1'"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '%~dp0/Scripts/kill-webserver.ps1'"

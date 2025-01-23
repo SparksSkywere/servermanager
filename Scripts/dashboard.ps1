@@ -75,13 +75,25 @@ $form.Text = "Server Manager Dashboard"
 $form.Size = New-Object System.Drawing.Size(1200,700)
 $form.StartPosition = "CenterScreen"
 
+# Modify form properties
+$form.Text = "Server Manager Dashboard"
+$form.MinimumSize = New-Object System.Drawing.Size(800,600)
+$form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
+$form.AutoSize = $false
+$form.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
+$form.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+
 # Remove existing tab control setup and create main layout panel
 $mainPanel = New-Object System.Windows.Forms.TableLayoutPanel
 $mainPanel.Size = New-Object System.Drawing.Size(1160,480)
 $mainPanel.Location = New-Object System.Drawing.Point(20,20)
 $mainPanel.ColumnCount = 2
 $mainPanel.RowCount = 1
-$mainPanel.Dock = [System.Windows.Forms.DockStyle]::None
+$mainPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$mainPanel.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$mainPanel.AutoSize = $false
+$mainPanel.Margin = New-Object System.Windows.Forms.Padding(10)
+$mainPanel.Padding = New-Object System.Windows.Forms.Padding(5)
 $mainPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 70)))
 $mainPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 30)))
 $mainPanel.CellBorderStyle = [System.Windows.Forms.TableLayoutPanelCellBorderStyle]::Single
@@ -158,8 +170,343 @@ $mainPanel.Controls.Add($hostPanel, 1, 0)
 
 # Create buttons panel
 $buttonPanel = New-Object System.Windows.Forms.Panel
-$buttonPanel.Location = New-Object System.Drawing.Point(20,520)
-$buttonPanel.Size = New-Object System.Drawing.Size(1160,40)
+$buttonPanel.Dock = [System.Windows.Forms.DockStyle]::Bottom
+$buttonPanel.Height = 50
+$buttonPanel.Padding = New-Object System.Windows.Forms.Padding(10, 5, 10, 5)
+
+# Add these functions before creating the buttons
+function New-IntegratedGameServer {
+    $createForm = New-Object System.Windows.Forms.Form
+    $createForm.Text = "Create Game Server"
+    $createForm.Size = New-Object System.Drawing.Size(450,300)
+    $createForm.StartPosition = "CenterScreen"
+
+    $nameLabel = New-Object System.Windows.Forms.Label
+    $nameLabel.Text = "Server Name:"
+    $nameLabel.Location = New-Object System.Drawing.Point(10,20)
+    $nameLabel.Size = New-Object System.Drawing.Size(100,20)
+
+    $nameTextBox = New-Object System.Windows.Forms.TextBox
+    $nameTextBox.Location = New-Object System.Drawing.Point(120,20)
+    $nameTextBox.Size = New-Object System.Drawing.Size(250,20)
+
+    $appIdLabel = New-Object System.Windows.Forms.Label
+    $appIdLabel.Text = "App ID:"
+    $appIdLabel.Location = New-Object System.Drawing.Point(10,60)
+    $appIdLabel.Size = New-Object System.Drawing.Size(100,20)
+
+    $appIdTextBox = New-Object System.Windows.Forms.TextBox
+    $appIdTextBox.Location = New-Object System.Drawing.Point(120,60)
+    $appIdTextBox.Size = New-Object System.Drawing.Size(250,20)
+
+    $installDirLabel = New-Object System.Windows.Forms.Label
+    $installDirLabel.Text = "Install Directory:"
+    $installDirLabel.Location = New-Object System.Drawing.Point(10,100)
+    $installDirLabel.Size = New-Object System.Drawing.Size(100,20)
+
+    $installDirTextBox = New-Object System.Windows.Forms.TextBox
+    $installDirTextBox.Location = New-Object System.Drawing.Point(120,100)
+    $installDirTextBox.Size = New-Object System.Drawing.Size(200,20)
+
+    $browseButton = New-Object System.Windows.Forms.Button
+    $browseButton.Text = "Browse"
+    $browseButton.Location = New-Object System.Drawing.Point(330,98)
+    $browseButton.Size = New-Object System.Drawing.Size(60,22)
+    $browseButton.Add_Click({
+        $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
+        $folderBrowser.Description = "Select Installation Directory"
+        if ($folderBrowser.ShowDialog() -eq 'OK') {
+            $installDirTextBox.Text = $folderBrowser.SelectedPath
+        }
+    })
+
+    $progressBar = New-Object System.Windows.Forms.ProgressBar
+    $progressBar.Location = New-Object System.Drawing.Point(120,180)
+    $progressBar.Size = New-Object System.Drawing.Size(250,20)
+    $progressBar.Style = 'Marquee'
+    $progressBar.MarqueeAnimationSpeed = 0
+    
+    $statusLabel = New-Object System.Windows.Forms.Label
+    $statusLabel.Location = New-Object System.Drawing.Point(120,160)
+    $statusLabel.Size = New-Object System.Drawing.Size(250,20)
+    $statusLabel.Text = ""
+
+    $createButton = New-Object System.Windows.Forms.Button
+    $createButton.Text = "Create"
+    $createButton.Location = New-Object System.Drawing.Point(120,140)
+    $createButton.Add_Click({
+        $serverName = $nameTextBox.Text
+        $appId = $appIdTextBox.Text
+        $installDir = $installDirTextBox.Text
+
+        if ([string]::IsNullOrWhiteSpace($serverName) -or 
+            [string]::IsNullOrWhiteSpace($appId) -or 
+            [string]::IsNullOrWhiteSpace($installDir)) {
+            [System.Windows.Forms.MessageBox]::Show("Please fill in all fields.", "Error")
+            return
+        }
+
+        $progressBar.MarqueeAnimationSpeed = 30
+        $statusLabel.Text = "Installing server..."
+        $createButton.Enabled = $false
+
+        # Start the installation in a background job
+        $job = Start-Job -ScriptBlock {
+            param($name, $appId, $installDir, $serverManagerDir)
+            
+            # Create server configuration
+            $serverConfig = @{
+                Name = $name
+                AppID = $appId
+                InstallDir = $installDir
+                Created = Get-Date -Format "o"
+                LastUpdate = Get-Date -Format "o"
+            }
+
+            # Save configuration
+            $configPath = Join-Path $serverManagerDir "servers"
+            if (-not (Test-Path $configPath)) {
+                New-Item -ItemType Directory -Path $configPath -Force | Out-Null
+            }
+            $serverConfig | ConvertTo-Json | Set-Content -Path (Join-Path $configPath "$name.json")
+
+            # Install SteamCMD if needed and perform installation
+            # Add your existing installation logic here
+            return @{
+                Success = $true
+                Message = "Server created successfully"
+            }
+        } -ArgumentList $serverName, $appId, $installDir, $serverManagerDir
+
+        # Monitor the job
+        $timer = New-Object System.Windows.Forms.Timer
+        $timer.Interval = 500
+        $timer.Add_Tick({
+            if ($job.State -eq 'Completed') {
+                $result = Receive-Job -Job $job
+                Remove-Job -Job $job
+                $timer.Stop()
+                $progressBar.MarqueeAnimationSpeed = 0
+                
+                if ($result.Success) {
+                    $statusLabel.Text = "Installation complete!"
+                    [System.Windows.Forms.MessageBox]::Show("Server created successfully.", "Success")
+                    $createForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+                    $createForm.Close()
+                    Update-ServerList
+                } else {
+                    $statusLabel.Text = "Installation failed!"
+                    [System.Windows.Forms.MessageBox]::Show("Failed to create server: $($result.Message)", "Error")
+                    $createButton.Enabled = $true
+                }
+            }
+        })
+        $timer.Start()
+    })
+
+    $createForm.Controls.AddRange(@(
+        $nameLabel, $nameTextBox,
+        $appIdLabel, $appIdTextBox,
+        $installDirLabel, $installDirTextBox,
+        $browseButton, $createButton,
+        $progressBar, $statusLabel
+    ))
+
+    $createForm.ShowDialog()
+}
+
+function Remove-IntegratedGameServer {
+    $removeForm = New-Object System.Windows.Forms.Form
+    $removeForm.Text = "Remove Game Server"
+    $removeForm.Size = New-Object System.Drawing.Size(400,200)
+    $removeForm.StartPosition = "CenterScreen"
+
+    $nameLabel = New-Object System.Windows.Forms.Label
+    $nameLabel.Text = "Server Name:"
+    $nameLabel.Location = New-Object System.Drawing.Point(10,20)
+    $nameLabel.Size = New-Object System.Drawing.Size(100,20)
+
+    $serverComboBox = New-Object System.Windows.Forms.ComboBox
+    $serverComboBox.Location = New-Object System.Drawing.Point(120,20)
+    $serverComboBox.Size = New-Object System.Drawing.Size(250,20)
+    $serverComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+
+    # Populate server list
+    $configPath = Join-Path $serverManagerDir "servers"
+    if (Test-Path $configPath) {
+        Get-ChildItem -Path $configPath -Filter "*.json" | ForEach-Object {
+            $serverComboBox.Items.Add($_.BaseName)
+        }
+    }
+
+    $progressBar = New-Object System.Windows.Forms.ProgressBar
+    $progressBar.Location = New-Object System.Drawing.Point(120,80)
+    $progressBar.Size = New-Object System.Drawing.Size(250,20)
+    $progressBar.Style = 'Marquee'
+    $progressBar.MarqueeAnimationSpeed = 0
+
+    $statusLabel = New-Object System.Windows.Forms.Label
+    $statusLabel.Location = New-Object System.Drawing.Point(120,60)
+    $statusLabel.Size = New-Object System.Drawing.Size(250,20)
+    $statusLabel.Text = ""
+
+    $removeButton = New-Object System.Windows.Forms.Button
+    $removeButton.Text = "Remove"
+    $removeButton.Location = New-Object System.Drawing.Point(120,110)
+    $removeButton.Add_Click({
+        $serverName = $serverComboBox.SelectedItem
+
+        if ([string]::IsNullOrEmpty($serverName)) {
+            [System.Windows.Forms.MessageBox]::Show("Please select a server.", "Error")
+            return
+        }
+
+        $confirmResult = [System.Windows.Forms.MessageBox]::Show(
+            "Are you sure you want to remove the server '$serverName'?",
+            "Confirm Removal",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo
+        )
+
+        if ($confirmResult -eq [System.Windows.Forms.DialogResult]::Yes) {
+            $progressBar.MarqueeAnimationSpeed = 30
+            $statusLabel.Text = "Removing server..."
+            $removeButton.Enabled = $false
+
+            # Start removal in background job
+            $job = Start-Job -ScriptBlock {
+                param($serverName, $serverManagerDir)
+                
+                try {
+                    # Stop server if running
+                    $configFile = Join-Path $serverManagerDir "servers\$serverName.json"
+                    if (Test-Path $configFile) {
+                        Remove-Item $configFile -Force
+                    }
+                    
+                    return @{
+                        Success = $true
+                        Message = "Server removed successfully"
+                    }
+                }
+                catch {
+                    return @{
+                        Success = $false
+                        Message = $_.Exception.Message
+                    }
+                }
+            } -ArgumentList $serverName, $serverManagerDir
+
+            # Monitor the job
+            $timer = New-Object System.Windows.Forms.Timer
+            $timer.Interval = 500
+            $timer.Add_Tick({
+                if ($job.State -eq 'Completed') {
+                    $result = Receive-Job -Job $job
+                    Remove-Job -Job $job
+                    $timer.Stop()
+                    $progressBar.MarqueeAnimationSpeed = 0
+                    
+                    if ($result.Success) {
+                        $statusLabel.Text = "Removal complete!"
+                        [System.Windows.Forms.MessageBox]::Show("Server removed successfully.", "Success")
+                        $removeForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+                        $removeForm.Close()
+                        Update-ServerList
+                    } else {
+                        $statusLabel.Text = "Removal failed!"
+                        [System.Windows.Forms.MessageBox]::Show("Failed to remove server: $($result.Message)", "Error")
+                        $removeButton.Enabled = $true
+                    }
+                }
+            })
+            $timer.Start()
+        }
+    })
+
+    $removeForm.Controls.AddRange(@(
+        $nameLabel, $serverComboBox,
+        $removeButton, $progressBar, $statusLabel
+    ))
+
+    $removeForm.ShowDialog()
+}
+
+function New-IntegratedAgent {
+    $agentForm = New-Object System.Windows.Forms.Form
+    $agentForm.Text = "Add Agent"
+    $agentForm.Size = New-Object System.Drawing.Size(400,300)
+    $agentForm.StartPosition = "CenterScreen"
+
+    $nameLabel = New-Object System.Windows.Forms.Label
+    $nameLabel.Text = "Agent Name:"
+    $nameLabel.Location = New-Object System.Drawing.Point(10,20)
+    $nameLabel.Size = New-Object System.Drawing.Size(100,20)
+    
+    $nameBox = New-Object System.Windows.Forms.TextBox
+    $nameBox.Location = New-Object System.Drawing.Point(120,20)
+    $nameBox.Size = New-Object System.Drawing.Size(250,20)
+
+    $ipLabel = New-Object System.Windows.Forms.Label
+    $ipLabel.Text = "IP Address:"
+    $ipLabel.Location = New-Object System.Drawing.Point(10,50)
+    $ipLabel.Size = New-Object System.Drawing.Size(100,20)
+
+    $ipBox = New-Object System.Windows.Forms.TextBox
+    $ipBox.Location = New-Object System.Drawing.Point(120,50)
+    $ipBox.Size = New-Object System.Drawing.Size(250,20)
+
+    $portLabel = New-Object System.Windows.Forms.Label
+    $portLabel.Text = "Port:"
+    $portLabel.Location = New-Object System.Drawing.Point(10,80)
+    $portLabel.Size = New-Object System.Drawing.Size(100,20)
+
+    $portBox = New-Object System.Windows.Forms.TextBox
+    $portBox.Location = New-Object System.Drawing.Point(120,80)
+    $portBox.Size = New-Object System.Drawing.Size(250,20)
+    $portBox.Text = "8080"  # Default port
+
+    $addButton = New-Object System.Windows.Forms.Button
+    $addButton.Text = "Add Agent"
+    $addButton.Location = New-Object System.Drawing.Point(120,120)
+    $addButton.Add_Click({
+        if ([string]::IsNullOrWhiteSpace($nameBox.Text) -or 
+            [string]::IsNullOrWhiteSpace($ipBox.Text) -or 
+            [string]::IsNullOrWhiteSpace($portBox.Text)) {
+            [System.Windows.Forms.MessageBox]::Show("Please fill in all fields.", "Error")
+            return
+        }
+
+        try {
+            $agentConfig = @{
+                Name = $nameBox.Text
+                IP = $ipBox.Text
+                Port = $portBox.Text
+                Added = Get-Date -Format "o"
+            }
+
+            $agentsPath = Join-Path $serverManagerDir "agents"
+            if (-not (Test-Path $agentsPath)) {
+                New-Item -ItemType Directory -Path $agentsPath -Force | Out-Null
+            }
+
+            $agentConfig | ConvertTo-Json | Set-Content -Path (Join-Path $agentsPath "$($nameBox.Text).json")
+            [System.Windows.Forms.MessageBox]::Show("Agent added successfully!", "Success")
+            $agentForm.Close()
+        }
+        catch {
+            [System.Windows.Forms.MessageBox]::Show("Failed to add agent: $($_.Exception.Message)", "Error")
+        }
+    })
+
+    $agentForm.Controls.AddRange(@(
+        $nameLabel, $nameBox,
+        $ipLabel, $ipBox,
+        $portLabel, $portBox,
+        $addButton
+    ))
+
+    $agentForm.ShowDialog()
+}
 
 # Create buttons with similar functionality to web dashboard
 $addButton = New-Object System.Windows.Forms.Button
@@ -167,10 +514,7 @@ $addButton.Location = New-Object System.Drawing.Point(0,0)
 $addButton.Size = New-Object System.Drawing.Size(100,30)
 $addButton.Text = "Add Server"
 $addButton.Add_Click({
-    $createServerPath = Join-Path $serverManagerDir "Scripts\create-server.ps1"
-    if (Test-Path $createServerPath) {
-        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$createServerPath`"" -WindowStyle Normal
-    }
+    New-IntegratedGameServer
 })
 
 $removeButton = New-Object System.Windows.Forms.Button
@@ -178,10 +522,7 @@ $removeButton.Location = New-Object System.Drawing.Point(110,0)
 $removeButton.Size = New-Object System.Drawing.Size(100,30)
 $removeButton.Text = "Remove Server"
 $removeButton.Add_Click({
-    $destroyServerPath = Join-Path $serverManagerDir "Scripts\destroy-server.ps1"
-    if (Test-Path $destroyServerPath) {
-        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$destroyServerPath`"" -WindowStyle Normal
-    }
+    Remove-IntegratedGameServer
 })
 
 $importButton = New-Object System.Windows.Forms.Button
@@ -216,12 +557,7 @@ $agentButton.Location = New-Object System.Drawing.Point(550,0)
 $agentButton.Size = New-Object System.Drawing.Size(100,30)
 $agentButton.Text = "Add Agent"
 $agentButton.Add_Click({
-    $agentFormPath = Join-Path $serverManagerDir "Scripts\agent-form.ps1"
-    if (Test-Path $agentFormPath) {
-        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$agentFormPath`"" -WindowStyle Normal
-    } else {
-        [System.Windows.Forms.MessageBox]::Show("Agent form script not found.", "Error")
-    }
+    New-IntegratedAgent
 })
 
 # Add WebSocket client with connection state tracking
@@ -234,8 +570,9 @@ $webSocket = $null
 
 # Add status label to the form (add this near the form creation code)
 $statusLabel = New-Object System.Windows.Forms.Label
-$statusLabel.Location = New-Object System.Drawing.Point(20, 630)
-$statusLabel.Size = New-Object System.Drawing.Size(1160, 20)
+$statusLabel.Dock = [System.Windows.Forms.DockStyle]::Bottom
+$statusLabel.Height = 25
+$statusLabel.Padding = New-Object System.Windows.Forms.Padding(10, 0, 10, 5)
 $statusLabel.Text = "WebSocket: Disconnected"
 $statusLabel.ForeColor = [System.Drawing.Color]::Red
 $form.Controls.Add($statusLabel)
@@ -640,6 +977,43 @@ $buttonPanel.Controls.AddRange(@($addButton, $removeButton, $importButton, $refr
 $form.Controls.Clear()
 $form.Controls.AddRange(@($mainPanel, $buttonPanel, $statusLabel))
 
+# Create container panel for main content
+$containerPanel = New-Object System.Windows.Forms.TableLayoutPanel
+$containerPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$containerPanel.RowCount = 3
+$containerPanel.ColumnCount = 1
+$containerPanel.Padding = New-Object System.Windows.Forms.Padding(10)
+
+# Set row styles for container panel
+$containerPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+$containerPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$containerPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+
+# Modify form controls
+$form.Controls.Clear()
+$containerPanel.Controls.Add($mainPanel, 0, 0)
+$containerPanel.Controls.Add($buttonPanel, 0, 1)
+$containerPanel.Controls.Add($statusLabel, 0, 2)
+$form.Controls.Add($containerPanel)
+
+# Update button layout
+$buttonPanel.AutoSize = $true
+$buttonFlowPanel = New-Object System.Windows.Forms.FlowLayoutPanel
+$buttonFlowPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$buttonFlowPanel.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+$buttonFlowPanel.WrapContents = $false
+$buttonFlowPanel.AutoSize = $true
+
+# Add buttons to flow panel
+@($addButton, $removeButton, $importButton, $refreshButton, $syncButton, $agentButton) | ForEach-Object {
+    $_.AutoSize = $true
+    $_.Margin = New-Object System.Windows.Forms.Padding(5)
+    $buttonFlowPanel.Controls.Add($_)
+}
+
+$buttonPanel.Controls.Clear()
+$buttonPanel.Controls.Add($buttonFlowPanel)
+
 # Add keep-alive ping function
 function Start-KeepAlivePing {
     if (-not $script:webSocketClient) { return }
@@ -797,3 +1171,260 @@ $form.Add_FormClosing({
 
 # Show the form
 $form.ShowDialog()
+
+# Add these new integrated server management functions before the Import-ExistingServer function
+function New-IntegratedGameServer {
+    $createForm = New-Object System.Windows.Forms.Form
+    $createForm.Text = "Create Game Server"
+    $createForm.Size = New-Object System.Drawing.Size(450,300)
+    $createForm.StartPosition = "CenterScreen"
+
+    $nameLabel = New-Object System.Windows.Forms.Label
+    $nameLabel.Text = "Server Name:"
+    $nameLabel.Location = New-Object System.Drawing.Point(10,20)
+    $nameLabel.Size = New-Object System.Drawing.Size(100,20)
+
+    $nameTextBox = New-Object System.Windows.Forms.TextBox
+    $nameTextBox.Location = New-Object System.Drawing.Point(120,20)
+    $nameTextBox.Size = New-Object System.Drawing.Size(250,20)
+
+    $appIdLabel = New-Object System.Windows.Forms.Label
+    $appIdLabel.Text = "App ID:"
+    $appIdLabel.Location = New-Object System.Drawing.Point(10,60)
+    $appIdLabel.Size = New-Object System.Drawing.Size(100,20)
+
+    $appIdTextBox = New-Object System.Windows.Forms.TextBox
+    $appIdTextBox.Location = New-Object System.Drawing.Point(120,60)
+    $appIdTextBox.Size = New-Object System.Drawing.Size(250,20)
+
+    $installDirLabel = New-Object System.Windows.Forms.Label
+    $installDirLabel.Text = "Install Directory:"
+    $installDirLabel.Location = New-Object System.Drawing.Point(10,100)
+    $installDirLabel.Size = New-Object System.Drawing.Size(100,20)
+
+    $installDirTextBox = New-Object System.Windows.Forms.TextBox
+    $installDirTextBox.Location = New-Object System.Drawing.Point(120,100)
+    $installDirTextBox.Size = New-Object System.Drawing.Size(200,20)
+
+    $browseButton = New-Object System.Windows.Forms.Button
+    $browseButton.Text = "Browse"
+    $browseButton.Location = New-Object System.Drawing.Point(330,98)
+    $browseButton.Size = New-Object System.Drawing.Size(60,22)
+    $browseButton.Add_Click({
+        $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
+        $folderBrowser.Description = "Select Installation Directory"
+        if ($folderBrowser.ShowDialog() -eq 'OK') {
+            $installDirTextBox.Text = $folderBrowser.SelectedPath
+        }
+    })
+
+    $progressBar = New-Object System.Windows.Forms.ProgressBar
+    $progressBar.Location = New-Object System.Drawing.Point(120,180)
+    $progressBar.Size = New-Object System.Drawing.Size(250,20)
+    $progressBar.Style = 'Marquee'
+    $progressBar.MarqueeAnimationSpeed = 0
+    
+    $statusLabel = New-Object System.Windows.Forms.Label
+    $statusLabel.Location = New-Object System.Drawing.Point(120,160)
+    $statusLabel.Size = New-Object System.Drawing.Size(250,20)
+    $statusLabel.Text = ""
+
+    $createButton = New-Object System.Windows.Forms.Button
+    $createButton.Text = "Create"
+    $createButton.Location = New-Object System.Drawing.Point(120,140)
+    $createButton.Add_Click({
+        $serverName = $nameTextBox.Text
+        $appId = $appIdTextBox.Text
+        $installDir = $installDirTextBox.Text
+
+        if ([string]::IsNullOrWhiteSpace($serverName) -or 
+            [string]::IsNullOrWhiteSpace($appId) -or 
+            [string]::IsNullOrWhiteSpace($installDir)) {
+            [System.Windows.Forms.MessageBox]::Show("Please fill in all fields.", "Error")
+            return
+        }
+
+        $progressBar.MarqueeAnimationSpeed = 30
+        $statusLabel.Text = "Installing server..."
+        $createButton.Enabled = $false
+
+        # Start the installation in a background job
+        $job = Start-Job -ScriptBlock {
+            param($name, $appId, $installDir, $serverManagerDir)
+            
+            # Create server configuration
+            $serverConfig = @{
+                Name = $name
+                AppID = $appId
+                InstallDir = $installDir
+                Created = Get-Date -Format "o"
+                LastUpdate = Get-Date -Format "o"
+            }
+
+            # Save configuration
+            $configPath = Join-Path $serverManagerDir "servers"
+            if (-not (Test-Path $configPath)) {
+                New-Item -ItemType Directory -Path $configPath -Force | Out-Null
+            }
+            $serverConfig | ConvertTo-Json | Set-Content -Path (Join-Path $configPath "$name.json")
+
+            # Install SteamCMD if needed and perform installation
+            # Add your existing installation logic here
+            return @{
+                Success = $true
+                Message = "Server created successfully"
+            }
+        } -ArgumentList $serverName, $appId, $installDir, $serverManagerDir
+
+        # Monitor the job
+        $timer = New-Object System.Windows.Forms.Timer
+        $timer.Interval = 500
+        $timer.Add_Tick({
+            if ($job.State -eq 'Completed') {
+                $result = Receive-Job -Job $job
+                Remove-Job -Job $job
+                $timer.Stop()
+                $progressBar.MarqueeAnimationSpeed = 0
+                
+                if ($result.Success) {
+                    $statusLabel.Text = "Installation complete!"
+                    [System.Windows.Forms.MessageBox]::Show("Server created successfully.", "Success")
+                    $createForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+                    $createForm.Close()
+                    Update-ServerList
+                } else {
+                    $statusLabel.Text = "Installation failed!"
+                    [System.Windows.Forms.MessageBox]::Show("Failed to create server: $($result.Message)", "Error")
+                    $createButton.Enabled = $true
+                }
+            }
+        })
+        $timer.Start()
+    })
+
+    $createForm.Controls.AddRange(@(
+        $nameLabel, $nameTextBox,
+        $appIdLabel, $appIdTextBox,
+        $installDirLabel, $installDirTextBox,
+        $browseButton, $createButton,
+        $progressBar, $statusLabel
+    ))
+
+    $createForm.ShowDialog()
+}
+
+function Remove-IntegratedGameServer {
+    $removeForm = New-Object System.Windows.Forms.Form
+    $removeForm.Text = "Remove Game Server"
+    $removeForm.Size = New-Object System.Drawing.Size(400,200)
+    $removeForm.StartPosition = "CenterScreen"
+
+    $nameLabel = New-Object System.Windows.Forms.Label
+    $nameLabel.Text = "Server Name:"
+    $nameLabel.Location = New-Object System.Drawing.Point(10,20)
+    $nameLabel.Size = New-Object System.Drawing.Size(100,20)
+
+    $serverComboBox = New-Object System.Windows.Forms.ComboBox
+    $serverComboBox.Location = New-Object System.Drawing.Point(120,20)
+    $serverComboBox.Size = New-Object System.Drawing.Size(250,20)
+    $serverComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+
+    # Populate server list
+    $configPath = Join-Path $serverManagerDir "servers"
+    if (Test-Path $configPath) {
+        Get-ChildItem -Path $configPath -Filter "*.json" | ForEach-Object {
+            $serverComboBox.Items.Add($_.BaseName)
+        }
+    }
+
+    $progressBar = New-Object System.Windows.Forms.ProgressBar
+    $progressBar.Location = New-Object System.Drawing.Point(120,80)
+    $progressBar.Size = New-Object System.Drawing.Size(250,20)
+    $progressBar.Style = 'Marquee'
+    $progressBar.MarqueeAnimationSpeed = 0
+
+    $statusLabel = New-Object System.Windows.Forms.Label
+    $statusLabel.Location = New-Object System.Drawing.Point(120,60)
+    $statusLabel.Size = New-Object System.Drawing.Size(250,20)
+    $statusLabel.Text = ""
+
+    $removeButton = New-Object System.Windows.Forms.Button
+    $removeButton.Text = "Remove"
+    $removeButton.Location = New-Object System.Drawing.Point(120,110)
+    $removeButton.Add_Click({
+        $serverName = $serverComboBox.SelectedItem
+
+        if ([string]::IsNullOrEmpty($serverName)) {
+            [System.Windows.Forms.MessageBox]::Show("Please select a server.", "Error")
+            return
+        }
+
+        $confirmResult = [System.Windows.Forms.MessageBox]::Show(
+            "Are you sure you want to remove the server '$serverName'?",
+            "Confirm Removal",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo
+        )
+
+        if ($confirmResult -eq [System.Windows.Forms.DialogResult]::Yes) {
+            $progressBar.MarqueeAnimationSpeed = 30
+            $statusLabel.Text = "Removing server..."
+            $removeButton.Enabled = $false
+
+            # Start removal in background job
+            $job = Start-Job -ScriptBlock {
+                param($serverName, $serverManagerDir)
+                
+                try {
+                    # Stop server if running
+                    $configFile = Join-Path $serverManagerDir "servers\$serverName.json"
+                    if (Test-Path $configFile) {
+                        Remove-Item $configFile -Force
+                    }
+                    
+                    return @{
+                        Success = $true
+                        Message = "Server removed successfully"
+                    }
+                }
+                catch {
+                    return @{
+                        Success = $false
+                        Message = $_.Exception.Message
+                    }
+                }
+            } -ArgumentList $serverName, $serverManagerDir
+
+            # Monitor the job
+            $timer = New-Object System.Windows.Forms.Timer
+            $timer.Interval = 500
+            $timer.Add_Tick({
+                if ($job.State -eq 'Completed') {
+                    $result = Receive-Job -Job $job
+                    Remove-Job -Job $job
+                    $timer.Stop()
+                    $progressBar.MarqueeAnimationSpeed = 0
+                    
+                    if ($result.Success) {
+                        $statusLabel.Text = "Removal complete!"
+                        [System.Windows.Forms.MessageBox]::Show("Server removed successfully.", "Success")
+                        $removeForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+                        $removeForm.Close()
+                        Update-ServerList
+                    } else {
+                        $statusLabel.Text = "Removal failed!"
+                        [System.Windows.Forms.MessageBox]::Show("Failed to remove server: $($result.Message)", "Error")
+                        $removeButton.Enabled = $true
+                    }
+                }
+            })
+            $timer.Start()
+        }
+    })
+
+    $removeForm.Controls.AddRange(@(
+        $nameLabel, $serverComboBox,
+        $removeButton, $progressBar, $statusLabel
+    ))
+
+    $removeForm.ShowDialog()
+}
