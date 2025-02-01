@@ -2,6 +2,27 @@ using namespace System.Net.WebSockets
 using namespace System.Net
 using namespace System.Text
 
+# Module-level variables
+$script:DefaultWebSocketPort = 8081
+$script:DefaultWebPort = 8080
+$script:WebSocketReadyFile = Join-Path $env:TEMP "websocket_ready.flag"
+$script:WebServerReadyFile = Join-Path $env:TEMP "webserver_ready.flag"
+
+# Main module functions
+function Global:Get-WebSocketPaths {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param()
+    
+    return @{
+        WebSocketReadyFile = $script:WebSocketReadyFile
+        WebServerReadyFile = $script:WebServerReadyFile
+        DefaultWebSocketPort = $script:DefaultWebSocketPort
+        DefaultWebPort = $script:DefaultWebPort
+    }
+}
+
+# WebSocket server and client classes
 class WebSocketServer {
     hidden [System.Net.Sockets.TcpListener]$Server
     hidden [bool]$IsRunning
@@ -12,11 +33,19 @@ class WebSocketServer {
         $this.Connections = @{}
     }
     
-    [bool] Initialize([int]$Port = 8080, [string]$HostName = "localhost") {
+    [bool] Initialize([int]$Port = $script:DefaultWebSocketPort, [string]$HostName = "localhost") {
         try {
-            $endpoint = [IPEndPoint]::new([IPAddress]::Parse($HostName), $Port)
+            # Remove any stale ready files
+            if (Test-Path $script:WebSocketReadyFile) {
+                Remove-Item $script:WebSocketReadyFile -Force
+            }
+            
+            $endpoint = [IPEndPoint]::new([IPAddress]::Any, $Port)
             $this.Server = [System.Net.Sockets.TcpListener]::new($endpoint)
-            Write-Host "WebSocket Server initialized on $($HostName):$Port"
+            Write-Host "WebSocket Server initialized on port $Port"
+            
+            # Signal ready state
+            Set-WebSocketReady -Port $Port
             return $true
         }
         catch {
@@ -110,7 +139,7 @@ class WebSocketClient {
     }
 }
 
-# Ensure these functions are defined at the module level with proper scope
+# Core WebSocket functions
 function Global:New-WebSocketServer {
     [CmdletBinding()]
     [OutputType([WebSocketServer])]
@@ -139,19 +168,8 @@ function Global:New-WebSocketClient {
     return [WebSocketClient]::new($ServerUrl)
 }
 
-function New-WebSocketServer {
-    param(
-        [int]$Port = 8080
-    )
-    
-    $listener = [TcpListener]::new([IPAddress]::Any, $Port)
-    $listener.Start()
-    
-    Write-Host "WebSocket server started on port $Port"
-    return $listener
-}
-
-function Send-WebSocketMessage {
+function Global:Send-WebSocketMessage {
+    [CmdletBinding()]
     param(
         [System.Net.WebSockets.WebSocket]$WebSocket,
         [string]$Message
@@ -168,7 +186,8 @@ function Send-WebSocketMessage {
     ).Wait()
 }
 
-function Test-WebSocketConnection {
+function Global:Test-WebSocketConnection {
+    [CmdletBinding()]
     param(
         [int]$Port = 8081,
         [string]$HostName = "localhost"
@@ -176,7 +195,7 @@ function Test-WebSocketConnection {
     
     try {
         $tcpClient = New-Object System.Net.Sockets.TcpClient
-        $connected = $tcpClient.ConnectAsync($Host, $Port).Wait(2000)
+        $connected = $tcpClient.ConnectAsync($HostName, $Port).Wait(2000)
         $tcpClient.Close()
         return $connected
     }
@@ -185,9 +204,75 @@ function Test-WebSocketConnection {
     }
 }
 
-# Explicitly export functions and make them visible
-Export-ModuleMember -Function New-WebSocketServer, New-WebSocketClient, Send-WebSocketMessage, Test-WebSocketConnection
+function Global:Set-WebSocketReady {
+    [CmdletBinding()]
+    param(
+        [int]$Port = $script:DefaultWebSocketPort,
+        [string]$Status = "ready"
+    )
+    
+    if ([string]::IsNullOrEmpty($script:WebSocketReadyFile)) {
+        throw "WebSocket ready file path not initialized"
+    }
+    
+    $config = @{
+        status = $Status
+        port = $Port
+        timestamp = Get-Date -Format "o"
+    }
+    
+    $configJson = $config | ConvertTo-Json
+    Write-Verbose "Writing WebSocket ready config to $($script:WebSocketReadyFile): $configJson"
+    $configJson | Set-Content -Path $script:WebSocketReadyFile -Force
+}
 
-# Add type data for classes if needed
+function Global:Test-WebSocketReady {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    
+    if ([string]::IsNullOrEmpty($script:WebSocketReadyFile)) {
+        Write-Warning "WebSocket ready file path not initialized"
+        return $false
+    }
+    
+    if (-not (Test-Path $script:WebSocketReadyFile)) { 
+        Write-Verbose "WebSocket ready file not found at: $script:WebSocketReadyFile"
+        return $false 
+    }
+    
+    try {
+        $config = Get-Content $script:WebSocketReadyFile -Raw | ConvertFrom-Json
+        if ($config.status -ne "ready") { return $false }
+        
+        # Test actual connection
+        $tcpClient = New-Object System.Net.Sockets.TcpClient
+        $connected = $tcpClient.ConnectAsync("localhost", $config.port).Wait(2000)
+        $tcpClient.Dispose()
+        
+        return $connected
+    }
+    catch {
+        return $false
+    }
+}
+
+# Module exports
+Export-ModuleMember -Function @(
+    'Get-WebSocketPaths',
+    'New-WebSocketServer',
+    'New-WebSocketClient',
+    'Send-WebSocketMessage',
+    'Test-WebSocketConnection',
+    'Set-WebSocketReady',
+    'Test-WebSocketReady'
+) -Variable @(
+    'DefaultWebSocketPort',
+    'DefaultWebPort',
+    'WebSocketReadyFile',
+    'WebServerReadyFile'
+)
+
+# Type data for classes
 Update-TypeData -TypeName WebSocketServer -MemberType NoteProperty -MemberName IsWebSocketServer -Value $true -Force
 Update-TypeData -TypeName WebSocketClient -MemberType NoteProperty -MemberName IsWebSocketClient -Value $true -Force

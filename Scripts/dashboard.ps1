@@ -1,3 +1,43 @@
+# Add global script variables at the beginning of the file
+$script:previousNetworkStats = @{}
+$script:previousNetworkTime = Get-Date
+$script:webSocketClient = $null
+$script:isWebSocketConnected = $false
+$script:lastServerListUpdate = [DateTime]::MinValue
+$script:lastFullUpdate = [DateTime]::MinValue
+$script:DebugLoggingEnabled = $false
+$script:pingTimer = $null
+
+# Add initial variable declarations at the top
+$script:outputBuilder = $null
+$script:errorBuilder = $null
+$script:output = $null
+$script:errorMessage = $null
+$script:errorOutput = $null
+$script:steamCmdPath = $null
+$script:timer = $null
+$script:process = $null
+$script:webSocket = $null
+$script:result = $null
+$script:configFile = $null
+$script:serverConfig = $null
+
+# Initialize performance counter
+try {
+    $script:cpuCounter = New-Object System.Diagnostics.PerformanceCounter("Processor", "% Processor Time", "_Total")
+    $script:cpuCounter.NextValue() # First call to initialize
+} catch {
+    Write-DashboardLog "Failed to initialize CPU counter: $($_.Exception.Message)" -Level ERROR
+    $script:cpuCounter = $null
+}
+
+# Add default variables for Steam installation
+$script:defaultSteamPath = Join-Path ${env:ProgramFiles(x86)} "Steam"
+$script:defaultInstallDir = Join-Path $script:defaultSteamPath "steamapps\common"
+
+# Add refresh timer variable
+$script:refreshTimer = $null
+
 # Add at the very beginning of the file, before any other code
 # Function to show or hide the console window
 function Show-Console {
@@ -51,46 +91,184 @@ function Write-DashboardLog {
     }
 }
 
+# Add credential handling functions at the top after initial variables
+function Get-SecureCredentials {
+    param (
+        [string]$credentialName,
+        [string]$keyFile = "C:\ProgramData\ServerManager\encryption.key"
+    )
+    try {
+        if (-not (Test-Path $keyFile)) {
+            throw "Encryption key not found. Please run installer first."
+        }
+
+        $key = Get-Content $keyFile -Encoding Byte
+        $secureKey = $key | ConvertTo-SecureString -AsPlainText -Force
+        
+        $credPath = Join-Path $env:ProgramData "ServerManager\Credentials"
+        $credFile = Join-Path $credPath "$credentialName.cred"
+        
+        if (Test-Path $credFile) {
+            $encrypted = Get-Content $credFile | ConvertTo-SecureString -Key $key
+            $cred = [PSCredential]::new("steam", $encrypted)
+            return $cred
+        }
+        return $null
+    }
+    catch {
+        Write-DashboardLog "Failed to get secure credentials: $($_.Exception.Message)" -Level ERROR
+        return $null
+    }
+}
+
+function Save-SecureCredentials {
+    param (
+        [string]$credentialName,
+        [SecureString]$password,
+        [string]$keyFile = "C:\ProgramData\ServerManager\encryption.key"
+    )
+    try {
+        if (-not (Test-Path $keyFile)) {
+            throw "Encryption key not found. Please run installer first."
+        }
+
+        $key = Get-Content $keyFile -Encoding Byte
+        $credPath = Join-Path $env:ProgramData "ServerManager\Credentials"
+        
+        if (-not (Test-Path $credPath)) {
+            New-Item -Path $credPath -ItemType Directory -Force | Out-Null
+        }
+
+        $credFile = Join-Path $credPath "$credentialName.cred"
+        $password | ConvertFrom-SecureString -Key $key | Set-Content $credFile
+        return $true
+    }
+    catch {
+        Write-DashboardLog "Failed to save secure credentials: $($_.Exception.Message)" -Level ERROR
+        return $false
+    }
+}
+
 # Add this after the Write-DashboardLog function and before other functions
 $script:jobScriptBlock = {
     param($name, $appId, $installDir, $serverManagerDir, $credentials)
+    
+    $output = New-Object System.Text.StringBuilder
+    $errorOutput = $null
+    $steamCmdPath = $null
+    $process = $null
     
     try {
         # Get SteamCMD path from registry
         $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
         $regValues = Get-ItemProperty -Path $registryPath -ErrorAction Stop
         $steamCmdDir = $regValues.SteamCmdPath
-        $steamCmdPath = Join-Path $steamCmdDir "steamcmd.exe"
-        
         Write-Output "Using SteamCMD directory: $steamCmdDir"
         
-        # Immediately start the download - don't wait for other operations
-        $scriptContent = @(
-            if ($installDir) { "force_install_dir `"$installDir`"" }
-            if ($credentials.Anonymous) { "login anonymous" } else { "login `"$($credentials.Username)`" `"$($credentials.Password)`"" }
-            "app_update $appId validate"
-            "quit"
-        ) | Where-Object { $_ }  # Remove empty entries
+        # If installDir is empty, let Steam choose the default path
+        if ([string]::IsNullOrWhiteSpace($installDir)) {
+            Write-Output "Using Steam's default installation path"
+            $installDir = "" # Empty string will let Steam use its default path
+        }
 
-        # Create and execute script file immediately
-        $scriptPath = Join-Path $env:TEMP "steamcmd_script.txt"
-        $scriptContent | Set-Content -Path $scriptPath -Force
-
-        Write-Output "Starting SteamCMD download immediately..."
-        
-        # Start process with minimal setup
-        $process = Start-Process -FilePath $steamCmdPath -ArgumentList "+runscript `"$scriptPath`"" -NoNewWindow -PassThru -RedirectStandardOutput "$env:TEMP\steamcmd_output.log"
-
-        # Then handle the directory creation and other setup while download is running
+        # Only create directory if a custom path is specified
         if ($installDir -and -not (Test-Path $installDir)) {
-            Write-Output "Creating install directory in background: $installDir"
+            Write-Output "Creating custom install directory: $installDir"
             New-Item -ItemType Directory -Path $installDir -Force | Out-Null
         }
 
-        # Wait for the process to complete
+        Write-Output "Starting server installation..."
+        
+        # Build SteamCMD command
+        $steamCmdArgs = if ($credentials.Anonymous) {
+            "+login anonymous"
+        } else {
+            "+login `"$($credentials.Username)`" `"$($credentials.Password)`""
+        }
+
+        if ($installDir) {
+            $steamCmdArgs += " +force_install_dir `"$installDir`""
+        }
+
+        $steamCmdArgs += " +app_update $appId validate +quit"
+        
+        Write-Output "Running SteamCMD with arguments: $steamCmdArgs"
+
+        # Start SteamCMD process
+        $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+        $pinfo.FileName = $steamCmdPath
+        $pinfo.Arguments = $steamCmdArgs
+        $pinfo.UseShellExecute = $false
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.RedirectStandardError = $true
+        $pinfo.RedirectStandardInput = $true
+        $pinfo.CreateNoWindow = $true
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $pinfo
+        
+        Write-Output "Starting SteamCMD process..."
+        $process.Start() | Out-Null
+
+        # Capture output in real-time
+        $output = New-Object System.Text.StringBuilder
+        while (!$process.StandardOutput.EndOfStream) {
+            $line = $process.StandardOutput.ReadLine()
+            $output.AppendLine($line)
+            Write-Output $line
+        }
+
+        $errorOutput = $process.StandardError.ReadToEnd()
         $process.WaitForExit()
 
-        # ...rest of existing error checking and configuration code...
+        Write-Output "SteamCMD process completed with exit code: $($process.ExitCode)"
+        
+        if ($errorOutput) {
+            Write-Output "SteamCMD Errors:"
+            Write-Output $errorOutput
+        }
+
+        if ($process.ExitCode -ne 0) {
+            throw "SteamCMD failed with exit code: $($process.ExitCode)`nOutput: $($output.ToString())`nErrors: $errorOutput"
+        }
+
+        # Verify installation
+        if (-not (Test-Path $installDir)) {
+            throw "Installation directory not created: $installDir"
+        }
+
+        $installedFiles = Get-ChildItem -Path $installDir -Recurse
+        if (-not $installedFiles) {
+            throw "No files were installed to: $installDir"
+        }
+
+        # Create server configuration
+        Write-Output "Creating server configuration..."
+        $serverConfig = @{
+            Name = $name
+            AppID = $appId
+            InstallDir = $installDir
+            Created = Get-Date -Format "o"
+            LastUpdate = Get-Date -Format "o"
+        }
+
+        $configPath = Join-Path $serverManagerDir "servers"
+        if (-not (Test-Path $configPath)) {
+            Write-Output "Creating servers directory: $configPath"
+            New-Item -ItemType Directory -Path $configPath -Force | Out-Null
+        }
+
+        $configFile = Join-Path $configPath "$name.json"
+        Write-Output "Saving configuration to: $configFile"
+        $serverConfig | ConvertTo-Json | Set-Content -Path $configFile -Force
+
+        Write-Output "Configuration saved successfully"
+
+        return @{
+            Success = $true
+            Message = "Server created successfully at $installDir"
+            InstallPath = $installDir
+        }
     }
     catch {
         Write-Output "Error occurred: $($_.Exception.Message)"
@@ -101,9 +279,8 @@ $script:jobScriptBlock = {
         }
     }
     finally {
-        # Cleanup
-        if (Test-Path $scriptPath) {
-            Remove-Item $scriptPath -Force -ErrorAction SilentlyContinue
+        if ($null -ne $process) {
+            $process.Dispose()
         }
     }
 }
@@ -316,9 +493,10 @@ function New-IntegratedGameServer {
     
     $createForm = New-Object System.Windows.Forms.Form
     $createForm.Text = "Create Game Server"
-    $createForm.Size = New-Object System.Drawing.Size(450,300)
+    $createForm.Size = New-Object System.Drawing.Size(600,500)
     $createForm.StartPosition = "CenterScreen"
 
+    # Keep existing input controls but adjust their positions
     $nameLabel = New-Object System.Windows.Forms.Label
     $nameLabel.Text = "Server Name:"
     $nameLabel.Location = New-Object System.Drawing.Point(10,20)
@@ -330,25 +508,25 @@ function New-IntegratedGameServer {
 
     $appIdLabel = New-Object System.Windows.Forms.Label
     $appIdLabel.Text = "App ID:"
-    $appIdLabel.Location = New-Object System.Drawing.Point(10,60)
+    $appIdLabel.Location = New-Object System.Drawing.Point(10,50)
     $appIdLabel.Size = New-Object System.Drawing.Size(100,20)
 
     $appIdTextBox = New-Object System.Windows.Forms.TextBox
-    $appIdTextBox.Location = New-Object System.Drawing.Point(120,60)
+    $appIdTextBox.Location = New-Object System.Drawing.Point(120,50)
     $appIdTextBox.Size = New-Object System.Drawing.Size(250,20)
 
     $installDirLabel = New-Object System.Windows.Forms.Label
     $installDirLabel.Text = "Install Directory:"
-    $installDirLabel.Location = New-Object System.Drawing.Point(10,100)
+    $installDirLabel.Location = New-Object System.Drawing.Point(10,80)
     $installDirLabel.Size = New-Object System.Drawing.Size(100,20)
 
     $installDirTextBox = New-Object System.Windows.Forms.TextBox
-    $installDirTextBox.Location = New-Object System.Drawing.Point(120,100)
+    $installDirTextBox.Location = New-Object System.Drawing.Point(120,80)
     $installDirTextBox.Size = New-Object System.Drawing.Size(200,20)
 
     $browseButton = New-Object System.Windows.Forms.Button
     $browseButton.Text = "Browse"
-    $browseButton.Location = New-Object System.Drawing.Point(330,98)
+    $browseButton.Location = New-Object System.Drawing.Point(330,78)
     $browseButton.Size = New-Object System.Drawing.Size(60,22)
     $browseButton.Add_Click({
         $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
@@ -358,74 +536,183 @@ function New-IntegratedGameServer {
         }
     })
 
+    # Add console output window
+    $consoleOutput = New-Object System.Windows.Forms.RichTextBox
+    $consoleOutput.Location = New-Object System.Drawing.Point(10,120)
+    $consoleOutput.Size = New-Object System.Drawing.Size(560,250)  # Wide console window
+    $consoleOutput.MultiLine = $true
+    $consoleOutput.ScrollBars = "Vertical"
+    $consoleOutput.BackColor = [System.Drawing.Color]::Black
+    $consoleOutput.ForeColor = [System.Drawing.Color]::White
+    $consoleOutput.Font = New-Object System.Drawing.Font("Consolas", 9)
+    $consoleOutput.ReadOnly = $true
+
+    # Move progress elements below console
     $progressBar = New-Object System.Windows.Forms.ProgressBar
-    $progressBar.Location = New-Object System.Drawing.Point(120,180)
-    $progressBar.Size = New-Object System.Drawing.Size(250,20)
+    $progressBar.Location = New-Object System.Drawing.Point(10,390)  # Moved down
+    $progressBar.Size = New-Object System.Drawing.Size(560,20)
     $progressBar.Style = 'Marquee'
     $progressBar.MarqueeAnimationSpeed = 0
-    
+
     $statusLabel = New-Object System.Windows.Forms.Label
-    $statusLabel.Location = New-Object System.Drawing.Point(120,160)
-    $statusLabel.Size = New-Object System.Drawing.Size(250,20)
+    $statusLabel.Location = New-Object System.Drawing.Point(10,370)  # Moved down
+    $statusLabel.Size = New-Object System.Drawing.Size(560,20)
     $statusLabel.Text = ""
 
     $createButton = New-Object System.Windows.Forms.Button
     $createButton.Text = "Create"
-    $createButton.Location = New-Object System.Drawing.Point(120,140)
+    $createButton.Location = New-Object System.Drawing.Point(10,420)  # Moved down
+    $createButton.Size = New-Object System.Drawing.Size(100,30)
+
+    # Modify the click handler to update the console output
     $createButton.Add_Click({
         try {
             Write-DashboardLog "Starting server creation process" -Level DEBUG
             
-            $serverName = $nameTextBox.Text.Trim()
-            $appId = $appIdTextBox.Text.Trim()
-            $installDir = $installDirTextBox.Text.Trim()
-
-            # Validate input
-            if ([string]::IsNullOrWhiteSpace($serverName) -or [string]::IsNullOrWhiteSpace($appId)) {
-                Write-DashboardLog "Validation failed: Missing required fields" -Level ERROR
-                [System.Windows.Forms.MessageBox]::Show("Please fill in server name and App ID.", "Error")
+            # Validate required fields
+            if ([string]::IsNullOrWhiteSpace($nameTextBox.Text)) {
+                [System.Windows.Forms.MessageBox]::Show("Server name is required.", "Validation Error")
+                Write-DashboardLog "Validation failed: Server name missing" -Level ERROR
                 return
             }
 
-            if (-not [string]::IsNullOrWhiteSpace($installDir) -and -not (Test-Path -Path $installDir -IsValid)) {
-                Write-DashboardLog "Invalid installation path specified" -Level ERROR
-                [System.Windows.Forms.MessageBox]::Show("Invalid installation directory path.", "Error")
+            if ([string]::IsNullOrWhiteSpace($appIdTextBox.Text)) {
+                [System.Windows.Forms.MessageBox]::Show("Steam App ID is required.", "Validation Error")
+                Write-DashboardLog "Validation failed: App ID missing" -Level ERROR
                 return
+            }
+
+            # Validate App ID is numeric
+            if (-not [int]::TryParse($appIdTextBox.Text, [ref]$null)) {
+                [System.Windows.Forms.MessageBox]::Show("Steam App ID must be a number.", "Validation Error")
+                Write-DashboardLog "Validation failed: Invalid App ID format" -Level ERROR
+                return
+            }
+
+            # Validate server name doesn't already exist
+            $existingConfigPath = Join-Path $serverManagerDir "servers\$($nameTextBox.Text).json"
+            if (Test-Path $existingConfigPath) {
+                [System.Windows.Forms.MessageBox]::Show("A server with this name already exists.", "Validation Error")
+                Write-DashboardLog "Validation failed: Server name already exists" -Level ERROR
+                return
+            }
+
+            # Validate install directory if specified
+            if (-not [string]::IsNullOrWhiteSpace($installDirTextBox.Text)) {
+                $installPath = $installDirTextBox.Text
+                
+                # Check if path is valid
+                try {
+                    $null = [System.IO.Path]::GetFullPath($installPath)
+                }
+                catch {
+                    [System.Windows.Forms.MessageBox]::Show("Invalid installation path specified.", "Validation Error")
+                    Write-DashboardLog "Validation failed: Invalid install path" -Level ERROR
+                    return
+                }
+
+                # Check if path exists and is empty, or can be created
+                if (Test-Path $installPath) {
+                    if ((Get-ChildItem $installPath -Force).Count -gt 0) {
+                        $result = [System.Windows.Forms.MessageBox]::Show(
+                            "The specified installation directory is not empty. Continue anyway?",
+                            "Warning",
+                            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                            [System.Windows.Forms.MessageBoxIcon]::Warning
+                        )
+                        if ($result -eq [System.Windows.Forms.DialogResult]::No) {
+                            Write-DashboardLog "User cancelled due to non-empty directory" -Level DEBUG
+                            return
+                        }
+                    }
+                }
+                else {
+                    try {
+                        $null = New-Item -ItemType Directory -Path $installPath -Force -ErrorAction Stop
+                        Remove-Item $installPath -Force
+                    }
+                    catch {
+                        [System.Windows.Forms.MessageBox]::Show("Cannot create installation directory. Please check permissions.", "Validation Error")
+                        Write-DashboardLog "Validation failed: Cannot create install directory - $($_.Exception.Message)" -Level ERROR
+                        return
+                    }
+                }
             }
 
             $progressBar.MarqueeAnimationSpeed = 30
             $statusLabel.Text = "Installing server..."
             $createButton.Enabled = $false
 
-            Write-DashboardLog "Starting background job for server installation" -Level DEBUG
+            # Clear console output
+            $consoleOutput.Clear()
+            $consoleOutput.AppendText("Starting server installation...\n")
 
-            # Use the passed-in credentials
-            $credentials = $SteamCredentials
+            # Modify job scriptblock to include output
+            $job = Start-Job -ScriptBlock {
+                param($name, $appId, $installDir, $serverManagerDir, $credentials)
+                
+                try {
+                    # Get SteamCMD path from registry
+                    $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+                    $regValues = Get-ItemProperty -Path $registryPath -ErrorAction Stop
+                    $steamCmdDir = $regValues.SteamCmdPath
+                    Write-Output "[INFO] Initializing installation..."
+                    Write-Output "[INFO] Server Name: $name"
+                    Write-Output "[INFO] App ID: $appId"
+                    Write-Output "[INFO] Install Directory: $installDir"
+                    Write-Output "[INFO] Using SteamCMD directory: $steamCmdDir"
+                    
+                    # Create install directory if needed
+                    if ($installDir -and -not (Test-Path $installDir)) {
+                        Write-Output "[INFO] Creating installation directory"
+                        New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+                    }
 
-            # Start the installation in a background job
-            $job = Start-Job -ScriptBlock $script:jobScriptBlock -ArgumentList $serverName, $appId, $installDir, $serverManagerDir, $credentials
+                    # Start SteamCMD installation
+                    Write-Output "[INFO] Starting SteamCMD download"
+                    $result = Start-SteamCmdProcess -steamCmdPath $steamCmdPath -appId $appId -installDir $installDir -credentials $credentials
 
-            Write-DashboardLog "Background job started with ID: $($job.Id)" -Level DEBUG
+                    if ($result.Success) {
+                        Write-Output "[SUCCESS] Installation completed successfully"
+                        return @{
+                            Success = $true
+                            Message = "Server installed successfully"
+                        }
+                    } else {
+                        throw $result.Message
+                    }
+                    
+                } catch {
+                    Write-Output "[ERROR] $($_.Exception.Message)"
+                    throw $_
+                }
+            } -ArgumentList $nameTextBox.Text, $appIdTextBox.Text, $installDirTextBox.Text, $serverManagerDir, $SteamCredentials
 
-            # Monitor the job
+            # Create timer to monitor job and update console
             $timer = New-Object System.Windows.Forms.Timer
-            $timer.Interval = 500
+            $timer.Interval = 100
             $timer.Add_Tick({
+                $job | Receive-Job | ForEach-Object {
+                    $consoleOutput.AppendText("$_`n")
+                    $consoleOutput.ScrollToCaret()
+                }
+
                 if ($job.State -eq 'Completed') {
-                    $result = Receive-Job -Job $job
-                    Remove-Job -Job $job
                     $timer.Stop()
+                    $result = Receive-Job -Job $job -Keep
+                    Remove-Job -Job $job
                     $progressBar.MarqueeAnimationSpeed = 0
                     
                     if ($result.Success) {
                         $statusLabel.Text = "Installation complete!"
+                        $consoleOutput.AppendText("[SUCCESS] Server created successfully.`n")
                         [System.Windows.Forms.MessageBox]::Show("Server created successfully.", "Success")
                         $createForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
                         $createForm.Close()
                         Update-ServerList
                     } else {
                         $statusLabel.Text = "Installation failed!"
-                        [System.Windows.Forms.MessageBox]::Show("Failed to create server: $($result.Message)", "Error")
+                        $consoleOutput.AppendText("[ERROR] Failed to create server: $($result.Message)`n")
                         $createButton.Enabled = $true
                     }
                 }
@@ -434,19 +721,20 @@ function New-IntegratedGameServer {
         }
         catch {
             Write-DashboardLog "Critical error in server creation: $($_.Exception.Message)" -Level ERROR
-            Write-DashboardLog $_.ScriptStackTrace -Level ERROR
+            $consoleOutput.AppendText("[ERROR] Critical error: $($_.Exception.Message)`n")
             $statusLabel.Text = "Critical error!"
             $createButton.Enabled = $true
-            [System.Windows.Forms.MessageBox]::Show("Critical error occurred: $($_.Exception.Message)", "Error")
         }
     })
 
+    # Add all controls to form
     $createForm.Controls.AddRange(@(
         $nameLabel, $nameTextBox,
         $appIdLabel, $appIdTextBox,
         $installDirLabel, $installDirTextBox,
-        $browseButton, $createButton,
-        $progressBar, $statusLabel
+        $browseButton, $consoleOutput,
+        $statusLabel, $progressBar,
+        $createButton
     ))
 
     $createForm.ShowDialog()
@@ -722,41 +1010,46 @@ $statusLabel.Text = "WebSocket: Disconnected"
 $statusLabel.ForeColor = [System.Drawing.Color]::Red
 $form.Controls.Add($statusLabel)
 
-# Modified Connect-WebSocket function with retry logic and more debugging
+# Replace the Connect-WebSocket function with this complete implementation
 function Connect-WebSocket {
+    # Variable setup
     $maxRetries = 5
     $retryCount = 0
     $retryDelay = 2
     $connected = $false
+    $tcpClient = $null
+    $webSocket = $null
+    $cancellationToken = [System.Threading.CancellationToken]::None
+    $connectionTimeout = 5000  # 5 seconds timeout
+
+    Write-DashboardLog "Initializing WebSocket connection..." -Level DEBUG
 
     while (-not $connected -and $retryCount -lt $maxRetries) {
         try {
             $retryCount++
             Write-DashboardLog "Connection attempt $retryCount of $maxRetries" -Level DEBUG
             
-            # Fix the Invoke syntax
+            # Update UI status
             $form.Invoke([Action]{
                 $statusLabel.Text = "WebSocket: Attempting connection (Try $retryCount of $maxRetries)..."
                 $statusLabel.ForeColor = [System.Drawing.Color]::Blue
                 $form.Refresh()
             })
 
-            # Check WebSocket ready file
-            $wsReadyFile = Join-Path $env:TEMP "websocket_ready.flag"
-            Write-DashboardLog "Checking WebSocket ready file at: $wsReadyFile" -Level DEBUG
+            # Wait for both web server and WebSocket server to be ready
+            $webReady = Test-Path $script:WebServerReadyFile
+            $wsReady = Test-WebSocketReady
             
-            if (-not (Test-Path $wsReadyFile)) {
-                Write-DashboardLog "WebSocket ready file not found, waiting..." -Level DEBUG
-                Start-Sleep -Seconds 2
+            if (-not ($webReady -and $wsReady)) {
+                Write-DashboardLog "Waiting for servers to be ready (Try $retryCount/$maxRetries)" -Level DEBUG
+                Start-Sleep -Seconds $retryDelay
                 continue
             }
-
-            $wsConfigContent = Get-Content $wsReadyFile -Raw
-            Write-DashboardLog "WebSocket config content: $wsConfigContent" -Level DEBUG
             
-            $wsConfig = $wsConfigContent | ConvertFrom-Json
+            # Get WebSocket configuration
+            $wsConfig = Get-Content $script:WebSocketReadyFile -Raw | ConvertFrom-Json
             if (-not $wsConfig -or $wsConfig.status -ne "ready") {
-                throw "WebSocket server not ready. Config: $wsConfigContent"
+                throw "WebSocket server not ready. Config: $($wsConfig | ConvertTo-Json)"
             }
 
             # Test TCP connection first
@@ -768,14 +1061,19 @@ function Connect-WebSocket {
             }
             $tcpClient.Close()
 
-            # Create WebSocket connection
+            # Initialize WebSocket connection
             $webSocket = New-Object System.Net.WebSockets.ClientWebSocket
             $wsUri = "ws://localhost:$($wsConfig.port)/ws"
             Write-DashboardLog "Connecting to WebSocket at $wsUri" -Level DEBUG
 
-            $connectTask = $webSocket.ConnectAsync([System.Uri]::new($wsUri), [System.Threading.CancellationToken]::None)
-            if (-not $connectTask.Wait(5000)) {
-                throw "WebSocket connection timeout"
+            # Set up WebSocket options
+            $webSocket.Options.KeepAliveInterval = [TimeSpan]::FromSeconds(30)
+            $webSocket.Options.SetBuffer(8192, 8192)  # 8KB buffer size
+
+            # Attempt connection with timeout
+            $connectTask = $webSocket.ConnectAsync([System.Uri]::new($wsUri), $cancellationToken)
+            if (-not $connectTask.Wait($connectionTimeout)) {
+                throw "WebSocket connection timeout after $($connectionTimeout/1000) seconds"
             }
 
             if ($webSocket.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
@@ -783,14 +1081,38 @@ function Connect-WebSocket {
                 $script:webSocketClient = $webSocket
                 $script:isWebSocketConnected = $true
                 
-                # Fix the Invoke syntax
+                # Update UI status
                 $form.Invoke([Action]{
                     $statusLabel.Text = "WebSocket: Connected"
                     $statusLabel.ForeColor = [System.Drawing.Color]::Green
                 })
                 
+                # Set up message handling
                 $connected = $true
+                
+                # Initialize WebSocket listener
                 Start-WebSocketListener
+                
+                # Send initial handshake message
+                $handshake = @{
+                    type = "handshake"
+                    client = "dashboard"
+                    version = "1.0"
+                    timestamp = Get-Date -Format "o"
+                } | ConvertTo-Json
+                
+                $buffer = [System.Text.Encoding]::UTF8.GetBytes($handshake)
+                $segment = [ArraySegment[byte]]::new($buffer)
+                
+                $sendTask = $webSocket.SendAsync(
+                    $segment,
+                    [System.Net.WebSockets.WebSocketMessageType]::Text,
+                    $true,
+                    $cancellationToken
+                )
+                $sendTask.Wait(2000)
+                
+                Write-DashboardLog "WebSocket handshake sent" -Level DEBUG
             } else {
                 throw "WebSocket failed to connect. State: $($webSocket.State)"
             }
@@ -799,45 +1121,107 @@ function Connect-WebSocket {
             Write-DashboardLog "Connection attempt failed: $($_.Exception.Message)" -Level ERROR
             Write-DashboardLog $_.ScriptStackTrace -Level DEBUG
             
+            if ($webSocket) {
+                $webSocket.Dispose()
+                $webSocket = $null
+            }
+            
             if ($retryCount -lt $maxRetries) {
+                Write-DashboardLog "Retrying in $retryDelay seconds..." -Level DEBUG
                 Start-Sleep -Seconds $retryDelay
             } else {
-                # Fix the Invoke syntax
+                # Update UI status for final failure
                 $form.Invoke([Action]{
                     $statusLabel.Text = "WebSocket: Connection failed after $maxRetries attempts"
                     $statusLabel.ForeColor = [System.Drawing.Color]::Red
                 })
+                Write-DashboardLog "Connection failed after $maxRetries attempts" -Level ERROR
+            }
+        }
+        finally {
+            if ($null -ne $tcpClient) {
+                $tcpClient.Dispose()
             }
         }
     }
+
+    # Return connection status
+    return $connected
 }
 
-# Add new function to handle WebSocket listening
+# Update the Start-WebSocketListener function to handle messages properly
 function Start-WebSocketListener {
-    $buffer = [byte[]]::new(4096)
+    $buffer = [byte[]]::new(8192)  # 8KB buffer
+    $cancelToken = [System.Threading.CancellationToken]::None
+    
     $receiveTask = $script:webSocketClient.ReceiveAsync(
         [System.ArraySegment[byte]]::new($buffer),
-        [System.Threading.CancellationToken]::None
+        $cancelToken
     )
 
     $receiveTask.ContinueWith({
         param($Task)
-        if ($Task.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion) {
-            if ($Task.Result.Count -gt 0) {
-                $jsonData = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $Task.Result.Count)
-                $updateData = $jsonData | ConvertFrom-Json
-                
-                # Fix the Invoke syntax
+        
+        try {
+            if ($Task.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion) {
+                if ($Task.Result.Count -gt 0) {
+                    $jsonData = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $Task.Result.Count)
+                    Write-DashboardLog "Received WebSocket message: $jsonData" -Level DEBUG
+                    
+                    $updateData = $jsonData | ConvertFrom-Json
+                    
+                    # Handle different message types
+                    switch ($updateData.Type) {
+                        "ServerListUpdate" {
+                            $form.Invoke([Action]{
+                                Update-ServerList
+                            })
+                        }
+                        "HostUpdate" {
+                            $form.Invoke([Action]{
+                                Update-HostInformation
+                            })
+                        }
+                        "Ping" {
+                            # Respond to ping with pong
+                            $pongMessage = @{
+                                Type = "Pong"
+                                Timestamp = Get-Date -Format "o"
+                            } | ConvertTo-Json
+                            
+                            $pongBuffer = [System.Text.Encoding]::UTF8.GetBytes($pongMessage)
+                            $script:webSocketClient.SendAsync(
+                                [ArraySegment[byte]]::new($pongBuffer),
+                                [System.Net.WebSockets.WebSocketMessageType]::Text,
+                                $true,
+                                $cancelToken
+                            ).Wait()
+                        }
+                    }
+                    
+                    # Continue listening
+                    Start-WebSocketListener
+                }
+            } else {
                 $form.Invoke([Action]{
-                    Update-ServerList
+                    $statusLabel.Text = "WebSocket: Disconnected"
+                    $statusLabel.ForeColor = [System.Drawing.Color]::Red
+                    $script:isWebSocketConnected = $false
                 })
                 
-                # Continue listening
-                Start-WebSocketListener
+                Write-DashboardLog "WebSocket disconnected. Task status: $($Task.Status)" -Level ERROR
+                
+                # Attempt reconnection
+                Start-Sleep -Seconds 5
+                Connect-WebSocket
             }
-        } else {
+        }
+        catch {
+            Write-DashboardLog "Error in WebSocket listener: $($_.Exception.Message)" -Level ERROR
+            Write-DashboardLog $_.ScriptStackTrace -Level DEBUG
+            
             $form.Invoke([Action]{
-                $statusLabel.Text = "WebSocket: Disconnected"
+                $statusLabel.Text = "WebSocket: Error"
                 $statusLabel.ForeColor = [System.Drawing.Color]::Red
                 $script:isWebSocketConnected = $false
             })
@@ -1269,7 +1653,7 @@ Update-HostInformation
 
 # Replace the form closing event with this enhanced version
 $form.Add_FormClosing({
-    param($sender, $e)
+    param($eventSender, $e)
     
     Write-DashboardLog "Dashboard closing initiated..." -Level DEBUG
 
@@ -1498,43 +1882,6 @@ function Remove-IntegratedGameServer {
     $nameLabel = New-Object System.Windows.Forms.Label
     $nameLabel.Text = "Server Name:"
     $nameLabel.Location = New-Object System.Drawing.Point(10,20)
-    $nameLabel.Size = New-Object System.Drawing.Size(100,20)
-
-    $serverComboBox = New-Object System.Windows.Forms.ComboBox
-    $serverComboBox.Location = New-Object System.Drawing.Point(120,20)
-    $serverComboBox.Size = New-Object System.Drawing.Size(250,20)
-    $serverComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-
-    # Populate server list
-    $configPath = Join-Path $serverManagerDir "servers"
-    if (Test-Path $configPath) {
-        Get-ChildItem -Path $configPath -Filter "*.json" | ForEach-Object {
-            $serverComboBox.Items.Add($_.BaseName)
-        }
-    }
-
-    $progressBar = New-Object System.Windows.Forms.ProgressBar
-    $progressBar.Location = New-Object System.Drawing.Point(120,80)
-    $progressBar.Size = New-Object System.Drawing.Size(250,20)
-    $progressBar.Style = 'Marquee'
-    $progressBar.MarqueeAnimationSpeed = 0
-
-    $statusLabel = New-Object System.Windows.Forms.Label
-    $statusLabel.Location = New-Object System.Drawing.Point(120,60)
-    $statusLabel.Size = New-Object System.Drawing.Size(250,20)
-    $statusLabel.Text = ""
-
-    $removeButton = New-Object System.Windows.Forms.Button
-    $removeButton.Text = "Remove"
-    $removeButton.Location = New-Object System.Drawing.Point(120,110)
-    $removeButton.Add_Click({
-        $serverName = $serverComboBox.SelectedItem
-
-        if ([string]::IsNullOrEmpty($serverName)) {
-            [System.Windows.Forms.MessageBox]::Show("Please select a server.", "Error")
-            return
-        }
-
         $confirmResult = [System.Windows.Forms.MessageBox]::Show(
             "Are you sure you want to remove the server '$serverName'?",
             "Confirm Removal",
@@ -1595,7 +1942,7 @@ function Remove-IntegratedGameServer {
             })
             $timer.Start()
         }
-    })
+    }
 
     $removeForm.Controls.AddRange(@(
         $nameLabel, $serverComboBox,
@@ -1603,7 +1950,6 @@ function Remove-IntegratedGameServer {
     ))
 
     $removeForm.ShowDialog()
-}
 
 # Add new Steam login form function
 function Get-SteamCredentials {
@@ -1695,123 +2041,11 @@ function Start-SteamCmdProcess {
         [hashtable]$credentials
     )
 
-    try {
-        $steamCmdArgs = if ($credentials.Anonymous) {
-            "+login anonymous"
-        } else {
-            "+login `"$($credentials.Username)`" `"$($credentials.Password)`""
-        }
-
-        if ($installDir) {
-            $steamCmdArgs = "+force_install_dir `"$installDir`" $steamCmdArgs"
-        }
-
-        $pinfo = New-Object System.Diagnostics.ProcessStartInfo
-        $pinfo.FileName = $steamCmdPath
-        $pinfo.Arguments = "$steamCmdArgs"
-        $pinfo.UseShellExecute = $false
-        $pinfo.RedirectStandardOutput = $true
-        $pinfo.RedirectStandardError = $true
-        $pinfo.RedirectStandardInput = $true
-        $pinfo.CreateNoWindow = $true
-
-        $process = New-Object System.Diagnostics.Process
-        $process.StartInfo = $pinfo
-        $process.Start() | Out-Null
-
-        $output = New-Object System.Text.StringBuilder
-        $needsGuardCode = $false
-        $subscription_required = $false
-        
-        while (!$process.StandardOutput.EndOfStream) {
-            $line = $process.StandardOutput.ReadLine()
-            $output.AppendLine($line)
-            Write-Output $line
-
-            # Check for Steam Guard prompt
-            if ($line -match "Steam Guard code:|Two-factor code:") {
-                if ($credentials.GuardCode) {
-                    $process.StandardInput.WriteLine($credentials.GuardCode)
-                    Write-Output "Submitted Steam Guard code"
-                } else {
-                    throw "Steam Guard code required but not provided"
-                }
-            }
-            
-            # Check for common errors
-            if ($line -match "No subscription|Ownership check failed|Access denied|Purchase required") {
-                $subscription_required = $true
-                Write-Output "DETECTED: Subscription or ownership requirement"
-            }
-            
-            if ($line -match "Invalid Password|Login Failure|Account not found") {
-                throw "Login failed: Invalid credentials"
-            }
-
-            if ($line -match "Invalid Steam Guard code") {
-                throw "Invalid Steam Guard code"
-            }
-        }
-
-        # If login successful, proceed with installation
-        if (-not $subscription_required) {
-            $process.StandardInput.WriteLine("+app_update $appId validate +quit")
-        }
-
-        $stderr = $process.StandardError.ReadToEnd()
-        $process.WaitForExit()
-
-        return @{
-            ExitCode = $process.ExitCode
-            Output = $output.ToString()
-            Error = $stderr
-            SubscriptionRequired = $subscription_required
-        }
-    }
-    catch {
-        return @{
-            ExitCode = 1
-            Output = $output.ToString()
-            Error = $_.Exception.Message
-            SubscriptionRequired = $subscription_required
-        }
-    }
-}
-
-# Modify the server creation job scriptblock to use the new process handling
-$job = Start-Job -ScriptBlock {
-    param($name, $appId, $installDir, $serverManagerDir, $credentials)
-    
-    try {
-        # ...existing registry and path validation...
-
-        $result = Start-SteamCmdProcess -steamCmdPath $steamCmdPath -appId $appId -installDir $installDir -credentials $credentials
-
-        if ($result.SubscriptionRequired) {
-            throw "This server requires a valid Steam subscription or game ownership. Please login with a Steam account that owns the game."
-        }
-
-        if ($result.ExitCode -ne 0) {
-            throw "SteamCMD failed with exit code: $($result.ExitCode)`nOutput: $($result.Output)`nErrors: $($result.Error)"
-        }
-
-        # ...existing configuration saving code...
-    }
-    catch {
-        # ...existing error handling...
-    }
-} -ArgumentList $serverName, $appId, $installDir, $serverManagerDir, $credentials
-
-# ...rest of existing code...
-
-# Modify the Start-SteamCmdProcess function for better logging and error handling
-function Start-SteamCmdProcess {
-    param(
-        [string]$steamCmdPath,
-        [string]$appId,
-        [string]$installDir,
-        [hashtable]$credentials
-    )
+    $outputBuilder = New-Object System.Text.StringBuilder
+    $errorBuilder = New-Object System.Text.StringBuilder
+    $output = $null
+    $errorOutput = $null
+    $subscription_required = $false
 
     try {
         Write-DashboardLog "Starting SteamCMD process with following parameters:" -Level DEBUG
@@ -1853,7 +2087,7 @@ function Start-SteamCmdProcess {
         $errorBuilder = New-Object System.Text.StringBuilder
 
         $process.OutputDataReceived = {
-            param($sender, $e)
+            param($eventSender, $e)
             if ($null -ne $e.Data) {
                 $outputBuilder.AppendLine($e.Data)
                 Write-DashboardLog "SteamCMD: $($e.Data)" -Level DEBUG
@@ -1861,7 +2095,7 @@ function Start-SteamCmdProcess {
         }
 
         $process.ErrorDataReceived = {
-            param($sender, $e)
+            param($eventSender, $e)
             if ($null -ne $e.Data) {
                 $errorBuilder.AppendLine($e.Data)
                 Write-DashboardLog "SteamCMD Error: $($e.Data)" -Level ERROR
@@ -1901,7 +2135,7 @@ function Start-SteamCmdProcess {
         return @{
             ExitCode = $process.ExitCode
             Output = $output
-            Error = $error
+            Error = $errorOutput
             SubscriptionRequired = $subscription_required
         }
     }
@@ -1909,6 +2143,11 @@ function Start-SteamCmdProcess {
         Write-DashboardLog "Error in Start-SteamCmdProcess: $($_.Exception.Message)" -Level ERROR
         Write-DashboardLog $_.ScriptStackTrace -Level ERROR
         throw
+    }
+    finally {
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
     }
 }
 
@@ -1968,6 +2207,7 @@ $job = Start-Job -ScriptBlock {
         return @{
             Success = $true
             Message = "Server created successfully"
+            InstallPath = $installDir
         }
     }
     catch {
@@ -1977,9 +2217,32 @@ $job = Start-Job -ScriptBlock {
             SubscriptionRequired = $false
         }
     }
-}
+} -ArgumentList $serverName, $appId, $installDir, $serverManagerDir, $credentials
 
-# ...rest of existing code...
+# Create timer to monitor installation progress
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 500
+$timer.Add_Tick({
+    if ($job.State -eq 'Completed') {
+        $result = Receive-Job -Job $job
+        Remove-Job -Job $job
+        $timer.Stop()
+        $progressBar.MarqueeAnimationSpeed = 0
+        
+        if ($result.Success) {
+            $statusLabel.Text = "Installation complete!"
+            [System.Windows.Forms.MessageBox]::Show("Server created successfully.", "Success")
+            $createForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $createForm.Close()
+            Update-ServerList
+        } else {
+            $statusLabel.Text = "Installation failed!"
+            [System.Windows.Forms.MessageBox]::Show("Failed to create server: $($result.Message)", "Error")
+            $createButton.Enabled = $true
+        }
+    }
+})
+$timer.Start()
 
 # Define the job script block before the New-IntegratedGameServer function
 $script:jobScriptBlock = {
@@ -2105,6 +2368,11 @@ $script:jobScriptBlock = {
             Message = $_.Exception.Message
         }
     }
+    finally {
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
+    }
 }
 
 # Show the form (this should be at the end of the script)
@@ -2126,3 +2394,91 @@ $refreshTimer.Start()
 # Initial updates
 Update-ServerList
 Update-HostInformation
+
+# Modify Connect-WebSocket function
+function Connect-WebSocket {
+    # Variable setup
+    $maxRetries = 5
+    $retryCount = 0
+    $retryDelay = 2
+    $connected = $false
+    $tcpClient = $null
+    $webSocket = $null
+    $cancellationToken = [System.Threading.CancellationToken]::None
+    $connectionTimeout = 5000  # 5 seconds timeout
+
+    Write-DashboardLog "Initializing WebSocket connection..." -Level DEBUG
+    
+    while (-not $connected -and $retryCount -lt $maxRetries) {
+        try {
+            # Wait for both web server and WebSocket server to be ready
+            $webReady = Test-Path $script:WebServerReadyFile
+            $wsReady = Test-WebSocketReady
+            
+            if (-not ($webReady -and $wsReady)) {
+                Write-DashboardLog "Waiting for servers to be ready (Try $retryCount/$maxRetries)" -Level DEBUG
+                Start-Sleep -Seconds $retryDelay
+                continue
+            }
+            
+            # Get WebSocket configuration
+            $wsConfig = Get-Content $script:WebSocketReadyFile -Raw | ConvertFrom-Json
+            $wsUri = "ws://localhost:$($wsConfig.port)/ws"
+        }
+        catch {
+            Write-DashboardLog "Failed to initialize WebSocket connection: $($_.Exception.Message)" -Level ERROR
+            Write-DashboardLog $_.ScriptStackTrace -Level DEBUG
+            
+            if ($retryCount -lt $maxRetries) {
+                Write-DashboardLog "Retrying in $retryDelay seconds..." -Level DEBUG
+                Start-Sleep -Seconds $retryDelay
+                $retryCount++
+            } else {
+                Write-DashboardLog "Max retries reached. WebSocket connection failed." -Level ERROR
+                $form.Invoke([Action]{
+                    $statusLabel.Text = "WebSocket: Connection failed"
+                    $statusLabel.ForeColor = [System.Drawing.Color]::Red
+                })
+                return $false
+            }
+        }
+    }
+}
+
+# Add periodic health check
+$script:healthCheckTimer = New-Object System.Windows.Forms.Timer
+$script:healthCheckTimer.Interval = 5000 # 5 seconds
+$script:healthCheckTimer.Add_Tick({
+    try {
+        $response = Invoke-WebRequest -Uri "http://localhost:8080/health" -UseBasicParsing
+        $health = $response.Content | ConvertFrom-Json
+        
+        if (-not $health.webSocketConnected -and $script:isWebSocketConnected) {
+            Write-DashboardLog "WebSocket disconnected, attempting reconnect..." -Level WARN
+            Connect-WebSocket
+        }
+    }
+    catch {
+        Write-DashboardLog "Health check failed: $_" -Level ERROR
+        if ($script:isWebSocketConnected) {
+            $script:isWebSocketConnected = $false
+            $statusLabel.Text = "WebSocket: Disconnected"
+            $statusLabel.ForeColor = [System.Drawing.Color]::Red
+        }
+    }
+})
+
+# Start health check timer in form shown event
+$form.Add_Shown({
+    $script:healthCheckTimer.Start()
+})
+
+# Clean up timer in form closing event
+$form.Add_FormClosing({
+    param($eventSender, $e)
+  
+    if ($script:healthCheckTimer) {
+        $script:healthCheckTimer.Stop()
+        $script:healthCheckTimer.Dispose()
+    }
+})

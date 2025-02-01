@@ -38,45 +38,6 @@ function Stop-TranscriptSafely {
 # Stop any PowerShell transcripts first
 Stop-TranscriptSafely
 
-# Force close any open log files
-$logFiles = @(
-    "main.log",
-    "webserver.log",
-    "trayicon.log",
-    "updates.log"
-)
-
-# More aggressive log file cleanup
-foreach ($logFile in $logFiles) {
-    $logPath = Join-Path $logDir $logFile
-    if (Test-Path $logPath) {
-        try {
-            [System.GC]::Collect()
-            [System.GC]::WaitForPendingFinalizers()
-            
-            # Stop any PowerShell transcripts
-            Stop-TranscriptSafely
-            
-            # Force close file handles
-            $handles = Get-Process | 
-                Where-Object { $_.Modules.FileName -contains $logPath } | 
-                ForEach-Object { $_.Handle }
-            
-            foreach ($handle in $handles) {
-                $null = [System.Runtime.InteropServices.Marshal]::FreeHGlobal($handle)
-            }
-            
-            Start-Sleep -Milliseconds 500
-            
-            # Delete and recreate file
-            Remove-Item -Path $logPath -Force -ErrorAction Stop
-            New-Item -Path $logPath -ItemType File -Force | Out-Null
-        } catch {
-            Write-Warning "Failed to cleanup log file $logFile : $_"
-        }
-    }
-}
-
 # Kill all related processes
 $processNames = @(
     "*webserver*",
@@ -84,13 +45,50 @@ $processNames = @(
     "*launcher*"
 )
 
+# Modify the process termination section
 foreach ($processName in $processNames) {
-    Get-Process -Name "powershell*" | 
-        Where-Object { $_.MainWindowTitle -like $processName -or $_.CommandLine -like "*$processName*" } | 
-        ForEach-Object {
-            Write-Host "Stopping process: $($_.Id)" -ForegroundColor Cyan
-            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    $processes = Get-Process -Name "powershell*" | 
+        Where-Object { $_.MainWindowTitle -like $processName -or $_.CommandLine -like "*$processName*" }
+    
+    foreach ($process in $processes) {
+        Write-Host "Attempting to stop process: $($process.Id)" -ForegroundColor Cyan
+        
+        $maxAttempts = 10
+        $attempt = 0
+        $stopped = $false
+        
+        while ($attempt -lt $maxAttempts -and -not $stopped) {
+            try {
+                Stop-Process -Id $process.Id -Force
+                
+                # Wait up to 1 second for process to exit
+                $stopWatch = [System.Diagnostics.Stopwatch]::StartNew()
+                while ($stopWatch.ElapsedMilliseconds -lt 1000) {
+                    if ((Get-Process -Id $process.Id -ErrorAction SilentlyContinue) -eq $null) {
+                        $stopped = $true
+                        break
+                    }
+                    Start-Sleep -Milliseconds 100
+                }
+                $stopWatch.Stop()
+            } catch {
+                # Process already stopped
+                $stopped = $true
+            }
+            
+            if (-not $stopped) {
+                $attempt++
+                Write-Host "Attempt $attempt of $maxAttempts to stop process $($process.Id)..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 1
+            }
         }
+        
+        # Force kill if still running
+        if (-not $stopped) {
+            Write-Host "Force terminating process $($process.Id) after $maxAttempts attempts..." -ForegroundColor Red
+            $null = taskkill /F /PID $process.Id 2>$null
+        }
+    }
 }
 
 # Find and stop any running web server jobs
@@ -127,7 +125,7 @@ $null = netsh http delete sslcert ipport=0.0.0.0:8080 2>$null
 $null = netsh http delete sslcert ipport=127.0.0.1:8080 2>$null
 
 # Restart HTTP service with retry mechanism
-$maxAttempts = 10
+$maxAttempts = 5
 $attempt = 0
 $stopped = $false
 
@@ -169,47 +167,89 @@ Start-Sleep -Seconds 1
 # Replace the final port check section with this more aggressive version
 # Kill any processes using port 8080 or 8081
 $portsToCheck = @(8080, 8081)
+
+# Modify the port check section at the end
 foreach ($port in $portsToCheck) {
-    try {
-        $processes = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | 
-            Select-Object -ExpandProperty OwningProcess
-        
-        if ($processes) {
-            Write-Host "Found processes using port $port. Forcefully terminating..." -ForegroundColor Yellow
-            foreach ($processId in $processes) {
-                try {
-                    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-                    if ($process) {
-                        Write-Host "Terminating process: $($process.Name) (PID: $processId)" -ForegroundColor Cyan
-                        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-                    }
-                } catch {
-                    # If normal termination fails, use taskkill
-                    $null = taskkill /F /PID $processId 2>$null
+    $maxAttempts = 5
+    $attempt = 0
+    $cleared = $false
+    
+    while ($attempt -lt $maxAttempts -and -not $cleared) {
+        try {
+            $connections = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
+            if ($connections) {
+                foreach ($conn in $connections) {
+                    Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
                 }
+            } else {
+                $cleared = $true
+                break
             }
-            
-            # Wait briefly for processes to terminate
+        } catch {
+            $cleared = $true
+            break
+        }
+        
+        $attempt++
+        if (-not $cleared) {
+            Write-Host "Attempt $attempt of $maxAttempts to clear port $port..." -ForegroundColor Yellow
             Start-Sleep -Seconds 1
-            
-            # Double-check if port is still in use
-            $stillInUse = Test-NetConnection -ComputerName localhost -Port $port -WarningAction SilentlyContinue
-            if ($stillInUse.TcpTestSucceeded) {
-                # Use netstat to find any remaining processes
-                $netstatOutput = netstat -ano | Select-String ":$port"
-                foreach ($line in $netstatOutput) {
-                    if ($line -match "\s+(\d+)$") {
-                        $processId = $matches[1]
-                        $null = taskkill /F /PID $processId 2>$null
-                    }
-                }
+        }
+    }
+    
+    # Force kill if still in use
+    if (-not $cleared) {
+        Write-Host "Force clearing port $port after $maxAttempts attempts..." -ForegroundColor Red
+        $null = netstat -ano | Select-String ":$port" | ForEach-Object {
+            if ($_ -match "\s+(\d+)$") {
+                taskkill /F /PID $matches[1] 2>$null
             }
         }
-    } catch {
-        # Ignore any errors and continue
+    }
+}
+
+Write-Host "Performing final log cleanup..." -ForegroundColor Yellow
+
+# Force close any open log files
+$logFiles = @(
+    "main.log",
+    "webserver.log",
+    "trayicon.log",
+    "updates.log"
+)
+
+# More aggressive log file cleanup
+foreach ($logFile in $logFiles) {
+    $logPath = Join-Path $logDir $logFile
+    if (Test-Path $logPath) {
+        try {
+            [System.GC]::Collect()
+            [System.GC]::WaitForPendingFinalizers()
+            
+            # Stop any PowerShell transcripts
+            Stop-TranscriptSafely
+            
+            # Force close file handles
+            $handles = Get-Process | 
+                Where-Object { $_.Modules.FileName -contains $logPath } | 
+                ForEach-Object { $_.Handle }
+            
+            foreach ($handle in $handles) {
+                $null = [System.Runtime.InteropServices.Marshal]::FreeHGlobal($handle)
+            }
+            
+            Start-Sleep -Milliseconds 500
+            
+            # Delete and recreate file
+            Remove-Item -Path $logPath -Force -ErrorAction Stop
+            New-Item -Path $logPath -ItemType File -Force | Out-Null
+        } catch {
+            Write-Warning "Failed to cleanup log file $logFile : $_"
+        }
     }
 }
 
 Write-Host "Server Manager stopped successfully" -ForegroundColor Green
 Write-Host "Cleanup complete" -ForegroundColor Green
 Start-Sleep -Seconds 2
+Exit

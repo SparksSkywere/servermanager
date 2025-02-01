@@ -87,29 +87,103 @@ function Write-StatusMessage {
 function Stop-AllComponents {
     Write-StatusMessage "Stopping all components..." "Yellow"
     
+    $maxAttempts = 10
     $processes = @($Global:ProcessTracker.WebServer, $Global:ProcessTracker.TrayIcon)
-    foreach ($processToStop in $processes) {
-        if ($processToStop) {
-            try {
-                $process = Get-Process -Id $processToStop -ErrorAction Stop
-                if (-not $process.HasExited) {
-                    Stop-Process -Id $processToStop -Force
-                    Wait-Process -Id $processToStop -Timeout 5 -ErrorAction SilentlyContinue
+    
+    foreach ($processId in $processes) {
+        if ($processId) {
+            $attempt = 0
+            $stopped = $false
+            
+            Write-StatusMessage "Attempting to stop process $processId..." "Cyan"
+            
+            while ($attempt -lt $maxAttempts -and -not $stopped) {
+                try {
+                    $process = Get-Process -Id $processId -ErrorAction Stop
+                    if (-not $process.HasExited) {
+                        Stop-Process -Id $processId -Force
+                        
+                        # Wait up to 1 second for process to exit
+                        $stopWatch = [System.Diagnostics.Stopwatch]::StartNew()
+                        while ($stopWatch.ElapsedMilliseconds -lt 1000) {
+                            if ((Get-Process -Id $processId -ErrorAction SilentlyContinue) -eq $null) {
+                                $stopped = $true
+                                break
+                            }
+                            Start-Sleep -Milliseconds 100
+                        }
+                        $stopWatch.Stop()
+                    } else {
+                        $stopped = $true
+                    }
+                } catch {
+                    # Process already stopped
+                    $stopped = $true
                 }
-            } catch { }
+                
+                if (-not $stopped) {
+                    $attempt++
+                    Write-StatusMessage "Attempt $attempt of $maxAttempts to stop process $processId..." "Yellow"
+                    Start-Sleep -Seconds 1
+                }
+            }
+            
+            # Force kill if still running
+            if (-not $stopped) {
+                Write-StatusMessage "Force terminating process $processId after $maxAttempts attempts..." "Red"
+                try {
+                    $null = taskkill /F /PID $processId 2>$null
+                } catch {
+                    Write-StatusMessage ("Failed to force terminate process {0}: {1}" -f $processId, $_.Exception.Message) "Red"
+                }
+            }
         }
     }
     
-    # Ensure ports are released
+    # Cleanup URL reservations
     try {
         netsh http delete urlacl url=http://localhost:8080/ | Out-Null
     } catch { }
     
-    # Kill any remaining processes using port 8080
-    Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue | 
-        ForEach-Object {
-            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+    # Kill any remaining processes using ports 8080/8081 with retry
+    $portsToCheck = @(8080, 8081)
+    foreach ($port in $portsToCheck) {
+        $attempt = 0
+        $cleared = $false
+        
+        while ($attempt -lt $maxAttempts -and -not $cleared) {
+            try {
+                $connections = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
+                if ($connections) {
+                    foreach ($conn in $connections) {
+                        Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
+                    }
+                } else {
+                    $cleared = $true
+                    break
+                }
+            } catch {
+                $cleared = $true
+                break
+            }
+            
+            $attempt++
+            if (-not $cleared) {
+                Write-StatusMessage "Attempt $attempt of $maxAttempts to clear port $port..." "Yellow"
+                Start-Sleep -Seconds 1
+            }
         }
+        
+        # Force kill if still in use
+        if (-not $cleared) {
+            Write-StatusMessage "Force clearing port $port after $maxAttempts attempts..." "Red"
+            $null = netstat -ano | Select-String ":$port" | ForEach-Object {
+                if ($_ -match "\s+(\d+)$") {
+                    taskkill /F /PID $matches[1] 2>$null
+                }
+            }
+        }
+    }
     
     Write-StatusMessage "Cleanup complete." "Green"
 }
@@ -271,54 +345,91 @@ Remove-Module Network, WebSocketServer, ServerManager -ErrorAction SilentlyConti
     "New-GameServer"
 )
 
-# Modified module loading section
+# Initialize module loading success flag at the start
 $moduleLoadingSuccess = $true
-foreach ($module in $coreModules) {
-    $modulePath = Join-Path $modulesPath $module
-    Write-StatusMessage "Loading module: $module" -Color Cyan
-    Write-StatusMessage "Module path: $modulePath" -Color Gray -Verbose
+
+# Modify module loading section to ensure WebSocketServer is loaded first
+Write-StatusMessage "Loading core modules..." "Cyan"
+
+try {
+    # First load WebSocketServer
+    $webSocketModule = Join-Path $modulesPath "WebSocketServer.psm1"
+    Import-Module $webSocketModule -Force -Global -DisableNameChecking
+    $module = Get-Module WebSocketServer -ErrorAction Stop
+    Write-StatusMessage "Module info: $($module | ConvertTo-Json)" "Gray" -Verbose
     
-    if (Test-Path $modulePath) {
-        try {
-            # First try to import without -Verbose to check for errors
-            $moduleInfo = Import-Module -Name $modulePath -Global -Force -PassThru -ErrorAction Stop -DisableNameChecking
-            
-            if ($null -eq $moduleInfo) {
-                Write-StatusMessage "Module failed to load. Attempting verbose import for debugging..." -Color Yellow
-                
-                # Try again with verbose output for debugging
-                $verbosePreference = 'Continue'
-                $moduleInfo = Import-Module -Name $modulePath -Global -Force -PassThru -Verbose -ErrorAction Stop -DisableNameChecking
-                $verbosePreference = 'SilentlyContinue'
-                
-                if ($null -eq $moduleInfo) {
-                    throw "Module import returned null after verbose attempt"
-                }
-            }
-            
-            # Verify module was loaded
-            $loadedModule = Get-Module $module.Replace('.psm1', '') -ErrorAction SilentlyContinue
-            if ($null -eq $loadedModule) {
-                throw "Module appears to be loaded but Get-Module returns null"
-            }
-            
-            Write-StatusMessage "Module $module loaded successfully ($($loadedModule.ExportedFunctions.Count) functions)" -Color Green
-            # Log functions to file only
-            Write-StatusMessage "Exported functions: $($loadedModule.ExportedFunctions.Keys -join ', ')" -Color Gray -Verbose
-            
-        } catch {
-            $moduleLoadingSuccess = $false
-            Write-StatusMessage "Error loading module $module" -Color Red
-            Write-StatusMessage "Error details: $($_.Exception.Message)" -Color Red
-            Write-StatusMessage "Stack trace: $($_.ScriptStackTrace)" -Color Red -Verbose
-            break
-        }
-    } else {
+    if (-not $module) {
         $moduleLoadingSuccess = $false
-        Write-StatusMessage "Core module not found: $modulePath" -Color Red
-        break
+        throw "WebSocketServer module failed to load"
     }
+    
+    # Verify required functions are available
+    $requiredWebSocketFunctions = @(
+        'Get-WebSocketPaths',
+        'Test-WebSocketReady',
+        'Set-WebSocketReady'
+    )
+    
+    $missingFunctions = $requiredWebSocketFunctions | Where-Object {
+        $fn = $_
+        Write-StatusMessage "Checking for function: $fn" "Gray" -Verbose
+        -not (Get-Command $fn -ErrorAction SilentlyContinue)
+    }
+    
+    if ($missingFunctions) {
+        throw "Missing required WebSocket functions: $($missingFunctions -join ', ')"
+    }
+    
+    Write-StatusMessage "WebSocketServer module loaded successfully" "Green"
+    
+    # Load remaining modules
+    foreach ($module in $coreModules | Where-Object { $_ -ne "WebSocketServer.psm1" }) {
+        $modulePath = Join-Path $modulesPath $module
+        Write-StatusMessage "Loading module: $module" -Color Cyan
+        
+        if (Test-Path $modulePath) {
+            try {
+                $moduleInfo = Import-Module -Name $modulePath -Force -Global -PassThru -ErrorAction Stop -DisableNameChecking -Verbose:$true
+                Write-StatusMessage "Module $module loaded successfully" -Color Green
+            }
+            catch {
+                $moduleLoadingSuccess = $false
+                Write-StatusMessage "Failed to load module $module : $($_.Exception.Message)" -Color Red
+                Write-StatusMessage $_.ScriptStackTrace -Color Red -Verbose
+                throw
+            }
+        }
+        else {
+            $moduleLoadingSuccess = $false
+            Write-StatusMessage "Module not found: $modulePath" -Color Red
+            throw
+        }
+    }
+
+    Write-StatusMessage "All core modules loaded successfully" -Color Green
 }
+catch {
+    $moduleLoadingSuccess = $false
+    Write-StatusMessage "Module loading failed: $($_.Exception.Message)" -Color Red
+    throw
+}
+
+# Verify modules if loading succeeded
+if (-not $moduleLoadingSuccess) {
+    Write-StatusMessage "Failed to load one or more modules. Check previous messages for details." -Color Red
+    throw "Module loading failed. Check previous messages for details."
+}
+
+# Initialize WebSocket paths
+$webSocketPaths = Get-WebSocketPaths
+$script:WebSocketReadyFile = $webSocketPaths.WebSocketReadyFile
+$script:WebServerReadyFile = $webSocketPaths.WebServerReadyFile
+$script:DefaultWebSocketPort = $webSocketPaths.DefaultWebSocketPort
+$script:DefaultWebPort = $webSocketPaths.DefaultWebPort
+
+Write-StatusMessage "All core modules loaded successfully" -Color Green
+
+# Continue with the rest of launcher.ps1
 
 # Simplified verification output
 if ($moduleLoadingSuccess) {
@@ -669,9 +780,30 @@ function Install-ServerManagerService {
     New-Service @params
 }
 
+# Add after module imports
+$webSocketPaths = Get-WebSocketPaths
+$script:WebSocketReadyFile = $webSocketPaths.WebSocketReadyFile
+$script:WebServerReadyFile = $webSocketPaths.WebServerReadyFile
+$script:DefaultWebSocketPort = $webSocketPaths.DefaultWebSocketPort
+$script:DefaultWebPort = $webSocketPaths.DefaultWebPort
+
 # Modify Start-WebServer to be more robust
 function Start-WebServer {
     $webserverPath = Join-Path $PSScriptRoot "webserver.ps1"
+    
+    # Add URL reservation check
+    try {
+        Write-StatusMessage "Checking URL reservations..." "Cyan"
+        $null = netsh http show urlacl url=http://+:8080/
+    }
+    catch {
+        Write-StatusMessage "Adding URL reservation..." "Yellow"
+        $null = netsh http add urlacl url=http://+:8080/ user=Everyone
+    }
+    
+    if (-not (Test-Path $webserverPath)) {
+        throw "Web server script not found at: $webserverPath"
+    }
     
     # Create process with proper configuration
     $pinfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -680,52 +812,55 @@ function Start-WebServer {
     $pinfo.UseShellExecute = $false
     $pinfo.RedirectStandardOutput = $true
     $pinfo.RedirectStandardError = $true
-    $pinfo.CreateNoWindow = $false  # Changed to show window for debugging
+    $pinfo.CreateNoWindow = $false  # Show window for debugging
+    $pinfo.WorkingDirectory = $PSScriptRoot
     
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $pinfo
     
-    # Add enhanced output handling
-    $stdoutEvent = Register-ObjectEvent -InputObject $process -EventName OutputDataReceived -Action {
-        param($sender, $eventArgs)
-        if ($eventArgs.Data) {
-            Write-StatusMessage "WebServer: $($eventArgs.Data)" "Gray"
-            # Log to specific file for debugging
-            Add-Content -Path (Join-Path $logDir "webserver_debug.log") -Value "OUTPUT: $($eventArgs.Data)"
-        }
-    }
-    
-    $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
-        param($sender, $eventArgs)
-        if ($eventArgs.Data) {
-            Write-StatusMessage "WebServer Error: $($eventArgs.Data)" "Red"
-            # Log to specific file for debugging
-            Add-Content -Path (Join-Path $logDir "webserver_debug.log") -Value "ERROR: $($eventArgs.Data)"
-        }
-    }
-    
     Write-StatusMessage "Starting web server process..." "Cyan"
     
-    # Start process with error handling
     try {
-        $process.Start() | Out-Null
-        $process.BeginOutputReadLine()
-        $process.BeginErrorReadLine()
+        $null = $process.Start()
         
-        Write-StatusMessage "Web server process started with PID: $($process.Id)" "Green"
-        
-        # Wait a moment for initial startup
+        # Give the process time to start
         Start-Sleep -Seconds 2
         
         if ($process.HasExited) {
-            throw "Web server process terminated immediately"
+            $exitCode = $process.ExitCode
+            throw "Web server process terminated immediately with exit code: $exitCode"
         }
         
         $Global:ProcessTracker.WebServer = $process.Id
-        return $process
+        
+        # Wait for ready flags
+        $maxWait = 30
+        $waited = 0
+        while ($waited -lt $maxWait) {
+            if ($process.HasExited) {
+                throw "Web server process terminated unexpectedly"
+            }
+            
+            $wsReady = Test-WebSocketReady
+            $webReady = Test-Path $script:WebServerReadyFile
+            Write-StatusMessage "Web server ready: $webReady, WebSocket ready: $wsReady" -Color Cyan -Verbose
+            
+            if ($webReady -and $wsReady) {
+                Write-StatusMessage "Web server initialization complete" "Green"
+                return $process
+            }
+            
+            Start-Sleep -Seconds 1
+            $waited++
+        }
+        
+        throw "Web server initialization timed out after $maxWait seconds"
     }
     catch {
-        Write-StatusMessage "Failed to start web server: $($_.Exception.Message)" "Red"
+        Write-StatusMessage "Failed to start web server: $_" "Red"
+        if ($process -and -not $process.HasExited) {
+            $process.Kill()
+        }
         throw
     }
 }
@@ -810,3 +945,137 @@ finally {
     }
 }
 
+# Modify module loading section with enhanced logging
+Write-StatusMessage "Loading core modules..." "Cyan"
+Write-StatusMessage "Module search path: $modulesPath" "Cyan" -Verbose
+
+# First load and verify WebSocketServer module
+try {
+    Write-StatusMessage "Attempting to load WebSocketServer module..." "Cyan" -Verbose
+    $webSocketModule = Join-Path $modulesPath "WebSocketServer.psm1"
+    
+    Write-StatusMessage "WebSocketServer module path: $webSocketModule" "Cyan" -Verbose
+    if (-not (Test-Path $webSocketModule)) {
+        throw "WebSocket module not found at: $webSocketModule"
+    }
+    
+    Import-Module $webSocketModule -Force -Global -DisableNameChecking -Verbose:$true
+    $module = Get-Module WebSocketServer -ErrorAction Stop
+    Write-StatusMessage "Module object: $($module | ConvertTo-Json)" "Gray" -Verbose
+    
+    if (-not $module) {
+        throw "WebSocketServer module failed to load"
+    }
+    
+    # Verify required functions are available
+    $requiredWebSocketFunctions = @(
+        'Get-WebSocketPaths',
+        'Test-WebSocketReady',
+        'Set-WebSocketReady'
+    )
+    
+    $missingFunctions = $requiredWebSocketFunctions | Where-Object {
+        $fn = $_
+        Write-StatusMessage "Checking for function: $fn" "Gray" -Verbose
+        -not (Get-Command $fn -ErrorAction SilentlyContinue)
+    }
+    
+    if ($missingFunctions) {
+        throw "Missing required WebSocket functions: $($missingFunctions -join ', ')"
+    }
+    
+    Write-StatusMessage "WebSocketServer module loaded successfully with all required functions" "Green"
+    
+    # Get WebSocket paths with error checking
+    try {
+        $webSocketPaths = Get-WebSocketPaths
+        Write-StatusMessage "WebSocket paths retrieved: $($webSocketPaths | ConvertTo-Json)" "Gray" -Verbose
+        
+        if (-not $webSocketPaths) {
+            throw "Get-WebSocketPaths returned null"
+        }
+    }
+    catch {
+        Write-StatusMessage "Error getting WebSocket paths: $($_.Exception.Message)" "Red"
+        Write-StatusMessage "Stack trace: $($_.ScriptStackTrace)" "Red" -Verbose
+        throw
+    }
+    
+    # Store paths in script scope with validation
+    foreach ($key in @('WebSocketReadyFile', 'WebServerReadyFile', 'DefaultWebSocketPort', 'DefaultWebPort')) {
+        if (-not $webSocketPaths.ContainsKey($key)) {
+            throw "Missing required path: $key"
+        }
+        Set-Variable -Name $key -Value $webSocketPaths[$key] -Scope Script
+        Write-StatusMessage "Set $key to $($webSocketPaths[$key])" "Gray" -Verbose
+    }
+    
+    Write-StatusMessage "WebSocket configuration initialized successfully" "Green"
+}
+catch {
+    Write-StatusMessage "Failed to initialize WebSocket module: $($_.Exception.Message)" "Red"
+    Write-StatusMessage "Stack trace: $($_.ScriptStackTrace)" "Red" -Verbose
+    throw
+}
+
+# Load remaining modules with enhanced logging
+$moduleLoadingSuccess = $true
+foreach ($module in $coreModules | Where-Object { $_ -ne "WebSocketServer.psm1" }) {
+    $modulePath = Join-Path $modulesPath $module
+    Write-StatusMessage "Loading module: $module" "Cyan"
+    Write-StatusMessage "Full module path: $modulePath" "Gray" -Verbose
+    
+    if (Test-Path $modulePath) {
+        try {
+            Write-StatusMessage "Importing module $module..." "Gray" -Verbose
+            $moduleInfo = Import-Module -Name $modulePath -Force -Global -PassThru -ErrorAction Stop -DisableNameChecking -Verbose:$true
+            
+            if ($null -eq $moduleInfo) {
+                throw "Module import returned null"
+            }
+            
+            Write-StatusMessage "Module info: $($moduleInfo | Select-Object Name, Version, ModuleType | ConvertTo-Json)" "Gray" -Verbose
+            
+            # Verify module was loaded
+            $loadedModule = Get-Module $module.Replace('.psm1', '') -ErrorAction SilentlyContinue
+            if ($null -eq $loadedModule) {
+                throw "Module appears to be loaded but Get-Module returns null"
+            }
+            
+            # Verify required functions
+            $requiredFunctions = $Global:requiredFunctions[$module]
+            if ($requiredFunctions) {
+                Write-StatusMessage "Checking required functions for $module" "Gray" -Verbose
+                $missingFunctions = $requiredFunctions | Where-Object {
+                    $fn = $_
+                    Write-StatusMessage "Checking function: $fn" "Gray" -Verbose
+                    -not (Get-Command $fn -ErrorAction SilentlyContinue)
+                }
+                
+                if ($missingFunctions) {
+                    throw "Missing required functions: $($missingFunctions -join ', ')"
+                }
+            }
+            
+            Write-StatusMessage "Module $module loaded successfully ($($loadedModule.ExportedFunctions.Count) functions)" "Green"
+        }
+        catch {
+            $moduleLoadingSuccess = $false
+            Write-StatusMessage "Error loading module $module" "Red"
+            Write-StatusMessage "Error details: $($_.Exception.Message)" "Red"
+            Write-StatusMessage "Stack trace: $($_.ScriptStackTrace)" "Red" -Verbose
+            break
+        }
+    }
+    else {
+        $moduleLoadingSuccess = $false
+        Write-StatusMessage "Module not found: $modulePath" "Red"
+        break
+    }
+}
+
+if (-not $moduleLoadingSuccess) {
+    Write-StatusMessage "Dumping loaded modules for debugging:" "Yellow" -Verbose
+    Get-Module | Format-Table -AutoSize | Out-String | Write-StatusMessage -Color Yellow -Verbose
+    throw "Module loading failed. See above messages and logs for details."
+}
