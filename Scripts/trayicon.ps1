@@ -144,16 +144,22 @@ try {
             $script:trayIcon.Visible = $false
             $script:trayIcon.Dispose()
             
-            # Run kill-webserver script
+            # Get script paths from registry
+            $registryPath = "HKLM:\Software\SkywereIndustries\servermanager"
+            $serverManagerDir = (Get-ItemProperty -Path $registryPath -ErrorAction Stop).servermanagerdir
             $stopScript = Join-Path $serverManagerDir "Scripts\kill-webserver.ps1"
+
             if (Test-Path $stopScript) {
                 Write-TrayLog "Running kill-webserver script..." -Level DEBUG
-                & "$stopScript"
+                # Start kill-webserver.ps1 as administrator without waiting
+                Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$stopScript`"" -Verb RunAs -WindowStyle Normal
             }
 
             Write-TrayLog "Exit process complete" -Level DEBUG
             [System.Windows.Forms.Application]::Exit()
-            exit
+
+            # Force exit this script
+            Stop-Process $pid -Force
         }
         catch {
             Write-TrayLog "Error during exit: $($_.Exception.Message)" -Level ERROR

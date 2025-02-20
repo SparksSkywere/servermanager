@@ -357,6 +357,7 @@ function Install-RequiredModules {
 
 # Add this function after Install-RequiredModules and before Set-InitialAuthConfig
 function Initialize-EncryptionKey {
+    # Keep encryption key in ProgramData for security
     $encryptionKeyPath = "C:\ProgramData\ServerManager"
     $keyFile = Join-Path $encryptionKeyPath "encryption.key"
 
