@@ -187,99 +187,30 @@ function Update-SteamCmd {
     }
 }
 
-# Function to update (pull) or clone Git repository (non-admin)
-function Update-GitRepo {
+# Replace the Update-GitRepo function with a simpler initial clone function
+function Initialize-GitRepo {
     param (
         [string]$repoUrl,
         [string]$destination
     )
     
-    Write-Host "Updating Git repository at $destination"
+    Write-Host "Initializing Git repository at $destination"
     try {
         if (Get-Command git -ErrorAction SilentlyContinue) {
-            if (Test-Path -Path (Join-Path $destination ".git")) {
-                Write-Host "Existing Git repository found."
-                Set-Location -Path $destination
-                
-                # Stash any local changes
-                Write-Host "Stashing local changes..."
-                git stash push -m "Auto-stashed during update"
-                
-                # Get current branch name
-                $currentBranch = git rev-parse --abbrev-ref HEAD
-                
-                # Fetch updates
-                Write-Host "Fetching updates..."
-                git fetch origin
-                
-                # Attempt to merge changes
-                Write-Host "Merging changes..."
-                git merge "origin/$currentBranch" --no-commit
-                
-                # Check for merge conflicts
-                $hasConflicts = git diff --name-only --diff-filter=U
-                if ($hasConflicts) {
-                    Write-Host "Merge conflicts detected. Keeping local changes..."
-                    git merge --abort
-                    git stash pop
-                } else {
-                    # Complete the merge if no conflicts
-                    git commit -m "Auto-merged updates"
-                }
-                
-                Set-Location -Path $PSScriptRoot
-                Write-Host "Git repository updated successfully."
-            } else {
-                if (Test-Path $destination) {
-                    # Backup existing non-git files
-                    $backupDir = "$destination-backup-$(Get-Date -Format 'yyyyMMddHHmmss')"
-                    Write-Host "Creating backup of existing files to: $backupDir"
-                    Copy-Item -Path $destination -Destination $backupDir -Recurse -Force
-                    
-                    # Clone new repository
-                    Write-Host "Cloning new repository..."
-                    git clone $repoUrl "$destination-temp"
-                    
-                    # Move existing config files back if they exist
-                    $configsToPreserve = @(
-                        "config/auth.xml",
-                        "config/users.xml",
-                        "config/admin.xml",
-                        "AppID.txt"
-                    )
-                    
-                    foreach ($config in $configsToPreserve) {
-                        $sourcePath = Join-Path $backupDir $config
-                        $destPath = Join-Path "$destination-temp" $config
-                        if (Test-Path $sourcePath) {
-                            Write-Host "Preserving existing config: $config"
-                            $destDir = Split-Path $destPath -Parent
-                            if (-not (Test-Path $destDir)) {
-                                New-Item -ItemType Directory -Path $destDir -Force
-                            }
-                            Copy-Item -Path $sourcePath -Destination $destPath -Force
-                        }
-                    }
-                    
-                    # Remove original directory and move new one in place
-                    Remove-Item -Path $destination -Recurse -Force
-                    Move-Item -Path "$destination-temp" -Destination $destination
-                }
-                else {
-                    Write-Host "Cloning new repository..."
-                    git clone $repoUrl $destination
-                }
-                Write-Host "Git repository successfully cloned."
+            if (Test-Path $destination) {
+                Write-Host "Removing existing directory..."
+                Remove-Item -Path $destination -Recurse -Force
             }
+            
+            Write-Host "Cloning repository..."
+            git clone $repoUrl $destination
+            Write-Host "Git repository successfully cloned."
         } else {
             Write-Host "Git is not installed or not found in the PATH."
             exit
         }
     } catch {
-        Write-Host "Failed to update Git repository: $($_.Exception.Message)"
-        if (Test-Path "$destination-temp") {
-            Remove-Item -Path "$destination-temp" -Recurse -Force
-        }
+        Write-Host "Failed to clone Git repository: $($_.Exception.Message)"
         throw
     }
 }
@@ -707,7 +638,7 @@ try {
 
     # Git operations first to get repository content
     Install-Git
-    Update-GitRepo -repoUrl $gitRepoUrl -destination $ServerManagerDir
+    Initialize-GitRepo -repoUrl $gitRepoUrl -destination $ServerManagerDir
 
     # Now that we have the repository, we can install external modules
     $requirementsPath = Join-Path $ServerManagerDir "requirements.txt"
