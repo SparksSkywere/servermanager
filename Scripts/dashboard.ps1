@@ -623,13 +623,13 @@ $serversPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
 $serversPanel.Controls.Add($listView)
 
 # Create host information panel
-$hostPanel = New-Object System.Windows.Forms.TableLayoutPanel
-$hostPanel.ColumnCount = 2
-$hostPanel.RowCount = 6
-$hostPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
-$hostPanel.Padding = New-Object System.Windows.Forms.Padding(10)
-$hostPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 30)))
-$hostPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 70)))
+$hostnamePanel = New-Object System.Windows.Forms.TableLayoutPanel
+$hostnamePanel.ColumnCount = 2
+$hostnamePanel.RowCount = 6
+$hostnamePanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$hostnamePanel.Padding = New-Object System.Windows.Forms.Padding(10)
+$hostnamePanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 30)))
+$hostnamePanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 70)))
 
 # Function to create metric labels
 function New-MetricLabel {
@@ -653,20 +653,20 @@ $metrics = @{
 
 $row = 0
 $metrics.GetEnumerator() | ForEach-Object {
-    $hostPanel.Controls.Add((New-MetricLabel $_.Key), 0, $row)
+    $hostnamePanel.Controls.Add((New-MetricLabel $_.Key), 0, $row)
     $valueLabel = New-MetricLabel $_.Value
     $valueLabel.Name = "lbl$($_.Key -replace '\s','')"
-    $hostPanel.Controls.Add($valueLabel, 1, $row)
+    $hostnamePanel.Controls.Add($valueLabel, 1, $row)
     $row++
 }
 
 # Modify host panel settings
-$hostPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
-$hostPanel.AutoSize = $true
+$hostnamePanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$hostnamePanel.AutoSize = $true
 
 # Add panels to main layout
 $mainPanel.Controls.Add($serversPanel, 0, 0)
-$mainPanel.Controls.Add($hostPanel, 1, 0)
+$mainPanel.Controls.Add($hostnamePanel, 1, 0)
 
 # Create buttons panel
 $buttonPanel = New-Object System.Windows.Forms.Panel
@@ -1204,7 +1204,8 @@ $form.Controls.Add($statusLabel)
 function Connect-WebSocket {
     param (
         [int]$MaxAttempts = 5,
-        [int]$RetryDelay = 2
+        [int]$RetryDelay = 2,
+        [int]$ConnectionTimeout = 5000  # 5 seconds timeout
     )
     
     Write-DashboardLog "Starting WebSocket connection sequence..." -Level DEBUG
@@ -1213,23 +1214,31 @@ function Connect-WebSocket {
         try {
             Write-DashboardLog "Connection attempt $attempt of $MaxAttempts" -Level DEBUG
             
-            # Verify ready file exists and read configuration
-            if (-not (Test-Path $script:ReadyFiles.WebSocket)) {
-                Write-DashboardLog "WebSocket ready file not found, waiting..." -Level DEBUG
-                Start-Sleep -Seconds $RetryDelay
-                continue
+            # Check ready file with retry
+            $startTime = Get-Date
+            while (-not (Test-Path $script:ReadyFiles.WebSocket)) {
+                if ((Get-Date) - $startTime -gt [TimeSpan]::FromSeconds(5)) {
+                    throw "Timeout waiting for WebSocket ready file"
+                }
+                Start-Sleep -Milliseconds 500
             }
 
             $wsConfig = Get-Content $script:ReadyFiles.WebSocket -Raw | ConvertFrom-Json
             $port = $wsConfig.port
             Write-DashboardLog "Found WebSocket port: $port" -Level DEBUG
 
-            # Simple TCP test
+            # TCP connection test with proper cleanup
             $tcpClient = New-Object System.Net.Sockets.TcpClient
             try {
-                if (-not $tcpClient.ConnectAsync("localhost", $port).Wait(5000)) {
-                    throw "TCP connection test failed"
+                Write-DashboardLog "Testing TCP connection..." -Level DEBUG
+                $tcpResult = $tcpClient.BeginConnect("localhost", $port, $null, $null)
+                $tcpSuccess = $tcpResult.AsyncWaitHandle.WaitOne(2000) # 2 second timeout
+                
+                if (-not $tcpSuccess) {
+                    throw "TCP connection test failed - timeout"
                 }
+                
+                $tcpClient.EndConnect($tcpResult)
                 Write-DashboardLog "TCP connection test successful" -Level DEBUG
             }
             finally {
@@ -1237,52 +1246,67 @@ function Connect-WebSocket {
                 $tcpClient.Dispose()
             }
 
-            # Create new WebSocket client
+            # Create WebSocket with proper disposal
             $ws = New-Object System.Net.WebSockets.ClientWebSocket
-            $ws.Options.KeepAliveInterval = [TimeSpan]::FromSeconds(30)
-            
-            # Use CancellationTokenSource for timeout
-            $cts = New-Object System.Threading.CancellationTokenSource
-            $cts.CancelAfter([TimeSpan]::FromSeconds(5))
-
-            $uri = "ws://localhost:$port/ws"
-            Write-DashboardLog "Attempting WebSocket connection to $uri" -Level DEBUG
-
             try {
-                # Connect with timeout
-                $connectTask = $ws.ConnectAsync([Uri]$uri, $cts.Token)
+                $ws.Options.KeepAliveInterval = [TimeSpan]::FromSeconds(30)
+                $ws.Options.SetBuffer(8192, 8192) # Increase buffer size
                 
-                if (-not [System.Threading.Tasks.Task]::WaitAll(@($connectTask), 5000)) {
-                    throw "WebSocket connection timed out"
-                }
-
-                if ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
-                    $script:webSocketClient = $ws
-                    $script:isWebSocketConnected = $true
+                Write-DashboardLog "Initializing WebSocket connection..." -Level DEBUG
+                
+                # Create URI and cancellation token
+                $uri = New-Object System.Uri "ws://localhost:$port/ws"
+                $cts = New-Object System.Threading.CancellationTokenSource
+                $cts.CancelAfter($ConnectionTimeout)
+                
+                Write-DashboardLog "Attempting WebSocket connection to $uri" -Level DEBUG
+                
+                # Connect with task-based approach
+                $connectTask = $ws.ConnectAsync($uri, $cts.Token)
+                
+                # Wait for connection with progress tracking
+                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                while (-not $connectTask.IsCompleted) {
+                    if ($sw.ElapsedMilliseconds -gt $ConnectionTimeout) {
+                        throw "Connection timed out after $($ConnectionTimeout)ms"
+                    }
                     
-                    Write-DashboardLog "WebSocket connected successfully" -Level DEBUG
+                    if ($cts.Token.IsCancellationRequested) {
+                        throw "Connection cancelled by timeout"
+                    }
                     
-                    # Update UI status
-                    $form.Invoke([Action]{
-                        $statusLabel.Text = "WebSocket: Connected"
-                        $statusLabel.ForeColor = [System.Drawing.Color]::Green
-                    })
-
-                    # Start message listener
-                    Start-WebSocketListener
-                    return $true
+                    Start-Sleep -Milliseconds 100
                 }
                 
-                throw "WebSocket failed to connect properly"
+                if ($connectTask.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion) {
+                    if ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
+                        Write-DashboardLog "WebSocket connected successfully" -Level DEBUG
+                        $script:webSocketClient = $ws
+                        $script:isWebSocketConnected = $true
+                        
+                        # Update UI status
+                        $form.Invoke([Action]{
+                            $statusLabel.Text = "WebSocket: Connected"
+                            $statusLabel.ForeColor = [System.Drawing.Color]::Green
+                        })
+
+                        # Start message listener
+                        Start-WebSocketListener
+                        return $true
+                    }
+                }
+                
+                throw "WebSocket failed to enter Open state (State: $($ws.State))"
             }
             catch {
+                Write-DashboardLog "WebSocket connection error: $($_.Exception.Message)" -Level ERROR
                 if ($ws -ne $null) {
                     $ws.Dispose()
                 }
                 throw
             }
             finally {
-                $cts.Dispose()
+                if ($cts) { $cts.Dispose() }
             }
         }
         catch {
@@ -1303,6 +1327,75 @@ function Connect-WebSocket {
     })
     return $false
 }
+
+# Add this helper function to verify WebSocket server status
+function Test-WebSocketServer {
+    param (
+        [int]$TimeoutSeconds = 5
+    )
+    
+    try {
+        $startTime = Get-Date
+        while ((Get-Date) - $startTime -lt [TimeSpan]::FromSeconds($TimeoutSeconds)) {
+            if (Test-Path $script:ReadyFiles.WebSocket) {
+                $config = Get-Content $script:ReadyFiles.WebSocket -Raw | ConvertFrom-Json
+                if ($config.status -eq "ready" -and $config.port) {
+                    # Try TCP connection
+                    $tcpClient = New-Object System.Net.Sockets.TcpClient
+                    try {
+                        $result = $tcpClient.BeginConnect("localhost", $config.port, $null, $null)
+                        if ($result.AsyncWaitHandle.WaitOne(2000)) {
+                            $tcpClient.EndConnect($result)
+                            return $true
+                        }
+                    }
+                    finally {
+                        $tcpClient.Close()
+                        $tcpClient.Dispose()
+                    }
+                }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+        return $false
+    }
+    catch {
+        Write-DashboardLog "Error testing WebSocket server: $_" -Level ERROR
+        return $false
+    }
+}
+
+# Modify the form's Shown event to use the new test function
+$form.Add_Shown({
+    Write-DashboardLog "Dashboard form shown, initializing components..." -Level DEBUG
+    
+    # First verify WebSocket server is running
+    if (-not (Test-WebSocketServer -TimeoutSeconds 10)) {
+        Write-DashboardLog "WebSocket server not available" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show(
+            "WebSocket server is not running or not accessible. Please ensure the server is started.",
+            "Connection Error",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        )
+        return
+    }
+
+    # Attempt WebSocket connection
+    if (Connect-WebSocket -MaxAttempts 5 -RetryDelay 2 -ConnectionTimeout 10000) {
+        Write-DashboardLog "WebSocket connection established, starting services..." -Level DEBUG
+        Start-KeepAlivePing
+        $refreshTimer.Start()
+    } else {
+        Write-DashboardLog "Failed to establish WebSocket connection" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show(
+            "Failed to connect to WebSocket server. The dashboard will continue in limited mode.",
+            "Connection Warning",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        )
+    }
+})
 
 # Modify the form's Shown event to be more sequential
 $form.Add_Shown({
@@ -1330,11 +1423,6 @@ $form.Add_Shown({
     }
 })
 
-# Remove any duplicate WebSocket connection attempts from other parts of the code
-# Make sure this is the only place we're calling Connect-WebSocket:
-# 1. Remove from Update-ServerList
-# 2. Remove from Update-HostInformation
-# 3. Remove from Start-KeepAlivePing
 
 # Modify Start-WebSocketListener to be more robust
 function Start-WebSocketListener {
@@ -1660,33 +1748,33 @@ function Update-HostInformation {
     try {
         # CPU Usage
         $cpu = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples.CookedValue
-        $lblCPUUsage = $hostPanel.Controls["lblCPUUsage"]
+        $lblCPUUsage = $hostnamePanel.Controls["lblCPUUsage"]
         $lblCPUUsage.Text = "$([Math]::Round($cpu, 2))%"
 
         # Memory Usage
         $memory = Get-CimInstance Win32_OperatingSystem
         $memoryUsage = 100 - [Math]::Round(($memory.FreePhysicalMemory/$memory.TotalVisibleMemorySize)*100, 2)
-        $lblMemoryUsage = $hostPanel.Controls["lblMemoryUsage"]
+        $lblMemoryUsage = $hostnamePanel.Controls["lblMemoryUsage"]
         $lblMemoryUsage.Text = "$memoryUsage% ($([Math]::Round($memory.TotalVisibleMemorySize/1MB, 2))GB Total)"
 
         # Disk Usage
         $disk = Get-PSDrive C
         $diskUsage = 100 - [Math]::Round(($disk.Free/$disk.Used)*100, 2)
-        $lblDiskUsage = $hostPanel.Controls["lblDiskUsage"]
+        $lblDiskUsage = $hostnamePanel.Controls["lblDiskUsage"]
         $diskFreeGB = [Math]::Round($disk.Free/1GB, 2)
         $lblDiskUsage.Text = "$diskUsage% ($diskFreeGB GB Free)"
 
         # GPU Info
-        $lblGPUInfo = $hostPanel.Controls["lblGPUInfo"]
+        $lblGPUInfo = $hostnamePanel.Controls["lblGPUInfo"]
         $lblGPUInfo.Text = Get-GPUInfo
 
         # Network Usage
-        $lblNetworkUsage = $hostPanel.Controls["lblNetworkUsage"]
+        $lblNetworkUsage = $hostnamePanel.Controls["lblNetworkUsage"]
         $lblNetworkUsage.Text = Get-NetworkUsage
 
         # System Uptime
         $uptime = (Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
-        $lblSystemUptime = $hostPanel.Controls["lblSystemUptime"]
+        $lblSystemUptime = $hostnamePanel.Controls["lblSystemUptime"]
         $lblSystemUptime.Text = "$($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m"
 
     } catch {
@@ -1786,13 +1874,13 @@ $refreshTimer.Add_Tick({
             $cpu = $script:cpuCounter.NextValue()
             
             # Update CPU immediately
-            $lblCPUUsage = $hostPanel.Controls["lblCPUUsage"]
+            $lblCPUUsage = $hostnamePanel.Controls["lblCPUUsage"]
             $lblCPUUsage.Text = "$([Math]::Round($cpu, 1))%"
             
             # Memory update (relatively fast operation)
             $memInfo = Get-CimInstance Win32_OperatingSystem -Property FreePhysicalMemory,TotalVisibleMemorySize
             $memoryUsage = 100 - [Math]::Round(($memInfo.FreePhysicalMemory/$memInfo.TotalVisibleMemorySize)*100, 2)
-            $lblMemoryUsage = $hostPanel.Controls["lblMemoryUsage"]
+            $lblMemoryUsage = $hostnamePanel.Controls["lblMemoryUsage"]
             $lblMemoryUsage.Text = "$memoryUsage% ($([Math]::Round($memInfo.TotalVisibleMemorySize/1MB, 2))GB Total)"
             
             $script:lastFullUpdate = $currentTime
@@ -1803,19 +1891,19 @@ $refreshTimer.Add_Tick({
             # Update disk info
             $disk = Get-PSDrive C
             $diskUsage = 100 - [Math]::Round(($disk.Free/$disk.Used)*100, 2)
-            $lblDiskUsage = $hostPanel.Controls["lblDiskUsage"]
+            $lblDiskUsage = $hostnamePanel.Controls["lblDiskUsage"]
             $lblDiskUsage.Text = "$diskUsage% ($([Math]::Round($disk.Free/1GB, 2))GB Free)"
             
             # Network and GPU updates
-            $lblNetworkUsage = $hostPanel.Controls["lblNetworkUsage"]
+            $lblNetworkUsage = $hostnamePanel.Controls["lblNetworkUsage"]
             $lblNetworkUsage.Text = Get-NetworkUsage
             
-            $lblGPUInfo = $hostPanel.Controls["lblGPUInfo"]
+            $lblGPUInfo = $hostnamePanel.Controls["lblGPUInfo"]
             $lblGPUInfo.Text = Get-GPUInfo
             
             # Update uptime (cheap operation)
             $uptime = (Get-Date) - (Get-CimInstance Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime
-            $lblSystemUptime = $hostPanel.Controls["lblSystemUptime"]
+            $lblSystemUptime = $hostnamePanel.Controls["lblSystemUptime"]
             $lblSystemUptime.Text = "$($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m"
             
             # Update server list
@@ -2712,11 +2800,16 @@ function Test-WebSocketReady {
         # Test if port is actually listening
         $tcpClient = New-Object System.Net.Sockets.TcpClient
         try {
-            $tcpClient.ConnectAsync("localhost", $wsConfig.port).Wait(1000)
-            return $tcpClient.Connected
+            $result = $tcpClient.BeginConnect("localhost", $wsConfig.port, $null, $null)
+            if ($result.AsyncWaitHandle.WaitOne(2000)) {
+                $tcpClient.EndConnect($result)
+                return $true
+            }
+            Write-DashboardLog "Could not connect to WebSocket port: $($wsConfig.port)" -Level DEBUG
+            return $false
         }
         catch {
-            Write-DashboardLog "Could not connect to WebSocket port: $_" -Level DEBUG
+            Write-DashboardLog "Error connecting to WebSocket port: $_" -Level ERROR
             return $false
         }
         finally {
@@ -2731,21 +2824,20 @@ function Test-WebSocketReady {
 
 # Modify Connect-WebSocket function to use proper error handling and retry logic
 function Connect-WebSocket {
-    $maxRetries = 5
-    $retryCount = 0
-    $retryDelay = 2
-    $connected = $false
-
+    param(
+        [int]$MaxRetries = 5,
+        [int]$RetryDelay = 2
+    )
+    
     Write-DashboardLog "Initializing WebSocket connection..." -Level DEBUG
     
-    while (-not $connected -and $retryCount -lt $maxRetries) {
+    for ($retryCount = 1; $retryCount -le $MaxRetries; $retryCount++) {
         try {
-            $retryCount++
-            Write-DashboardLog "Connection attempt $retryCount of $maxRetries" -Level DEBUG
+            Write-DashboardLog "Connection attempt $retryCount of $MaxRetries" -Level DEBUG
 
             # Update UI status
             $form.Invoke([Action]{
-                $statusLabel.Text = "WebSocket: Attempting connection (Try $retryCount of $maxRetries)..."
+                $statusLabel.Text = "WebSocket: Attempting connection (Try $retryCount of $MaxRetries)..."
                 $statusLabel.ForeColor = [System.Drawing.Color]::Blue
             })
 
@@ -2797,9 +2889,9 @@ function Connect-WebSocket {
             Write-DashboardLog "Connection attempt failed: $($_.Exception.Message)" -Level ERROR
             Write-DashboardLog $_.ScriptStackTrace -Level DEBUG
 
-            if ($retryCount -lt $maxRetries) {
-                Write-DashboardLog "Retrying in $retryDelay seconds..." -Level DEBUG
-                Start-Sleep -Seconds $retryDelay
+            if ($retryCount -lt $MaxRetries) {
+                Write-DashboardLog "Retrying in $RetryDelay seconds..." -Level DEBUG
+                Start-Sleep -Seconds $RetryDelay
             }
             else {
                 $form.Invoke([Action]{
@@ -2812,11 +2904,6 @@ function Connect-WebSocket {
     }
     return $connected
 }
-
-# Add these variable definitions near the top of the file
-$script:ProgramDataPath = Join-Path $env:ProgramData "ServerManager"
-$script:WebServerReadyFile = Join-Path $script:ProgramDataPath "webserver.ready"
-$script:WebSocketReadyFile = Join-Path $script:ProgramDataPath "websocket.ready"
 
 # Add initialization verification function
 function Test-RequiredFiles {
@@ -3129,3 +3216,400 @@ function Connect-WebSocket {
     Write-DashboardLog "All connection attempts failed" -Level ERROR
     return $false
 }
+
+# Add this diagnostic helper function
+function Test-WebSocketHandshake {
+    param(
+        [string]$Hostname = "localhost",
+        [int]$Port,
+        [int]$TimeoutMs = 2000
+    )
+    
+    Write-DashboardLog "Testing WebSocket handshake on $Hostname`:$Port" -Level DEBUG
+    $tcpClient = $null
+    $stream = $null
+    
+    try {
+        $tcpClient = New-Object System.Net.Sockets.TcpClient
+        if (-not $tcpClient.ConnectAsync($Hostname, $Port).Wait($TimeoutMs)) {
+            Write-DashboardLog "TCP connection timeout" -Level ERROR
+            return $false
+        }
+
+        Write-DashboardLog "TCP connection established, attempting WebSocket upgrade" -Level DEBUG
+        $stream = $tcpClient.GetStream()
+        
+        # Send WebSocket upgrade request
+        $key = [Convert]::ToBase64String([byte[]](1..16 | ForEach-Object { Get-Random -Minimum 0 -Maximum 255 }))
+        $headers = @(
+            "GET /ws HTTP/1.1",
+            "Host: $Hostname`:$Port",
+            "Upgrade: websocket",
+            "Connection: Upgrade",
+            "Sec-WebSocket-Key: $key",
+            "Sec-WebSocket-Version: 13",
+            "",
+            ""
+        )
+        
+        $request = [Text.Encoding]::ASCII.GetBytes(($headers -join "`r`n"))
+        $stream.Write($request, 0, $request.Length)
+        $stream.Flush()
+        
+        # Read response
+        $buffer = New-Object byte[] 1024
+        $read = $stream.Read($buffer, 0, $buffer.Length)
+        $response = [Text.Encoding]::ASCII.GetString($buffer, 0, $read)
+        
+        Write-DashboardLog "Received handshake response: $response" -Level DEBUG
+        
+        # Verify handshake response
+        if ($response -match "HTTP/1.1 101 Switching Protocols") {
+            Write-DashboardLog "WebSocket handshake successful" -Level DEBUG
+            return $true
+        }
+        
+        Write-DashboardLog "Invalid handshake response" -Level ERROR
+        return $false
+    }
+    catch {
+        Write-DashboardLog "Handshake error: $($_.Exception.Message)" -Level ERROR
+        return $false
+    }
+    finally {
+        if ($stream) { $stream.Dispose() }
+        if ($tcpClient) { $tcpClient.Dispose() }
+    }
+}
+
+# Modify the Connect-WebSocket function
+function Connect-WebSocket {
+    param (
+        [int]$MaxAttempts = 5,
+        [int]$RetryDelay = 2,
+        [int]$ConnectionTimeout = 5000
+    )
+    
+    Write-DashboardLog "Starting WebSocket connection sequence..." -Level DEBUG
+    
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            Write-DashboardLog "Connection attempt $attempt of $MaxAttempts" -Level DEBUG
+            
+            # Verify ready file exists
+            if (-not (Test-Path $script:ReadyFiles.WebSocket)) {
+                Write-DashboardLog "Waiting for WebSocket ready file..." -Level DEBUG
+                Start-Sleep -Seconds 2
+                continue
+            }
+
+            # Read configuration
+            $wsConfig = Get-Content $script:ReadyFiles.WebSocket -Raw | ConvertFrom-Json
+            $port = $wsConfig.port
+            Write-DashboardLog "Found WebSocket port: $port" -Level DEBUG
+            
+            # Test handshake first
+            if (-not (Test-WebSocketHandshake -Port $port)) {
+                throw "WebSocket handshake failed"
+            }
+
+            # Create new WebSocket client
+            $ws = New-Object System.Net.WebSockets.ClientWebSocket
+            try {
+                $ws.Options.KeepAliveInterval = [TimeSpan]::FromSeconds(30)
+                $ws.Options.SetBuffer(65536, 65536)
+                
+                # Add custom headers
+                $ws.Options.SetRequestHeader("User-Agent", "PowerShell-Dashboard")
+                $ws.Options.SetRequestHeader("X-Client-Type", "Dashboard")
+                
+                $uri = New-Object System.Uri "ws://localhost:$port/ws"
+                $cts = New-Object System.Threading.CancellationTokenSource
+                $cts.CancelAfter($ConnectionTimeout)
+                
+                Write-DashboardLog "Starting WebSocket connection..." -Level DEBUG
+                
+                # Connect with better state monitoring
+                $connectTask = $ws.ConnectAsync($uri, $cts.Token)
+                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                
+                while (-not $connectTask.IsCompleted -and $sw.ElapsedMilliseconds -lt $ConnectionTimeout) {
+                    Write-DashboardLog "Connection state: $($ws.State)" -Level DEBUG
+                    Start-Sleep -Milliseconds 100
+                }
+                
+                if (-not $connectTask.IsCompleted) {
+                    throw "Connection timed out after $($ConnectionTimeout)ms"
+                }
+                
+                if ($connectTask.Exception) {
+                    throw $connectTask.Exception
+                }
+                
+                Write-DashboardLog "Final connection state: $($ws.State)" -Level DEBUG
+                
+                if ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
+                    Write-DashboardLog "WebSocket connection established" -Level DEBUG
+                    $script:webSocketClient = $ws
+                    $script:isWebSocketConnected = $true
+                    
+                    # Send test message
+                    $testMessage = [Text.Encoding]::UTF8.GetBytes('{"type":"ping"}')
+                    $segment = [ArraySegment[byte]]::new($testMessage)
+                    $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [Threading.CancellationToken]::None).Wait()
+                    
+                    # Start message listener
+                    Start-WebSocketListener
+                    return $true
+                }
+                
+                throw "WebSocket failed to enter Open state (State: $($ws.State))"
+            }
+            catch {
+                Write-DashboardLog "Connection error: $($_.Exception.Message)" -Level ERROR
+                if ($ws -ne $null) { $ws.Dispose() }
+                throw
+            }
+            finally {
+                if ($cts) { $cts.Dispose() }
+            }
+        }
+        catch {
+            Write-DashboardLog "Attempt $attempt failed: $($_.Exception.Message)" -Level ERROR
+            
+            if ($attempt -lt $MaxAttempts) {
+                Write-DashboardLog "Retrying in $RetryDelay seconds..." -Level DEBUG
+                Start-Sleep -Seconds $RetryDelay
+            }
+        }
+    }
+    
+    Write-DashboardLog "Failed to connect after $MaxAttempts attempts" -Level ERROR
+    return $false
+}
+
+# Modify Start-WebSocketListener for better error handling
+function Start-WebSocketListener {
+    if (-not $script:webSocketClient -or $script:webSocketClient.State -ne [System.Net.WebSockets.WebSocketState]::Open) {
+        Write-DashboardLog "Cannot start listener - WebSocket not connected" -Level ERROR
+        return
+    }
+
+    [System.Threading.Tasks.Task]::Run({
+        $buffer = [byte[]]::new(8192)
+        $ct = [System.Threading.CancellationToken]::None
+
+        while ($script:webSocketClient.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
+            try {
+                $segment = [ArraySegment[byte]]::new($buffer)
+                $result = $script:webSocketClient.ReceiveAsync($segment, $ct).GetAwaiter().GetResult()
+
+                if ($result.Count -gt 0) {
+                    $message = [Text.Encoding]::UTF8.GetString($buffer, 0, $result.Count)
+                    Write-DashboardLog "Received: $message" -Level DEBUG
+                    
+                    if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) {
+                        Write-DashboardLog "Received close frame" -Level DEBUG
+                        break
+                    }
+
+                    # Process message
+                    $form.Invoke([Action]{
+                        try {
+                            $data = $message | ConvertFrom-Json
+                            switch ($data.Type) {
+                                "ServerUpdate" { Update-ServerList }
+                                "SystemUpdate" { Update-HostInformation }
+                                "Ping" { Send-PongMessage }
+                            }
+                        }
+                        catch {
+                            Write-DashboardLog "Error processing message: $_" -Level ERROR
+                        }
+                    })
+                }
+            }
+            catch {
+                Write-DashboardLog "Error in receive loop: $_" -Level ERROR
+                break
+            }
+        }
+
+        Write-DashboardLog "WebSocket state changed to: $($script:webSocketClient.State)" -Level DEBUG
+        
+        # Attempt reconnection after delay
+        Start-Sleep -Seconds 5
+        $form.Invoke([Action]{ 
+            if (-not $script:isWebSocketConnected) {
+                Connect-WebSocket 
+            }
+        })
+    })
+}
+
+# Add server status verification
+function Test-WebSocketServerStatus {
+    param([int]$TimeoutSeconds = 10)
+    
+    Write-DashboardLog "Testing WebSocket server status..." -Level DEBUG
+    
+    try {
+        $startTime = Get-Date
+        while ((Get-Date) - $startTime -lt [TimeSpan]::FromSeconds($TimeoutSeconds)) {
+            if (Test-Path $script:ReadyFiles.WebSocket) {
+                $config = Get-Content $script:ReadyFiles.WebSocket -Raw | ConvertFrom-Json
+                if ($config.status -eq "ready" -and $config.port) {
+                    if (Test-WebSocketHandshake -Port $config.port) {
+                        Write-DashboardLog "WebSocket server is ready" -Level DEBUG
+                        return $true
+                    }
+                }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+        
+        Write-DashboardLog "WebSocket server not ready after $TimeoutSeconds seconds" -Level ERROR
+        return $false
+    }
+    catch {
+        Write-DashboardLog "Error testing server status: $_" -Level ERROR
+        return $false
+    }
+}
+
+# Modify the form's Shown event
+$form.Add_Shown({
+    Write-DashboardLog "Dashboard form shown, initializing components..." -Level DEBUG
+    
+    if (-not (Test-WebSocketServerStatus -TimeoutSeconds 10)) {
+        Write-DashboardLog "WebSocket server not ready" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show(
+            "WebSocket server is not responding. Please ensure the server is started and try again.",
+            "Connection Error",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        )
+        return
+    }
+
+    if (Connect-WebSocket -MaxAttempts 5 -RetryDelay 2 -ConnectionTimeout 5000) {
+        Write-DashboardLog "WebSocket connection established, starting services..." -Level DEBUG
+        Start-KeepAlivePing
+        $refreshTimer.Start()
+    } else {
+        Write-DashboardLog "Failed to establish WebSocket connection" -Level ERROR
+        [System.Windows.Forms.MessageBox]::Show(
+            "Failed to connect to WebSocket server. The dashboard will continue in limited mode.",
+            "Connection Warning",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        )
+    }
+})
+
+# Modify the create button click handler in New-IntegratedGameServer function
+$createButton.Add_Click({
+    try {
+        Write-DashboardLog "Starting server creation process" -Level DEBUG
+        
+        # Validate required fields
+        if ([string]::IsNullOrWhiteSpace($nameTextBox.Text)) {
+            [System.Windows.Forms.MessageBox]::Show("Server name is required.", "Validation Error")
+            Write-DashboardLog "Validation failed: Server name missing" -Level ERROR
+            return
+        }
+
+        if ([string]::IsNullOrWhiteSpace($appIdTextBox.Text)) {
+            [System.Windows.Forms.MessageBox]::Show("Steam App ID is required.", "Validation Error")
+            Write-DashboardLog "Validation failed: App ID missing" -Level ERROR
+            return
+        }
+
+        $progressBar.MarqueeAnimationSpeed = 30
+        $statusLabel.Text = "Installing server..."
+        $createButton.Enabled = $false
+
+        # Get Steam credentials first
+        $credentials = Get-SteamCredentials
+        if ($null -eq $credentials) {
+            Write-DashboardLog "User cancelled Steam login" -Level DEBUG
+            $createButton.Enabled = $true
+            $progressBar.MarqueeAnimationSpeed = 0
+            $statusLabel.Text = "Installation cancelled"
+            return
+        }
+
+        # Prepare installation parameters
+        $jobParams = @{
+            name = $nameTextBox.Text
+            appId = $appIdTextBox.Text
+            installDir = $installDirTextBox.Text
+            serverManagerDir = $serverManagerDir
+            credentials = $credentials
+        }
+
+        # Start the installation job with error handling
+        $job = Start-Job -ScriptBlock $script:jobScriptBlock -ArgumentList @(
+            $jobParams.name,
+            $jobParams.appId,
+            $jobParams.installDir,
+            $jobParams.serverManagerDir,
+            $jobParams.credentials
+        )
+
+        if ($null -eq $job) {
+            throw "Failed to create background job"
+        }
+
+        Write-DashboardLog "Started installation job with ID: $($job.Id)" -Level DEBUG
+
+        # Create timer to monitor job
+        $timer = New-Object System.Windows.Forms.Timer
+        $timer.Interval = 500
+        $timer.Add_Tick({
+            if ($job.State -eq 'Completed') {
+                try {
+                    $result = Receive-Job -Job $job -ErrorAction Stop
+                    Remove-Job -Job $job -Force
+                    $timer.Stop()
+                    $progressBar.MarqueeAnimationSpeed = 0
+                    
+                    if ($result.Success) {
+                        $statusLabel.Text = "Installation complete!"
+                        [System.Windows.Forms.MessageBox]::Show("Server created successfully.", "Success")
+                        $createForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+                        $createForm.Close()
+                        Update-ServerList
+                    } else {
+                        $statusLabel.Text = "Installation failed!"
+                        [System.Windows.Forms.MessageBox]::Show("Failed to create server: $($result.Message)", "Error")
+                        $createButton.Enabled = $true
+                    }
+                }
+                catch {
+                    Write-DashboardLog "Error processing job result: $_" -Level ERROR
+                    $statusLabel.Text = "Error processing installation"
+                    $createButton.Enabled = $true
+                }
+            }
+            elseif ($job.State -eq 'Failed') {
+                $timer.Stop()
+                $progressBar.MarqueeAnimationSpeed = 0
+                $statusLabel.Text = "Installation failed!"
+                Write-DashboardLog "Job failed: $($job.ChildJobs[0].Error)" -Level ERROR
+                [System.Windows.Forms.MessageBox]::Show("Installation failed: $($job.ChildJobs[0].Error)", "Error")
+                $createButton.Enabled = $true
+                Remove-Job -Job $job -Force
+            }
+        })
+        $timer.Start()
+    }
+    catch {
+        Write-DashboardLog "Critical error in server creation: $($_.Exception.Message)" -Level ERROR
+        Write-DashboardLog $_.ScriptStackTrace -Level ERROR
+        $statusLabel.Text = "Critical error!"
+        $createButton.Enabled = $true
+        $progressBar.MarqueeAnimationSpeed = 0
+        [System.Windows.Forms.MessageBox]::Show("Critical error occurred: $($_.Exception.Message)", "Error")
+    }
+})

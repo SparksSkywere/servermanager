@@ -71,50 +71,18 @@ class WebSocketServer {
         try {
             Write-WebSocketLog "Initializing WebSocket server on ${HostName}:${Port}" -Level INFO
             
+            # Import required module for background jobs
+            Import-Module ThreadJob -ErrorAction Stop
+            
             # Clear ready file first
             if (Test-Path $script:ReadyFiles.WebSocket) {
                 Remove-Item $script:ReadyFiles.WebSocket -Force
             }
 
-            # Check and add URL reservation if needed
-            $urlPrefix = "http://+:${Port}/"
-            try {
-                Write-WebSocketLog "Checking URL ACL for $urlPrefix" -Level DEBUG
-                $null = netsh http show urlacl url=$urlPrefix 2>&1
-            }
-            catch {
-                Write-WebSocketLog "Adding URL ACL for $urlPrefix" -Level INFO
-                $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-                $result = netsh http add urlacl url=$urlPrefix user=$currentUser
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Failed to add URL ACL: $result"
-                }
-            }
-
-            # Check and add firewall rule if needed
-            $ruleName = "ServerManager_WebSocket_$Port"
-            $existingRule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
-            if (-not $existingRule) {
-                Write-WebSocketLog "Adding firewall rule for port $Port" -Level INFO
-                New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow | Out-Null
-            }
-
-            # Test port availability with proper error handling
-            try {
-                $tcpTest = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, $Port)
-                $tcpTest.Start()
-                $tcpTest.Stop()
-                Write-WebSocketLog "Port $Port is available" -Level DEBUG
-            }
-            catch {
-                throw "Port $Port is not available: $_"
-            }
-            
-            # Setup listener with proper prefix
+            # Setup listener with proper prefix for WebSocket (with required trailing slash)
             $this.Listener.Prefixes.Clear()
-            $this.Listener.Prefixes.Add($urlPrefix)
+            $this.Listener.Prefixes.Add("http://+:${Port}/ws/")  # Added trailing slash
             
-            # Try to start the listener
             try {
                 $this.Listener.Start()
                 Write-WebSocketLog "WebSocket listener started successfully" -Level INFO
@@ -123,10 +91,12 @@ class WebSocketServer {
                 throw "Failed to start listener: $_"
             }
 
-            # Write ready file
+            # Write ready file with full connection info (without trailing slash in the client URL)
             $config = @{
                 status = "ready"
                 port = $Port
+                path = "/ws"
+                url = "ws://localhost:${Port}/ws"  # Client URL doesn't need trailing slash
                 timestamp = Get-Date -Format "o"
             }
             
@@ -147,18 +117,7 @@ class WebSocketServer {
         }
         
         try {
-            # Add URL reservation if needed
-            $prefix = $this.Listener.Prefixes | Select-Object -First 1
-            if ($prefix) {
-                $urlAcl = netsh http show urlacl $prefix
-                if (-not $urlAcl) {
-                    Write-WebSocketLog "Adding URL reservation for $prefix" -Level INFO
-                    $null = netsh http add urlacl url=$prefix user=Everyone
-                }
-            }
-
             Write-WebSocketLog "Starting WebSocket listener..." -Level INFO
-            $this.Listener.Start()
             $this.IsRunning = $true
             
             Write-WebSocketLog "Starting message handling loop..." -Level INFO
@@ -166,16 +125,8 @@ class WebSocketServer {
                 try {
                     $context = $this.Listener.GetContext()
                     
-                    # Handle request in background job to prevent blocking
-                    Start-ThreadJob -ScriptBlock {
-                        param($context, $server)
-                        try {
-                            $server.HandleClient($context)
-                        }
-                        catch {
-                            Write-WebSocketLog "Client handler error: $_" -Level ERROR
-                        }
-                    } -ArgumentList $context, $this
+                    # Handle the connection synchronously instead of using ThreadJob
+                    $this.HandleClient($context)
                 }
                 catch {
                     if ($this.IsRunning) {
@@ -198,129 +149,162 @@ class WebSocketServer {
     }
     
     hidden [void] HandleClient($context) {
-        $clientId = [Guid]::NewGuid().ToString()  # Define ID at the start
+        $clientId = [Guid]::NewGuid().ToString()
         
         try {
-            if ($context.Request.IsWebSocketRequest) {
-                $wsContext = $context.AcceptWebSocketAsync().Result
+            Write-WebSocketLog "New connection request from $($context.Request.RemoteEndPoint)" -Level DEBUG
+            Write-WebSocketLog "Request URL: $($context.Request.Url)" -Level DEBUG  # Added URL logging
+            
+            # Check if the request is for the correct path
+            if ($context.Request.Url.AbsolutePath -ne "/ws/" -and $context.Request.Url.AbsolutePath -ne "/ws") {
+                Write-WebSocketLog "Invalid path requested: $($context.Request.Url.AbsolutePath)" -Level WARN
+                $context.Response.StatusCode = 404
+                $context.Response.Close()
+                return
+            }
+
+            if (-not $context.Request.IsWebSocketRequest) {
+                Write-WebSocketLog "Non-WebSocket request received from $($context.Request.RemoteEndPoint)" -Level WARN
+                $context.Response.StatusCode = 400
+                $context.Response.Close()
+                return
+            }
+
+            Write-WebSocketLog "Processing WebSocket handshake for client $clientId" -Level DEBUG
+            
+            # Perform handshake first
+            if (-not $this.PerformHandshake($context)) {
+                Write-WebSocketLog "Handshake failed for client $clientId" -Level ERROR
+                return
+            }
+
+            try {
+                $wsContext = $context.AcceptWebSocketAsync().GetAwaiter().GetResult()
                 $this.Connections[$clientId] = $wsContext.WebSocket
                 
-                Write-WebSocketLog "Client ${clientId} connected" -Level INFO
-                
-                # Handle messages in a loop
+                Write-WebSocketLog "Client ${clientId} connected successfully" -Level INFO
+
+                # Send initial welcome message
+                $welcomeMsg = "Welcome to Server Manager WebSocket"
+                $welcomeBytes = [System.Text.Encoding]::UTF8.GetBytes($welcomeMsg)
+                $welcomeSegment = [ArraySegment[byte]]::new($welcomeBytes)
+                $wsContext.WebSocket.SendAsync(
+                    $welcomeSegment,
+                    [WebSocketMessageType]::Text,
+                    $true,
+                    [Threading.CancellationToken]::None
+                ).Wait()
+
+                # Handle messages
                 $buffer = [byte[]]::new(4096)
                 $segment = [ArraySegment[byte]]::new($buffer)
                 
                 while ($wsContext.WebSocket.State -eq [WebSocketState]::Open) {
-                    $result = $wsContext.WebSocket.ReceiveAsync($segment, [Threading.CancellationToken]::None).Result
-                    
-                    if ($result.MessageType -eq [WebSocketMessageType]::Text) {
-                        $messageText = [Text.Encoding]::UTF8.GetString($buffer, 0, $result.Count)
-                        Write-WebSocketLog "Received from ${clientId}: ${messageText}" -Level DEBUG
+                    try {
+                        $result = $wsContext.WebSocket.ReceiveAsync($segment, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
                         
-                        # Echo back
-                        $response = [Text.Encoding]::UTF8.GetBytes("Echo: ${messageText}")
-                        $responseSegment = [ArraySegment[byte]]::new($response)
-                        $wsContext.WebSocket.SendAsync(
-                            $responseSegment,
-                            [WebSocketMessageType]::Text,
-                            $true,
+                        if ($result.MessageType -eq [WebSocketMessageType]::Text) {
+                            $messageText = [Text.Encoding]::UTF8.GetString($buffer, 0, $result.Count)
+                            Write-WebSocketLog "Received from ${clientId}: ${messageText}" -Level DEBUG
+                            
+                            # Echo back
+                            $response = [Text.Encoding]::UTF8.GetBytes("Echo: ${messageText}")
+                            $responseSegment = [ArraySegment[byte]]::new($response)
+                            $wsContext.WebSocket.SendAsync(
+                                $responseSegment,
+                                [WebSocketMessageType]::Text,
+                                $true,
+                                [Threading.CancellationToken]::None
+                            ).Wait()
+                        }
+                        elseif ($result.MessageType -eq [WebSocketMessageType]::Close) {
+                            Write-WebSocketLog "Client ${clientId} requested close" -Level DEBUG
+                            break
+                        }
+                    }
+                    catch {
+                        if ($wsContext.WebSocket.State -eq [WebSocketState]::Open) {
+                            Write-WebSocketLog "Error processing message from client ${clientId}: $_" -Level ERROR
+                        }
+                        break
+                    }
+                }
+            }
+            catch {
+                Write-WebSocketLog "Error accepting WebSocket connection: $_" -Level ERROR
+                throw
+            }
+        }
+        catch {
+            Write-WebSocketLog "Client handler error for ${clientId}: $_" -Level ERROR
+        }
+        finally {
+            if ($this.Connections.ContainsKey($clientId)) {
+                try {
+                    if ($this.Connections[$clientId].State -eq [WebSocketState]::Open) {
+                        $this.Connections[$clientId].CloseAsync(
+                            [WebSocketCloseStatus]::NormalClosure,
+                            "Server closing connection",
                             [Threading.CancellationToken]::None
                         ).Wait()
                     }
                 }
-            }
-            else {
-                Write-WebSocketLog "Non-WebSocket request received" -Level WARN
-                $context.Response.StatusCode = 400
-                $context.Response.Close()
-            }
-        }
-        catch {
-            Write-WebSocketLog "Client handler error: $_" -Level ERROR
-        }
-        finally {
-            if ($this.Connections.ContainsKey($clientId)) {
+                catch {
+                    Write-WebSocketLog "Error closing connection for client ${clientId}: $_" -Level ERROR
+                }
                 $this.Connections.Remove($clientId)
                 Write-WebSocketLog "Removed client ${clientId}" -Level DEBUG
             }
         }
     }
-    
+
     hidden [bool] PerformHandshake($context) {
         try {
             Write-WebSocketLog "Starting WebSocket handshake" -Level DEBUG
+            
             $request = $context.Request
             $response = $context.Response
             
-            # Log headers for debugging
-            Write-WebSocketLog "Request headers:" -Level DEBUG
-            foreach ($key in $request.Headers.AllKeys) {
-                Write-WebSocketLog "${key}: $($request.Headers[$key])" -Level DEBUG
-            }
-            
-            # Check for WebSocket upgrade
+            # Verify WebSocket upgrade headers
             $upgrade = $request.Headers["Upgrade"]
             $connection = $request.Headers["Connection"]
-            if ((-not $upgrade) -or ($upgrade -ne "websocket") -or
-                (-not $connection) -or ($connection -notlike "*upgrade*")) {
-                Write-WebSocketLog "Not a valid WebSocket upgrade request" -Level WARN
-                $response.StatusCode = 400
-                $response.Close()
-                return $false
-            }
-
-            # Verify WebSocket version
+            $key = $request.Headers["Sec-WebSocket-Key"]
             $version = $request.Headers["Sec-WebSocket-Version"]
-            if (-not $version -or $version -ne "13") {
-                Write-WebSocketLog "Invalid WebSocket version" -Level WARN
-                $response.StatusCode = 426
-                $response.Headers.Add("Sec-WebSocket-Version", "13")
-                $response.Close()
-                return $false
-            }
-
-            # Get and validate security key
-            $secKey = $request.Headers["Sec-WebSocket-Key"]
-            if ([string]::IsNullOrEmpty($secKey)) {
-                Write-WebSocketLog "Missing Sec-WebSocket-Key header" -Level WARN
+            
+            if (-not $upgrade -or -not $connection -or -not $key -or -not $version) {
+                Write-WebSocketLog "Missing required WebSocket headers" -Level WARN
                 $response.StatusCode = 400
                 $response.Close()
                 return $false
             }
-
-            # Calculate accept key
-            $acceptKey = Get-WebSocketAcceptKey $secKey
             
-            # Check for subprotocols
-            $protocols = $request.Headers.GetValues("Sec-WebSocket-Protocol")
-            if ($protocols -and $protocols.Contains("dashboard")) {
-                $response.Headers.Add("Sec-WebSocket-Protocol", "dashboard")
+            if ($upgrade.ToLower() -ne "websocket" -or 
+                $connection.ToLower() -notlike "*upgrade*" -or 
+                $version -ne "13") {
+                Write-WebSocketLog "Invalid WebSocket headers" -Level WARN
+                $response.StatusCode = 400
+                $response.Close()
+                return $false
             }
-
-            # Send handshake response
+            
+            # Calculate accept key
+            $acceptKey = Get-WebSocketAcceptKey $key
+            
+            # Set response headers
             $response.StatusCode = 101
             $response.Headers.Add("Upgrade", "websocket")
             $response.Headers.Add("Connection", "Upgrade")
             $response.Headers.Add("Sec-WebSocket-Accept", $acceptKey)
-            
-            Write-WebSocketLog "Handshake response headers:" -Level DEBUG
-            foreach ($key in $response.Headers.AllKeys) {
-                Write-WebSocketLog "${key}: $($response.Headers[$key])" -Level DEBUG
-            }
-            
-            $response.Close()
             
             Write-WebSocketLog "WebSocket handshake completed successfully" -Level DEBUG
             return $true
         }
         catch {
             Write-WebSocketLog "Handshake error: $_" -Level ERROR
-            Write-WebSocketLog $_.ScriptStackTrace -Level ERROR
             return $false
         }
     }
-    
+
     [void] Stop() {
         $this.IsRunning = $false
         if ($this.Listener) {
@@ -343,8 +327,9 @@ class WebSocketServer {
     [hashtable] GetStatus() {
         return @{
             IsRunning = $this.IsRunning
-            ConnectionCount = $this.Connections.Count
+            ConnectionCount = [Math]::Max(0, $this.Connections.Count)  # Prevent division by zero
             ListenerActive = $this.Listener -and $this.Listener.IsListening
+            Connections = $this.Connections.Keys
         }
     }
 }

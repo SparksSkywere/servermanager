@@ -1,0 +1,5 @@
+Microsoft.PowerShell.SecretManagement
+PSWindowsUpdate
+PackageManagement
+PowerShellGet
+ThreadJob

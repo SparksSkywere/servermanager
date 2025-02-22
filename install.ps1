@@ -626,24 +626,62 @@ function Show-CompletionDialog {
     $form.ShowDialog()
 }
 
+# Add this function before Install-RequiredModules
+function Install-ExternalModules {
+    param([string]$RequirementsPath)
+    
+    Write-Host "Installing external PowerShell modules..." -ForegroundColor Cyan
+    
+    if (-not (Test-Path $RequirementsPath)) {
+        Write-Host "Requirements file not found at: $RequirementsPath" -ForegroundColor Yellow
+        return $false
+    }
+    
+    try {
+        $modules = Get-Content $RequirementsPath | Where-Object { $_ -match '\S' } | ForEach-Object { $_.Trim() }
+        
+        foreach ($module in $modules) {
+            Write-Host "Installing module: $module"
+            try {
+                Install-Module -Name $module -Force -AllowClobber -Scope CurrentUser -ErrorAction Stop
+                Write-Host "Successfully installed $module" -ForegroundColor Green
+            }
+            catch {
+                Write-Host "Failed to install module $module : $($_.Exception.Message)" -ForegroundColor Red
+                return $false
+            }
+        }
+        
+        return $true
+    }
+    catch {
+        Write-Host "Error reading requirements file: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
 # MAIN SCRIPT FLOW
 try {
     Test-AdminPrivileges
 
-    # Get installation options first - Remove the parentheses
+    # Get installation options first
     $installOptions = Get-InstallationOptions
-    Write-Log "Installation options selected: Service install = $($installOptions.InstallService)"
-
+    
     $SteamCMDPath = Select-FolderDialog
     if (-Not $SteamCMDPath -or -not (Test-ValidPath $SteamCMDPath)) {
         throw "Invalid or no directory selected"
     }
 
-    Write-Log "Selected installation directory: $SteamCMDPath"
+    # Create base directories first
     New-Servermanager -dir $SteamCMDPath
-
     $ServerManagerDir = Join-Path $SteamCMDPath "Servermanager"
+    New-Item -ItemType Directory -Force -Path $ServerManagerDir | Out-Null
+    
+    # Set up logging
     $global:logFilePath = Join-Path $ServerManagerDir "Install-Log.txt"
+    Write-Log "Installation started"
+    Write-Log "Selected installation directory: $SteamCMDPath"
+    Write-Log "Installation options selected: Service install = $($installOptions.InstallService)"
 
     # Create registry structure
     if (-not (Test-RegistryAccess)) {
@@ -667,11 +705,17 @@ try {
         Set-ItemProperty -Path $registryPath -Name $key -Value $registryValues[$key] -Force
     }
 
-    # Git operations
+    # Git operations first to get repository content
     Install-Git
     Update-GitRepo -repoUrl $gitRepoUrl -destination $ServerManagerDir
 
-    # Module installation
+    # Now that we have the repository, we can install external modules
+    $requirementsPath = Join-Path $ServerManagerDir "requirements.txt"
+    if (-not (Install-ExternalModules -RequirementsPath $requirementsPath)) {
+        throw "Failed to install required external modules"
+    }
+
+    # After external modules, install internal modules
     if (-not (Install-RequiredModules -ServerManagerDir $ServerManagerDir)) {
         throw "Module installation failed"
     }
@@ -689,7 +733,7 @@ try {
     New-AppIDFile -serverManagerDir $ServerManagerDir
     Set-InitialAuthConfig -ServerManagerDir $ServerManagerDir
 
-    # After completing the basic installation, handle service setup if requested
+    # Service installation last
     if ($installOptions.InstallService) {
         Write-Log "Setting up Windows Service..."
         try {
@@ -743,7 +787,9 @@ try {
 catch {
     Write-Host "Installation failed: $($_.Exception.Message)" -ForegroundColor Red
     Write-Log "Installation failed: $($_.Exception.Message)"
-    Write-LogToFile -logFilePath $global:logFilePath
+    if (Test-Path (Split-Path $global:logFilePath -Parent)) {
+        Write-LogToFile -logFilePath $global:logFilePath
+    }
     exit 1
 }
 
