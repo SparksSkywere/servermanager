@@ -3,8 +3,7 @@ $ErrorActionPreference = 'Stop'
 $VerbosePreference = 'Continue'
 
 # Initialize basic logging first
-$timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-$logFile = Join-Path $PSScriptRoot "webserver_$timestamp.log"
+$logFile = Join-Path $PSScriptRoot "webserver.log"
 
 function Write-WebServerLog {
     param([string]$Message)
@@ -127,7 +126,7 @@ try {
         New-Item -Path $dir -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
     }
     
-    $properLogPath = Join-Path $paths.Logs (Split-Path $logFile -Leaf)
+    $properLogPath = Join-Path $paths.Logs "webserver.log"
     Move-Item -Path $logFile -Destination $properLogPath -Force -ErrorAction SilentlyContinue
     $logFile = $properLogPath
 

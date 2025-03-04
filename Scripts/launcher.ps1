@@ -68,6 +68,80 @@ function Initialize-Configuration {
     }
 }
 
+# Add new helper functions for pre-flight checks
+function Remove-UrlReservation {
+    param([string]$Port)
+    
+    $urls = @(
+        "http://+:$Port/",
+        "http://localhost:$Port/",
+        "http://*:$Port/"
+    )
+    
+    foreach ($url in $urls) {
+        Write-StatusMessage "Removing URL reservation: $url" "Cyan" -LogOnly
+        $null = netsh http delete urlacl url=$url 2>&1
+    }
+}
+
+function Remove-FirewallRules {
+    param([string]$Port)
+    
+    $ruleNames = @(
+        "ServerManager_http_$Port",
+        "ServerManager_WebSocket_$Port"
+    )
+    
+    foreach ($ruleName in $ruleNames) {
+        Write-StatusMessage "Removing firewall rule: $ruleName" "Cyan" -LogOnly
+        Remove-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+    }
+}
+
+function Clear-TCPPort {
+    param(
+        [Parameter(Mandatory=$true)]
+        [int]$Port
+    )
+    
+    Write-StatusMessage "Clearing port $Port..." "Cyan" -LogOnly
+    
+    # Get all processes using the port
+    $connections = @()
+    $connections += netstat -ano | Where-Object { $_ -match ":$Port\s+.*(?:LISTENING|ESTABLISHED)" }
+    
+    try {
+        $connections += Get-NetTCPConnection -LocalPort $Port -ErrorAction Stop
+    } catch {
+        Write-StatusMessage "Note: Get-NetTCPConnection unavailable" "Yellow" -LogOnly
+    }
+    
+    # Extract and stop processes
+    $processIds = $connections | ForEach-Object {
+        if ($_ -match ".*:$Port.*\s+(\d+)\s*$") {
+            $matches[1]
+        } elseif ($_.OwningProcess) {
+            $_.OwningProcess
+        }
+    } | Select-Object -Unique
+    
+    foreach ($pid in $processIds) {
+        if ($pid -in @(0, 4)) { continue } # Skip system processes
+        
+        try {
+            $process = Get-Process -Id $pid -ErrorAction Stop
+            Write-StatusMessage "Stopping process $($process.Name) (PID: $pid) using port $Port" "Yellow" -LogOnly
+            Stop-Process -Id $pid -Force
+        } catch {
+            Write-StatusMessage "Could not stop process $pid : $_" "Red" -LogOnly
+        }
+    }
+    
+    # Reset networking components
+    Remove-UrlReservation -Port $Port
+    Remove-FirewallRules -Port $Port
+}
+
 # Consolidated process start function
 function Start-ManagedProcess {
     param(
@@ -132,8 +206,45 @@ function Start-ManagedProcess {
 # Replace existing Start-WebServer function with this simplified version
 function Start-WebServer {
     try {
-        # Remove any existing ready files
+        Write-StatusMessage "Performing pre-flight checks..." "Cyan"
+        
+        # Clear any existing ready files
+        Remove-Item -Path $script:ReadyFiles.WebSocket -Force -ErrorAction SilentlyContinue
         Remove-Item -Path $script:ReadyFiles.WebServer -Force -ErrorAction SilentlyContinue
+        
+        # Clean up ports
+        Clear-TCPPort -Port $script:Ports.WebServer
+        Clear-TCPPort -Port $script:Ports.WebSocket
+        
+        # Add new URL reservations
+        Write-StatusMessage "Adding URL reservations..." "Cyan" -LogOnly
+        $null = netsh http add urlacl url=http://+:$($script:Ports.WebServer)/ user=Everyone
+        $null = netsh http add urlacl url=http://+:$($script:Ports.WebSocket)/ user=Everyone
+        
+        # Add firewall rules if they don't exist
+        Write-StatusMessage "Configuring firewall rules..." "Cyan" -LogOnly
+        $rules = @(
+            @{
+                Name = "ServerManager_http_$($script:Ports.WebServer)"
+                Port = $script:Ports.WebServer
+                Protocol = "TCP"
+            },
+            @{
+                Name = "ServerManager_WebSocket_$($script:Ports.WebSocket)"
+                Port = $script:Ports.WebSocket
+                Protocol = "TCP"
+            }
+        )
+        
+        foreach ($rule in $rules) {
+            if (-not (Get-NetFirewallRule -DisplayName $rule.Name -ErrorAction SilentlyContinue)) {
+                New-NetFirewallRule -DisplayName $rule.Name `
+                                  -Direction Inbound `
+                                  -Protocol $rule.Protocol `
+                                  -LocalPort $rule.Port `
+                                  -Action Allow
+            }
+        }
         
         # Start the web server process
         $webserverPath = Join-Path $script:Paths.Scripts "webserver.ps1"

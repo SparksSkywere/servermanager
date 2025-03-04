@@ -192,8 +192,131 @@ function Remove-PidFile {
     return $false
 }
 
+# Add system metrics functions
+function Get-SystemMetrics {
+    try {
+        $metrics = @{
+            CPU = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples.CookedValue
+            Memory = Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory, TotalVisibleMemorySize
+            Disk = Get-PSDrive C | Select-Object Free, Used
+            GPU = Get-WmiObject Win32_VideoController | Select-Object -First 1
+            Network = Get-NetAdapter | Where-Object Status -eq "Up" | Select-Object -First 1
+            Uptime = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+        }
+        return $metrics
+    }
+    catch {
+        Write-ServerLog "Error getting system metrics: $_" -Level ERROR
+        return $null
+    }
+}
+
+function Get-NetworkUsage {
+    param(
+        [hashtable]$PreviousStats,
+        [datetime]$PreviousTime
+    )
+    
+    try {
+        $adapter = Get-NetAdapter | Where-Object Status -eq "Up" | Select-Object -First 1
+        $currentStats = $adapter | Get-NetAdapterStatistics
+        $currentTime = Get-Date
+
+        $timeDiff = ($currentTime - $PreviousTime).TotalSeconds
+
+        if ($timeDiff -gt 0 -and $PreviousStats.ContainsKey($adapter.Name)) {
+            $prevStats = $PreviousStats[$adapter.Name]
+            $receiveBps = ($currentStats.ReceivedBytes - $prevStats.ReceivedBytes) / $timeDiff
+            $sentBps = ($currentStats.SentBytes - $prevStats.SentBytes) / $timeDiff
+
+            $receiveMbps = [Math]::Round(($receiveBps * 8) / 1MB, 2)
+            $sentMbps = [Math]::Round(($sentBps * 8) / 1MB, 2)
+
+            return @{
+                Stats = @{ $adapter.Name = $currentStats }
+                Time = $currentTime
+                Display = "Down: $receiveMbps Mbps Up: $sentMbps Mbps"
+            }
+        }
+
+        return @{
+            Stats = @{ $adapter.Name = $currentStats }
+            Time = $currentTime
+            Display = "Calculating..."
+        }
+    }
+    catch {
+        Write-ServerLog "Error getting network usage: $_" -Level ERROR
+        return $null
+    }
+}
+
+function Get-GPUInfo {
+    try {
+        $gpu = Get-WmiObject Win32_VideoController | Select-Object -First 1
+        return "$($gpu.Name) - $('{0:N0}' -f ($gpu.AdapterRAM/1MB))MB"
+    } catch {
+        return "GPU information unavailable"
+    }
+}
+
+# Add console window handling
+function Show-ConsoleWindow {
+    param([switch]$Show, [switch]$Hide)
+    
+    try {
+        if (-not ("Win32.NativeMethods" -as [type])) {
+            Add-Type -Name NativeMethods -Namespace Win32 -MemberDefinition '
+                [DllImport("kernel32.dll")]
+                public static extern IntPtr GetConsoleWindow();
+                [DllImport("user32.dll")]
+                public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+            '
+        }
+        $consolePtr = [Win32.NativeMethods]::GetConsoleWindow()
+        $nCmdShow = if ($Show) { 5 } elseif ($Hide) { 0 }
+        [Win32.NativeMethods]::ShowWindow($consolePtr, $nCmdShow)
+    }
+    catch {
+        Write-ServerLog "Failed to modify console window: $_" -Level ERROR
+    }
+}
+
+# Add WebSocket helper functions
+function Test-WebSocketHandshake {
+    param(
+        [string]$Hostname = "localhost",
+        [int]$Port,
+        [int]$TimeoutMs = 2000
+    )
+    
+    $tcpClient = $null
+    $stream = $null
+    
+    try {
+        $tcpClient = New-Object System.Net.Sockets.TcpClient
+        if (-not $tcpClient.ConnectAsync($Hostname, $Port).Wait($TimeoutMs)) {
+            Write-ServerLog "TCP connection timeout" -Level ERROR
+            return $false
+        }
+
+        # ...rest of existing handshake code...
+        return $true
+    }
+    catch {
+        Write-ServerLog "Handshake error: $($_.Exception.Message)" -Level ERROR
+        return $false
+    }
+    finally {
+        if ($stream) { $stream.Dispose() }
+        if ($tcpClient) { $tcpClient.Dispose() }
+    }
+}
+
 # Export members
 Export-ModuleMember -Variable Paths, ReadyFiles, Ports, PidFiles
 Export-ModuleMember -Function Write-ServerLog, Write-ReadyFile, Test-ReadyFile, 
                               Write-PidFile, Get-ProcessFromPidFile, 
-                              Test-ProcessAlive, Remove-PidFile
+                              Test-ProcessAlive, Remove-PidFile,
+                              Get-SystemMetrics, Get-NetworkUsage, Get-GPUInfo, 
+                              Show-ConsoleWindow, Test-WebSocketHandshake
