@@ -118,15 +118,26 @@ try {
         try {
             $dashboardPath = Join-Path $serverManagerDir "Scripts\dashboard.ps1"
             if (Test-Path $dashboardPath) {
-                Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$dashboardPath`"" -WindowStyle Normal
-                Write-TrayLog "Admin console opened" -Level DEBUG
+                # Create a launcher script that will ensure proper STA threading
+                $launcherPath = Join-Path $env:TEMP "LaunchDashboard.ps1"
+                @"
+Add-Type -AssemblyName PresentationFramework
+Add-Type -AssemblyName System.Windows.Forms
+Set-StrictMode -Off
+`$scriptPath = '$dashboardPath'
+& `$scriptPath
+"@ | Out-File -FilePath $launcherPath -Encoding utf8
+                
+                # Launch with appropriate parameters for GUI
+                Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Normal -File `"$launcherPath`"" -WindowStyle Normal
+                Write-TrayLog "Dashboard launched via launcher script" -Level DEBUG
             } else {
                 throw "Dashboard script not found: $dashboardPath"
             }
         }
         catch {
-            Write-TrayLog "Failed to open admin console: $($_.Exception.Message)" -Level ERROR
-            [System.Windows.Forms.MessageBox]::Show("Failed to open admin console: $($_.Exception.Message)", "Error")
+            Write-TrayLog "Failed to open dashboard: $($_.Exception.Message)" -Level ERROR
+            [System.Windows.Forms.MessageBox]::Show("Failed to open dashboard: $($_.Exception.Message)", "Error")
         }
     })
 
