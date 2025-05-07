@@ -136,7 +136,10 @@ class API {
     connectWebSocket() {
         if (this.webSocket?.readyState === WebSocket.OPEN) return;
 
-        this.webSocket = new WebSocket(`ws://${window.location.host}/ws`);
+        // Use the WebSocket URL from the config file instead of relative path
+        this.webSocket = new WebSocket(CONFIG.WEBSOCKET_URL);
+        
+        console.log(`Connecting to WebSocket at ${CONFIG.WEBSOCKET_URL}`);
 
         this.webSocket.onopen = () => {
             console.log('WebSocket connected');
@@ -156,6 +159,7 @@ class API {
             console.log('WebSocket disconnected');
             if (this.reconnectAttempts < this.maxReconnectAttempts) {
                 this.reconnectAttempts++;
+                console.log(`Reconnecting to WebSocket, attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
                 setTimeout(() => this.connectWebSocket(), 5000);
             }
         };
@@ -175,6 +179,10 @@ class API {
                 break;
             case 'log':
                 window.dashboard?.addActivityLogEntry(data.message);
+                break;
+            case 'connection':
+                console.log('WebSocket connection status:', data.status);
+                if (data.message) window.dashboard?.addActivityLogEntry(data.message);
                 break;
             default:
                 console.log('Unknown WebSocket message type:', data.type);

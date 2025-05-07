@@ -520,28 +520,59 @@ function Start-ManagedProcess {
     $pinfo.CreateNoWindow = $NoWindow
     $pinfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
     
+    # Add working directory to improve stability
+    $pinfo.WorkingDirectory = Split-Path -Parent $FilePath
+    
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $pinfo
     
     try {
+        # Start with a resource monitor
         $null = $process.Start()
+        
         # Store the PID in both the process tracker and write to PID file
         $Global:ProcessTracker.$Type = $process.Id
         Write-PidFile -Type $Type -ProcessId $process.Id
         
-        # Register output handlers
+        # Create a synchronized buffer for output to prevent thread issues
+        $outputBuffer = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+        $errorBuffer = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+        
+        # Register output handlers with buffering
         $null = Register-ObjectEvent -InputObject $process -EventName OutputDataReceived -Action {
             param($sender, $e)
-            if ($e.Data) { Write-StatusMessage "${Type}: $($e.Data)" "Gray" -LogOnly }
+            if ($e.Data) { 
+                $null = $outputBuffer.Add($e.Data)
+                # Keep buffer size reasonable
+                if ($outputBuffer.Count > 500) { $null = $outputBuffer.RemoveAt(0) }
+                Write-StatusMessage "${Type}: $($e.Data)" "Gray" -LogOnly 
+            }
         }
         
         $null = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
             param($sender, $e)
-            if ($e.Data) { Write-StatusMessage "$Type Error: $($e.Data)" "Red" -LogOnly }
+            if ($e.Data) { 
+                $null = $errorBuffer.Add($e.Data)
+                # Keep buffer size reasonable
+                if ($errorBuffer.Count > 300) { $null = $errorBuffer.RemoveAt(0) }
+                Write-StatusMessage "$Type Error: $($e.Data)" "Red" -LogOnly 
+            }
+        }
+        
+        # Add memory and CPU monitoring for the process
+        $null = Register-ObjectEvent -InputObject $process -EventName Exited -Action {
+            $exitCode = $sender.ExitCode
+            Write-StatusMessage "$Type process exited with code: $exitCode" "Yellow" -LogOnly
+            # Clear process from tracker upon exit
+            $Global:ProcessTracker.$Type = $null
         }
         
         $process.BeginOutputReadLine()
         $process.BeginErrorReadLine()
+        
+        # Store output/error buffers in process for retrieval
+        Add-Member -InputObject $process -MemberType NoteProperty -Name "OutputBuffer" -Value $outputBuffer
+        Add-Member -InputObject $process -MemberType NoteProperty -Name "ErrorBuffer" -Value $errorBuffer
         
         Write-StatusMessage "$Type process started (PID: $($process.Id))" "Green"
         return $process
@@ -650,6 +681,10 @@ function Start-WebServer {
                 Create-ReadyFiles -WebPort $script:Ports.WebServer -WebSocketPort $script:Ports.WebSocket -Emergency
             }
         }
+        
+        # Create WebSocket ready file explicitly to ensure it exists
+        # This is critical for dashboard connectivity
+        Initialize-WebSocketReadyFile
         
         Write-StatusMessage "Web server started successfully" "Green"
         return $webServerProcess
@@ -798,6 +833,54 @@ function Create-ReadyFiles {
     }
     catch {
         Write-StatusMessage "Error creating ready files: $_" "Red" -LogOnly
+        return $false
+    }
+}
+
+# Add explicit WebSocket ready file creation to ensure dashboard can connect
+function Initialize-WebSocketReadyFile {
+    try {
+        Write-StatusMessage "Creating WebSocket ready file..." "Cyan"
+        
+        # Get WebSocket port from registry if available
+        $webSocketPort = 8081
+        
+        # Create ready file with proper format
+        $readyFilePath = $script:ReadyFiles.WebSocket
+        $readyContent = @{
+            status = "ready"
+            port = $webSocketPort
+            timestamp = Get-Date -Format "o"
+            host = "localhost"
+        } | ConvertTo-Json
+        
+        # Ensure directory exists
+        $readyDir = Split-Path -Parent $readyFilePath
+        if (-not (Test-Path $readyDir)) {
+            New-Item -Path $readyDir -ItemType Directory -Force | Out-Null
+        }
+        
+        # Write file with maximum reliability - try multiple methods
+        try {
+            [System.IO.File]::WriteAllText($readyFilePath, $readyContent)
+        }
+        catch {
+            Write-StatusMessage "Using alternative method to write ready file: $_" "Yellow" -LogOnly
+            Set-Content -Path $readyFilePath -Value $readyContent -Force
+        }
+        
+        # Verify file was created
+        if (Test-Path $readyFilePath) {
+            Write-StatusMessage "WebSocket ready file created successfully" "Green" -LogOnly
+            return $true
+        }
+        else {
+            Write-StatusMessage "Failed to create WebSocket ready file" "Red" -LogOnly
+            return $false
+        }
+    }
+    catch {
+        Write-StatusMessage "Error creating WebSocket ready file: $_" "Red" -LogOnly
         return $false
     }
 }

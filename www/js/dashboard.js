@@ -14,6 +14,23 @@ export class Dashboard {
         this.startPerformanceMonitoring();
         this.initializeGridStack();
         this.initializePanelControls();
+        
+        // Initialize WebSocket connection
+        this.connectToWebSocket();
+        
+        // Store dashboard instance globally to allow access from API
+        window.dashboard = this;
+    }
+    
+    connectToWebSocket() {
+        try {
+            console.log('Initializing WebSocket connection from dashboard');
+            API.connectWebSocket();
+            this.addActivityLogEntry('Connecting to real-time monitoring service...');
+        } catch (error) {
+            console.error('Failed to connect to WebSocket:', error);
+            this.addActivityLogEntry('Failed to connect to real-time monitoring service');
+        }
     }
 
     async initializeCharts() {
@@ -100,7 +117,7 @@ export class Dashboard {
         await updateMetrics();
 
         // Set up interval for updates
-        setInterval(updateMetrics, this.updateInterval);
+        this.monitoringInterval = setInterval(updateMetrics, this.updateInterval);
     }
 
     async fetchPerformanceMetrics() {
@@ -128,7 +145,50 @@ export class Dashboard {
         this.updateChartData(this.charts.disk, metrics.diskUsage);
 
         // Update activity log
-        this.updateActivityLog(metrics.recentActivity);
+        if (metrics.recentActivity) {
+            this.updateActivityLog(metrics.recentActivity);
+        }
+    }
+
+    updateChartData(chart, data) {
+        if (!chart || !data) return;
+        
+        try {
+            if (chart.data && chart.data.datasets) {
+                if (Array.isArray(data)) {
+                    // For simple array data
+                    chart.data.datasets[0].data = data;
+                } else if (data.used !== undefined && data.free !== undefined) {
+                    // For disk usage
+                    chart.data.datasets[0].data = [data.used, data.free];
+                } else if (data.download !== undefined && data.upload !== undefined) {
+                    // For network data
+                    chart.data.datasets[0].data.push(data.download);
+                    chart.data.datasets[1].data.push(data.upload);
+                    
+                    // Keep only the last 10 points
+                    if (chart.data.datasets[0].data.length > 10) {
+                        chart.data.datasets[0].data.shift();
+                        chart.data.datasets[1].data.shift();
+                    }
+                    
+                    // Update labels
+                    chart.data.labels = Array(chart.data.datasets[0].data.length).fill('');
+                }
+                
+                chart.update();
+            }
+        } catch (error) {
+            console.error('Error updating chart data:', error);
+        }
+    }
+
+    updateActivityLog(activities) {
+        if (Array.isArray(activities)) {
+            activities.forEach(activity => {
+                this.addActivityLogEntry(activity);
+            });
+        }
     }
 
     async updateServerList() {
@@ -194,6 +254,8 @@ export class Dashboard {
 
     addActivityLogEntry(message) {
         const logContainer = document.getElementById('activityLog');
+        if (!logContainer) return; // Safety check
+        
         const entry = document.createElement('div');
         entry.className = 'log-entry';
         entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
@@ -220,6 +282,11 @@ export class Dashboard {
         document.getElementById('refreshRate')?.addEventListener('change', (e) => {
             this.updateInterval = parseInt(e.target.value) * 1000;
             this.restartPerformanceMonitoring();
+        });
+        
+        // Add WebSocket reconnect button if it exists
+        document.getElementById('reconnectWebsocket')?.addEventListener('click', () => {
+            this.connectToWebSocket();
         });
     }
 
@@ -258,7 +325,7 @@ export class Dashboard {
 
     initializePanelControls() {
         const editBtn = document.querySelector('.edit-dashboard-btn');
-        editBtn.addEventListener('click', () => {
+        editBtn?.addEventListener('click', () => {
             const isEditing = editBtn.classList.toggle('active');
             document.body.classList.toggle('dashboard-editing', isEditing);
             this.setEditMode(isEditing);

@@ -77,20 +77,37 @@ class SimpleWebSocketServer {
     }
     
     [bool] IsListening() {
-        # Simple implementation that just returns the status
-        return $this.IsRunning -and $null -ne $this.Listener
+        # Better check for listening state
+        if ($null -eq $this.Listener) {
+            return $false
+        }
+        
+        try {
+            # More reliable test if the listener is actually working
+            return $this.IsRunning -and $this.Listener.Server.IsBound
+        }
+        catch {
+            return $false
+        }
     }
     
     [bool] Initialize([int]$Port = 8081, [string]$HostName = "localhost") {
         try {
             if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
-                Write-WebSocketLog "Initializing SimpleWebSocketServer on port $Port" -Level INFO
+                Write-WebSocketLog "Initializing SimpleWebSocketServer on port $Port and host $HostName" -Level INFO
             }
             
             # Clean up any existing listener
             if ($null -ne $this.Listener) {
-                try { $this.Listener.Stop() } catch {}
-                $this.Listener = $null
+                try {
+                    $this.Listener.Stop()
+                    $this.Listener = $null
+                } 
+                catch {
+                    if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
+                        Write-WebSocketLog "Error stopping existing listener: $_" -Level WARN
+                    }
+                }
             }
             
             # Store port
@@ -98,19 +115,39 @@ class SimpleWebSocketServer {
             
             # Create TCP listener based on hostname
             if ($HostName -eq '+' -or $HostName -eq '*') {
+                # Listen on all interfaces
                 $this.Listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, $Port)
+                if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
+                    Write-WebSocketLog "Created listener on all interfaces (IPAddress.Any)" -Level INFO
+                }
             }
             elseif ($HostName -eq 'localhost') {
+                # Listen on localhost only (loopback)
                 $this.Listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $Port)
+                if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
+                    Write-WebSocketLog "Created listener on localhost only (Loopback)" -Level INFO
+                }
             }
             else {
-                # Try to parse IP address
+                # Listen on specified hostname
                 try {
-                    $ipAddress = [System.Net.IPAddress]::Parse($HostName)
+                    $ipAddress = [System.Net.Dns]::GetHostAddresses($HostName) | 
+                                 Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork } | 
+                                 Select-Object -First 1
+                                 
+                    if ($null -eq $ipAddress) {
+                        throw "Could not resolve hostname $HostName to an IPv4 address"
+                    }
+                    
                     $this.Listener = New-Object System.Net.Sockets.TcpListener($ipAddress, $Port)
+                    if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
+                        Write-WebSocketLog "Created listener on specific host: $HostName ($($ipAddress.ToString()))" -Level INFO
+                    }
                 }
                 catch {
-                    # Default to Any address
+                    if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
+                        Write-WebSocketLog "Failed to resolve hostname $HostName, using Any: $_" -Level WARN
+                    }
                     $this.Listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, $Port)
                 }
             }
@@ -131,19 +168,21 @@ class SimpleWebSocketServer {
                 status = "ready"
                 port = $Port
                 timestamp = Get-Date -Format "o"
+                host = $HostName
             } | ConvertTo-Json
             
             Set-Content -Path $readyFilePath -Value $config -Force
             
             if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
-                Write-WebSocketLog "SimpleWebSocketServer initialized successfully on port $Port" -Level INFO
+                Write-WebSocketLog "WebSocket server initialized on port $Port" -Level INFO
+                Write-WebSocketLog "Ready file created at: $readyFilePath" -Level INFO
             }
             
             return $true
         }
         catch {
             if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
-                Write-WebSocketLog "Failed to initialize SimpleWebSocketServer: $_" -Level ERROR
+                Write-WebSocketLog "Failed to initialize WebSocket server: $_" -Level ERROR
             }
             return $false
         }
@@ -152,11 +191,10 @@ class SimpleWebSocketServer {
     [void] Start() {
         $this.IsRunning = $true
         
-        # Keep the server alive - we're not actually processing WebSocket messages
-        # in this simplified version, just making the ports available
+        # Create a thread to handle inbound connections
         try {
             if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
-                Write-WebSocketLog "SimpleWebSocketServer started on port $($this.Port)" -Level INFO
+                Write-WebSocketLog "Starting WebSocket server on port $($this.Port)" -Level INFO
             }
             
             # Update ready file to indicate we're running
@@ -168,32 +206,91 @@ class SimpleWebSocketServer {
             } | ConvertTo-Json
             
             Set-Content -Path $readyFilePath -Value $config -Force
+            
+            # Start a background thread to handle listening
+            $thread = [System.Threading.Thread]::new({
+                param($server)
+                
+                try {
+                    while ($server.IsRunning) {
+                        try {
+                            if ($server.Listener.Pending()) {
+                                # Accept a new client connection
+                                $client = $server.Listener.AcceptSocket()
+                                
+                                # In a real implementation, we would handle WebSocket handshake
+                                # and manage the connection. For this simple server, we'll just
+                                # keep the port open and accept connections.
+                                $client.Close()
+                            }
+                            
+                            # Sleep to avoid CPU spike
+                            [System.Threading.Thread]::Sleep(100)
+                        }
+                        catch [System.Net.Sockets.SocketException] {
+                            # Socket exceptions may occur if client disconnects - just continue
+                        }
+                        catch {
+                            # Log other errors but continue running
+                            if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
+                                Write-WebSocketLog "Error in WebSocket listener thread: $_" -Level ERROR
+                            }
+                            [System.Threading.Thread]::Sleep(1000)
+                        }
+                    }
+                }
+                catch {
+                    if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
+                        Write-WebSocketLog "WebSocket listener thread terminated with error: $_" -Level ERROR
+                    }
+                }
+                finally {
+                    if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
+                        Write-WebSocketLog "WebSocket listener thread exited" -Level INFO
+                    }
+                }
+            })
+            
+            # Set thread as background so it doesn't prevent PowerShell from exiting
+            $thread.IsBackground = $true
+            
+            # Pass the server instance to the thread
+            $thread.Start($this)
+            
+            if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
+                Write-WebSocketLog "WebSocket server started successfully" -Level INFO
+            }
         }
         catch {
             if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
-                Write-WebSocketLog "Error in SimpleWebSocketServer: $_" -Level ERROR
+                Write-WebSocketLog "Failed to start WebSocket server: $_" -Level ERROR
             }
-            $this.IsRunning = $false
         }
     }
     
     [void] Stop() {
         $this.IsRunning = $false
         if ($null -ne $this.Listener) {
-            try { 
-                $this.Listener.Stop() 
+            try {
+                $this.Listener.Stop()
                 if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
-                    Write-WebSocketLog "SimpleWebSocketServer stopped" -Level INFO
+                    Write-WebSocketLog "WebSocket server stopped" -Level INFO
                 }
-            } 
-            catch {}
+            }
+            catch {
+                if ($null -ne (Get-Command "Write-WebSocketLog" -ErrorAction SilentlyContinue)) {
+                    Write-WebSocketLog "Error stopping WebSocket server: $_" -Level ERROR
+                }
+            }
         }
     }
     
     [hashtable] GetStatus() {
         return @{
-            IsRunning = $this.IsRunning
+            IsListening = $this.IsListening()
             Port = $this.Port
+            IsRunning = $this.IsRunning
+            ConnectionCount = $this.Connections.Count
         }
     }
 }
@@ -500,6 +597,102 @@ function Write-WebSocketLog {
     }
 }
 
+# Function to connect to WebSocket with port scanning for reliability
+function Connect-WebSocketWithPortScan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$false)]
+        [int]$StartPort = 8081,
+        
+        [Parameter(Mandatory=$false)]
+        [int]$EndPort = 8091,
+        
+        [Parameter(Mandatory=$false)]
+        [string]$HostName = "localhost",
+        
+        [Parameter(Mandatory=$false)]
+        [int]$Timeout = 2000,
+        
+        [Parameter(Mandatory=$false)]
+        [string]$ReadyFile = $script:ReadyFiles.WebSocket,
+        
+        [Parameter(Mandatory=$false)]
+        [switch]$UseReadyFileFirst,
+        
+        [Parameter(Mandatory=$false)]
+        [switch]$Silent
+    )
+    
+    # Suppress confirmation prompts
+    $oldConfirmPreference = $ConfirmPreference
+    $ConfirmPreference = 'None'
+    $InformationPreference = 'SilentlyContinue'
+    
+    try {
+        Write-WebSocketLog "Attempting WebSocket connection with port scan ($StartPort-$EndPort)" -Level INFO
+        
+        # First try to get port from ready file if requested
+        if ($UseReadyFileFirst -and (Test-Path $ReadyFile)) {
+            try {
+                $readyContent = Get-Content $ReadyFile -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if ($readyContent.port -gt 0) {
+                    Write-WebSocketLog "Found port $($readyContent.port) in ready file, trying first" -Level INFO
+                    
+                    if (Test-WebSocketConnection -Port $readyContent.port -HostName $HostName -Timeout $Timeout) {
+                        Write-WebSocketLog "Successfully connected to WebSocket on port $($readyContent.port) from ready file" -Level INFO
+                        return @{
+                            Success = $true
+                            Port = $readyContent.port
+                            Host = $HostName
+                            Url = "ws://$($HostName):$($readyContent.port)/"
+                        }
+                    }
+                }
+            }
+            catch {
+                Write-WebSocketLog "Error reading ready file: $_" -Level WARN
+            }
+        }
+        
+        # Scan ports in range
+        Write-WebSocketLog "Scanning ports $StartPort to $EndPort for WebSocket connection" -Level INFO
+        
+        for ($port = $StartPort; $port -le $EndPort; $port++) {
+            try {
+                Write-WebSocketLog "Trying WebSocket connection on port $port" -Level DEBUG
+                
+                if (Test-WebSocketConnection -Port $port -HostName $HostName -Timeout $Timeout) {
+                    Write-WebSocketLog "Successfully connected to WebSocket on port $port" -Level INFO
+                    return @{
+                        Success = $true
+                        Port = $port
+                        Host = $HostName
+                        Url = "ws://$($HostName):$port/"
+                    }
+                }
+            }
+            catch {
+                Write-WebSocketLog "Error testing connection on port $port $_" -Level DEBUG
+            }
+        }
+        
+        # If we get here, we failed to connect
+        Write-WebSocketLog "Failed to find WebSocket on any port in range $StartPort-$EndPort" -Level ERROR
+        
+        return @{
+            Success = $false
+            Port = 0
+            Host = $HostName
+            Url = $null
+            Error = "Could not connect to WebSocket on any port"
+        }
+    }
+    finally {
+        # Restore original preferences
+        $ConfirmPreference = $oldConfirmPreference
+    }
+}
+
 # Export module members - make sure ALL required functions are here
 Export-ModuleMember -Function @(
     'Get-WebSocketPaths',
@@ -508,7 +701,8 @@ Export-ModuleMember -Function @(
     'Set-WebSocketReady',
     'Test-WebSocketConnection',
     'New-WebSocketClient',
-    'Write-WebSocketLog'
+    'Write-WebSocketLog',
+    'Connect-WebSocketWithPortScan'
 ) -Variable @(
     'DefaultWebSocketPort',
     'DefaultWebPort'
