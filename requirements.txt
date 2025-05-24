@@ -1,8 +1,8 @@
-flask>=2.0.0
-psutil>=5.8.0
-requests>=2.25.1
-pywin32>=300
-pycryptodome>=3.10.1
-gitpython>=3.1.14
-paramiko>=2.7.2
-schedule>=1.1.0
+flask
+psutil
+requests
+pywin32
+pycryptodome
+gitpython
+paramiko
+schedule

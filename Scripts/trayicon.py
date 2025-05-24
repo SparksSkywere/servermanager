@@ -38,6 +38,7 @@ class ServerManagerTrayIcon:
         self.web_port = 8080
         self.server_status = "Unknown"
         self.debug_mode = False
+        self.dashboard_process = None
         
         # Parse command line arguments
         parser = argparse.ArgumentParser(description='Server Manager Tray Icon')
@@ -191,13 +192,85 @@ class ServerManagerTrayIcon:
             self.icon.title = f"Server Manager - {self.server_status}"
     
     def open_dashboard(self):
-        """Open the web dashboard in a browser"""
+        """Open the Python dashboard instead of web dashboard"""
         try:
-            url = f"http://localhost:{self.web_port}"
-            webbrowser.open(url)
-            logger.info(f"Opening dashboard: {url}")
+            # Check if dashboard is already running
+            dashboard_pid_file = os.path.join(self.paths["temp"], "dashboard.pid")
+            if os.path.exists(dashboard_pid_file):
+                try:
+                    with open(dashboard_pid_file, 'r') as f:
+                        pid_info = json.load(f)
+                    
+                    pid = pid_info.get("ProcessId")
+                    if pid and self.is_process_running(pid):
+                        logger.info(f"Dashboard is already running with PID {pid}")
+                        # Show notification
+                        if self.icon:
+                            self.icon.notify("Dashboard is already running", "Server Manager")
+                        return
+                except Exception as e:
+                    logger.error(f"Error checking dashboard PID file: {str(e)}")
+            
+            # Launch the dashboard script
+            dashboard_script = os.path.join(self.paths["scripts"], "dashboard.py")
+            if not os.path.exists(dashboard_script):
+                logger.error(f"Dashboard script not found: {dashboard_script}")
+                if self.icon:
+                    self.icon.notify("Dashboard script not found", "Server Manager Error")
+                return
+            
+            # Build command with debug flag if needed
+            cmd = [sys.executable, dashboard_script]
+            if self.debug_mode:
+                cmd.append("--debug")
+            
+            # Launch dashboard process detached from current process
+            logger.info(f"Starting dashboard: {' '.join(cmd)}")
+            
+            if sys.platform == 'win32':
+                # On Windows, use CREATE_NEW_PROCESS_GROUP flag to detach
+                self.dashboard_process = subprocess.Popen(
+                    cmd, 
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                    close_fds=True
+                )
+            else:
+                # On Unix, use start_new_session to detach
+                self.dashboard_process = subprocess.Popen(
+                    cmd,
+                    start_new_session=True,
+                    close_fds=True
+                )
+            
+            logger.info(f"Dashboard started with PID: {self.dashboard_process.pid}")
+            
+            # Show notification
+            if self.icon:
+                self.icon.notify("Dashboard opened", "Server Manager")
+                
         except Exception as e:
             logger.error(f"Failed to open dashboard: {str(e)}")
+            if self.icon:
+                self.icon.notify(f"Failed to open dashboard: {str(e)}", "Server Manager Error")
+    
+    def is_process_running(self, pid):
+        """Check if a process with the given PID is running"""
+        try:
+            if sys.platform == 'win32':
+                # Windows implementation
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                handle = kernel32.OpenProcess(1, False, pid)
+                if handle == 0:
+                    return False
+                kernel32.CloseHandle(handle)
+                return True
+            else:
+                # Unix implementation
+                os.kill(pid, 0)
+                return True
+        except:
+            return False
     
     def toggle_debug_mode(self):
         """Toggle debug mode"""
@@ -226,20 +299,45 @@ class ServerManagerTrayIcon:
             pid_file = os.path.join(self.paths["temp"], "trayicon.pid")
             if os.path.exists(pid_file):
                 os.remove(pid_file)
+                logger.debug("Removed trayicon PID file")
         except Exception as e:
             logger.error(f"Error removing PID file: {str(e)}")
+        
+        # Stop dashboard if we started it
+        if self.dashboard_process and self.dashboard_process.poll() is None:
+            try:
+                logger.info(f"Terminating dashboard process: {self.dashboard_process.pid}")
+                self.dashboard_process.terminate()
+            except Exception as e:
+                logger.error(f"Error terminating dashboard process: {str(e)}")
+        
+        # Also try to find and close other dashboard instances by PID file
+        try:
+            dashboard_pid_file = os.path.join(self.paths["temp"], "dashboard.pid")
+            if os.path.exists(dashboard_pid_file):
+                with open(dashboard_pid_file, 'r') as f:
+                    pid_info = json.load(f)
+                
+                pid = pid_info.get("ProcessId")
+                if pid and self.is_process_running(pid):
+                    logger.info(f"Terminating existing dashboard with PID {pid}")
+                    if sys.platform == 'win32':
+                        subprocess.call(['taskkill', '/F', '/PID', str(pid)])
+                    else:
+                        os.kill(pid, signal.SIGTERM)
+                        
+                # Remove the PID file
+                os.remove(dashboard_pid_file)
+                logger.debug("Removed dashboard PID file")
+        except Exception as e:
+            logger.error(f"Error terminating existing dashboard: {str(e)}")
         
         # Stop the icon
         if self.icon:
             self.icon.stop()
-            
-        # Stop all related processes
-        try:
-            stop_script = os.path.join(self.paths["scripts"], "stop_servermanager.py")
-            if os.path.exists(stop_script):
-                subprocess.Popen([sys.executable, stop_script])
-        except Exception as e:
-            logger.error(f"Error stopping server manager: {str(e)}")
+        
+        # Exit the application
+        logger.info("Server Manager tray icon terminated")
     
     def run(self):
         """Run the tray icon application"""

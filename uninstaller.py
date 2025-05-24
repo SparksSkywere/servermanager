@@ -1,14 +1,19 @@
 import os
 import sys
-import shutil
-import subprocess
 import winreg
 import ctypes
-import traceback
-import psutil
-import tkinter as tk
-from tkinter import messagebox
-import time
+import subprocess
+import logging
+import shutil
+from pathlib import Path
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("Uninstaller")
 
 def is_admin():
     """Check if the script is running with administrator privileges"""
@@ -22,199 +27,226 @@ def run_as_admin():
     ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
     sys.exit()
 
-def remove_directory_forcefully(path):
-    """Remove a directory forcefully, dealing with permission issues"""
-    print(f"Attempting to remove directory: {path}")
+class ServerManagerUninstaller:
+    """Class to handle the uninstallation of Server Manager"""
+    def __init__(self):
+        self.registry_path = r"Software\SkywereIndustries\Servermanager"
+        self.server_manager_dir = None
+        self.remove_data = False
+        
+        # Initialize from registry
+        self.initialize_from_registry()
     
-    if not os.path.exists(path):
-        print(f"Directory does not exist: {path}")
-        return
-    
-    # Kill any processes that might be locking the directory
-    for proc in psutil.process_iter(['pid', 'name', 'exe']):
+    def initialize_from_registry(self):
+        """Get server manager directory from registry"""
         try:
-            if proc.info['exe'] and path.lower() in proc.info['exe'].lower():
-                print(f"Stopping process: {proc.info['name']}")
-                proc.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
-    
-    # Take ownership and grant permissions (Windows only)
-    try:
-        subprocess.run(["takeown", "/f", path, "/r", "/d", "y"], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        subprocess.run(["icacls", path, "/grant", "administrators:F", "/t"], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except Exception as e:
-        print(f"Error taking ownership: {str(e)}")
-    
-    # Try different removal methods
-    try:
-        # Method 1: Direct removal
-        shutil.rmtree(path, ignore_errors=True)
-    except Exception as e1:
-        print(f"Standard removal failed: {str(e1)}")
-        try:
-            # Method 2: CMD
-            subprocess.run(["cmd", "/c", f"rd /s /q \"{path}\""], check=False)
-        except Exception as e2:
-            print(f"CMD removal failed: {str(e2)}")
-            try:
-                # Method 3: Robocopy (empty dir trick)
-                empty_dir = os.path.join(os.environ["TEMP"], "empty")
-                os.makedirs(empty_dir, exist_ok=True)
-                subprocess.run([
-                    "robocopy", empty_dir, path, "/PURGE", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP"
-                ], check=False)
-                shutil.rmtree(empty_dir, ignore_errors=True)
-                os.rmdir(path)
-            except Exception as e3:
-                print(f"Robocopy removal failed: {str(e3)}")
-
-def stop_service(service_name="ServerManagerService"):
-    """Stop a Windows service"""
-    try:
-        # First check if service exists
-        output = subprocess.run(["sc", "query", service_name], 
-                               stdout=subprocess.PIPE, 
-                               stderr=subprocess.PIPE,
-                               text=True)
-        
-        if "RUNNING" in output.stdout:
-            print(f"Stopping service: {service_name}")
-            subprocess.run(["sc", "stop", service_name], check=False)
-            time.sleep(2)  # Wait for service to stop
-            
-        # Delete the service
-        subprocess.run(["sc", "delete", service_name], check=False)
-        print(f"Service {service_name} deleted")
-    except Exception as e:
-        print(f"Error managing service: {str(e)}")
-
-def remove_firewall_rules(prefix="ServerManager_"):
-    """Remove firewall rules with a specific prefix"""
-    try:
-        # Get all firewall rules
-        output = subprocess.run(["netsh", "advfirewall", "firewall", "show", "rule", "name=all"], 
-                               stdout=subprocess.PIPE, 
-                               text=True)
-        
-        # Find rules with our prefix
-        import re
-        rules = re.findall(rf"Rule Name:\s+({prefix}[^\n]+)", output.stdout)
-        
-        # Delete each rule
-        for rule in rules:
-            print(f"Removing firewall rule: {rule}")
-            subprocess.run(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={rule}"], check=False)
-    except Exception as e:
-        print(f"Error removing firewall rules: {str(e)}")
-
-def main():
-    """Main uninstallation function"""
-    try:
-        # Check if running as admin
-        if not is_admin():
-            print("Requesting administrative privileges...")
-            run_as_admin()
-        
-        # Stop the service if it exists
-        stop_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "stop_servermanager.py")
-        if os.path.exists(stop_script):
-            print("Stopping Server Manager service...")
-            subprocess.run([sys.executable, stop_script], check=False)
-            time.sleep(2)
-        
-        # Get the installation path from registry
-        try:
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\SkywereIndustries\servermanager")
-            steam_cmd_path = winreg.QueryValueEx(key, "SteamCMDPath")[0]
+            # Read registry for paths
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
+            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             
-            if not steam_cmd_path:
-                raise Exception("SteamCMDPath not found")
+            logger.info(f"Server Manager directory: {self.server_manager_dir}")
+            return True
+            
         except Exception as e:
-            print(f"Installation not found or registry key missing: {str(e)}")
-            return 1
+            logger.error(f"Failed to initialize from registry: {str(e)}")
+            return False
+    
+    def stop_services(self):
+        """Stop all Server Manager services"""
+        try:
+            logger.info("Stopping Server Manager services...")
+            
+            # Run the stop script if it exists
+            stop_script = os.path.join(self.server_manager_dir, "Stop-ServerManager.cmd")
+            if os.path.exists(stop_script):
+                subprocess.call([stop_script])
+                logger.info("Services stopped")
+            else:
+                logger.warning("Stop script not found, attempting manual shutdown")
+                
+                # Try to stop processes directly
+                try:
+                    # Import needed here to avoid errors if not available
+                    import psutil
+                    
+                    # Look for processes
+                    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                        try:
+                            # Check for Python processes related to Server Manager
+                            if proc.info['name'] == 'python.exe' or proc.info['name'] == 'pythonw.exe':
+                                cmdline = proc.info['cmdline']
+                                if cmdline and any('servermanager' in str(cmd).lower() for cmd in cmdline):
+                                    proc.terminate()
+                                    logger.info(f"Terminated process: {proc.info['pid']}")
+                        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                            pass
+                except ImportError:
+                    logger.warning("psutil not available, cannot stop processes manually")
+            
+            # Wait a moment to ensure processes are stopped
+            import time
+            time.sleep(3)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to stop services: {str(e)}")
+            return False
+    
+    def remove_registry_keys(self):
+        """Remove registry keys for Server Manager"""
+        try:
+            logger.info("Removing registry keys...")
+            
+            try:
+                # Delete registry key and all values
+                winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
+                logger.info("Registry keys removed")
+            except WindowsError as e:
+                if e.winerror == 2:  # Key not found
+                    logger.warning("Registry key not found, already removed")
+                else:
+                    raise
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to remove registry keys: {str(e)}")
+            return False
+    
+    def remove_shortcuts(self):
+        """Remove desktop shortcuts"""
+        try:
+            logger.info("Removing shortcuts...")
+            
+            # Get desktop path
+            desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+            
+            # Shortcut names to remove
+            shortcut_names = ["Start Server Manager.lnk", "Stop Server Manager.lnk"]
+            
+            # Remove shortcuts
+            for shortcut in shortcut_names:
+                shortcut_path = os.path.join(desktop, shortcut)
+                if os.path.exists(shortcut_path):
+                    os.remove(shortcut_path)
+                    logger.info(f"Removed shortcut: {shortcut}")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to remove shortcuts: {str(e)}")
+            return False
+    
+    def remove_installation(self):
+        """Remove Server Manager installation"""
+        try:
+            logger.info("Removing installation files...")
+            
+            if not self.server_manager_dir or not os.path.exists(self.server_manager_dir):
+                logger.warning("Installation directory not found or already removed")
+                return True
+            
+            # If not removing data, back up servers and configuration
+            if not self.remove_data:
+                logger.info("Backing up servers and configuration...")
+                
+                # Create backup directory
+                backup_dir = os.path.join(os.path.dirname(self.server_manager_dir), "ServerManagerBackup")
+                os.makedirs(backup_dir, exist_ok=True)
+                
+                # Backup servers directory
+                servers_dir = os.path.join(self.server_manager_dir, "servers")
+                if os.path.exists(servers_dir):
+                    shutil.copytree(servers_dir, os.path.join(backup_dir, "servers"), dirs_exist_ok=True)
+                    logger.info("Servers directory backed up")
+                
+                # Backup config directory
+                config_dir = os.path.join(self.server_manager_dir, "config")
+                if os.path.exists(config_dir):
+                    shutil.copytree(config_dir, os.path.join(backup_dir, "config"), dirs_exist_ok=True)
+                    logger.info("Configuration directory backed up")
+                
+                logger.info(f"Backups saved to: {backup_dir}")
+            
+            # Remove the installation directory
+            shutil.rmtree(self.server_manager_dir, ignore_errors=True)
+            logger.info("Installation directory removed")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to remove installation: {str(e)}")
+            return False
+    
+    def uninstall(self):
+        """Main uninstallation method"""
+        logger.info("Starting Server Manager uninstallation...")
         
         # Confirm uninstallation
-        root = tk.Tk()
-        root.withdraw()  # Hide the main window
+        print("This will uninstall Server Manager from your system.")
+        confirm = input("Are you sure you want to continue? (y/n): ").lower()
         
-        result = messagebox.askyesno(
-            "Uninstall Confirmation",
-            f"Do you want to uninstall Server Manager?\nSteamCMD directory: {steam_cmd_path}"
-        )
+        if confirm != 'y':
+            logger.info("Uninstallation cancelled by user")
+            return False
         
-        if not result:
-            return 0
+        # Confirm data removal
+        remove_data = input("Do you want to remove all server data and configuration? (y/n): ").lower()
+        self.remove_data = (remove_data == 'y')
         
-        # Additional confirmation for SteamCMD
-        remove_steam_cmd = messagebox.askyesno(
-            "Remove SteamCMD",
-            "Do you also want to remove SteamCMD and all game servers?"
-        )
+        if not self.remove_data:
+            print("Server data and configuration will be backed up before removal.")
         
-        print("Starting uninstallation...")
-        
-        # Stop related processes
-        print("Stopping related processes...")
-        for proc in psutil.process_iter(['pid', 'name']):
-            try:
-                if ("steam" in proc.info['name'].lower() or 
-                    "servermanager" in proc.info['name'].lower()):
-                    print(f"Stopping process: {proc.info['name']}")
-                    proc.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                pass
-        
-        # Remove services
-        print("Removing services...")
-        stop_service("ServerManagerService")
-        
-        # Remove firewall rules
-        print("Removing firewall rules...")
-        remove_firewall_rules()
-        
-        # Remove scheduled tasks
-        print("Removing scheduled tasks...")
-        subprocess.run(["schtasks", "/delete", "/tn", "ServerManager\\*", "/f"], check=False)
-        
-        # Remove program data
-        program_data_paths = [
-            r"C:\ProgramData\ServerManager",
-            os.path.join(os.environ["LOCALAPPDATA"], "ServerManager"),
-            os.path.join(os.environ["APPDATA"], "ServerManager")
-        ]
-        
-        for path in program_data_paths:
-            remove_directory_forcefully(path)
+        # Stop services
+        if not self.stop_services():
+            logger.warning("Failed to stop all services, continuing anyway")
         
         # Remove registry keys
-        print("Removing registry keys...")
-        try:
-            winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, r"Software\SkywereIndustries\servermanager")
-            winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, r"Software\SkywereIndustries")
-        except Exception as e:
-            print(f"Error removing registry keys: {str(e)}")
+        if not self.remove_registry_keys():
+            logger.warning("Failed to remove registry keys, continuing anyway")
         
-        # Remove installation directory
-        if remove_steam_cmd:
-            print("Removing SteamCMD directory...")
-            remove_directory_forcefully(steam_cmd_path)
-        else:
-            print("Removing Server Manager components...")
-            remove_directory_forcefully(os.path.join(steam_cmd_path, "servermanager"))
+        # Remove shortcuts
+        if not self.remove_shortcuts():
+            logger.warning("Failed to remove shortcuts, continuing anyway")
         
-        print("\nUninstallation completed!")
-        if not remove_steam_cmd:
-            print(f"SteamCMD remains at: {steam_cmd_path}")
+        # Remove installation
+        if not self.remove_installation():
+            logger.error("Failed to remove installation")
+            return False
         
-        input("Press Enter to exit")
-        return 0
-    except Exception as e:
-        print(f"Uninstallation failed: {str(e)}")
-        traceback.print_exc()
-        input("Press Enter to exit")
-        return 1
+        logger.info("Server Manager uninstallation completed successfully!")
+        
+        if not self.remove_data:
+            backup_dir = os.path.join(os.path.dirname(self.server_manager_dir), "ServerManagerBackup")
+            print(f"\nYour server data and configuration have been backed up to: {backup_dir}")
+        
+        return True
+
+def main():
+    # Check for admin privileges
+    if not is_admin():
+        print("Administrator privileges required. Requesting elevated permissions...")
+        run_as_admin()
+    
+    # Create and run uninstaller
+    uninstaller = ServerManagerUninstaller()
+    result = uninstaller.uninstall()
+    
+    if result:
+        print("\nUninstallation completed successfully.")
+    else:
+        print("\nUninstallation failed or was cancelled.")
+    
+    input("Press Enter to exit...")
+    return 0 if result else 1
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        logger.info("Uninstallation cancelled by user")
+        print("\nUninstallation cancelled.")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unhandled exception: {str(e)}")
+        print(f"\nAn error occurred: {str(e)}")
+        input("Press Enter to exit...")
+        sys.exit(1)

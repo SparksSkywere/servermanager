@@ -3,23 +3,13 @@ import sys
 import json
 import logging
 import winreg
+import argparse
+import datetime
 import threading
 import time
-import signal
-import argparse
 from pathlib import Path
-from datetime import datetime
 
-# Import Flask and related packages
-try:
-    from flask import Flask, render_template, request, jsonify, send_from_directory
-except ImportError:
-    import subprocess
-    print("Required packages not found. Installing...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "flask"])
-    from flask import Flask, render_template, request, jsonify, send_from_directory
-
-# Setup logging
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -27,46 +17,110 @@ logging.basicConfig(
 )
 logger = logging.getLogger("WebServer")
 
+# Import Flask for web server
+try:
+    from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+except ImportError:
+    logger.error("Flask not installed. Installing required packages...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "flask"])
+    from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+
+# Get server manager directory from registry to find modules
+def get_server_manager_dir():
+    try:
+        registry_path = r"Software\SkywereIndustries\Servermanager"
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
+        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
+        winreg.CloseKey(key)
+        return server_manager_dir
+    except Exception as e:
+        logger.error(f"Failed to get server manager directory from registry: {e}")
+        # Use fallback approach based on script location
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        server_manager_dir = os.path.dirname(script_dir)
+        logger.warning(f"Using fallback server manager directory: {server_manager_dir}")
+        return server_manager_dir
+
+# Get the server manager directory and add the modules path to sys.path
+server_manager_dir = get_server_manager_dir()
+modules_path = os.path.join(server_manager_dir, "modules")
+if modules_path not in sys.path:
+    sys.path.append(modules_path)
+
+# Now import modules from the determined path
+try:
+    # Import modules from the modules directory
+    from common import paths, process_manager, config_manager
+    from server_operations import (
+        get_all_servers, get_server_status, start_server, stop_server, 
+        restart_server, install_server, check_for_updates
+    )
+    from authentication import authenticate_user, get_all_users, is_admin_user
+    from security import is_admin
+    
+    logger.info(f"Successfully imported modules from: {modules_path}")
+except ImportError as e:
+    logger.error(f"Failed to import modules: {e}")
+    logger.error(f"Modules path: {modules_path}")
+    logger.error(f"sys.path: {sys.path}")
+    sys.exit(1)
+
 class ServerManagerWebServer:
+    """Web server for Server Manager"""
     def __init__(self):
         self.registry_path = r"Software\SkywereIndustries\Servermanager"
-        self.server_manager_dir = None
-        self.paths = {}
+        self.server_manager_dir = server_manager_dir  # Use the already determined directory
         self.web_port = 8080
-        self.app = Flask(__name__)
         self.debug_mode = False
-        self.servers = {}
+        self.paths = {}
         
         # Parse command line arguments
         parser = argparse.ArgumentParser(description='Server Manager Web Server')
-        parser.add_argument('--debug', action='store_true', help='Enable debug mode')
         parser.add_argument('--port', type=int, help='Web server port')
+        parser.add_argument('--debug', action='store_true', help='Enable debug mode')
         args = parser.parse_args()
         
-        # Set debug mode if requested
+        # Set debug mode if specified
         if args.debug:
             self.debug_mode = True
             logger.setLevel(logging.DEBUG)
-            
-        # Override port if specified
+        
+        # Set port if specified
         if args.port:
             self.web_port = args.port
-            
-        # Initialize the web server
-        self.initialize()
         
-    def initialize(self):
-        """Initialize paths and configuration from registry"""
+        # Initialize paths
+        self.initialize_from_registry()
+        
+        # Create Flask app
+        self.app = Flask(
+            __name__,
+            template_folder=os.path.join(self.paths.get("root", ""), "templates"),
+            static_folder=os.path.join(self.paths.get("root", ""), "static")
+        )
+        
+        # Set up Flask secret key
+        self.app.secret_key = os.urandom(24)
+        
+        # Set up routes
+        self.setup_routes()
+        
+        # Write PID file
+        self.write_pid_file()
+    
+    def initialize_from_registry(self):
+        """Initialize paths and settings from registry"""
         try:
             # Read registry for paths
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             
-            # Get web port from registry if not overridden by command line
-            if hasattr(self, 'web_port_override') and self.web_port_override:
-                self.web_port = self.web_port_override
-            else:
+            # Get web port from registry if available
+            try:
                 self.web_port = int(winreg.QueryValueEx(key, "WebPort")[0])
+            except:
+                pass
                 
             winreg.CloseKey(key)
             
@@ -75,375 +129,264 @@ class ServerManagerWebServer:
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
                 "config": os.path.join(self.server_manager_dir, "config"),
+                "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
                 "scripts": os.path.join(self.server_manager_dir, "scripts"),
-                "static": os.path.join(self.server_manager_dir, "static"),
                 "templates": os.path.join(self.server_manager_dir, "templates"),
-                "servers": os.path.join(self.server_manager_dir, "servers")
+                "static": os.path.join(self.server_manager_dir, "static")
             }
             
             # Ensure directories exist
             for path in self.paths.values():
                 os.makedirs(path, exist_ok=True)
-                
+            
             # Set up file logging
             log_file = os.path.join(self.paths["logs"], "webserver.log")
             file_handler = logging.FileHandler(log_file)
             file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
             logger.addHandler(file_handler)
             
-            # Write PID file
-            self.write_pid_file("webserver", os.getpid())
-            
-            # Set up Flask routes
-            self.setup_routes()
-            
-            logger.info(f"Initialization complete. Server Manager directory: {self.server_manager_dir}")
+            logger.info(f"Initialized from registry. Server Manager directory: {self.server_manager_dir}")
             logger.info(f"Web server port: {self.web_port}")
-            
             return True
             
         except Exception as e:
-            logger.error(f"Initialization failed: {str(e)}")
-            return False
+            logger.error(f"Failed to initialize from registry: {str(e)}")
             
-    def write_pid_file(self, process_type, pid):
+            # Use fallback paths based on script location
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            self.server_manager_dir = os.path.dirname(script_dir)
+            
+            self.paths = {
+                "root": self.server_manager_dir,
+                "logs": os.path.join(self.server_manager_dir, "logs"),
+                "config": os.path.join(self.server_manager_dir, "config"),
+                "servers": os.path.join(self.server_manager_dir, "servers"),
+                "temp": os.path.join(self.server_manager_dir, "temp"),
+                "scripts": script_dir,
+                "templates": os.path.join(self.server_manager_dir, "templates"),
+                "static": os.path.join(self.server_manager_dir, "static")
+            }
+            
+            # Ensure directories exist
+            for path in self.paths.values():
+                os.makedirs(path, exist_ok=True)
+                
+            # Set up file logging in fallback location
+            log_file = os.path.join(self.paths["logs"], "webserver.log")
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            logger.addHandler(file_handler)
+            
+            logger.warning(f"Using fallback paths. Server Manager directory: {self.server_manager_dir}")
+            return False
+    
+    def write_pid_file(self):
         """Write process ID to file"""
         try:
-            pid_file = os.path.join(self.paths["temp"], f"{process_type}.pid")
+            pid_file = os.path.join(self.paths["temp"], "webserver.pid")
             
             # Create PID info dictionary
             pid_info = {
-                "ProcessId": pid,
-                "StartTime": datetime.now().isoformat(),
-                "ProcessType": process_type
+                "ProcessId": os.getpid(),
+                "StartTime": datetime.datetime.now().isoformat(),
+                "ProcessType": "webserver",
+                "Port": self.web_port
             }
             
             # Write PID info to file as JSON
             with open(pid_file, 'w') as f:
-                json.dump(pid_info, f)
+                json.dump(pid_info, f, indent=4)
                 
-            logger.debug(f"PID file created for {process_type}: {pid}")
+            logger.debug(f"PID file created: {pid_file}")
             return True
         except Exception as e:
-            logger.error(f"Failed to write PID file for {process_type}: {str(e)}")
+            logger.error(f"Failed to write PID file: {str(e)}")
             return False
-            
+    
     def setup_routes(self):
         """Set up Flask routes"""
-        # Register route handlers
-        @self.app.route('/')
-        def index():
-            try:
-                # Check if template exists
-                template_path = os.path.join(self.paths["templates"], "index.html")
-                if os.path.exists(template_path):
-                    return render_template("index.html")
+        app = self.app
+        
+        # Login required decorator
+        def login_required(f):
+            from functools import wraps
+            @wraps(f)
+            def decorated_function(*args, **kwargs):
+                if 'user' not in session:
+                    return redirect(url_for('login', next=request.url))
+                return f(*args, **kwargs)
+            return decorated_function
+        
+        # Admin required decorator
+        def admin_required(f):
+            from functools import wraps
+            @wraps(f)
+            def decorated_function(*args, **kwargs):
+                if 'user' not in session:
+                    return redirect(url_for('login', next=request.url))
+                if not is_admin_user(session['user']):
+                    return jsonify({"error": "Admin privileges required"}), 403
+                return f(*args, **kwargs)
+            return decorated_function
+        
+        # Login route
+        @app.route('/login', methods=['GET', 'POST'])
+        def login():
+            if request.method == 'POST':
+                username = request.form.get('username')
+                password = request.form.get('password')
+                
+                if authenticate_user(username, password):
+                    session['user'] = username
+                    next_page = request.args.get('next')
+                    return redirect(next_page or url_for('dashboard'))
                 else:
-                    # Provide a basic HTML if template doesn't exist
-                    return """
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <title>Server Manager</title>
-                        <style>
-                            body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-                            h1 { color: #333; }
-                            .container { max-width: 800px; margin: 0 auto; }
-                        </style>
-                    </head>
-                    <body>
-                        <div class="container">
-                            <h1>Server Manager Dashboard</h1>
-                            <p>Welcome to the Server Manager dashboard.</p>
-                            <ul>
-                                <li><a href="/servers">View Servers</a></li>
-                                <li><a href="/status">System Status</a></li>
-                            </ul>
-                        </div>
-                    </body>
-                    </html>
-                    """
-            except Exception as e:
-                logger.error(f"Error rendering index: {str(e)}")
-                return f"Error: {str(e)}", 500
-                
-        @self.app.route('/servers')
-        def servers():
-            try:
-                servers = self.get_servers()
-                return jsonify(servers)
-            except Exception as e:
-                logger.error(f"Error getting servers: {str(e)}")
-                return jsonify({"error": str(e)}), 500
-                
-        @self.app.route('/server/<server_name>')
-        def server_detail(server_name):
-            try:
-                server = self.get_server_detail(server_name)
-                if server:
-                    return jsonify(server)
-                else:
-                    return jsonify({"error": "Server not found"}), 404
-            except Exception as e:
-                logger.error(f"Error getting server detail: {str(e)}")
-                return jsonify({"error": str(e)}), 500
-                
-        @self.app.route('/server/<server_name>/start', methods=['POST'])
-        def start_server(server_name):
-            try:
-                success = self.start_server(server_name)
-                return jsonify({"success": success})
-            except Exception as e:
-                logger.error(f"Error starting server: {str(e)}")
-                return jsonify({"error": str(e)}), 500
-                
-        @self.app.route('/server/<server_name>/stop', methods=['POST'])
-        def stop_server(server_name):
-            try:
-                success = self.stop_server(server_name)
-                return jsonify({"success": success})
-            except Exception as e:
-                logger.error(f"Error stopping server: {str(e)}")
-                return jsonify({"error": str(e)}), 500
-                
-        @self.app.route('/server/<server_name>/restart', methods=['POST'])
-        def restart_server(server_name):
-            try:
-                success = self.restart_server(server_name)
-                return jsonify({"success": success})
-            except Exception as e:
-                logger.error(f"Error restarting server: {str(e)}")
-                return jsonify({"error": str(e)}), 500
-                
-        @self.app.route('/status')
-        def status():
-            try:
-                status = self.get_system_status()
+                    return render_template('login.html', error="Invalid username or password")
+            
+            return render_template('login.html')
+        
+        # Logout route
+        @app.route('/logout')
+        def logout():
+            session.pop('user', None)
+            return redirect(url_for('login'))
+        
+        # Dashboard route
+        @app.route('/')
+        @login_required
+        def dashboard():
+            servers = get_all_servers()
+            return render_template('dashboard.html', 
+                                 username=session.get('user'),
+                                 is_admin=is_admin_user(session.get('user')),
+                                 servers=servers)
+        
+        # API routes
+        
+        # Get all servers
+        @app.route('/api/servers', methods=['GET'])
+        @login_required
+        def api_servers():
+            servers = get_all_servers()
+            return jsonify(servers)
+        
+        # Get server status
+        @app.route('/api/servers/<server_name>', methods=['GET'])
+        @login_required
+        def api_server_status(server_name):
+            status = get_server_status(server_name)
+            if status:
                 return jsonify(status)
-            except Exception as e:
-                logger.error(f"Error getting system status: {str(e)}")
-                return jsonify({"error": str(e)}), 500
-                
-        @self.app.route('/static/<path:path>')
-        def serve_static(path):
-            try:
-                return send_from_directory(self.paths["static"], path)
-            except Exception as e:
-                logger.error(f"Error serving static file: {str(e)}")
-                return f"Error: {str(e)}", 404
-                
-        # Add error handlers
-        @self.app.errorhandler(404)
+            else:
+                return jsonify({"error": "Server not found"}), 404
+        
+        # Start server
+        @app.route('/api/servers/<server_name>/start', methods=['POST'])
+        @login_required
+        def api_start_server(server_name):
+            result = start_server(server_name)
+            if result:
+                return jsonify({"success": True, "message": f"Server {server_name} started"})
+            else:
+                return jsonify({"success": False, "error": f"Failed to start server {server_name}"}), 500
+        
+        # Stop server
+        @app.route('/api/servers/<server_name>/stop', methods=['POST'])
+        @login_required
+        def api_stop_server(server_name):
+            force = request.json.get('force', False) if request.is_json else False
+            result = stop_server(server_name, force)
+            if result:
+                return jsonify({"success": True, "message": f"Server {server_name} stopped"})
+            else:
+                return jsonify({"success": False, "error": f"Failed to stop server {server_name}"}), 500
+        
+        # Restart server
+        @app.route('/api/servers/<server_name>/restart', methods=['POST'])
+        @login_required
+        def api_restart_server(server_name):
+            result = restart_server(server_name)
+            if result:
+                return jsonify({"success": True, "message": f"Server {server_name} restarted"})
+            else:
+                return jsonify({"success": False, "error": f"Failed to restart server {server_name}"}), 500
+        
+        # Check for updates
+        @app.route('/api/servers/<server_name>/check-updates', methods=['GET'])
+        @login_required
+        def api_check_updates(server_name):
+            has_updates = check_for_updates(server_name)
+            return jsonify({"updates_available": has_updates})
+        
+        # Install/update server
+        @app.route('/api/servers/<server_name>/install', methods=['POST'])
+        @login_required
+        def api_install_server(server_name):
+            validate = request.json.get('validate', True) if request.is_json else True
+            result = install_server(server_name, validate)
+            if result:
+                return jsonify({"success": True, "message": f"Server {server_name} installed/updated"})
+            else:
+                return jsonify({"success": False, "error": f"Failed to install/update server {server_name}"}), 500
+        
+        # User management - admin only
+        
+        # Get all users
+        @app.route('/api/users', methods=['GET'])
+        @admin_required
+        def api_users():
+            users = get_all_users()
+            return jsonify(users)
+        
+        # Add more routes as needed
+        
+        # Error handlers
+        @app.errorhandler(404)
         def page_not_found(e):
-            return jsonify({"error": "Not found"}), 404
-            
-        @self.app.errorhandler(500)
-        def server_error(e):
-            return jsonify({"error": "Internal server error"}), 500
-            
-    def get_servers(self):
-        """Get list of all servers"""
-        servers = []
-        servers_dir = self.paths["servers"]
+            return render_template('404.html'), 404
         
-        try:
-            if os.path.exists(servers_dir):
-                for filename in os.listdir(servers_dir):
-                    if filename.endswith(".json"):
-                        server_path = os.path.join(servers_dir, filename)
-                        with open(server_path, 'r') as f:
-                            server = json.load(f)
-                            servers.append(server)
-            return servers
-        except Exception as e:
-            logger.error(f"Error getting servers: {str(e)}")
-            return []
-            
-    def get_server_detail(self, server_name):
-        """Get detailed information about a specific server"""
-        server_path = os.path.join(self.paths["servers"], f"{server_name}.json")
-        
-        try:
-            if os.path.exists(server_path):
-                with open(server_path, 'r') as f:
-                    server = json.load(f)
-                    
-                # Check if server is running
-                if "PID" in server and server["PID"]:
-                    try:
-                        import psutil
-                        if psutil.pid_exists(server["PID"]):
-                            process = psutil.Process(server["PID"])
-                            server["IsRunning"] = True
-                            server["CPU"] = process.cpu_percent()
-                            server["Memory"] = process.memory_info().rss / (1024 * 1024)  # MB
-                            server["Threads"] = len(process.threads())
-                        else:
-                            server["IsRunning"] = False
-                            server["Status"] = "Stopped"
-                    except ImportError:
-                        server["IsRunning"] = False
-                        
-                return server
-            else:
-                return None
-        except Exception as e:
-            logger.error(f"Error getting server detail: {str(e)}")
-            return None
-            
-    def start_server(self, server_name):
-        """Start a server"""
-        try:
-            script_path = os.path.join(self.paths["scripts"], "start_server.py")
-            if os.path.exists(script_path):
-                import subprocess
-                result = subprocess.run([sys.executable, script_path, server_name], capture_output=True, text=True)
-                logger.info(f"Start server result: {result.stdout}")
-                return result.returncode == 0
-            else:
-                logger.error(f"Start server script not found: {script_path}")
-                return False
-        except Exception as e:
-            logger.error(f"Error starting server: {str(e)}")
-            return False
-            
-    def stop_server(self, server_name):
-        """Stop a server"""
-        try:
-            script_path = os.path.join(self.paths["scripts"], "stop_server.py")
-            if os.path.exists(script_path):
-                import subprocess
-                result = subprocess.run([sys.executable, script_path, server_name], capture_output=True, text=True)
-                logger.info(f"Stop server result: {result.stdout}")
-                return result.returncode == 0
-            else:
-                logger.error(f"Stop server script not found: {script_path}")
-                return False
-        except Exception as e:
-            logger.error(f"Error stopping server: {str(e)}")
-            return False
-            
-    def restart_server(self, server_name):
-        """Restart a server"""
-        try:
-            # Just call stop and then start
-            if self.stop_server(server_name):
-                time.sleep(2)  # Wait for server to fully stop
-                return self.start_server(server_name)
-            return False
-        except Exception as e:
-            logger.error(f"Error restarting server: {str(e)}")
-            return False
-            
-    def get_system_status(self):
-        """Get system status information"""
-        try:
-            # Try to use psutil for better system info
-            try:
-                import psutil
-                
-                # Get CPU, memory, and disk info
-                cpu_percent = psutil.cpu_percent(interval=0.5)
-                memory = psutil.virtual_memory()
-                disk = psutil.disk_usage('/')
-                
-                # Get network info
-                net_io = psutil.net_io_counters()
-                
-                # Format uptime
-                uptime_seconds = time.time() - psutil.boot_time()
-                uptime = {
-                    "days": int(uptime_seconds / 86400),
-                    "hours": int((uptime_seconds % 86400) / 3600),
-                    "minutes": int((uptime_seconds % 3600) / 60),
-                    "seconds": int(uptime_seconds % 60)
-                }
-                
-                return {
-                    "cpu": cpu_percent,
-                    "memory": {
-                        "total": memory.total / (1024 * 1024 * 1024),  # GB
-                        "available": memory.available / (1024 * 1024 * 1024),  # GB
-                        "percent": memory.percent
-                    },
-                    "disk": {
-                        "total": disk.total / (1024 * 1024 * 1024),  # GB
-                        "free": disk.free / (1024 * 1024 * 1024),  # GB
-                        "percent": disk.percent
-                    },
-                    "network": {
-                        "bytes_sent": net_io.bytes_sent,
-                        "bytes_recv": net_io.bytes_recv
-                    },
-                    "uptime": uptime,
-                    "server_count": len(self.get_servers()),
-                    "running_servers": sum(1 for s in self.get_servers() if s.get("Status") == "Running")
-                }
-                
-            except ImportError:
-                # Fallback to basic info if psutil is not available
-                return {
-                    "server_count": len(self.get_servers()),
-                    "uptime": "Unknown (psutil not available)",
-                    "cpu": "Unknown",
-                    "memory": "Unknown"
-                }
-                
-        except Exception as e:
-            logger.error(f"Error getting system status: {str(e)}")
-            return {"error": str(e)}
-            
+        @app.errorhandler(500)
+        def internal_server_error(e):
+            return render_template('500.html'), 500
+    
     def run(self):
-        """Run the Flask web server"""
+        """Run the web server"""
         try:
-            # Start the Flask app
             logger.info(f"Starting web server on port {self.web_port}")
             
-            # Run in a separate thread to allow clean shutdown
+            # Run in a new thread to allow for stopping
             threading.Thread(
                 target=self.app.run,
-                kwargs={
-                    'host': '0.0.0.0',
-                    'port': self.web_port,
-                    'debug': self.debug_mode,
-                    'use_reloader': False  # Disable reloader to prevent duplicate processes
-                }
+                kwargs={'host': '0.0.0.0', 'port': self.web_port, 'debug': self.debug_mode},
+                daemon=True
             ).start()
             
-            # Wait for shutdown signal
+            # Keep the main thread alive
             while True:
                 time.sleep(1)
                 
         except KeyboardInterrupt:
-            logger.info("Keyboard interrupt received, shutting down...")
-            return 0
-            
+            logger.info("Web server stopping due to keyboard interrupt")
         except Exception as e:
-            logger.error(f"Error running web server: {str(e)}")
-            return 1
-            
-        finally:
-            # Clean up
-            try:
-                pid_file = os.path.join(self.paths["temp"], "webserver.pid")
-                if os.path.exists(pid_file):
-                    os.remove(pid_file)
-            except Exception as e:
-                logger.error(f"Error removing PID file: {str(e)}")
+            logger.error(f"Web server error: {str(e)}")
+            return False
+        
+        return True
 
 def main():
-    # Register signal handlers
-    signal.signal(signal.SIGINT, lambda sig, frame: sys.exit(0))
-    signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
-    
+    """Main function"""
     try:
+        # Check if admin (informational only)
+        if not is_admin():
+            logger.warning("Not running with administrator privileges. Some features may be limited.")
+        
         # Create and run web server
         web_server = ServerManagerWebServer()
         return web_server.run()
     except Exception as e:
         logger.error(f"Unhandled exception: {str(e)}")
-        return 1
+        return False
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
