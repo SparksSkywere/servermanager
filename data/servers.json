@@ -1,0 +1,11 @@
+[
+    {
+        "name": "Example Server",
+        "type": "windows",
+        "path": "C:\\Servers\\Example",
+        "status": "Stopped",
+        "cpuUsage": 0,
+        "memoryUsage": 0,
+        "uptime": 0
+    }
+]

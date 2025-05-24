@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login - Server Manager</title>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/login.css">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <h1>Server Manager</h1>
+            <div id="error" class="error"></div>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="authType">Authentication Method:</label>
+                    <select id="authType" required>
+                        <option value="Local" selected>Windows Authentication</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="username">Username:</label>
+                    <input type="text" id="username" required placeholder="Enter username">
+                </div>
+                <div class="form-group">
+                    <label for="password">Password:</label>
+                    <input type="password" id="password" required placeholder="Enter password">
+                </div>
+                <button type="submit" class="btn btn-primary">Login</button>
+                <div id="loading" class="loading-spinner" style="display: none;">Authenticating...</div>
+            </form>
+        </div>
+    </div>
+
+    <script type="module">
+        import { login, checkAuth } from './js/auth.js';
+
+        let loginInProgress = false;
+
+        async function checkExistingAuth() {
+            // Don't check auth if we just got redirected from dashboard
+            if (document.referrer.includes('dashboard.html')) {
+                console.log('Skipping auth check - redirected from dashboard');
+                return false;
+            }
+
+            console.log('Checking existing auth...');
+            try {
+                if (await checkAuth()) {
+                    console.log('Valid session found, redirecting to dashboard');
+                    window.location.replace('dashboard.html');
+                    return true;
+                }
+                return false;
+            } catch (error) {
+                console.error('Auth check error:', error);
+                sessionStorage.clear();
+                return false;
+            }
+        }
+
+        // Clear any existing session data on page load
+        sessionStorage.clear();
+        
+        document.addEventListener('DOMContentLoaded', checkExistingAuth);
+
+        document.getElementById('loginForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            
+            if (loginInProgress) {
+                console.log('Login already in progress');
+                return;
+            }
+
+            loginInProgress = true;
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const submitButton = document.querySelector('button[type="submit"]');
+            
+            error.textContent = '';
+            loading.style.display = 'block';
+            submitButton.disabled = true;
+            
+            try {
+                const username = document.getElementById('username').value;
+                const password = document.getElementById('password').value;
+                
+                await login(username, password);
+                console.log('Login successful, redirecting...');
+                window.location.replace('dashboard.html');
+            } catch (err) {
+                console.error('Login error:', err);
+                error.textContent = err.message || 'Authentication failed';
+                sessionStorage.clear();
+            } finally {
+                loading.style.display = 'none';
+                submitButton.disabled = false;
+                loginInProgress = false;
+            }
+        });
+    </script>
+</body>
+</html>

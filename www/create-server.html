@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html data-theme="light">
+<head>
+    <title>Create New Server</title>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="css/theme.css">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h2>Create New Server</h2>
+            <form id="createServerForm" class="form-group">
+                <div class="form-field">
+                    <label for="serverName">Server Name</label>
+                    <input type="text" id="serverName" required>
+                </div>
+                <div class="form-field">
+                    <label for="serverType">Server Type</label>
+                    <select id="serverType" required>
+                        <option value="windows">Windows</option>
+                        <option value="linux">Linux</option>
+                    </select>
+                </div>
+                <div class="form-field">
+                    <label for="serverPath">Server Path</label>
+                    <input type="text" id="serverPath" required>
+                </div>
+                <div class="form-actions">
+                    <button type="button" onclick="history.back()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Server</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="module">
+        import API from './js/api.js';
+        import { showNotification } from './js/utils.js';
+
+        document.getElementById('createServerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            try {
+                const serverData = {
+                    name: document.getElementById('serverName').value,
+                    type: document.getElementById('serverType').value,
+                    path: document.getElementById('serverPath').value
+                };
+
+                await API.createServer(serverData);
+                showNotification('Server created successfully', 'success');
+                setTimeout(() => window.location.href = 'dashboard.html', 1000);
+            } catch (error) {
+                showNotification(error.message, 'error');
+            }
+        });
+    </script>
+</body>
+</html>

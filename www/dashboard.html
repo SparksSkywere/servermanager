@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html data-theme="light">
+<head>
+    <title>Server Manager Dashboard</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    
+    <!-- CSS Loading Order is important -->
+    <link rel="stylesheet" href="css/normalize.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@7.2.3/dist/gridstack.min.css">
+    <link rel="stylesheet" href="css/theme.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+    
+    <!-- JavaScript -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gridstack@7.2.3/dist/gridstack-all.js"></script>
+</head>
+<body>
+    <script>
+        // Prevent accessing dashboard from cache after logout
+        if (!sessionStorage.getItem('auth_token')) {
+            window.location.replace('login.html');
+        }
+    </script>
+    <div class="dashboard-container">
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <h2>Server Manager</h2>
+                <span id="username"></span>
+            </div>
+            <ul class="nav-links">
+                <li class="active"><a href="#overview">Overview</a></li>
+                <li><a href="#servers">Servers</a></li>
+                <li><a href="#monitoring">Monitoring</a></li>
+                <li><a href="#settings">Settings</a></li>
+                <li id="adminButton">
+                    <a href="admin.html" onclick="return false;" id="adminLink">Administration</a>
+                </li>
+                <li class="logout"><a href="#" onclick="logout()">Logout</a></li>
+            </ul>
+        </nav>
+
+        <main class="content">
+            <div class="dashboard-header">
+                <div class="dashboard-controls">
+                    <button class="btn edit-dashboard-btn">Edit Dashboard</button>
+                    <div class="time-controls">
+                        <select id="refreshRate">
+                            <option value="10">10s</option>
+                            <option value="30">30s</option>
+                            <option value="60">1m</option>
+                        </select>
+                        <div class="theme-toggle">
+                            <input type="checkbox" id="themeToggle">
+                            <label for="themeToggle">Dark Mode</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-grid grid-stack">
+                <!-- System Overview -->
+                <div class="grid-stack-item" gs-w="12" gs-h="2">
+                    <div class="grid-stack-item-content visualization-card">
+                        <div class="panel-header">
+                            <h2 class="title">System Overview</h2>
+                            <div class="panel-controls">
+                                <button class="btn panel-edit">Edit</button>
+                                <button class="btn panel-remove">Remove</button>
+                            </div>
+                        </div>
+                        <div class="stat-panel">
+                            <div class="stat-card">
+                                <div class="stat-icon servers"></div>
+                                <div class="stat-info">
+                                    <h3>Total Servers</h3>
+                                    <div class="stat-value" id="totalServers">0</div>
+                                </div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-icon running"></div>
+                                <div class="stat-info">
+                                    <h3>Running</h3>
+                                    <div class="stat-value" id="runningServers">0</div>
+                                </div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-icon cpu"></div>
+                                <div class="stat-info">
+                                    <h3>CPU Usage</h3>
+                                    <div class="stat-value" id="cpuUsage">0%</div>
+                                </div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-icon memory"></div>
+                                <div class="stat-info">
+                                    <h3>Memory Usage</h3>
+                                    <div class="stat-value" id="memoryUsage">0%</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CPU Usage -->
+                <div class="grid-stack-item" gs-w="6" gs-h="4">
+                    <div class="grid-stack-item-content visualization-card">
+                        <div class="panel-header">
+                            <h2 class="title">CPU Usage</h2>
+                            <div class="panel-controls">
+                                <button class="btn panel-edit">Edit</button>
+                                <button class="btn panel-remove">Remove</button>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="cpuChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Memory Usage -->
+                <div class="grid-stack-item" gs-w="6" gs-h="4">
+                    <div class="grid-stack-item-content visualization-card">
+                        <div class="panel-header">
+                            <h2 class="title">Memory Usage</h2>
+                            <div class="panel-controls">
+                                <button class="btn panel-edit">Edit</button>
+                                <button class="btn panel-remove">Remove</button>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="memoryChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Server Status -->
+                <div class="grid-stack-item" gs-w="6" gs-h="4">
+                    <div class="grid-stack-item-content visualization-card">
+                        <div class="panel-header">
+                            <h2 class="title">Server Status</h2>
+                            <div class="panel-controls">
+                                <button class="btn panel-edit">Edit</button>
+                                <button class="btn panel-remove">Remove</button>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="statusChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Server Management -->
+                <div class="grid-stack-item" gs-w="12" gs-h="6">
+                    <div class="grid-stack-item-content server-management">
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Server Management</h2>
+                                <div class="card-actions">
+                                    <select id="bulkAction">
+                                        <option value="">Bulk Actions...</option>
+                                        <option value="start">Start Selected</option>
+                                        <option value="stop">Stop Selected</option>
+                                        <option value="restart">Restart Selected</option>
+                                        <option value="suspend">Suspend Selected</option>
+                                        <option value="resume">Resume Selected</option>
+                                    </select>
+                                    <button class="btn" onclick="executeBulkAction()">Apply</button>
+                                    <button class="btn refresh-btn" onclick="dashboard.refreshData()">Refresh</button>
+                                </div>
+                            </div>
+                            <div class="server-filters">
+                                <input type="text" id="serverSearch" placeholder="Search servers...">
+                                <select id="statusFilter">
+                                    <option value="all">All Status</option>
+                                    <option value="running">Running</option>
+                                    <option value="stopped">Stopped</option>
+                                    <option value="suspended">Suspended</option>
+                                    <option value="error">Error</option>
+                                </select>
+                            </div>
+                            <div class="server-list" id="serverList">
+                                <!-- Server items will be dynamically added here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Performance Metrics -->
+                <div class="grid-stack-item" gs-w="6" gs-h="4">
+                    <div class="grid-stack-item-content performance-metrics">
+                        <div class="metric-card">
+                            <h3>Network Usage</h3>
+                            <div class="chart-container">
+                                <canvas id="networkChart"></canvas>
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <h3>Disk Usage</h3>
+                            <div class="chart-container">
+                                <canvas id="diskChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Activity Log -->
+                <div class="grid-stack-item" gs-w="12" gs-h="4">
+                    <div class="grid-stack-item-content activity-log">
+                        <h3>Recent Activity</h3>
+                        <div id="activityLog" class="log-container"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Notification System -->
+    <div id="notification" class="notification"></div>
+
+    <script type="module">
+        import { checkAuth, logout as authLogout, isAdmin } from './js/auth.js';
+        import { showNotification } from './js/utils.js';
+        import API from './js/api.js';
+        import { Dashboard } from './js/dashboard.js';
+        import { controlServer as importedControlServer, executeBulkAction as importedBulkAction } from './js/serverControls.js';
+
+        let dashboard;
+        let initializationInProgress = false;
+
+        // Expose functions to global scope
+        window.controlServer = importedControlServer;
+        window.executeBulkAction = importedBulkAction;
+        window.logout = () => {
+            console.log('Logout called');
+            authLogout();
+        };
+
+        async function initDashboard() {
+            if (initializationInProgress) {
+                console.log('Initialization already in progress');
+                return;
+            }
+
+            initializationInProgress = true;
+            console.log('Initializing dashboard...');
+
+            try {
+                const isAuthenticated = await checkAuth();
+                console.log('Authentication check result:', isAuthenticated);
+
+                if (!isAuthenticated) {
+                    console.log('Authentication failed, redirecting to login');
+                    sessionStorage.clear();
+                    window.location.replace('login.html');
+                    return;
+                }
+
+                const username = sessionStorage.getItem('username');
+                if (!username) {
+                    throw new Error('No username found');
+                }
+
+                document.getElementById('username').textContent = username;
+                
+                const adminButton = document.getElementById('adminButton');
+                adminButton.style.display = await isAdmin() ? 'block' : 'none';
+
+                dashboard = new Dashboard();
+                console.log('Dashboard initialized successfully');
+
+            } catch (error) {
+                console.error('Dashboard initialization error:', error);
+                sessionStorage.clear();
+                window.location.replace('login.html');
+            } finally {
+                initializationInProgress = false;
+            }
+        }
+
+        // Ensure DOM is loaded before initialization
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initDashboard);
+        } else {
+            await initDashboard();
+        }
+
+        // Admin link handler
+        document.getElementById('adminLink')?.addEventListener('click', async (event) => {
+            event.preventDefault();
+            try {
+                const adminCheck = await API.verifyAdmin();
+                if (adminCheck.isAdmin) {
+                    window.location.href = 'admin.html';
+                } else {
+                    showNotification('Access denied: Admin privileges required', 'error');
+                }
+            } catch (error) {
+                console.error('Admin navigation error:', error);
+                showNotification('Failed to verify admin access', 'error');
+            }
+        });
+
+        // Theme toggle handler
+        document.getElementById('themeToggle')?.addEventListener('change', (e) => {
+            document.documentElement.setAttribute('data-theme', e.target.checked ? 'dark' : 'light');
+        });
+    </script>
+
+    <template id="serverItemTemplate">
+        <div class="server-item">
+            <div class="server-info">
+                <input type="checkbox" class="server-select">
+                <span class="server-name"></span>
+                <span class="server-status"></span>
+                <div class="server-metrics">
+                    <span class="cpu-usage"></span>
+                    <span class="memory-usage"></span>
+                    <span class="disk-usage"></span>
+                    <span class="network-usage"></span>
+                </div>
+            </div>
+            <div class="server-controls">
+                <button class="btn start-btn" title="Start Server">Start</button>
+                <button class="btn stop-btn" title="Stop Server">Stop</button>
+                <button class="btn restart-btn" title="Restart Server">Restart</button>
+                <button class="btn suspend-btn" title="Suspend Server">Suspend</button>
+                <button class="btn resume-btn" title="Resume Server">Resume</button>
+                <button class="btn console-btn" title="Open Console">Console</button>
+                <button class="btn settings-btn" title="Server Settings">Settings</button>
+            </div>
+        </div>
+    </template>
+</body>
+</html>
