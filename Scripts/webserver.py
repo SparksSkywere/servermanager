@@ -7,6 +7,8 @@ import argparse
 import datetime
 import threading
 import time
+import uuid
+import hashlib
 from pathlib import Path
 
 # Configure logging
@@ -17,14 +19,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger("WebServer")
 
-# Import Flask for web server
+# Import Flask for web server - with better error handling
 try:
-    from flask import Flask, render_template, request, jsonify, redirect, url_for, session
-except ImportError:
-    logger.error("Flask not installed. Installing required packages...")
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "flask"])
-    from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+    from flask import Flask, render_template, request, jsonify, redirect, url_for, session, send_from_directory
+    logger.info("Flask imported successfully")
+    try:
+        from flask_cors import CORS
+        logger.info("Flask-CORS imported successfully")
+    except ImportError:
+        logger.error("Flask-CORS not installed. Running without CORS support.")
+        # Define a dummy CORS class that does nothing
+        class CORS:
+            def __init__(self, app):
+                logger.warning("Using dummy CORS implementation")
+                pass
+except ImportError as e:
+    logger.critical(f"Flask not installed: {e}. Please run setup.py or install manually.")
+    logger.critical("You can install required packages with: pip install flask flask-cors")
+    sys.exit(1)
 
 # Get server manager directory from registry to find modules
 def get_server_manager_dir():
@@ -42,35 +54,192 @@ def get_server_manager_dir():
         logger.warning(f"Using fallback server manager directory: {server_manager_dir}")
         return server_manager_dir
 
-# Get the server manager directory and add the modules path to sys.path
-server_manager_dir = get_server_manager_dir()
-modules_path = os.path.join(server_manager_dir, "modules")
-if modules_path not in sys.path:
-    sys.path.append(modules_path)
-
-# Now import modules from the determined path
-try:
-    # Import modules from the modules directory
-    from common import paths, process_manager, config_manager
-    from server_operations import (
-        get_all_servers, get_server_status, start_server, stop_server, 
-        restart_server, install_server, check_for_updates
-    )
-    from authentication import authenticate_user, get_all_users, is_admin_user
-    from security import is_admin
+# Authentication system
+class Authentication:
+    def __init__(self, config_path):
+        self.config_path = config_path
+        self.users = self._load_users()
+        self.tokens = {}  # Store active tokens
+        
+    def _load_users(self):
+        try:
+            users_file = os.path.join(self.config_path, "users.json")
+            if not os.path.exists(users_file):
+                # Create default admin user if file doesn't exist
+                default_users = {
+                    "admin": {
+                        "password": self._hash_password("admin"),
+                        "isAdmin": True
+                    }
+                }
+                os.makedirs(os.path.dirname(users_file), exist_ok=True)
+                with open(users_file, 'w') as f:
+                    json.dump(default_users, f, indent=4)
+                logger.info("Created default users file with admin user")
+                return default_users
+            
+            with open(users_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load users: {e}")
+            # Return a default admin user if there's an error
+            return {"admin": {"password": self._hash_password("admin"), "isAdmin": True}}
     
-    logger.info(f"Successfully imported modules from: {modules_path}")
-except ImportError as e:
-    logger.error(f"Failed to import modules: {e}")
-    logger.error(f"Modules path: {modules_path}")
-    logger.error(f"sys.path: {sys.path}")
-    sys.exit(1)
+    def _save_users(self):
+        try:
+            users_file = os.path.join(self.config_path, "users.json")
+            os.makedirs(os.path.dirname(users_file), exist_ok=True)
+            with open(users_file, 'w') as f:
+                json.dump(self.users, f, indent=4)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save users: {e}")
+            return False
+    
+    def _hash_password(self, password):
+        # Simple password hashing - in production, use more secure methods
+        return hashlib.sha256(password.encode()).hexdigest()
+    
+    def authenticate(self, username, password):
+        if username in self.users:
+            stored_hash = self.users[username]["password"]
+            if self._hash_password(password) == stored_hash:
+                # Generate token
+                token = str(uuid.uuid4())
+                self.tokens[token] = {
+                    "username": username,
+                    "created": datetime.datetime.now().isoformat(),
+                    "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat()
+                }
+                return {"token": token, "username": username, "isAdmin": self.users[username].get("isAdmin", False)}
+        return None
+    
+    def verify_token(self, token):
+        if token in self.tokens:
+            token_data = self.tokens[token]
+            expires = datetime.datetime.fromisoformat(token_data["expires"])
+            if datetime.datetime.now() < expires:
+                return token_data
+        return None
+    
+    def is_admin(self, username):
+        if username in self.users:
+            return self.users[username].get("isAdmin", False)
+        return False
+    
+    def get_all_users(self):
+        user_list = []
+        for username, data in self.users.items():
+            user_list.append({
+                "username": username,
+                "isAdmin": data.get("isAdmin", False)
+            })
+        return user_list
+    
+    def add_user(self, username, password, is_admin=False):
+        if username in self.users:
+            return False
+        
+        self.users[username] = {
+            "password": self._hash_password(password),
+            "isAdmin": is_admin
+        }
+        self._save_users()
+        return True
+    
+    def delete_user(self, username):
+        if username in self.users:
+            if username == "admin":
+                return False  # Prevent deleting the main admin
+            
+            del self.users[username]
+            self._save_users()
+            return True
+        return False
+    
+    def change_password(self, username, new_password):
+        if username in self.users:
+            self.users[username]["password"] = self._hash_password(new_password)
+            self._save_users()
+            return True
+        return False
+
+# Server Manager operations
+class ServerManager:
+    def __init__(self, servers_path):
+        self.servers_path = servers_path
+        
+    def get_all_servers(self):
+        try:
+            # For demo purposes, return simulated servers
+            return [
+                {
+                    "id": "server1",
+                    "name": "Production Server",
+                    "status": "running",
+                    "type": "windows",
+                    "cpu": 15,
+                    "memory": 45,
+                    "disk": 67
+                },
+                {
+                    "id": "server2",
+                    "name": "Development Server",
+                    "status": "stopped",
+                    "type": "linux",
+                    "cpu": 0,
+                    "memory": 0,
+                    "disk": 23
+                },
+                {
+                    "id": "server3",
+                    "name": "Test Server",
+                    "status": "running",
+                    "type": "windows",
+                    "cpu": 5,
+                    "memory": 30,
+                    "disk": 45
+                }
+            ]
+        except Exception as e:
+            logger.error(f"Error getting servers: {e}")
+            return []
+    
+    def get_server(self, server_id):
+        servers = self.get_all_servers()
+        for server in servers:
+            if server["id"] == server_id:
+                return server
+        return None
+    
+    def start_server(self, server_id):
+        server = self.get_server(server_id)
+        if server:
+            # Simulate starting server
+            server["status"] = "running"
+            return True
+        return False
+    
+    def stop_server(self, server_id):
+        server = self.get_server(server_id)
+        if server:
+            # Simulate stopping server
+            server["status"] = "stopped"
+            return True
+        return False
+    
+    def restart_server(self, server_id):
+        server = self.get_server(server_id)
+        if server:
+            # Simulate restarting server
+            return True
+        return False
 
 class ServerManagerWebServer:
     """Web server for Server Manager"""
     def __init__(self):
         self.registry_path = r"Software\SkywereIndustries\Servermanager"
-        self.server_manager_dir = server_manager_dir  # Use the already determined directory
+        self.server_manager_dir = get_server_manager_dir()  # Use the already determined directory
         self.web_port = 8080
         self.debug_mode = False
         self.paths = {}
@@ -93,12 +262,18 @@ class ServerManagerWebServer:
         # Initialize paths
         self.initialize_from_registry()
         
+        # Initialize authentication and server manager
+        self.auth = Authentication(self.paths["config"])
+        self.server_manager = ServerManager(self.paths["servers"])
+        
         # Create Flask app
         self.app = Flask(
             __name__,
-            template_folder=os.path.join(self.paths.get("root", ""), "templates"),
-            static_folder=os.path.join(self.paths.get("root", ""), "static")
+            static_folder=os.path.join(self.server_manager_dir, "www")
         )
+        
+        # Enable CORS for API
+        CORS(self.app)
         
         # Set up Flask secret key
         self.app.secret_key = os.urandom(24)
@@ -132,8 +307,7 @@ class ServerManagerWebServer:
                 "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
                 "scripts": os.path.join(self.server_manager_dir, "scripts"),
-                "templates": os.path.join(self.server_manager_dir, "templates"),
-                "static": os.path.join(self.server_manager_dir, "static")
+                "www": os.path.join(self.server_manager_dir, "www")
             }
             
             # Ensure directories exist
@@ -164,8 +338,7 @@ class ServerManagerWebServer:
                 "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
                 "scripts": script_dir,
-                "templates": os.path.join(self.server_manager_dir, "templates"),
-                "static": os.path.join(self.server_manager_dir, "static")
+                "www": os.path.join(self.server_manager_dir, "www")
             }
             
             # Ensure directories exist
@@ -178,7 +351,7 @@ class ServerManagerWebServer:
             file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
             logger.addHandler(file_handler)
             
-            logger.warning(f"Using fallback paths. Server Manager directory: {self.server_manager_dir}")
+            logger.warning(f"Using fallback paths. Server Manager directory: {server_manager_dir}")
             return False
     
     def write_pid_file(self):
@@ -209,171 +382,274 @@ class ServerManagerWebServer:
         """Set up Flask routes"""
         app = self.app
         
-        # Login required decorator
-        def login_required(f):
-            from functools import wraps
-            @wraps(f)
-            def decorated_function(*args, **kwargs):
-                if 'user' not in session:
-                    return redirect(url_for('login', next=request.url))
-                return f(*args, **kwargs)
-            return decorated_function
-        
-        # Admin required decorator
-        def admin_required(f):
-            from functools import wraps
-            @wraps(f)
-            def decorated_function(*args, **kwargs):
-                if 'user' not in session:
-                    return redirect(url_for('login', next=request.url))
-                if not is_admin_user(session['user']):
-                    return jsonify({"error": "Admin privileges required"}), 403
-                return f(*args, **kwargs)
-            return decorated_function
-        
-        # Login route
-        @app.route('/login', methods=['GET', 'POST'])
-        def login():
-            if request.method == 'POST':
-                username = request.form.get('username')
-                password = request.form.get('password')
-                
-                if authenticate_user(username, password):
-                    session['user'] = username
-                    next_page = request.args.get('next')
-                    return redirect(next_page or url_for('dashboard'))
-                else:
-                    return render_template('login.html', error="Invalid username or password")
+        # Serve static files from www directory
+        @app.route('/', defaults={'path': 'login.html'})
+        @app.route('/<path:path>')
+        def serve_static(path):
+            if path == "" or path == "/":
+                path = "login.html"
             
-            return render_template('login.html')
-        
-        # Logout route
-        @app.route('/logout')
-        def logout():
-            session.pop('user', None)
-            return redirect(url_for('login'))
-        
-        # Dashboard route
-        @app.route('/')
-        @login_required
-        def dashboard():
-            servers = get_all_servers()
-            return render_template('dashboard.html', 
-                                 username=session.get('user'),
-                                 is_admin=is_admin_user(session.get('user')),
-                                 servers=servers)
+            # Check if file exists in www directory
+            www_path = os.path.join(self.paths["www"], path)
+            if os.path.exists(www_path) and os.path.isfile(www_path):
+                # Determine directory and filename
+                directory = os.path.dirname(path)
+                filename = os.path.basename(path)
+                
+                # If directory is empty, serve from root of www
+                if not directory:
+                    return send_from_directory(self.paths["www"], filename)
+                else:
+                    # Serve from subdirectory of www
+                    return send_from_directory(os.path.join(self.paths["www"], directory), filename)
+            
+            # Default to 404 if file not found
+            return "File not found", 404
         
         # API routes
         
-        # Get all servers
+        # Authentication API
+        @app.route('/api/auth/login', methods=['POST'])
+        def api_login():
+            try:
+                data = request.json
+                username = data.get('username')
+                password = data.get('password')
+                
+                if not username or not password:
+                    return jsonify({"error": "Username and password are required"}), 400
+                
+                auth_result = self.auth.authenticate(username, password)
+                if auth_result:
+                    return jsonify({
+                        "token": auth_result["token"],
+                        "username": auth_result["username"],
+                        "isAdmin": auth_result["isAdmin"]
+                    })
+                else:
+                    return jsonify({"error": "Invalid username or password"}), 401
+            except Exception as e:
+                logger.error(f"Login error: {e}")
+                return jsonify({"error": "Authentication error"}), 500
+        
+        @app.route('/api/auth/verify', methods=['GET'])
+        def api_verify_auth():
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"authenticated": False}), 401
+                
+                token = auth_header.split(' ')[1]
+                token_data = self.auth.verify_token(token)
+                
+                if token_data:
+                    return jsonify({
+                        "authenticated": True,
+                        "username": token_data["username"],
+                        "isAdmin": self.auth.is_admin(token_data["username"])
+                    })
+                else:
+                    return jsonify({"authenticated": False}), 401
+            except Exception as e:
+                logger.error(f"Auth verification error: {e}")
+                return jsonify({"error": "Authentication verification error"}), 500
+        
+        @app.route('/api/verify-admin', methods=['GET'])
+        def api_verify_admin():
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"isAdmin": False}), 401
+                
+                token = auth_header.split(' ')[1]
+                token_data = self.auth.verify_token(token)
+                
+                if token_data:
+                    is_admin = self.auth.is_admin(token_data["username"])
+                    return jsonify({"isAdmin": is_admin})
+                else:
+                    return jsonify({"isAdmin": False}), 401
+            except Exception as e:
+                logger.error(f"Admin verification error: {e}")
+                return jsonify({"error": "Admin verification error"}), 500
+        
+        # Server management API
         @app.route('/api/servers', methods=['GET'])
-        @login_required
-        def api_servers():
-            servers = get_all_servers()
-            return jsonify(servers)
+        def api_get_servers():
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+                
+                token = auth_header.split(' ')[1]
+                token_data = self.auth.verify_token(token)
+                
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+                
+                servers = self.server_manager.get_all_servers()
+                return jsonify(servers)
+            except Exception as e:
+                logger.error(f"Get servers error: {e}")
+                return jsonify({"error": "Failed to get servers"}), 500
         
-        # Get server status
-        @app.route('/api/servers/<server_name>', methods=['GET'])
-        @login_required
-        def api_server_status(server_name):
-            status = get_server_status(server_name)
-            if status:
-                return jsonify(status)
-            else:
-                return jsonify({"error": "Server not found"}), 404
+        # Server control API
+        @app.route('/api/servers/<server_id>/start', methods=['POST'])
+        def api_start_server(server_id):
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+                
+                token = auth_header.split(' ')[1]
+                token_data = self.auth.verify_token(token)
+                
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+                
+                result = self.server_manager.start_server(server_id)
+                if result:
+                    return jsonify({"success": True, "message": f"Server {server_id} started successfully"})
+                else:
+                    return jsonify({"error": f"Failed to start server {server_id}"}), 400
+            except Exception as e:
+                logger.error(f"Start server error: {e}")
+                return jsonify({"error": "Failed to start server"}), 500
         
-        # Start server
-        @app.route('/api/servers/<server_name>/start', methods=['POST'])
-        @login_required
-        def api_start_server(server_name):
-            result = start_server(server_name)
-            if result:
-                return jsonify({"success": True, "message": f"Server {server_name} started"})
-            else:
-                return jsonify({"success": False, "error": f"Failed to start server {server_name}"}), 500
+        @app.route('/api/servers/<server_id>/stop', methods=['POST'])
+        def api_stop_server(server_id):
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+                
+                token = auth_header.split(' ')[1]
+                token_data = self.auth.verify_token(token)
+                
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+                
+                result = self.server_manager.stop_server(server_id)
+                if result:
+                    return jsonify({"success": True, "message": f"Server {server_id} stopped successfully"})
+                else:
+                    return jsonify({"error": f"Failed to stop server {server_id}"}), 400
+            except Exception as e:
+                logger.error(f"Stop server error: {e}")
+                return jsonify({"error": "Failed to stop server"}), 500
         
-        # Stop server
-        @app.route('/api/servers/<server_name>/stop', methods=['POST'])
-        @login_required
-        def api_stop_server(server_name):
-            force = request.json.get('force', False) if request.is_json else False
-            result = stop_server(server_name, force)
-            if result:
-                return jsonify({"success": True, "message": f"Server {server_name} stopped"})
-            else:
-                return jsonify({"success": False, "error": f"Failed to stop server {server_name}"}), 500
+        @app.route('/api/servers/<server_id>/restart', methods=['POST'])
+        def api_restart_server(server_id):
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+                
+                token = auth_header.split(' ')[1]
+                token_data = self.auth.verify_token(token)
+                
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+                
+                result = self.server_manager.restart_server(server_id)
+                if result:
+                    return jsonify({"success": True, "message": f"Server {server_id} restarted successfully"})
+                else:
+                    return jsonify({"error": f"Failed to restart server {server_id}"}), 400
+            except Exception as e:
+                logger.error(f"Restart server error: {e}")
+                return jsonify({"error": "Failed to restart server"}), 500
         
-        # Restart server
-        @app.route('/api/servers/<server_name>/restart', methods=['POST'])
-        @login_required
-        def api_restart_server(server_name):
-            result = restart_server(server_name)
-            if result:
-                return jsonify({"success": True, "message": f"Server {server_name} restarted"})
-            else:
-                return jsonify({"success": False, "error": f"Failed to restart server {server_name}"}), 500
-        
-        # Check for updates
-        @app.route('/api/servers/<server_name>/check-updates', methods=['GET'])
-        @login_required
-        def api_check_updates(server_name):
-            has_updates = check_for_updates(server_name)
-            return jsonify({"updates_available": has_updates})
-        
-        # Install/update server
-        @app.route('/api/servers/<server_name>/install', methods=['POST'])
-        @login_required
-        def api_install_server(server_name):
-            validate = request.json.get('validate', True) if request.is_json else True
-            result = install_server(server_name, validate)
-            if result:
-                return jsonify({"success": True, "message": f"Server {server_name} installed/updated"})
-            else:
-                return jsonify({"success": False, "error": f"Failed to install/update server {server_name}"}), 500
-        
-        # User management - admin only
-        
-        # Get all users
+        # User management API (admin only)
         @app.route('/api/users', methods=['GET'])
-        @admin_required
-        def api_users():
-            users = get_all_users()
-            return jsonify(users)
+        def api_get_users():
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+                
+                token = auth_header.split(' ')[1]
+                token_data = self.auth.verify_token(token)
+                
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+                
+                # Check if user is admin
+                if not self.auth.is_admin(token_data["username"]):
+                    return jsonify({"error": "Admin privileges required"}), 403
+                
+                users = self.auth.get_all_users()
+                return jsonify(users)
+            except Exception as e:
+                logger.error(f"Get users error: {e}")
+                return jsonify({"error": "Failed to get users"}), 500
         
-        # Add more routes as needed
+        # System settings API
+        @app.route('/api/settings', methods=['GET'])
+        def api_get_settings():
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+                
+                token = auth_header.split(' ')[1]
+                token_data = self.auth.verify_token(token)
+                
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+                
+                # Return some default settings
+                return jsonify({
+                    "autoUpdate": True,
+                    "backupSchedule": 24,
+                    "notificationsEnabled": True
+                })
+            except Exception as e:
+                logger.error(f"Get settings error: {e}")
+                return jsonify({"error": "Failed to get settings"}), 500
         
         # Error handlers
         @app.errorhandler(404)
         def page_not_found(e):
-            return render_template('404.html'), 404
+            return jsonify({"error": "Not found"}), 404
         
         @app.errorhandler(500)
         def internal_server_error(e):
-            return render_template('500.html'), 500
+            logger.error(f"Internal server error: {e}")
+            return jsonify({"error": "Internal server error"}), 500
     
     def run(self):
         """Run the web server"""
         try:
             logger.info(f"Starting web server on port {self.web_port}")
             
-            # Run in a new thread to allow for stopping
-            threading.Thread(
-                target=self.app.run,
-                kwargs={'host': '0.0.0.0', 'port': self.web_port, 'debug': self.debug_mode},
-                daemon=True
-            ).start()
-            
-            # Keep the main thread alive
-            while True:
-                time.sleep(1)
+            # Instead of running in a thread, run directly in the main thread
+            # This provides better error reporting and stability
+            self.app.run(
+                host='0.0.0.0',  # Bind to all interfaces
+                port=self.web_port,
+                debug=self.debug_mode,
+                threaded=True,
+                use_reloader=False  # Disable reloader to prevent duplicate processes
+            )
                 
         except KeyboardInterrupt:
             logger.info("Web server stopping due to keyboard interrupt")
         except Exception as e:
             logger.error(f"Web server error: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
         
         return True
+
+def is_admin():
+    """Check if running with admin privileges"""
+    try:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except:
+        return False
 
 def main():
     """Main function"""

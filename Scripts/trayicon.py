@@ -293,8 +293,10 @@ class ServerManagerTrayIcon:
             sock.settimeout(timeout)
             result = sock.connect_ex((host, port))
             sock.close()
+            logger.debug(f"Port {port} check result: {result} (0 means open)")
             return result == 0
-        except:
+        except Exception as e:
+            logger.error(f"Error checking port {port}: {str(e)}")
             return False
     
     def toggle_offline_mode(self):
@@ -360,35 +362,50 @@ class ServerManagerTrayIcon:
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                     startupinfo.wShowWindow = 0  # SW_HIDE
                     
+                    # Use shell=False for better process management
                     subprocess.Popen(
                         cmd,
-                        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
                         startupinfo=startupinfo,
+                        shell=False,  # Important: Don't use shell
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
-                        stdin=subprocess.PIPE,
-                        close_fds=True
+                        stdin=subprocess.PIPE
                     )
                 else:
                     # On Unix, use start_new_session
                     subprocess.Popen(
                         cmd,
                         start_new_session=True,
+                        shell=False,  # Important: Don't use shell
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
-                        stdin=subprocess.PIPE,
-                        close_fds=True
+                        stdin=subprocess.PIPE
                     )
                 
                 # Wait for web server to start
-                for _ in range(5):  # Try for 5 seconds
+                connected = False
+                logger.info(f"Waiting for web server to start on port {self.web_port}...")
+                for attempt in range(10):  # Try for 10 seconds
                     time.sleep(1)
+                    logger.debug(f"Connection attempt {attempt+1}/10...")
                     if self.is_port_open('localhost', self.web_port):
                         self.webserver_status = "Connected"
+                        connected = True
+                        logger.info(f"Web server successfully started and connected on port {self.web_port}")
                         break
+                
+                if not connected:
+                    logger.error(f"Failed to connect to web server after 10 seconds")
+                    if self.icon:
+                        self.icon.notify("Failed to start web server. Check logs for details.", 
+                                        "Server Manager Error")
+                    return
                 
             except Exception as e:
                 logger.error(f"Failed to start web server: {str(e)}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 if self.icon:
                     self.icon.notify(f"Failed to start web server: {str(e)}", "Server Manager Error")
                 return
@@ -405,6 +422,8 @@ class ServerManagerTrayIcon:
                 
         except Exception as e:
             logger.error(f"Failed to open web interface: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             if self.icon:
                 self.icon.notify(f"Failed to open web interface: {str(e)}", "Server Manager Error")
 

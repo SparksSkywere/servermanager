@@ -1,374 +1,466 @@
-import { TimeRange } from './timerange.js';
-import { ChartManager } from './charts.js';
+/**
+ * Dashboard management for Server Manager
+ */
+
 import API from './api.js';
-import { handleApiError, showNotification } from './utils.js';
+import { showNotification, formatBytes, getRandomColor } from './utils.js';
 
 export class Dashboard {
     constructor() {
+        this.servers = [];
         this.charts = {};
-        this.serverData = [];
-        this.lastUpdate = new Date();
-        this.updateInterval = 2000; // 2 seconds default
-        this.initializeCharts();
-        this.initializeEventListeners();
-        this.startPerformanceMonitoring();
+        this.refreshInterval = null;
+        this.refreshRate = 10; // Default refresh rate in seconds
+        
+        // Initialize dashboard
         this.initializeGridStack();
-        this.initializePanelControls();
+        this.setupEventListeners();
+        this.refreshData();
         
-        // Initialize WebSocket connection
-        this.connectToWebSocket();
-        
-        // Store dashboard instance globally to allow access from API
-        window.dashboard = this;
+        // Start automatic refresh
+        this.startAutoRefresh();
     }
     
-    connectToWebSocket() {
-        try {
-            console.log('Initializing WebSocket connection from dashboard');
-            API.connectWebSocket();
-            this.addActivityLogEntry('Connecting to real-time monitoring service...');
-        } catch (error) {
-            console.error('Failed to connect to WebSocket:', error);
-            this.addActivityLogEntry('Failed to connect to real-time monitoring service');
-        }
-    }
-
-    async initializeCharts() {
-        // CPU Usage Chart
-        this.charts.cpu = this.charts.createTimeSeriesChart('cpuChart', {
-            title: 'CPU Usage',
-            unit: '%',
-            thresholds: [
-                { value: 70, color: 'var(--warning-color)' },
-                { value: 90, color: 'var(--error-color)' }
-            ]
-        });
-
-        // Memory Usage Chart
-        this.charts.memory = this.charts.createTimeSeriesChart('memoryChart', {
-            title: 'Memory Usage',
-            unit: '%',
-            thresholds: [
-                { value: 80, color: 'var(--warning-color)' },
-                { value: 95, color: 'var(--error-color)' }
-            ]
-        });
-
-        // Server Status Chart
-        this.charts.status = this.charts.createPieChart('statusChart', {
-            title: 'Server Status Distribution'
-        });
-
-        // Add new charts for network and disk
-        this.charts.network = new Chart(
-            document.getElementById('networkChart').getContext('2d'),
-            {
-                type: 'line',
-                data: {
-                    labels: [],
-                    datasets: [{
-                        label: 'Download (Mbps)',
-                        data: [],
-                        borderColor: '#2196F3'
-                    }, {
-                        label: 'Upload (Mbps)',
-                        data: [],
-                        borderColor: '#4CAF50'
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false
-                }
-            }
-        );
-
-        this.charts.disk = new Chart(
-            document.getElementById('diskChart').getContext('2d'),
-            {
-                type: 'doughnut',
-                data: {
-                    labels: ['Used', 'Free'],
-                    datasets: [{
-                        data: [0, 100],
-                        backgroundColor: ['#FF5722', '#E0E0E0']
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false
-                }
-            }
-        );
-    }
-
-    async startPerformanceMonitoring() {
-        const updateMetrics = async () => {
-            try {
-                const metrics = await this.fetchPerformanceMetrics();
-                this.updateDashboardMetrics(metrics);
-                this.updateServerList();
-            } catch (error) {
-                console.error('Error updating metrics:', error);
-            }
-        };
-
-        // Initial update
-        await updateMetrics();
-
-        // Set up interval for updates
-        this.monitoringInterval = setInterval(updateMetrics, this.updateInterval);
-    }
-
-    async fetchPerformanceMetrics() {
-        try {
-            const response = await fetch('/api/metrics');
-            if (!response.ok) throw new Error('Failed to fetch metrics');
-            return await response.json();
-        } catch (error) {
-            console.error('Metrics fetch error:', error);
-            throw error;
-        }
-    }
-
-    updateDashboardMetrics(metrics) {
-        // Update system overview
-        document.getElementById('cpuUsage').textContent = `${metrics.cpu}%`;
-        document.getElementById('memoryUsage').textContent = `${metrics.memory}%`;
-        document.getElementById('totalServers').textContent = metrics.totalServers;
-        document.getElementById('runningServers').textContent = metrics.runningServers;
-
-        // Update charts
-        this.updateChartData(this.charts.cpu, metrics.cpuHistory);
-        this.updateChartData(this.charts.memory, metrics.memoryHistory);
-        this.updateChartData(this.charts.network, metrics.networkHistory);
-        this.updateChartData(this.charts.disk, metrics.diskUsage);
-
-        // Update activity log
-        if (metrics.recentActivity) {
-            this.updateActivityLog(metrics.recentActivity);
-        }
-    }
-
-    updateChartData(chart, data) {
-        if (!chart || !data) return;
-        
-        try {
-            if (chart.data && chart.data.datasets) {
-                if (Array.isArray(data)) {
-                    // For simple array data
-                    chart.data.datasets[0].data = data;
-                } else if (data.used !== undefined && data.free !== undefined) {
-                    // For disk usage
-                    chart.data.datasets[0].data = [data.used, data.free];
-                } else if (data.download !== undefined && data.upload !== undefined) {
-                    // For network data
-                    chart.data.datasets[0].data.push(data.download);
-                    chart.data.datasets[1].data.push(data.upload);
-                    
-                    // Keep only the last 10 points
-                    if (chart.data.datasets[0].data.length > 10) {
-                        chart.data.datasets[0].data.shift();
-                        chart.data.datasets[1].data.shift();
-                    }
-                    
-                    // Update labels
-                    chart.data.labels = Array(chart.data.datasets[0].data.length).fill('');
-                }
-                
-                chart.update();
-            }
-        } catch (error) {
-            console.error('Error updating chart data:', error);
-        }
-    }
-
-    updateActivityLog(activities) {
-        if (Array.isArray(activities)) {
-            activities.forEach(activity => {
-                this.addActivityLogEntry(activity);
-            });
-        }
-    }
-
-    async updateServerList() {
-        try {
-            const serverList = document.getElementById('serverList');
-            const template = document.getElementById('serverItemTemplate');
-            const response = await fetch('/api/servers');
-            const servers = await response.json();
-
-            // Clear existing list
-            serverList.innerHTML = '';
-
-            servers.forEach(server => {
-                const serverItem = template.content.cloneNode(true);
-                
-                // Update server item content
-                serverItem.querySelector('.server-name').textContent = server.name;
-                serverItem.querySelector('.server-status').textContent = server.status;
-                serverItem.querySelector('.cpu-usage').textContent = `CPU: ${server.cpu}%`;
-                serverItem.querySelector('.memory-usage').textContent = `RAM: ${server.memory}%`;
-                serverItem.querySelector('.disk-usage').textContent = `Disk: ${server.disk}%`;
-                serverItem.querySelector('.network-usage').textContent = `Net: ${server.network}`;
-
-                // Add event listeners for server controls
-                const controls = serverItem.querySelector('.server-controls');
-                controls.querySelectorAll('.btn').forEach(button => {
-                    button.addEventListener('click', () => {
-                        const action = button.classList[1].replace('-btn', '');
-                        this.controlServer(server.id, action);
-                    });
-                });
-
-                serverList.appendChild(serverItem);
-            });
-        } catch (error) {
-            console.error('Error updating server list:', error);
-        }
-    }
-
-    async controlServer(serverId, action) {
-        try {
-            const response = await fetch('/api/server/control', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ serverId, action })
-            });
-
-            if (!response.ok) throw new Error('Server control action failed');
-
-            // Update server list after action
-            this.updateServerList();
-            
-            // Add to activity log
-            this.addActivityLogEntry(`Server ${serverId} ${action} command sent`);
-
-        } catch (error) {
-            console.error('Server control error:', error);
-            showNotification(`Failed to ${action} server: ${error.message}`, 'error');
-        }
-    }
-
-    addActivityLogEntry(message) {
-        const logContainer = document.getElementById('activityLog');
-        if (!logContainer) return; // Safety check
-        
-        const entry = document.createElement('div');
-        entry.className = 'log-entry';
-        entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-        logContainer.insertBefore(entry, logContainer.firstChild);
-
-        // Keep only last 100 entries
-        while (logContainer.children.length > 100) {
-            logContainer.removeChild(logContainer.lastChild);
-        }
-    }
-
-    initializeEventListeners() {
-        // Server search
-        document.getElementById('serverSearch')?.addEventListener('input', (e) => {
-            this.filterServers(e.target.value);
-        });
-
-        // Status filter
-        document.getElementById('statusFilter')?.addEventListener('change', (e) => {
-            this.filterServers(document.getElementById('serverSearch').value, e.target.value);
-        });
-
-        // Refresh rate change
-        document.getElementById('refreshRate')?.addEventListener('change', (e) => {
-            this.updateInterval = parseInt(e.target.value) * 1000;
-            this.restartPerformanceMonitoring();
-        });
-        
-        // Add WebSocket reconnect button if it exists
-        document.getElementById('reconnectWebsocket')?.addEventListener('click', () => {
-            this.connectToWebSocket();
-        });
-    }
-
-    filterServers(searchText, status = 'all') {
-        const servers = document.querySelectorAll('.server-item');
-        servers.forEach(server => {
-            const name = server.querySelector('.server-name').textContent.toLowerCase();
-            const serverStatus = server.querySelector('.server-status').textContent.toLowerCase();
-            const matchesSearch = name.includes(searchText.toLowerCase());
-            const matchesStatus = status === 'all' || serverStatus === status;
-            server.style.display = matchesSearch && matchesStatus ? '' : 'none';
-        });
-    }
-
-    restartPerformanceMonitoring() {
-        clearInterval(this.monitoringInterval);
-        this.startPerformanceMonitoring();
-    }
-
     initializeGridStack() {
+        // Initialize GridStack for draggable panels
         this.grid = GridStack.init({
-            column: 12,
-            cellHeight: 60,
-            animate: true,
+            cellHeight: 80,
+            minRow: 1,
+            margin: 10,
+            disableOneColumnMode: true,
+            float: false,
+            handleClass: 'panel-header',
             draggable: {
                 handle: '.panel-header'
-            },
-            resizable: {
-                handles: 'e,se,s,sw,w'
             }
         });
-
-        // Disable dragging by default
-        this.setEditMode(false);
+        
+        // Disable dragging initially
+        this.grid.enableMove(false);
     }
-
-    initializePanelControls() {
+    
+    setupEventListeners() {
+        // Set up event listeners for dashboard controls
+        const refreshRateSelect = document.getElementById('refreshRate');
+        if (refreshRateSelect) {
+            refreshRateSelect.addEventListener('change', () => {
+                this.refreshRate = parseInt(refreshRateSelect.value);
+                this.startAutoRefresh();
+            });
+        }
+        
+        // Server search
+        const serverSearch = document.getElementById('serverSearch');
+        if (serverSearch) {
+            serverSearch.addEventListener('input', () => this.filterServers());
+        }
+        
+        // Status filter
+        const statusFilter = document.getElementById('statusFilter');
+        if (statusFilter) {
+            statusFilter.addEventListener('change', () => this.filterServers());
+        }
+        
+        // Edit dashboard button
+        const editDashboardBtn = document.querySelector('.edit-dashboard-btn');
+        if (editDashboardBtn) {
+            editDashboardBtn.addEventListener('click', () => this.toggleEditMode());
+        }
+    }
+    
+    async refreshData() {
+        try {
+            // Fetch servers
+            this.servers = await API.getServers();
+            
+            // Update dashboard components
+            this.updateServerList();
+            this.updateSystemOverview();
+            this.updateCharts();
+            this.updateActivityLog();
+            
+        } catch (error) {
+            console.error('Dashboard refresh error:', error);
+            showNotification('Failed to refresh dashboard data', 'error');
+        }
+    }
+    
+    startAutoRefresh() {
+        // Clear existing interval
+        if (this.refreshInterval) {
+            clearInterval(this.refreshInterval);
+        }
+        
+        // Start new interval
+        this.refreshInterval = setInterval(() => {
+            this.refreshData();
+        }, this.refreshRate * 1000);
+        
+        console.log(`Auto-refresh set to ${this.refreshRate} seconds`);
+    }
+    
+    updateServerList() {
+        const serverList = document.getElementById('serverList');
+        if (!serverList) return;
+        
+        // Clear existing list
+        serverList.innerHTML = '';
+        
+        // Create new list items
+        const template = document.getElementById('serverItemTemplate');
+        
+        this.servers.forEach(server => {
+            // Clone template
+            const serverItem = template.content.cloneNode(true);
+            
+            // Set server name
+            serverItem.querySelector('.server-name').textContent = server.name;
+            
+            // Set status with appropriate class
+            const statusElement = serverItem.querySelector('.server-status');
+            statusElement.textContent = server.status;
+            statusElement.classList.add(server.status);
+            
+            // Set metrics
+            serverItem.querySelector('.cpu-usage').textContent = `CPU: ${server.cpu}%`;
+            serverItem.querySelector('.memory-usage').textContent = `Memory: ${server.memory}%`;
+            serverItem.querySelector('.disk-usage').textContent = `Disk: ${server.disk}%`;
+            
+            // Set up buttons
+            const startBtn = serverItem.querySelector('.start-btn');
+            const stopBtn = serverItem.querySelector('.stop-btn');
+            const restartBtn = serverItem.querySelector('.restart-btn');
+            
+            // Update button states based on server status
+            if (server.status === 'running') {
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                restartBtn.disabled = false;
+            } else if (server.status === 'stopped') {
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                restartBtn.disabled = true;
+            }
+            
+            // Set data attribute for server ID
+            const serverElement = serverItem.querySelector('.server-item');
+            serverElement.dataset.serverId = server.id;
+            
+            // Add event listeners to buttons
+            startBtn.addEventListener('click', () => this.controlServer(server.id, 'start'));
+            stopBtn.addEventListener('click', () => this.controlServer(server.id, 'stop'));
+            restartBtn.addEventListener('click', () => this.controlServer(server.id, 'restart'));
+            
+            // Add to server list
+            serverList.appendChild(serverItem);
+        });
+    }
+    
+    updateSystemOverview() {
+        // Update system overview stats
+        document.getElementById('totalServers').textContent = this.servers.length;
+        
+        const runningServers = this.servers.filter(server => server.status === 'running').length;
+        document.getElementById('runningServers').textContent = runningServers;
+        
+        // Calculate average CPU and memory usage
+        const cpuTotal = this.servers.reduce((sum, server) => sum + server.cpu, 0);
+        const memoryTotal = this.servers.reduce((sum, server) => sum + server.memory, 0);
+        
+        const cpuAvg = this.servers.length ? Math.round(cpuTotal / this.servers.length) : 0;
+        const memoryAvg = this.servers.length ? Math.round(memoryTotal / this.servers.length) : 0;
+        
+        document.getElementById('cpuUsage').textContent = `${cpuAvg}%`;
+        document.getElementById('memoryUsage').textContent = `${memoryAvg}%`;
+    }
+    
+    updateCharts() {
+        this.updateCpuChart();
+        this.updateMemoryChart();
+        this.updateStatusChart();
+        this.updateNetworkChart();
+        this.updateDiskChart();
+    }
+    
+    updateCpuChart() {
+        const ctx = document.getElementById('cpuChart');
+        if (!ctx) return;
+        
+        const serverNames = this.servers.map(server => server.name);
+        const cpuValues = this.servers.map(server => server.cpu);
+        const backgroundColors = this.servers.map(() => getRandomColor());
+        
+        if (this.charts.cpu) {
+            // Update existing chart
+            this.charts.cpu.data.labels = serverNames;
+            this.charts.cpu.data.datasets[0].data = cpuValues;
+            this.charts.cpu.update();
+        } else {
+            // Create new chart
+            this.charts.cpu = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: serverNames,
+                    datasets: [{
+                        label: 'CPU Usage (%)',
+                        data: cpuValues,
+                        backgroundColor: backgroundColors
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100
+                        }
+                    }
+                }
+            });
+        }
+    }
+    
+    updateMemoryChart() {
+        const ctx = document.getElementById('memoryChart');
+        if (!ctx) return;
+        
+        const serverNames = this.servers.map(server => server.name);
+        const memoryValues = this.servers.map(server => server.memory);
+        const backgroundColors = this.servers.map(() => getRandomColor());
+        
+        if (this.charts.memory) {
+            // Update existing chart
+            this.charts.memory.data.labels = serverNames;
+            this.charts.memory.data.datasets[0].data = memoryValues;
+            this.charts.memory.update();
+        } else {
+            // Create new chart
+            this.charts.memory = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: serverNames,
+                    datasets: [{
+                        label: 'Memory Usage (%)',
+                        data: memoryValues,
+                        backgroundColor: backgroundColors
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100
+                        }
+                    }
+                }
+            });
+        }
+    }
+    
+    updateStatusChart() {
+        const ctx = document.getElementById('statusChart');
+        if (!ctx) return;
+        
+        // Count servers by status
+        const statusCounts = {
+            running: 0,
+            stopped: 0,
+            error: 0,
+            suspended: 0
+        };
+        
+        this.servers.forEach(server => {
+            statusCounts[server.status] = (statusCounts[server.status] || 0) + 1;
+        });
+        
+        const labels = Object.keys(statusCounts);
+        const data = Object.values(statusCounts);
+        const colors = {
+            running: '#4CAF50',
+            stopped: '#F44336',
+            error: '#FF9800',
+            suspended: '#9C27B0'
+        };
+        
+        const backgroundColors = labels.map(status => colors[status] || getRandomColor());
+        
+        if (this.charts.status) {
+            // Update existing chart
+            this.charts.status.data.labels = labels;
+            this.charts.status.data.datasets[0].data = data;
+            this.charts.status.data.datasets[0].backgroundColor = backgroundColors;
+            this.charts.status.update();
+        } else {
+            // Create new chart
+            this.charts.status = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: backgroundColors
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'right'
+                        }
+                    }
+                }
+            });
+        }
+    }
+    
+    updateNetworkChart() {
+        const ctx = document.getElementById('networkChart');
+        if (!ctx) return;
+        
+        // Simulate network data
+        const labels = ['RX', 'TX'];
+        const data = [150, 75]; // MB/s
+        
+        if (this.charts.network) {
+            // Update existing chart
+            this.charts.network.data.datasets[0].data = data;
+            this.charts.network.update();
+        } else {
+            // Create new chart
+            this.charts.network = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Network (MB/s)',
+                        data: data,
+                        backgroundColor: ['#42A5F5', '#26C6DA']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y'
+                }
+            });
+        }
+    }
+    
+    updateDiskChart() {
+        const ctx = document.getElementById('diskChart');
+        if (!ctx) return;
+        
+        // Simulate disk data
+        const labels = ['Used', 'Free'];
+        const data = [350, 650]; // GB
+        
+        if (this.charts.disk) {
+            // Update existing chart
+            this.charts.disk.data.datasets[0].data = data;
+            this.charts.disk.update();
+        } else {
+            // Create new chart
+            this.charts.disk = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: ['#F44336', '#4CAF50']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            });
+        }
+    }
+    
+    updateActivityLog() {
+        const activityLog = document.getElementById('activityLog');
+        if (!activityLog) return;
+        
+        // Simulate activity log entries
+        const activities = [
+            { time: new Date(), message: 'Dashboard refreshed', type: 'info' },
+            { time: new Date(Date.now() - 5 * 60000), message: 'Server "Production Server" started', type: 'success' },
+            { time: new Date(Date.now() - 15 * 60000), message: 'Backup completed', type: 'success' },
+            { time: new Date(Date.now() - 30 * 60000), message: 'Server "Test Server" stopped', type: 'warning' }
+        ];
+        
+        activityLog.innerHTML = activities.map(activity => `
+            <div class="log-entry ${activity.type}">
+                <span class="timestamp">${activity.time.toLocaleTimeString()}</span>
+                <span class="message">${activity.message}</span>
+            </div>
+        `).join('');
+    }
+    
+    filterServers() {
+        const searchTerm = document.getElementById('serverSearch').value.toLowerCase();
+        const statusFilter = document.getElementById('statusFilter').value;
+        
+        const serverItems = document.querySelectorAll('.server-item');
+        
+        serverItems.forEach(item => {
+            const serverName = item.querySelector('.server-name').textContent.toLowerCase();
+            const serverStatus = item.querySelector('.server-status').textContent.toLowerCase();
+            
+            const matchesSearch = serverName.includes(searchTerm);
+            const matchesStatus = statusFilter === 'all' || serverStatus === statusFilter;
+            
+            item.style.display = (matchesSearch && matchesStatus) ? 'flex' : 'none';
+        });
+    }
+    
+    toggleEditMode() {
         const editBtn = document.querySelector('.edit-dashboard-btn');
-        editBtn?.addEventListener('click', () => {
-            const isEditing = editBtn.classList.toggle('active');
-            document.body.classList.toggle('dashboard-editing', isEditing);
-            this.setEditMode(isEditing);
-        });
-
-        // Panel remove buttons
-        document.querySelectorAll('.panel-remove').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const item = e.target.closest('.grid-stack-item');
-                this.grid.removeWidget(item);
-            });
-        });
-
-        // Panel edit buttons
-        document.querySelectorAll('.panel-edit').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const panel = e.target.closest('.visualization-card');
-                this.openPanelEditor(panel);
-            });
-        });
+        const isEditing = this.grid.opts.staticGrid;
+        
+        if (isEditing) {
+            // Disable edit mode
+            this.grid.enableMove(false);
+            editBtn.textContent = 'Edit Dashboard';
+            showNotification('Dashboard edit mode disabled', 'info');
+        } else {
+            // Enable edit mode
+            this.grid.enableMove(true);
+            editBtn.textContent = 'Save Dashboard';
+            showNotification('Dashboard edit mode enabled', 'info');
+        }
     }
-
-    setEditMode(enabled) {
-        this.grid.enableMove(enabled);
-        this.grid.enableResize(enabled);
-    }
-
-    openPanelEditor(panel) {
-        // Implement panel editor modal
-        console.log('Edit panel:', panel);
-    }
-
-    // Save dashboard layout
-    saveDashboardLayout() {
-        const layout = this.grid.save();
-        localStorage.setItem('dashboardLayout', JSON.stringify(layout));
-    }
-
-    // Load dashboard layout
-    loadDashboardLayout() {
-        const savedLayout = localStorage.getItem('dashboardLayout');
-        if (savedLayout) {
-            this.grid.load(JSON.parse(savedLayout));
+    
+    async controlServer(serverId, action) {
+        try {
+            let result;
+            
+            switch (action) {
+                case 'start':
+                    result = await API.startServer(serverId);
+                    break;
+                case 'stop':
+                    result = await API.stopServer(serverId);
+                    break;
+                case 'restart':
+                    result = await API.restartServer(serverId);
+                    break;
+                default:
+                    throw new Error(`Unknown action: ${action}`);
+            }
+            
+            showNotification(result.message, 'success');
+            
+            // Refresh data after a short delay
+            setTimeout(() => this.refreshData(), 1000);
+            
+        } catch (error) {
+            console.error(`Server control error (${action}):`, error);
+            showNotification(`Failed to ${action} server: ${error.message}`, 'error');
         }
     }
 }

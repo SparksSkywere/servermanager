@@ -1,93 +1,117 @@
-import API from './api.js';
+/**
+ * Authentication module for Server Manager
+ */
 
-export async function checkAuth() {
-    const token = sessionStorage.getItem('auth_token');
-    console.log('CheckAuth - Token present:', !!token);
-    
-    if (!token) return false;
+const API_URL = '/api';
 
+/**
+ * Authenticate user and get token
+ * @param {string} username - Username
+ * @param {string} password - Password
+ * @param {string} authType - Authentication type ('Local' or 'Database')
+ * @returns {Promise<Object>} - Authentication result
+ */
+export async function login(username, password, authType = 'Local') {
     try {
-        const response = await fetch('/api/auth/verify', {
-            method: 'GET',
+        const response = await fetch(`${API_URL}/auth/login`, {
+            method: 'POST',
             headers: {
-                'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json'
             },
-            credentials: 'include'  // Changed to include
+            body: JSON.stringify({ username, password, authType })
         });
 
-        console.log('CheckAuth - Response status:', response.status);
-        
         if (!response.ok) {
-            console.error('Auth check failed:', response.status);
-            sessionStorage.clear();  // Clear invalid session
-            return false;
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Authentication failed');
         }
 
         const data = await response.json();
-        console.log('CheckAuth - Response data:', data);  // Added logging
-        return true;  // If we get here, the token is valid
-    } catch (error) {
-        console.error('Auth check error:', error);
-        sessionStorage.clear();  // Clear on error
-        return false;
-    }
-}
-
-export async function login(username, password) {
-    console.log('Login attempt for:', username);
-    
-    try {
-        const response = await fetch('/api/auth', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            credentials: 'same-origin',
-            body: JSON.stringify({
-                username,
-                password,
-                authType: 'Local'
-            })
-        });
-
-        const data = await response.json();
-        console.log('Login response status:', response.status);
-
-        if (!response.ok) throw new Error(data.message || 'Login failed');
-        if (!data.token) throw new Error('No token received');
-
-        // Clear any existing session first
-        sessionStorage.clear();
-
-        // Set new session data
+        
+        // Store authentication data in session storage
         sessionStorage.setItem('auth_token', data.token);
         sessionStorage.setItem('username', data.username);
-        sessionStorage.setItem('isAdmin', data.isAdmin ? 'true' : 'false');
-
-        console.log('Login successful - Token stored');
+        sessionStorage.setItem('isAdmin', data.isAdmin);
+        
         return data;
     } catch (error) {
         console.error('Login error:', error);
-        sessionStorage.clear();
         throw error;
     }
 }
 
-export function logout() {
-    console.log('Logging out...');
-    sessionStorage.clear();
-    
-    // Clear browser history and prevent back navigation
-    window.history.pushState(null, '', 'login.html');
-    window.onpopstate = function () {
-        window.history.pushState(null, '', 'login.html');
-    };
-    
-    // Force reload of login page to clear any cached states
-    window.location.replace('login.html');
+/**
+ * Check if user is authenticated
+ * @returns {Promise<boolean>} - True if authenticated
+ */
+export async function checkAuth() {
+    try {
+        const token = sessionStorage.getItem('auth_token');
+        if (!token) {
+            return false;
+        }
+
+        const response = await fetch(`${API_URL}/auth/verify`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!response.ok) {
+            return false;
+        }
+
+        const data = await response.json();
+        return data.authenticated === true;
+    } catch (error) {
+        console.error('Auth check error:', error);
+        return false;
+    }
 }
 
+/**
+ * Check if current user is an admin
+ * @returns {Promise<boolean>} - True if user is admin
+ */
 export async function isAdmin() {
-    return sessionStorage.getItem('isAdmin') === 'true';
+    try {
+        // First check session storage
+        const isAdminInSession = sessionStorage.getItem('isAdmin');
+        if (isAdminInSession === 'true') {
+            return true;
+        }
+        
+        // If not in session or false, verify with server
+        const token = sessionStorage.getItem('auth_token');
+        if (!token) {
+            return false;
+        }
+
+        const response = await fetch(`${API_URL}/verify-admin`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!response.ok) {
+            return false;
+        }
+
+        const data = await response.json();
+        return data.isAdmin === true;
+    } catch (error) {
+        console.error('Admin check error:', error);
+        return false;
+    }
+}
+
+/**
+ * Logout user
+ */
+export function logout() {
+    // Clear session storage
+    sessionStorage.clear();
+    
+    // Redirect to login page
+    window.location.replace('login.html');
 }

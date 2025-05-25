@@ -1,197 +1,142 @@
 import CONFIG from './config.js';
 
+/**
+ * API client for Server Manager
+ */
+
+const API_URL = '/api';
+
 class API {
-    constructor() {
-        this.baseUrl = '/api';
-        this.webSocket = null;
-        this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
+    /**
+     * Get authentication token from session storage
+     * @returns {string|null} Auth token or null if not authenticated
+     */
+    static getToken() {
+        return sessionStorage.getItem('auth_token');
     }
 
-    static getBaseUrl() {
-        return CONFIG.API_BASE_URL;
-    }
-
-    static async handleResponse(response) {
-        const contentType = response.headers.get('content-type');
-        const isJson = contentType && contentType.includes('application/json');
-        
-        if (!response.ok) {
-            console.error('API Error:', response.status, response.statusText);
-            const error = isJson ? await response.json() : { message: response.statusText };
-            throw new Error(error.message || 'API request failed');
+    /**
+     * Make authenticated API request
+     * @param {string} endpoint - API endpoint
+     * @param {Object} options - Fetch options
+     * @returns {Promise<Object>} - API response
+     */
+    static async request(endpoint, options = {}) {
+        const token = this.getToken();
+        if (!token) {
+            throw new Error('Not authenticated');
         }
-        
-        return isJson ? response.json() : response;
-    }
 
-    async request(endpoint, options = {}) {
-        const defaultOptions = {
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${sessionStorage.getItem('auth_token')}`
-            }
+        const url = `${API_URL}${endpoint}`;
+        const headers = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            ...options.headers
         };
 
         try {
-            const response = await fetch(
-                `${this.baseUrl}${endpoint}`,
-                { ...defaultOptions, ...options }
-            );
+            const response = await fetch(url, {
+                ...options,
+                headers
+            });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.message || 'API request failed');
+                if (response.status === 401) {
+                    // Token expired or invalid
+                    sessionStorage.clear();
+                    window.location.replace('login.html');
+                    throw new Error('Authentication expired');
+                }
+
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'API request failed');
             }
 
             return await response.json();
         } catch (error) {
-            console.error('API request error:', error);
+            console.error(`API error (${endpoint}):`, error);
             throw error;
         }
     }
 
-    static async getAuthMethods() {
-        const response = await fetch('/api/auth/methods');
-        if (!response.ok) throw new Error('Failed to get auth methods');
-        return response;
-    }
-
-    static async login(credentials) {
-        const response = await fetch('/api/auth', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(credentials)
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Authentication failed');
-        }
-        
-        return response;
-    }
-
-    async verifyAdmin() {
-        return this.request('/admin/verify');
-    }
-
-    static async getUsers() {
-        const response = await fetch('/api/users', {
-            headers: {
-                'Authorization': `Bearer ${sessionStorage.getItem('auth_token')}`
-            }
-        });
-        if (!response.ok) {
-            throw new Error('Failed to fetch users');
-        }
-        return await response.json();
-    }
-
-    static async getSystemStats() {
-        const response = await fetch('/api/stats', {
-            headers: { 
-                'Authorization': `Bearer ${sessionStorage.getItem('auth_token')}`,
-                'Content-Type': 'application/json'
-            }
-        });
-        return this.handleResponse(response);
-    }
-
-    async getServers() {
+    /**
+     * Get all servers
+     * @returns {Promise<Array>} List of servers
+     */
+    static async getServers() {
         return this.request('/servers');
     }
 
-    async controlServer(serverId, action) {
-        return this.request('/server/control', {
-            method: 'POST',
-            body: JSON.stringify({ serverId, action })
+    /**
+     * Start a server
+     * @param {string} serverId - Server ID
+     * @returns {Promise<Object>} Operation result
+     */
+    static async startServer(serverId) {
+        return this.request(`/servers/${serverId}/start`, {
+            method: 'POST'
         });
     }
 
-    static async createServer(serverData) {
-        const response = await fetch('/api/servers', {
+    /**
+     * Stop a server
+     * @param {string} serverId - Server ID
+     * @param {boolean} force - Force stop
+     * @returns {Promise<Object>} Operation result
+     */
+    static async stopServer(serverId, force = false) {
+        return this.request(`/servers/${serverId}/stop`, {
             method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${sessionStorage.getItem('auth_token')}`,
-                'Content-Type': 'application/json'
-            },
+            body: JSON.stringify({ force })
+        });
+    }
+
+    /**
+     * Restart a server
+     * @param {string} serverId - Server ID
+     * @returns {Promise<Object>} Operation result
+     */
+    static async restartServer(serverId) {
+        return this.request(`/servers/${serverId}/restart`, {
+            method: 'POST'
+        });
+    }
+
+    /**
+     * Get all users (admin only)
+     * @returns {Promise<Array>} List of users
+     */
+    static async getUsers() {
+        return this.request('/users');
+    }
+
+    /**
+     * Get system settings
+     * @returns {Promise<Object>} System settings
+     */
+    static async getSystemSettings() {
+        return this.request('/settings');
+    }
+
+    /**
+     * Create a new server
+     * @param {Object} serverData - Server data
+     * @returns {Promise<Object>} Operation result
+     */
+    static async createServer(serverData) {
+        return this.request('/servers', {
+            method: 'POST',
             body: JSON.stringify(serverData)
         });
-        if (!response.ok) throw new Error('Failed to create server');
-        return await response.json();
     }
 
-    static async deleteServer(serverName) {
-        const response = await fetch(`/api/servers/${serverName}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${sessionStorage.getItem('auth_token')}` }
-        });
-        if (!response.ok) throw new Error('Failed to delete server');
-        return await response.json();
-    }
-
-    connectWebSocket() {
-        if (this.webSocket?.readyState === WebSocket.OPEN) return;
-
-        // Use the WebSocket URL from the config file instead of relative path
-        this.webSocket = new WebSocket(CONFIG.WEBSOCKET_URL);
-        
-        console.log(`Connecting to WebSocket at ${CONFIG.WEBSOCKET_URL}`);
-
-        this.webSocket.onopen = () => {
-            console.log('WebSocket connected');
-            this.reconnectAttempts = 0;
-        };
-
-        this.webSocket.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                this.handleWebSocketMessage(data);
-            } catch (error) {
-                console.error('WebSocket message error:', error);
-            }
-        };
-
-        this.webSocket.onclose = () => {
-            console.log('WebSocket disconnected');
-            if (this.reconnectAttempts < this.maxReconnectAttempts) {
-                this.reconnectAttempts++;
-                console.log(`Reconnecting to WebSocket, attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
-                setTimeout(() => this.connectWebSocket(), 5000);
-            }
-        };
-
-        this.webSocket.onerror = (error) => {
-            console.error('WebSocket error:', error);
-        };
-    }
-
-    handleWebSocketMessage(data) {
-        switch (data.type) {
-            case 'metrics':
-                window.dashboard?.updateDashboardMetrics(data);
-                break;
-            case 'serverUpdate':
-                window.dashboard?.updateServerList();
-                break;
-            case 'log':
-                window.dashboard?.addActivityLogEntry(data.message);
-                break;
-            case 'connection':
-                console.log('WebSocket connection status:', data.status);
-                if (data.message) window.dashboard?.addActivityLogEntry(data.message);
-                break;
-            default:
-                console.log('Unknown WebSocket message type:', data.type);
-        }
-    }
-
-    async getMetrics() {
-        return this.request('/metrics');
+    /**
+     * Verify if user has admin privileges
+     * @returns {Promise<Object>} Admin verification result
+     */
+    static async verifyAdmin() {
+        return this.request('/verify-admin');
     }
 }
 
-export default new API();
+export default API;

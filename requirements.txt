@@ -1,4 +1,5 @@
 flask
+flask-cors
 psutil
 requests
 pywin32
@@ -6,3 +7,5 @@ pycryptodome
 gitpython
 paramiko
 schedule
+pystray
+pillow

@@ -10,6 +10,7 @@ import logging
 import ctypes
 from pathlib import Path
 from datetime import datetime
+import socket
 
 # Setup basic logging
 logging.basicConfig(
@@ -196,10 +197,12 @@ class ServerManagerLauncher:
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 0  # SW_HIDE
                 
+                # Don't use DETACHED_PROCESS as it can cause issues
                 web_process = subprocess.Popen(
                     [sys.executable, web_script],
-                    creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                     startupinfo=startupinfo,
+                    shell=False,  # Explicitly don't use shell
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     stdin=subprocess.PIPE
@@ -209,24 +212,149 @@ class ServerManagerLauncher:
                 web_process = subprocess.Popen(
                     [sys.executable, web_script],
                     start_new_session=True,
+                    shell=False,  # Explicitly don't use shell
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     stdin=subprocess.PIPE
                 )
             
+            # Wait a moment to see if the process exits immediately
+            time.sleep(2)
+            if web_process.poll() is not None:
+                exit_code = web_process.returncode
+                stdout, stderr = web_process.communicate()
+                logger.error(f"Web server process exited immediately with code {exit_code}")
+                logger.error(f"Stdout: {stdout.decode('utf-8', errors='replace')}")
+                logger.error(f"Stderr: {stderr.decode('utf-8', errors='replace')}")
+                return False
+            
             self.processes["web_server"] = web_process
             self.write_pid_file("webserver", web_process.pid)
             
-            logger.info(f"Web server process started (PID: {web_process.pid})")
-            return True
+            # Check if the web server is actually listening on the port
+            # Give it some time to start up
+            web_port = 8080  # Default port
+            try:
+                # Try to get the port from registry
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
+                web_port = int(winreg.QueryValueEx(key, "WebPort")[0])
+                winreg.CloseKey(key)
+            except:
+                logger.warning("Could not get web port from registry, using default 8080")
+            
+            logger.info(f"Checking if web server is listening on port {web_port}...")
+            for attempt in range(5):
+                time.sleep(1)
+                if self.is_port_open('localhost', web_port):
+                    logger.info(f"Web server successfully started and listening on port {web_port}")
+                    return True
+                logger.debug(f"Attempt {attempt+1}/5: Web server not yet listening")
+            
+            logger.warning(f"Web server process started (PID: {web_process.pid}) but not listening on port {web_port}")
+            return True  # Return True anyway to keep the process managed
             
         except Exception as e:
             logger.error(f"Failed to start web server: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+
+    def is_port_open(self, host, port, timeout=1):
+        """Check if a port is open on the specified host"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            return result == 0
+        except:
             return False
     
+    def check_dependencies(self):
+        """Check if required dependencies are installed"""
+        try:
+            logger.info("Checking for required dependencies...")
+            
+            # Check if Flask is installed
+            try:
+                import flask
+                logger.info("Flask is installed")
+            except ImportError:
+                logger.error("Flask is not installed")
+                return False
+                
+            # Check if Flask-CORS is installed
+            try:
+                import flask_cors
+                logger.info("Flask-CORS is installed")
+            except ImportError:
+                logger.warning("Flask-CORS is not installed - some features may not work")
+                
+            # Check other important dependencies
+            for module in ["pystray", "PIL"]:
+                try:
+                    __import__(module)
+                    logger.info(f"{module} is installed")
+                except ImportError:
+                    logger.error(f"{module} is not installed")
+                    return False
+                    
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking dependencies: {e}")
+            return False
+
+    def install_dependencies(self):
+        """Install missing dependencies"""
+        try:
+            setup_script = os.path.join(self.server_manager_dir, "setup.py")
+            
+            if not os.path.exists(setup_script):
+                logger.error(f"Setup script not found: {setup_script}")
+                return False
+                
+            logger.info("Running setup script to install dependencies...")
+            
+            if sys.platform == 'win32':
+                # On Windows, use CREATE_NO_WINDOW to hide console
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
+                
+                result = subprocess.run(
+                    [sys.executable, setup_script, "--no-admin-check"],
+                    startupinfo=startupinfo,
+                    capture_output=True,
+                    text=True
+                )
+            else:
+                result = subprocess.run(
+                    [sys.executable, setup_script, "--no-admin-check"],
+                    capture_output=True,
+                    text=True
+                )
+                
+            if result.returncode != 0:
+                logger.error(f"Failed to install dependencies: {result.stderr}")
+                return False
+                
+            logger.info("Dependencies installed successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error installing dependencies: {e}")
+            return False
+
     def start_processes(self):
         """Start all server manager component processes"""
         try:
+            # Check and install dependencies first
+            if not self.check_dependencies():
+                logger.warning("Some dependencies are missing, attempting to install...")
+                if not self.install_dependencies():
+                    logger.error("Failed to install dependencies, some components may not work")
+            
             # Start tray icon
             if not self.start_tray_icon():
                 logger.warning("Failed to start tray icon, continuing anyway")
