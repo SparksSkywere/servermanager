@@ -33,6 +33,7 @@ class ServerManagerLauncher:
         parser = argparse.ArgumentParser(description='Server Manager Launcher')
         parser.add_argument('--service', action='store_true', help='Run as a service')
         parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+        parser.add_argument('--force', action='store_true', help='Force start even if another instance is detected')
         args = parser.parse_args()
         
         # Configure logging based on arguments
@@ -40,10 +41,65 @@ class ServerManagerLauncher:
             logger.setLevel(logging.DEBUG)
             
         self.is_service = args.service
+        self.force_start = args.force
         
         # Initialize paths and configuration
         self.initialize()
         
+        # Check for existing instance
+        if not self.force_start and self.check_existing_instance():
+            logger.warning("Another instance of Server Manager is already running. Exiting.")
+            sys.exit(0)
+        
+    def check_existing_instance(self):
+        """Check if another instance of Server Manager is already running"""
+        try:
+            if not self.paths or not self.paths.get("temp"):
+                # If paths aren't initialized, we can't check
+                return False
+                
+            # Check for existing PID files
+            for process_type in ["launcher", "trayicon", "webserver"]:
+                pid_file = os.path.join(self.paths["temp"], f"{process_type}.pid")
+                
+                if os.path.exists(pid_file):
+                    try:
+                        with open(pid_file, 'r') as f:
+                            pid_data = json.load(f)
+                            pid = pid_data.get("ProcessId")
+                            
+                            if pid and pid != os.getpid():  # Make sure it's not our PID
+                                # Check if process is still running
+                                if sys.platform == "win32":
+                                    # Windows method
+                                    PROCESS_QUERY_INFORMATION = 0x0400
+                                    process_handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
+                                    if process_handle:
+                                        ctypes.windll.kernel32.CloseHandle(process_handle)
+                                        logger.warning(f"Found existing {process_type} process with PID {pid}")
+                                        return True
+                                else:
+                                    # Unix method
+                                    try:
+                                        os.kill(pid, 0)  # Signal 0 just checks if process exists
+                                        logger.warning(f"Found existing {process_type} process with PID {pid}")
+                                        return True
+                                    except OSError:
+                                        # Process not running, clean up stale PID file
+                                        os.remove(pid_file)
+                    except (json.JSONDecodeError, IOError) as e:
+                        # Invalid PID file, remove it
+                        logger.warning(f"Invalid PID file for {process_type}: {str(e)}")
+                        try:
+                            os.remove(pid_file)
+                        except:
+                            pass
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error checking for existing instances: {str(e)}")
+            return False
+    
     def initialize(self):
         """Initialize paths and configuration from registry"""
         try:
