@@ -228,6 +228,10 @@ class ServerManagerDashboard:
         self.server_context_menu = tk.Menu(self.root, tearoff=0)
         self.server_context_menu.add_command(label="Add Server", command=self.add_server)
         self.server_context_menu.add_separator()
+        self.server_context_menu.add_command(label="Start Server", command=self.start_server)
+        self.server_context_menu.add_command(label="Stop Server", command=self.stop_server)
+        self.server_context_menu.add_command(label="Configure Server", command=self.configure_server)
+        self.server_context_menu.add_separator()
         self.server_context_menu.add_command(label="Open Folder Directory", command=self.open_server_directory)
         self.server_context_menu.add_command(label="Remove Server", command=self.remove_server)
         
@@ -325,10 +329,16 @@ class ServerManagerDashboard:
             # Enable server-specific options
             self.server_context_menu.entryconfigure("Open Folder Directory", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("Remove Server", state=tk.NORMAL)
+            self.server_context_menu.entryconfigure("Start Server", state=tk.NORMAL)
+            self.server_context_menu.entryconfigure("Stop Server", state=tk.NORMAL)
+            self.server_context_menu.entryconfigure("Configure Server", state=tk.NORMAL)
         else:
             # Disable server-specific options
             self.server_context_menu.entryconfigure("Open Folder Directory", state=tk.DISABLED)
             self.server_context_menu.entryconfigure("Remove Server", state=tk.DISABLED)
+            self.server_context_menu.entryconfigure("Start Server", state=tk.DISABLED)
+            self.server_context_menu.entryconfigure("Stop Server", state=tk.DISABLED)
+            self.server_context_menu.entryconfigure("Configure Server", state=tk.DISABLED)
             
         # Show context menu
         self.server_context_menu.tk_popup(event.x_root, event.y_root)
@@ -1083,11 +1093,54 @@ class ServerManagerDashboard:
                                 process = psutil.Process(server_config["ProcessId"])
                                 if process.is_running():
                                     status = "Running"
-                                    cpu_usage = "Checking..."
-                                    memory_usage = f"{process.memory_info().rss / (1024 * 1024):.2f} MB"
-                                    uptime = "Checking..."
+                                    try:
+                                        cpu_usage = f"{process.cpu_percent(interval=0.1):.1f}%"
+                                    except:
+                                        cpu_usage = "N/A"
+                                        
+                                    try:
+                                        memory_usage = f"{process.memory_info().rss / (1024 * 1024):.1f} MB"
+                                    except:
+                                        memory_usage = "N/A"
+                                        
+                                    try:
+                                        # Calculate uptime if start time is available
+                                        if "StartTime" in server_config:
+                                            start_time = datetime.datetime.fromisoformat(server_config["StartTime"])
+                                            now = datetime.datetime.now()
+                                            delta = now - start_time
+                                            
+                                            days = delta.days
+                                            hours, remainder = divmod(delta.seconds, 3600)
+                                            minutes, seconds = divmod(remainder, 60)
+                                            
+                                            if days > 0:
+                                                uptime = f"{days}d {hours}h {minutes}m"
+                                            else:
+                                                uptime = f"{hours}h {minutes}m {seconds}s"
+                                        else:
+                                            uptime = "Running"
+                                    except:
+                                        uptime = "Running"
+                                else:
+                                    # Process exists in config but is not running
+                                    # Clean up the process ID in the config
+                                    server_config.pop('ProcessId', None)
+                                    server_config.pop('StartTime', None)
+                                    server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                                    
+                                    # Save updated configuration
+                                    with open(os.path.join(servers_path, file), 'w') as f:
+                                        json.dump(server_config, f, indent=4)
                             except:
-                                pass
+                                # Process doesn't exist, clean up the config
+                                server_config.pop('ProcessId', None)
+                                server_config.pop('StartTime', None)
+                                server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                                
+                                # Save updated configuration
+                                with open(os.path.join(servers_path, file), 'w') as f:
+                                    json.dump(server_config, f, indent=4)
                                 
                         # Add to list
                         self.server_list.insert("", tk.END, values=(
@@ -1343,6 +1396,808 @@ class ServerManagerDashboard:
         
         # Close the window
         self.root.destroy()
+
+    def start_server(self):
+        """Start the selected game server"""
+        selected_items = self.server_list.selection()
+        if not selected_items:
+            messagebox.showinfo("No Selection", "Please select a server first.")
+            return
+            
+        server_name = self.server_list.item(selected_items[0])['values'][0]
+        
+        try:
+            # Get server config file path
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            
+            if not os.path.exists(config_file):
+                messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
+                return
+                
+            # Read server configuration
+            with open(config_file, 'r') as f:
+                server_config = json.load(f)
+                
+            # Check if server is already running
+            if 'ProcessId' in server_config and self.is_process_running(server_config['ProcessId']):
+                messagebox.showinfo("Already Running", f"Server '{server_name}' is already running.")
+                return
+                
+            # Check for executable path
+            if 'ExecutablePath' not in server_config or not server_config['ExecutablePath']:
+                # No executable path specified, show configuration dialog
+                messagebox.showinfo("Configuration Needed", 
+                                    "No executable specified. Please configure the server startup settings.")
+                self.configure_server()
+                return
+                
+            executable_path = server_config['ExecutablePath']
+            install_dir = server_config.get('InstallDir', '')
+            
+            # Validate executable path
+            if not os.path.exists(executable_path):
+                messagebox.showerror("Error", f"Executable not found: {executable_path}")
+                return
+                
+            # Get startup arguments if available
+            startup_args = server_config.get('StartupArgs', '')
+            
+            # Build the command
+            if executable_path.lower().endswith(('.bat', '.cmd')):
+                # For batch files, use call to ensure we don't block
+                cmd = f'start "" /D "{install_dir}" cmd /c "{executable_path}" {startup_args}'
+                shell = True
+            elif executable_path.lower().endswith('.sh') and sys.platform != 'win32':
+                # For shell scripts on non-Windows platforms
+                cmd = ['/bin/sh', executable_path]
+                if startup_args:
+                    cmd.extend(startup_args.split())
+                shell = False
+            else:
+                # For regular executables
+                cmd = f'"{executable_path}" {startup_args}'
+                shell = True
+                
+            # Create logs directory if it doesn't exist
+            server_logs_dir = os.path.join(install_dir, "logs")
+            os.makedirs(server_logs_dir, exist_ok=True)
+            
+            # Set up log files
+            stdout_log = os.path.join(server_logs_dir, "server_stdout.log")
+            stderr_log = os.path.join(server_logs_dir, "server_stderr.log")
+            
+            # Start the process
+            logger.info(f"Starting server: {server_name} with command: {cmd}")
+            
+            # Open log files
+            with open(stdout_log, 'a') as stdout_file, open(stderr_log, 'a') as stderr_file:
+                # Write startup timestamp
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                stdout_file.write(f"\n--- Server started at {timestamp} ---\n")
+                
+                # Start the process
+                if shell:
+                    process = subprocess.Popen(
+                        cmd,
+                        shell=True,
+                        cwd=install_dir,
+                        stdout=stdout_file,
+                        stderr=stderr_file
+                    )
+                else:
+                    process = subprocess.Popen(
+                        cmd,
+                        cwd=install_dir,
+                        stdout=stdout_file,
+                        stderr=stderr_file
+                    )
+                
+            # Update server configuration with process ID
+            server_config['ProcessId'] = process.pid
+            server_config['StartTime'] = datetime.datetime.now().isoformat()
+            server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+            
+            # Save updated configuration
+            with open(config_file, 'w') as f:
+                json.dump(server_config, f, indent=4)
+                
+            # Update server list
+            self.update_server_list(force_refresh=True)
+            
+            messagebox.showinfo("Success", f"Server '{server_name}' started successfully.")
+            
+        except Exception as e:
+            logger.error(f"Error starting server: {str(e)}")
+            messagebox.showerror("Error", f"Failed to start server: {str(e)}")
+    
+    def stop_server(self):
+        """Stop the selected game server"""
+        selected_items = self.server_list.selection()
+        if not selected_items:
+            messagebox.showinfo("No Selection", "Please select a server first.")
+            return
+            
+        server_name = self.server_list.item(selected_items[0])['values'][0]
+        
+        try:
+            # Get server config file path
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            
+            if not os.path.exists(config_file):
+                messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
+                return
+                
+            # Read server configuration
+            with open(config_file, 'r') as f:
+                server_config = json.load(f)
+                
+            # Check if server has a process ID registered
+            if 'ProcessId' not in server_config:
+                messagebox.showinfo("Not Running", f"Server '{server_name}' is not running.")
+                return
+                
+            process_id = server_config['ProcessId']
+            
+            # Check if process is still running
+            if not self.is_process_running(process_id):
+                messagebox.showinfo("Not Running", f"Server '{server_name}' is not running.")
+                
+                # Clean up the process ID in the config
+                server_config.pop('ProcessId', None)
+                server_config.pop('StartTime', None)
+                server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                
+                # Save updated configuration
+                with open(config_file, 'w') as f:
+                    json.dump(server_config, f, indent=4)
+                    
+                # Update server list
+                self.update_server_list(force_refresh=True)
+                return
+                
+            # Confirm server stop
+            confirm = messagebox.askyesno("Confirm Stop", 
+                                        f"Are you sure you want to stop the server '{server_name}'?",
+                                        icon=messagebox.WARNING)
+            
+            if not confirm:
+                return
+                
+            # Try to use custom stop command if available
+            if 'StopCommand' in server_config and server_config['StopCommand']:
+                try:
+                    stop_cmd = server_config['StopCommand']
+                    install_dir = server_config.get('InstallDir', '')
+                    
+                    logger.info(f"Executing custom stop command: {stop_cmd}")
+                    subprocess.run(stop_cmd, shell=True, cwd=install_dir, timeout=30)
+                    
+                    # Wait a bit to see if the process stops
+                    time.sleep(2)
+                    
+                    # Check if process is still running
+                    if not self.is_process_running(process_id):
+                        # Process stopped successfully
+                        server_config.pop('ProcessId', None)
+                        server_config.pop('StartTime', None)
+                        server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                        
+                        # Save updated configuration
+                        with open(config_file, 'w') as f:
+                            json.dump(server_config, f, indent=4)
+                            
+                        # Update server list
+                        self.update_server_list(force_refresh=True)
+                        
+                        messagebox.showinfo("Success", f"Server '{server_name}' stopped successfully.")
+                        return
+                    else:
+                        logger.warning(f"Custom stop command did not stop the server, using force termination")
+                except Exception as e:
+                    logger.error(f"Error executing custom stop command: {str(e)}")
+            
+            # If we got here, either the custom stop command failed or wasn't available
+            # Try to terminate the process
+            try:
+                process = psutil.Process(process_id)
+                
+                # First try graceful termination
+                process.terminate()
+                
+                # Wait up to 5 seconds for the process to terminate
+                try:
+                    process.wait(timeout=5)
+                except psutil.TimeoutExpired:
+                    # If it doesn't terminate, kill it forcefully
+                    logger.warning(f"Process {process_id} did not terminate gracefully, using force kill")
+                    process.kill()
+                
+                logger.info(f"Terminated server process with PID {process_id}")
+                
+                # Update server configuration
+                server_config.pop('ProcessId', None)
+                server_config.pop('StartTime', None)
+                server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                
+                # Save updated configuration
+                with open(config_file, 'w') as f:
+                    json.dump(server_config, f, indent=4)
+                    
+                # Update server list
+                self.update_server_list(force_refresh=True)
+                
+                messagebox.showinfo("Success", f"Server '{server_name}' stopped successfully.")
+                
+            except Exception as e:
+                logger.error(f"Failed to stop server process: {str(e)}")
+                messagebox.showerror("Error", f"Failed to stop server: {str(e)}")
+                
+        except Exception as e:
+            logger.error(f"Error stopping server: {str(e)}")
+            messagebox.showerror("Error", f"Failed to stop server: {str(e)}")
+    
+    def configure_server(self):
+        """Configure server executable and startup settings"""
+        selected_items = self.server_list.selection()
+        if not selected_items:
+            messagebox.showinfo("No Selection", "Please select a server first.")
+            return
+            
+        server_name = self.server_list.item(selected_items[0])['values'][0]
+        
+        try:
+            # Get server config file path
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            
+            if not os.path.exists(config_file):
+                messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
+                return
+                
+            # Read server configuration
+            with open(config_file, 'r') as f:
+                server_config = json.load(f)
+                
+            # Get installation directory
+            install_dir = server_config.get('InstallDir', '')
+            if not install_dir or not os.path.exists(install_dir):
+                messagebox.showerror("Error", "Server installation directory not found.")
+                return
+                
+            # Create configuration dialog
+            dialog = tk.Toplevel(self.root)
+            dialog.title(f"Configure Server: {server_name}")
+            dialog.geometry("600x450")
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            # Create a frame with padding
+            main_frame = ttk.Frame(dialog, padding=10)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Server information display
+            info_frame = ttk.LabelFrame(main_frame, text="Server Information")
+            info_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            ttk.Label(info_frame, text=f"Name: {server_name}", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, padx=10, pady=2)
+            ttk.Label(info_frame, text=f"AppID: {server_config.get('AppID', 'N/A')}").pack(anchor=tk.W, padx=10, pady=2)
+            ttk.Label(info_frame, text=f"Install Directory: {install_dir}").pack(anchor=tk.W, padx=10, pady=2)
+            
+            # Startup configuration
+            startup_frame = ttk.LabelFrame(main_frame, text="Startup Configuration")
+            startup_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            # Executable path
+            ttk.Label(startup_frame, text="Executable Path:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
+            exec_path_var = tk.StringVar(value=server_config.get('ExecutablePath', ''))
+            exec_path_entry = ttk.Entry(startup_frame, textvariable=exec_path_var, width=40)
+            exec_path_entry.grid(row=0, column=1, padx=5, pady=10, sticky=tk.W)
+            
+            # Browse button for executable
+            def browse_executable():
+                filetypes = [
+                    ("Executables", "*.exe;*.bat;*.cmd;*.sh"),
+                    ("All files", "*.*")
+                ]
+                filepath = filedialog.askopenfilename(
+                    title="Select Server Executable",
+                    initialdir=install_dir,
+                    filetypes=filetypes
+                )
+                if filepath:
+                    # Convert to relative path if it's within the install directory
+                    if os.path.commonpath([filepath, install_dir]) == install_dir:
+                        rel_path = os.path.relpath(filepath, install_dir)
+                        exec_path_var.set(rel_path)
+                    else:
+                        exec_path_var.set(filepath)
+                    
+            browse_btn = ttk.Button(startup_frame, text="Browse", command=browse_executable, width=10)
+            browse_btn.grid(row=0, column=2, padx=5, pady=10)
+            
+            # Startup arguments
+            ttk.Label(startup_frame, text="Startup Arguments:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
+            startup_args_var = tk.StringVar(value=server_config.get('StartupArgs', ''))
+            startup_args_entry = ttk.Entry(startup_frame, textvariable=startup_args_var, width=40)
+            startup_args_entry.grid(row=1, column=1, columnspan=2, padx=5, pady=10, sticky=tk.W+tk.E)
+            
+            # Custom stop command
+            ttk.Label(startup_frame, text="Stop Command:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
+            stop_cmd_var = tk.StringVar(value=server_config.get('StopCommand', ''))
+            stop_cmd_entry = ttk.Entry(startup_frame, textvariable=stop_cmd_var, width=40)
+            stop_cmd_entry.grid(row=2, column=1, columnspan=2, padx=5, pady=10, sticky=tk.W+tk.E)
+            
+            # Working directory options
+            ttk.Label(startup_frame, text="Working Directory:").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
+            working_dir_var = tk.StringVar(value=server_config.get('WorkingDir', ''))
+            working_dir_entry = ttk.Entry(startup_frame, textvariable=working_dir_var, width=40)
+            working_dir_entry.grid(row=3, column=1, padx=5, pady=10, sticky=tk.W)
+            
+            # Browse button for working directory
+            def browse_working_dir():
+                directory = filedialog.askdirectory(
+                    title="Select Working Directory",
+                    initialdir=install_dir
+                )
+                if directory:
+                    # Convert to relative path if it's within the install directory
+                    if os.path.commonpath([directory, install_dir]) == install_dir:
+                        rel_path = os.path.relpath(directory, install_dir)
+                        working_dir_var.set(rel_path)
+                    else:
+                        working_dir_var.set(directory)
+                    
+            working_dir_btn = ttk.Button(startup_frame, text="Browse", command=browse_working_dir, width=10)
+            working_dir_btn.grid(row=3, column=2, padx=5, pady=10)
+            
+            # Help text
+            help_text = ttk.Label(
+                main_frame, 
+                text="Note: For relative paths, use paths relative to the installation directory.\n"
+                     "For the stop command, leave blank to use the default termination method.",
+                foreground="gray"
+            )
+            help_text.pack(fill=tk.X, pady=5)
+            
+            # Buttons
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=10)
+            
+            def save_configuration():
+                try:
+                    # Get values from form
+                    exec_path = exec_path_var.get().strip()
+                    startup_args = startup_args_var.get().strip()
+                    stop_cmd = stop_cmd_var.get().strip()
+                    working_dir = working_dir_var.get().strip()
+                    
+                    # Validate executable path
+                    if not exec_path:
+                        messagebox.showerror("Validation Error", "Executable path is required.")
+                        return
+                        
+                    # Resolve paths
+                    if not os.path.isabs(exec_path):
+                        exec_path_abs = os.path.join(install_dir, exec_path)
+                    else:
+                        exec_path_abs = exec_path
+                        
+                    if working_dir and not os.path.isabs(working_dir):
+                        working_dir_abs = os.path.join(install_dir, working_dir)
+                    else:
+                        working_dir_abs = working_dir if working_dir else install_dir
+                    
+                    # Check if executable exists
+                    if not os.path.exists(exec_path_abs):
+                        result = messagebox.askyesno(
+                            "Warning", 
+                            f"The specified executable was not found: {exec_path_abs}\n\nSave anyway?",
+                            icon=messagebox.WARNING
+                        )
+                        if not result:
+                            return
+                    
+                    # Update server configuration
+                    server_config['ExecutablePath'] = exec_path
+                    server_config['StartupArgs'] = startup_args
+                    server_config['StopCommand'] = stop_cmd
+                    server_config['WorkingDir'] = working_dir
+                    server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                    
+                    # Save updated configuration
+                    with open(config_file, 'w') as f:
+                        json.dump(server_config, f, indent=4)
+                        
+                    messagebox.showinfo("Success", "Server configuration saved successfully.")
+                    dialog.destroy()
+                    
+                except Exception as e:
+                    logger.error(f"Error saving server configuration: {str(e)}")
+                    messagebox.showerror("Error", f"Failed to save configuration: {str(e)}")
+            
+            save_btn = ttk.Button(button_frame, text="Save", command=save_configuration, width=10)
+            save_btn.pack(side=tk.RIGHT, padx=5)
+            
+            cancel_btn = ttk.Button(button_frame, text="Cancel", command=dialog.destroy, width=10)
+            cancel_btn.pack(side=tk.RIGHT, padx=5)
+            
+            # Test button
+            def test_executable():
+                try:
+                    exec_path = exec_path_var.get().strip()
+                    
+                    if not exec_path:
+                        messagebox.showerror("Error", "No executable specified.")
+                        return
+                        
+                    # Resolve path
+                    if not os.path.isabs(exec_path):
+                        exec_path_abs = os.path.join(install_dir, exec_path)
+                    else:
+                        exec_path_abs = exec_path
+                        
+                    # Check if file exists
+                    if not os.path.exists(exec_path_abs):
+                        messagebox.showerror("Error", f"Executable not found: {exec_path_abs}")
+                        return
+                        
+                    # Show success message
+                    messagebox.showinfo("Success", f"Executable found: {exec_path_abs}")
+                    
+                except Exception as e:
+                    logger.error(f"Error testing executable: {str(e)}")
+                    messagebox.showerror("Error", f"Test failed: {str(e)}")
+            
+            test_btn = ttk.Button(button_frame, text="Test Path", command=test_executable, width=10)
+            test_btn.pack(side=tk.LEFT, padx=5)
+            
+            # Center dialog on parent window
+            dialog.update_idletasks()
+            x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+            y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+            dialog.geometry(f"+{x}+{y}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring server: {str(e)}")
+            messagebox.showerror("Error", f"Failed to configure server: {str(e)}")
+    
+    def update_server_list(self, force_refresh=False):
+        """Update the server list in the UI"""
+        # Skip update if it's been less than 5 seconds since the last update and force_refresh isn't specified
+        if not force_refresh and \
+           (self.variables["lastServerListUpdate"] != datetime.datetime.min) and \
+           (datetime.datetime.now() - self.variables["lastServerListUpdate"]).total_seconds() < 5:
+            logger.debug("Skipping server list update - last update was less than 5 seconds ago")
+            return
+            
+        # Clear current items
+        for item in self.server_list.get_children():
+            self.server_list.delete(item)
+            
+        # Get server configurations
+        servers_path = self.paths["servers"]
+        if os.path.exists(servers_path):
+            for file in os.listdir(servers_path):
+                if file.endswith(".json"):
+                    try:
+                        with open(os.path.join(servers_path, file), 'r') as f:
+                            server_config = json.load(f)
+                            
+                        # Check if server is running
+                        status = "Offline"
+                        cpu_usage = "N/A"
+                        memory_usage = "N/A"
+                        uptime = "N/A"
+                        
+                        # Get process if running
+                        if "ProcessId" in server_config:
+                            try:
+                                process = psutil.Process(server_config["ProcessId"])
+                                if process.is_running():
+                                    status = "Running"
+                                    try:
+                                        cpu_usage = f"{process.cpu_percent(interval=0.1):.1f}%"
+                                    except:
+                                        cpu_usage = "N/A"
+                                        
+                                    try:
+                                        memory_usage = f"{process.memory_info().rss / (1024 * 1024):.1f} MB"
+                                    except:
+                                        memory_usage = "N/A"
+                                        
+                                    try:
+                                        # Calculate uptime if start time is available
+                                        if "StartTime" in server_config:
+                                            start_time = datetime.datetime.fromisoformat(server_config["StartTime"])
+                                            now = datetime.datetime.now()
+                                            delta = now - start_time
+                                            
+                                            days = delta.days
+                                            hours, remainder = divmod(delta.seconds, 3600)
+                                            minutes, seconds = divmod(remainder, 60)
+                                            
+                                            if days > 0:
+                                                uptime = f"{days}d {hours}h {minutes}m"
+                                            else:
+                                                uptime = f"{hours}h {minutes}m {seconds}s"
+                                        else:
+                                            uptime = "Running"
+                                    except:
+                                        uptime = "Running"
+                                else:
+                                    # Process exists in config but is not running
+                                    # Clean up the process ID in the config
+                                    server_config.pop('ProcessId', None)
+                                    server_config.pop('StartTime', None)
+                                    server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                                    
+                                    # Save updated configuration
+                                    with open(os.path.join(servers_path, file), 'w') as f:
+                                        json.dump(server_config, f, indent=4)
+                            except:
+                                # Process doesn't exist, clean up the config
+                                server_config.pop('ProcessId', None)
+                                server_config.pop('StartTime', None)
+                                server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                                
+                                # Save updated configuration
+                                with open(os.path.join(servers_path, file), 'w') as f:
+                                    json.dump(server_config, f, indent=4)
+                                
+                        # Add to list
+                        self.server_list.insert("", tk.END, values=(
+                            server_config["Name"],
+                            status,
+                            cpu_usage,
+                            memory_usage,
+                            uptime
+                        ))
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to process server config {file}: {str(e)}")
+        
+        # Update last refresh time
+        self.variables["lastServerListUpdate"] = datetime.datetime.now()
+    
+    def check_webserver_status(self):
+        """Check if the web server is running and return status"""
+        if self.variables["offlineMode"]:
+            return "Offline Mode"
+            
+        try:
+            # Try to read the web server PID file first
+            webserver_pid_file = os.path.join(self.paths["temp"], "webserver.pid")
+            if os.path.exists(webserver_pid_file):
+                try:
+                    with open(webserver_pid_file, 'r') as f:
+                        pid_info = json.load(f)
+                    
+                    pid = pid_info.get("ProcessId")
+                    port = pid_info.get("Port", self.variables["webserverPort"])
+                    
+                    # Update web port from PID file if available
+                    if port:
+                        self.variables["webserverPort"] = port
+                    
+                    # Check if process is running
+                    if pid and self.is_process_running(pid):
+                        # Now check if we can connect to the port
+                        if self.is_port_open('localhost', self.variables["webserverPort"]):
+                            return "Connected"
+                except Exception as e:
+                    logger.debug(f"Error checking web server PID file: {str(e)}")
+            
+            # If we get here, try to connect to the port directly
+            if self.is_port_open('localhost', self.variables["webserverPort"]):
+                return "Connected"
+            else:
+                return "Disconnected"
+                
+        except Exception as e:
+            logger.error(f"Error checking web server status: {str(e)}")
+            return "Error"
+    
+    def is_process_running(self, pid):
+        """Check if a process with the given PID is running"""
+        try:
+            return psutil.pid_exists(pid)
+        except:
+            return False
+    
+    def is_port_open(self, host, port, timeout=1):
+        """Check if a port is open on the specified host"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            return result == 0
+        except:
+            return False
+    
+    def toggle_offline_mode(self):
+        """Toggle offline mode"""
+        self.variables["offlineMode"] = self.offline_var.get()
+        self.update_webserver_status()
+        logger.info(f"Offline mode set to {self.variables['offlineMode']}")
+    
+    def update_webserver_status(self):
+        """Update the web server status display"""
+        try:
+            status = self.check_webserver_status()
+            self.variables["webserverStatus"] = status
+            
+            # Update status label with appropriate color
+            if status == "Connected":
+                self.webserver_status.config(text=status, foreground="green")
+            elif status == "Offline Mode":
+                self.webserver_status.config(text=status, foreground="orange")
+            else:
+                self.webserver_status.config(text=status, foreground="red")
+                
+            # Update offline mode checkbox
+            self.offline_var.set(self.variables["offlineMode"])
+            
+        except Exception as e:
+            logger.error(f"Error updating web server status: {str(e)}")
+            self.webserver_status.config(text="Error", foreground="red")
+    
+    def update_system_info(self):
+        """Update system information in the UI"""
+        try:
+            # Update web server status
+            self.update_webserver_status()
+            
+            # Computer name and OS info
+            computer_name = platform.node()
+            os_info = f"{platform.system()} {platform.version()}"
+            
+            self.system_name.config(text=computer_name)
+            self.os_info.config(text=os_info)
+            
+            # CPU usage
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            self.metric_labels["cpu"].config(text=f"{cpu_percent:.1f}%")
+            
+            # Memory usage
+            memory = psutil.virtual_memory()
+            total_mem_gb = memory.total / (1024 * 1024 * 1024)
+            used_mem_gb = memory.used / (1024 * 1024 * 1024)
+            self.metric_labels["memory"].config(text=f"{used_mem_gb:.1f} GB / {total_mem_gb:.1f} GB")
+            
+            # Disk usage
+            disk_usage = []
+            total_size = 0
+            total_used = 0
+            
+            for part in psutil.disk_partitions(all=False):
+                if part.fstype:
+                    usage = psutil.disk_usage(part.mountpoint)
+                    total_size += usage.total
+                    total_used += usage.used
+            
+            total_size_gb = total_size / (1024 * 1024 * 1024)
+            total_used_gb = total_used / (1024 * 1024 * 1024)
+            
+            self.metric_labels["disk"].config(text=f"{total_used_gb:.0f} GB / {total_size_gb:.0f} GB")
+            
+            # Network usage
+            network_stats = psutil.net_io_counters()
+            
+            if self.variables["lastNetworkStats"]:
+                last_stats = self.variables["lastNetworkStats"]
+                last_time = self.variables["lastNetworkStatsTime"]
+                time_diff = (datetime.datetime.now() - last_time).total_seconds()
+                
+                bytes_sent = network_stats.bytes_sent - last_stats.bytes_sent
+                bytes_recv = network_stats.bytes_recv - last_stats.bytes_recv
+                
+                send_rate = bytes_sent / time_diff / 1024  # KB/s
+                recv_rate = bytes_recv / time_diff / 1024  # KB/s
+                
+                if send_rate > 1024 or recv_rate > 1024:
+                    send_rate = send_rate / 1024  # MB/s
+                    recv_rate = recv_rate / 1024  # MB/s
+                    self.metric_labels["network"].config(text=f"↓{recv_rate:.1f} MB/s | ↑{send_rate:.1f} MB/s")
+                else:
+                    self.metric_labels["network"].config(text=f"↓{recv_rate:.1f} KB/s | ↑{send_rate:.1f} KB/s")
+            else:
+                self.metric_labels["network"].config(text="Calculating...")
+            
+            self.variables["lastNetworkStats"] = network_stats
+            self.variables["lastNetworkStatsTime"] = datetime.datetime.now()
+            
+            # GPU info - placeholder since getting GPU info is more complex
+            self.metric_labels["gpu"].config(text="N/A")
+            
+            # System uptime
+            boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
+            uptime = datetime.datetime.now() - boot_time
+            days = uptime.days
+            hours, remainder = divmod(uptime.seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            
+            uptime_str = f"{days}d {hours}h {minutes}m {seconds}s"
+            self.metric_labels["uptime"].config(text=uptime_str)
+            
+            # Update last refresh time
+            self.variables["lastFullUpdate"] = datetime.datetime.now()
+            
+        except Exception as e:
+            logger.error(f"Error updating system info: {str(e)}")
+    
+    def start_timers(self):
+        """Start update timers"""
+        # System info update timer - 5 seconds
+        self.root.after(5000, self.system_info_timer)
+        
+        # Server list update timer - 30 seconds
+        self.root.after(30000, self.server_list_timer)
+        
+        # Web server status update timer - 15 seconds
+        self.root.after(15000, self.webserver_status_timer)
+    
+    def system_info_timer(self):
+        """Timer callback for system info updates"""
+        self.update_system_info()
+        self.root.after(5000, self.system_info_timer)
+    
+    def server_list_timer(self):
+        """Timer callback for server list updates"""
+        self.update_server_list()
+        self.root.after(30000, self.server_list_timer)
+    
+    def webserver_status_timer(self):
+        """Timer callback for web server status updates"""
+        self.update_webserver_status()
+        self.root.after(15000, self.webserver_status_timer)
+    
+    def run(self):
+        """Run the dashboard application"""
+        logger.info("Starting dashboard")
+        
+        # Initial updates
+        self.update_server_list(force_refresh=True)
+        
+        # Show the window
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.variables["formDisplayed"] = True
+        
+        # Center window on screen
+        self.root.update_idletasks()
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.root.winfo_screenheight() // 2) - (height // 2)
+        self.root.geometry(f'+{x}+{y}')
+        
+        # Start main loop
+        self.root.mainloop()
+    
+    def on_close(self):
+        """Handle window close event"""
+        logger.info("Dashboard closing")
+        
+        # Clean up resources
+        try:
+            # Remove PID file
+            pid_file = os.path.join(self.paths["temp"], "dashboard.pid")
+            if os.path.exists(pid_file):
+                os.remove(pid_file)
+                logger.debug("Removed PID file")
+                
+            # Close any open processes
+            if hasattr(self, 'install_process') and self.install_process:
+                try:
+                    self.install_process.terminate()
+                    logger.debug("Terminated installation process")
+                except:
+                    pass
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}")
+        
+        # Close the window
+        self.root.destroy()
+
 
 def main():
     # Parse command line arguments

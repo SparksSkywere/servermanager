@@ -44,12 +44,14 @@ class ServerManagerTrayIcon:
         self.webserver_status = "Disconnected"
         self.offline_mode = False
         self.standalone_mode = False  # New: track if running in standalone mode
+        self.notifications_enabled = False  # Add flag to control notifications
         
         # Parse command line arguments
         parser = argparse.ArgumentParser(description='Server Manager Tray Icon')
         parser.add_argument('--debug', action='store_true', help='Enable debug logging')
         parser.add_argument('--logpath', help='Path to log file')
         parser.add_argument('--standalone', action='store_true', help='Run in standalone mode')
+        parser.add_argument('--notifications', action='store_true', help='Enable notification toasts')
         args = parser.parse_args()
         
         # Configure logging based on arguments
@@ -61,6 +63,11 @@ class ServerManagerTrayIcon:
         if args.standalone:
             self.standalone_mode = True
             logger.info("Running in standalone mode")
+            
+        # Set notifications flag
+        if args.notifications:
+            self.notifications_enabled = True
+            logger.info("Notifications enabled")
         
         # Initialize and start the tray icon
         self.initialize()
@@ -311,20 +318,20 @@ class ServerManagerTrayIcon:
         # Update status immediately
         self.check_webserver_status()
         
-        # Show notification
-        if self.icon:
+        # Show notification only if enabled
+        if self.icon and self.notifications_enabled:
             self.icon.notify(
                 f"Offline mode {'enabled' if self.offline_mode else 'disabled'}",
                 "Server Manager"
             )
             
-            # Force menu update
-            self.update_server_status()
+        # Force menu update
+        self.update_server_status()
     
     def open_web_interface(self):
         """Open the web interface in a browser"""
         if self.offline_mode:
-            if self.icon:
+            if self.icon and self.notifications_enabled:
                 self.icon.notify(
                     "Cannot open web interface in offline mode",
                     "Server Manager"
@@ -333,7 +340,7 @@ class ServerManagerTrayIcon:
             
         # Check if web server is running
         if self.webserver_status != "Connected":
-            if self.icon:
+            if self.icon and self.notifications_enabled:
                 self.icon.notify(
                     "Web server is not connected. Starting web server...",
                     "Server Manager"
@@ -344,7 +351,7 @@ class ServerManagerTrayIcon:
                 webserver_script = os.path.join(self.paths["scripts"], "webserver.py")
                 if not os.path.exists(webserver_script):
                     logger.error(f"Web server script not found: {webserver_script}")
-                    if self.icon:
+                    if self.icon and self.notifications_enabled:
                         self.icon.notify("Web server script not found", "Server Manager Error")
                     return
                 
@@ -397,7 +404,7 @@ class ServerManagerTrayIcon:
                 
                 if not connected:
                     logger.error(f"Failed to connect to web server after 10 seconds")
-                    if self.icon:
+                    if self.icon and self.notifications_enabled:
                         self.icon.notify("Failed to start web server. Check logs for details.", 
                                         "Server Manager Error")
                     return
@@ -406,7 +413,7 @@ class ServerManagerTrayIcon:
                 logger.error(f"Failed to start web server: {str(e)}")
                 import traceback
                 logger.error(f"Traceback: {traceback.format_exc()}")
-                if self.icon:
+                if self.icon and self.notifications_enabled:
                     self.icon.notify(f"Failed to start web server: {str(e)}", "Server Manager Error")
                 return
     
@@ -416,15 +423,15 @@ class ServerManagerTrayIcon:
             logger.info(f"Opening web interface: {url}")
             webbrowser.open(url)
             
-            # Show notification
-            if self.icon:
+            # Show notification only if enabled
+            if self.icon and self.notifications_enabled:
                 self.icon.notify("Web interface opened in browser", "Server Manager")
                 
         except Exception as e:
             logger.error(f"Failed to open web interface: {str(e)}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-            if self.icon:
+            if self.icon and self.notifications_enabled:
                 self.icon.notify(f"Failed to open web interface: {str(e)}", "Server Manager Error")
 
     def open_dashboard(self):
@@ -440,8 +447,8 @@ class ServerManagerTrayIcon:
                     pid = pid_info.get("ProcessId")
                     if pid and self.is_process_running(pid):
                         logger.info(f"Dashboard is already running with PID {pid}")
-                        # Show notification
-                        if self.icon:
+                        # Show notification only if enabled
+                        if self.icon and self.notifications_enabled:
                             self.icon.notify("Dashboard is already running", "Server Manager")
                         return
                 except Exception as e:
@@ -451,7 +458,7 @@ class ServerManagerTrayIcon:
             dashboard_script = os.path.join(self.paths["scripts"], "dashboard.py")
             if not os.path.exists(dashboard_script):
                 logger.error(f"Dashboard script not found: {dashboard_script}")
-                if self.icon:
+                if self.icon and self.notifications_enabled:
                     self.icon.notify("Dashboard script not found", "Server Manager Error")
                 return
             
@@ -491,13 +498,13 @@ class ServerManagerTrayIcon:
             
             logger.info(f"Dashboard started with PID: {self.dashboard_process.pid}")
             
-            # Show notification
-            if self.icon:
+            # Show notification only if enabled
+            if self.icon and self.notifications_enabled:
                 self.icon.notify("Dashboard opened", "Server Manager")
                 
         except Exception as e:
             logger.error(f"Failed to open dashboard: {str(e)}")
-            if self.icon:
+            if self.icon and self.notifications_enabled:
                 self.icon.notify(f"Failed to open dashboard: {str(e)}", "Server Manager Error")
 
     def is_process_running(self, pid):
@@ -530,8 +537,8 @@ class ServerManagerTrayIcon:
             logger.setLevel(logging.INFO)
             logger.info("Debug mode disabled")
             
-        # Show notification
-        if self.icon:
+        # Show notification only if enabled
+        if self.icon and self.notifications_enabled:
             self.icon.notify(
                 f"Debug mode {'enabled' if self.debug_mode else 'disabled'}",
                 "Server Manager"
@@ -655,15 +662,16 @@ class ServerManagerTrayIcon:
             # Start server status update thread
             self.update_server_status()
             
-            # Show notification on startup
+            # Show notification on startup only if enabled
             def setup(icon):
                 icon.visible = True
                 # Log that the icon is now visible and running
                 logger.info("Tray icon is now visible and running")
-                icon.notify(
-                    "Server Manager is now running in the system tray",
-                    "Server Manager"
-                )
+                if self.notifications_enabled:
+                    icon.notify(
+                        "Server Manager is now running in the system tray",
+                        "Server Manager"
+                    )
             
             # Run the icon
             logger.info("Starting tray icon")
