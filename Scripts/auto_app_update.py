@@ -9,6 +9,26 @@ import datetime
 import winreg
 from pathlib import Path
 
+# Add modules directory to path if needed
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(script_dir)
+modules_dir = os.path.join(parent_dir, "modules")
+if modules_dir not in sys.path:
+    sys.path.append(modules_dir)
+
+# Try to import debug module
+try:
+    from debug import enable_debug, log_exception
+except ImportError:
+    # Create a simple fallback if debug module not available
+    def enable_debug():
+        logging.getLogger().setLevel(logging.DEBUG)
+    
+    def log_exception(e, message="An exception occurred"):
+        logging.error(f"{message}: {str(e)}")
+        import traceback
+        logging.error(traceback.format_exc())
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -30,11 +50,17 @@ class AutoUpdater:
         parser.add_argument('--force', action='store_true', help='Force update even if server is running')
         parser.add_argument('--server', help='Specific server to update')
         parser.add_argument('--log', help='Log file path')
+        parser.add_argument('--debug', action='store_true', help='Enable debug logging')
         args = parser.parse_args()
         
         self.check_only = args.check
         self.force_update = args.force
         self.specific_server = args.server
+        
+        # Enable debug logging if requested
+        if args.debug:
+            enable_debug()
+            logger.setLevel(logging.DEBUG)
         
         # Initialize paths and set up logging
         self.initialize()
@@ -80,7 +106,7 @@ class AutoUpdater:
             return True
             
         except Exception as e:
-            logger.error(f"Initialization failed: {str(e)}")
+            log_exception(e, "Initialization failed")
             return False
     
     def get_server_list(self):
@@ -356,7 +382,7 @@ class AutoUpdater:
             return 0
             
         except Exception as e:
-            logger.error(f"Auto-updater failed: {str(e)}")
+            log_exception(e, "Auto-updater failed")
             return 1
 
 def main():
@@ -364,7 +390,7 @@ def main():
         updater = AutoUpdater()
         return updater.run()
     except Exception as e:
-        logger.error(f"Unhandled exception: {str(e)}")
+        log_exception(e, "Unhandled exception")
         return 1
 
 if __name__ == "__main__":

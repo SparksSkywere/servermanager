@@ -191,7 +191,8 @@ class ServerManagerWebServer:
                 "ProcessId": os.getpid(),
                 "StartTime": datetime.datetime.now().isoformat(),
                 "ProcessType": "webserver",
-                "Port": self.web_port
+                "Port": self.web_port,
+                "Status": "Running"
             }
             
             # Write PID info to file as JSON

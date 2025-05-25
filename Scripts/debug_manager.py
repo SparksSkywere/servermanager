@@ -13,12 +13,25 @@ import traceback
 import ctypes
 import psutil
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+# Add modules directory to path if needed
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(script_dir)
+modules_dir = os.path.join(parent_dir, "modules")
+if modules_dir not in sys.path:
+    sys.path.append(modules_dir)
+
+# Try to import from modules
+try:
+    from debug import debug_manager, enable_debug, get_system_info, create_diagnostic_report
+except ImportError:
+    # If import fails, use basic logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    debug_manager = None
+
 logger = logging.getLogger("DebugManager")
 
 def is_admin():
@@ -80,6 +93,11 @@ class DebugManager:
             logger.addHandler(file_handler)
             
             logger.info(f"Initialization complete. Server Manager directory: {self.server_manager_dir}")
+            
+            # Enable debug mode
+            if debug_manager:
+                enable_debug()
+                
             return True
             
         except Exception as e:
@@ -91,7 +109,6 @@ class DebugManager:
         """Create the UI elements"""
         # Create group boxes for different debug areas
         self.create_system_group()
-        self.create_ui_group()
         self.create_misc_group()
     
     def create_system_group(self):
@@ -114,21 +131,6 @@ class DebugManager:
                                      command=self.view_system_logs)
         system_logs_btn.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
     
-    def create_ui_group(self):
-        """Create UI group box"""
-        ui_frame = ttk.LabelFrame(self.root, text="User Interface")
-        ui_frame.grid(row=1, column=0, padx=20, pady=10, sticky="nsew")
-        
-        # Form debugger button
-        form_debug_btn = ttk.Button(ui_frame, text="UI Form Debugger", 
-                                    command=self.debug_ui_form)
-        form_debug_btn.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
-        
-        # Control inspector button
-        control_inspector_btn = ttk.Button(ui_frame, text="Control Inspector", 
-                                          command=self.inspect_control)
-        control_inspector_btn.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
-    
     def create_misc_group(self):
         """Create miscellaneous group box"""
         misc_frame = ttk.LabelFrame(self.root, text="Miscellaneous")
@@ -139,16 +141,32 @@ class DebugManager:
                                    command=self.run_full_diagnostics)
         full_diag_btn.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
         
+        # Debug log toggle
+        self.debug_var = tk.BooleanVar(value=debug_manager.is_debug_enabled() if debug_manager else False)
+        debug_check = ttk.Checkbutton(misc_frame, text="Enable Debug Logging", 
+                                     variable=self.debug_var, command=self.toggle_debug)
+        debug_check.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
+        
         # Close button
         close_btn = ttk.Button(misc_frame, text="Close Debug Center", 
                               command=self.root.destroy)
-        close_btn.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
+        close_btn.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
         
         # Configure grid weights
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_columnconfigure(1, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_rowconfigure(1, weight=1)
+    
+    def toggle_debug(self):
+        """Toggle debug logging mode"""
+        if debug_manager:
+            if self.debug_var.get():
+                enable_debug()
+                messagebox.showinfo("Debug Mode", "Debug logging is now enabled.")
+            else:
+                debug_manager.set_debug_mode(False)
+                messagebox.showinfo("Debug Mode", "Debug logging is now disabled.")
     
     def show_system_information(self):
         """Show system information window"""
@@ -163,48 +181,60 @@ class DebugManager:
         
         # Get system info
         try:
-            # OS info
-            os_name = platform.system()
-            os_version = platform.version()
-            os_release = platform.release()
-            
-            # CPU info
-            cpu_info = platform.processor()
-            cpu_count = psutil.cpu_count(logical=False)
-            cpu_threads = psutil.cpu_count(logical=True)
-            
-            # Memory info
-            memory = psutil.virtual_memory()
-            memory_total = round(memory.total / (1024**3), 2)
-            memory_available = round(memory.available / (1024**3), 2)
-            
-            # Disk info
-            disk_info = []
-            for disk in psutil.disk_partitions():
-                try:
-                    usage = psutil.disk_usage(disk.mountpoint)
-                    disk_info.append(
-                        f"Drive {disk.device}: {round(usage.total / (1024**3), 2)} GB total, "
-                        f"{round(usage.free / (1024**3), 2)} GB free"
-                    )
-                except:
-                    pass
-            
-            # Network info
-            network_info = []
-            for name, addrs in psutil.net_if_addrs().items():
-                for addr in addrs:
-                    if addr.family == 2:  # AF_INET (IPv4)
-                        network_info.append(f"Adapter: {name}\nIP Address: {addr.address}\n")
-            
-            # Format all information
-            system_info_text = f"""SYSTEM INFORMATION
+            if debug_manager:
+                # Use the debug module to get system info
+                system_info = get_system_info()
+                
+                # Format system information
+                system_info_text = f"""SYSTEM INFORMATION
+-----------------
+Computer Name: {platform.node()}
+OS: {system_info['system']['system']} {system_info['system']['release']}
+Version: {system_info['system']['version']}
+
+HARDWARE
+--------
+CPU: {system_info['system']['processor']}
+Cores: {system_info['cpu']['physical_cores']} physical, {system_info['cpu']['logical_cores']} logical
+CPU Usage: {system_info['cpu']['cpu_percent']}%
+RAM: {round(system_info['memory']['total'] / (1024**3), 2)} GB ({round(system_info['memory']['available'] / (1024**3), 2)} GB available)
+
+STORAGE
+-------
+Total: {round(system_info['disk']['total'] / (1024**3), 2)} GB
+Free: {round(system_info['disk']['free'] / (1024**3), 2)} GB
+Usage: {system_info['disk']['percent']}%
+
+NETWORK
+-------
+Bytes Sent: {system_info['network']['bytes_sent']}
+Bytes Received: {system_info['network']['bytes_recv']}
+"""
+            else:
+                # Fallback to direct psutil calls
+                # OS info
+                os_name = platform.system()
+                os_version = platform.version()
+                os_release = platform.release()
+                
+                # CPU info
+                cpu_info = platform.processor()
+                cpu_count = psutil.cpu_count(logical=False)
+                cpu_threads = psutil.cpu_count(logical=True)
+                
+                # Memory info
+                memory = psutil.virtual_memory()
+                memory_total = round(memory.total / (1024**3), 2)
+                memory_available = round(memory.available / (1024**3), 2)
+                
+                # Disk info
+                disk_usage = psutil.disk_usage('/')
+                
+                system_info_text = f"""SYSTEM INFORMATION
 -----------------
 Computer Name: {platform.node()}
 OS: {os_name} {os_release}
 Version: {os_version}
-Last Boot: {datetime.datetime.fromtimestamp(psutil.boot_time()).strftime('%Y-%m-%d %H:%M:%S')}
-Uptime: {round((time.time() - psutil.boot_time()) / 3600, 2)} hours
 
 HARDWARE
 --------
@@ -214,11 +244,9 @@ RAM: {memory_total} GB ({memory_available} GB available)
 
 STORAGE
 -------
-{os.linesep.join(disk_info)}
-
-NETWORK
--------
-{os.linesep.join(network_info)}
+Total: {round(disk_usage.total / (1024**3), 2)} GB
+Free: {round(disk_usage.free / (1024**3), 2)} GB
+Usage: {disk_usage.percent}%
 """
 
             # Insert text
@@ -252,16 +280,7 @@ NETWORK
         
         # Simulate updating system info
         def do_update():
-            time.sleep(1)
-            print("Updating system information...")
-            time.sleep(0.8)
-            print("Checking OS status...")
-            time.sleep(0.5)
-            print("Checking disk space...")
-            time.sleep(0.6)
-            print("Checking network status...")
-            time.sleep(0.7)
-            print("Complete!")
+            time.sleep(2)  # Give time for any system data to refresh
             
             # Close progress window and show updated info
             progress_window.destroy()
@@ -287,189 +306,6 @@ NETWORK
         else:  # Linux and other Unix-like systems
             subprocess.Popen(["xdg-open", log_path])
     
-    def debug_ui_form(self):
-        """Debug UI form"""
-        debug_window = tk.Toplevel(self.root)
-        debug_window.title("UI Form Debugger")
-        debug_window.geometry("600x500")
-        debug_window.grab_set()
-        
-        # Form selection
-        form_frame = ttk.Frame(debug_window)
-        form_frame.pack(fill=tk.X, padx=10, pady=10)
-        
-        ttk.Label(form_frame, text="Form Name:").pack(side=tk.LEFT, padx=5)
-        
-        form_combo = ttk.Combobox(form_frame, width=30)
-        form_combo['values'] = (
-            "MainDashboard", "SettingsForm", "ConnectionManager", 
-            "ServerConfigEditor", "UserManagement", "LogViewer"
-        )
-        form_combo.current(0)
-        form_combo.pack(side=tk.LEFT, padx=5)
-        
-        # Debug output
-        debug_text = scrolledtext.ScrolledText(debug_window, wrap=tk.WORD, width=70, height=20)
-        debug_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Function to display form debugging info
-        def show_form_debug():
-            selected_form = form_combo.get()
-            
-            # Generate some simulated debug info
-            from random import randint, choice
-            
-            state = choice(["Active", "Loaded", "Minimized"])
-            controls = randint(5, 30)
-            visible = choice(["True", "False"])
-            modal = choice(["True", "False"])
-            events = randint(3, 15)
-            
-            debug_info = f"""
-FORM DEBUGGING INFO: {selected_form}
---------------------------------
-State: {state}
-Controls: {controls}
-Visible: {visible}
-Modal: {modal}
-Events Registered: {events}
-
-CONTROL HIERARCHY:
-- {selected_form}
-  |- Panel1
-  |  |- Button1
-  |  |- Button2
-  |- TabControl1
-     |- Tab1
-     |- Tab2
-
-RECENT EVENTS:
-- Load (handled)
-- Resize (handled)
-- Click on Button1 (handled)
-- MouseMove (not handled)
-"""
-            debug_text.delete(1.0, tk.END)
-            debug_text.insert(tk.END, debug_info)
-        
-        # Refresh button
-        refresh_btn = ttk.Button(debug_window, text="Refresh", command=show_form_debug)
-        refresh_btn.pack(pady=10)
-        
-        # Show initial debug info
-        show_form_debug()
-        
-        # Close button
-        close_btn = ttk.Button(debug_window, text="Close", command=debug_window.destroy)
-        close_btn.pack(pady=10)
-    
-    def inspect_control(self):
-        """Inspect control properties"""
-        inspect_window = tk.Toplevel(self.root)
-        inspect_window.title("Control Inspector")
-        inspect_window.geometry("600x500")
-        inspect_window.grab_set()
-        
-        # Control selection
-        control_frame = ttk.Frame(inspect_window)
-        control_frame.pack(fill=tk.X, padx=10, pady=10)
-        
-        ttk.Label(control_frame, text="Control Type:").pack(side=tk.LEFT, padx=5)
-        
-        control_combo = ttk.Combobox(control_frame, width=30)
-        control_combo['values'] = (
-            "Button", "TextBox", "ComboBox", "CheckBox", "ListView", "TabControl"
-        )
-        control_combo.current(0)
-        control_combo.pack(side=tk.LEFT, padx=5)
-        
-        # Properties display
-        prop_text = scrolledtext.ScrolledText(inspect_window, wrap=tk.WORD, width=70, height=20)
-        prop_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Function to display control properties
-        def show_control_props():
-            selected_control = control_combo.get()
-            
-            # Generate control-specific properties based on type
-            if selected_control == "Button":
-                control_type = "Button"
-                control_specific_props = """Text: 'Save Changes'
-DialogResult: OK
-Image: (none)
-FlatStyle: Standard"""
-            elif selected_control == "TextBox":
-                control_type = "TextBox"
-                control_specific_props = """Text: 'Sample text'
-Multiline: False
-ReadOnly: False
-MaxLength: 32767
-PasswordChar: ''"""
-            elif selected_control == "ComboBox":
-                control_type = "ComboBox"
-                control_specific_props = """DropDownStyle: DropDownList
-Items: 10
-SelectedIndex: 2
-SelectedItem: 'Option 3'"""
-            elif selected_control == "CheckBox":
-                control_type = "CheckBox"
-                control_specific_props = """Checked: True
-CheckState: Checked
-AutoCheck: True
-Appearance: Normal"""
-            elif selected_control == "ListView":
-                control_type = "ListView"
-                control_specific_props = """View: Details
-Columns: 4
-Items: 12
-MultiSelect: True"""
-            elif selected_control == "TabControl":
-                control_type = "TabControl"
-                control_specific_props = """TabCount: 3
-SelectedIndex: 0
-Alignment: Top"""
-            else:
-                control_type = selected_control
-                control_specific_props = "No specific properties available"
-            
-            # Generate random event handlers
-            from random import randint, choice
-            events = ["Click", "DoubleClick", "MouseOver", "MouseLeave", "KeyPress", "TextChanged"]
-            event_count = randint(1, 4)
-            event_handlers = "\n".join([f"{choice(events)}: event_handler_{randint(1, 100)}" for _ in range(event_count)])
-            
-            # Format complete property text
-            prop_info = f"""CONTROL PROPERTIES: {selected_control}
----------------------------------
-Type: {control_type}
-Name: {selected_control}1
-Parent: MainForm
-Location: X={randint(10, 500)}, Y={randint(10, 400)}
-Size: Width={randint(100, 400)}, Height={randint(20, 200)}
-Enabled: {choice(['True', 'False'])}
-Visible: {choice(['True', 'False'])}
-TabIndex: {randint(0, 20)}
-
-CONTROL-SPECIFIC PROPERTIES:
-{control_specific_props}
-
-EVENT HANDLERS:
-{event_handlers}
-"""
-            prop_text.delete(1.0, tk.END)
-            prop_text.insert(tk.END, prop_info)
-        
-        # Refresh button
-        refresh_btn = ttk.Button(inspect_window, text="Refresh", command=show_control_props)
-        refresh_btn.pack(pady=10)
-        
-        # Show initial properties
-        show_control_props()
-        
-        # Close button
-        close_btn = ttk.Button(inspect_window, text="Close", command=inspect_window.destroy)
-        close_btn.pack(pady=10)
-    
     def run_full_diagnostics(self):
         """Run full system diagnostics"""
         # Create progress window
@@ -494,81 +330,156 @@ EVENT HANDLERS:
         close_btn = ttk.Button(diag_window, text="Close", command=diag_window.destroy, state=tk.DISABLED)
         close_btn.pack(pady=10)
         
-        # Function to run diagnostics in stages
+        # Function to run diagnostics
         def run_diagnostics():
             try:
-                steps = [
-                    ("Checking system requirements", 10),
-                    ("Verifying installation", 20),
-                    ("Checking registry settings", 30),
-                    ("Scanning server configurations", 50),
-                    ("Verifying file permissions", 60),
-                    ("Testing network connectivity", 70),
-                    ("Checking system resources", 80),
-                    ("Validating SteamCMD installation", 90),
-                    ("Generating final report", 100)
-                ]
+                # Update progress
+                progress_bar["value"] = 10
+                progress_label.config(text="Running diagnostics: Checking system requirements...")
+                diag_window.update()
                 
-                results = []
+                results_text.insert(tk.END, "Starting diagnostics...\n\n")
                 
-                for step, progress in steps:
-                    # Update progress
-                    progress_label.config(text=f"Running diagnostics: {step}...")
-                    progress_bar["value"] = progress
-                    diag_window.update()
-                    
-                    # Simulate step execution
-                    time.sleep(0.5)
-                    
-                    # Add result
-                    if progress % 3 == 0:
-                        status = "[WARNING]"
-                        color = "orange"
-                    elif progress % 7 == 0:
-                        status = "[ERROR]"
-                        color = "red"
-                    else:
-                        status = "[OK]"
-                        color = "green"
-                    
-                    result_text = f"{status} {step}\n"
-                    results_text.insert(tk.END, result_text, status.lower())
-                    results_text.tag_config(status.lower(), foreground=color)
-                    
-                    # Simulate detailed output
-                    details = f"  Details: Completed in {randint(1, 500)} ms\n"
-                    results_text.insert(tk.END, details)
-                    results_text.see(tk.END)
+                # Step 1: System information
+                progress_bar["value"] = 20
+                progress_label.config(text="Running diagnostics: Gathering system information...")
+                diag_window.update()
+                time.sleep(0.5)
                 
-                # Final summary
-                results_text.insert(tk.END, "\nDiagnostics completed.\n", "heading")
+                results_text.insert(tk.END, "--- System Information ---\n", "heading")
                 results_text.tag_config("heading", font=("Arial", 10, "bold"))
                 
-                issues = sum(1 for step, _ in steps if _ % 3 == 0 or _ % 7 == 0)
-                if issues > 0:
-                    summary = f"Found {issues} potential issues that need attention.\n"
-                    results_text.insert(tk.END, summary, "warning")
-                    results_text.tag_config("warning", foreground="orange")
+                if debug_manager:
+                    system_info = get_system_info()
+                    results_text.insert(tk.END, f"OS: {system_info['system']['system']} {system_info['system']['release']}\n")
+                    results_text.insert(tk.END, f"CPU: {system_info['cpu']['logical_cores']} cores, {system_info['cpu']['cpu_percent']}% used\n")
+                    results_text.insert(tk.END, f"Memory: {round(system_info['memory']['used'] / (1024**3), 2)} GB of {round(system_info['memory']['total'] / (1024**3), 2)} GB used ({system_info['memory']['percent']}%)\n")
+                    results_text.insert(tk.END, f"Disk: {round(system_info['disk']['used'] / (1024**3), 2)} GB of {round(system_info['disk']['total'] / (1024**3), 2)} GB used ({system_info['disk']['percent']}%)\n\n")
                 else:
-                    summary = "No issues detected. System is running optimally.\n"
-                    results_text.insert(tk.END, summary, "success")
-                    results_text.tag_config("success", foreground="green")
+                    # Fallback to direct calls
+                    mem = psutil.virtual_memory()
+                    disk = psutil.disk_usage('/')
+                    results_text.insert(tk.END, f"OS: {platform.system()} {platform.release()}\n")
+                    results_text.insert(tk.END, f"CPU: {psutil.cpu_count()} cores, {psutil.cpu_percent()}% used\n")
+                    results_text.insert(tk.END, f"Memory: {round(mem.used / (1024**3), 2)} GB of {round(mem.total / (1024**3), 2)} GB used ({mem.percent}%)\n")
+                    results_text.insert(tk.END, f"Disk: {round(disk.used / (1024**3), 2)} GB of {round(disk.total / (1024**3), 2)} GB used ({disk.percent}%)\n\n")
+                
+                # Step 2: Installation verification
+                progress_bar["value"] = 40
+                progress_label.config(text="Running diagnostics: Verifying installation...")
+                diag_window.update()
+                time.sleep(0.5)
+                
+                results_text.insert(tk.END, "--- Installation Verification ---\n", "heading")
+                
+                if os.path.exists(self.server_manager_dir):
+                    results_text.insert(tk.END, f"[OK] Server Manager directory: {self.server_manager_dir}\n", "ok")
+                    results_text.tag_config("ok", foreground="green")
+                else:
+                    results_text.insert(tk.END, f"[ERROR] Server Manager directory not found: {self.server_manager_dir}\n", "error")
+                    results_text.tag_config("error", foreground="red")
+                
+                # Check essential directories
+                essential_dirs = ["logs", "config", "servers", "scripts"]
+                for dir_name in essential_dirs:
+                    dir_path = self.paths.get(dir_name, os.path.join(self.server_manager_dir, dir_name))
+                    if os.path.exists(dir_path) and os.path.isdir(dir_path):
+                        results_text.insert(tk.END, f"[OK] {dir_name.capitalize()} directory: {dir_path}\n", "ok")
+                    else:
+                        results_text.insert(tk.END, f"[ERROR] {dir_name.capitalize()} directory not found: {dir_path}\n", "error")
+                
+                results_text.insert(tk.END, "\n")
+                
+                # Step 3: Server check
+                progress_bar["value"] = 60
+                progress_label.config(text="Running diagnostics: Checking servers...")
+                diag_window.update()
+                time.sleep(0.5)
+                
+                results_text.insert(tk.END, "--- Server Status ---\n", "heading")
+                
+                servers_dir = self.paths.get("servers", os.path.join(self.server_manager_dir, "servers"))
+                if os.path.exists(servers_dir):
+                    server_files = [f for f in os.listdir(servers_dir) if f.endswith('.json')]
+                    if server_files:
+                        results_text.insert(tk.END, f"Found {len(server_files)} server configuration(s).\n")
+                        
+                        # Check a few servers
+                        for i, server_file in enumerate(server_files[:3]):  # Check up to 3 servers
+                            try:
+                                with open(os.path.join(servers_dir, server_file), 'r') as f:
+                                    server_config = json.load(f)
+                                
+                                server_name = server_config.get("Name", server_file.replace(".json", ""))
+                                results_text.insert(tk.END, f"  - {server_name}: ")
+                                
+                                if debug_manager and hasattr(debug_manager, "get_server_status"):
+                                    server_status = debug_manager.get_server_status(server_name)
+                                    if server_status.get("IsRunning", False):
+                                        results_text.insert(tk.END, "Running\n", "ok")
+                                    else:
+                                        results_text.insert(tk.END, "Stopped\n", "warning")
+                                        results_text.tag_config("warning", foreground="orange")
+                                else:
+                                    if "PID" in server_config and server_config["PID"]:
+                                        try:
+                                            pid = int(server_config["PID"])
+                                            if psutil.pid_exists(pid):
+                                                results_text.insert(tk.END, "Running\n", "ok")
+                                            else:
+                                                results_text.insert(tk.END, "Stopped\n", "warning")
+                                        except:
+                                            results_text.insert(tk.END, "Unknown\n", "warning")
+                                    else:
+                                        results_text.insert(tk.END, "Not started\n", "warning")
+                            except Exception as e:
+                                results_text.insert(tk.END, f"Error reading server config {server_file}: {str(e)}\n", "error")
+                    else:
+                        results_text.insert(tk.END, "No server configurations found.\n", "warning")
+                else:
+                    results_text.insert(tk.END, f"Servers directory not found: {servers_dir}\n", "error")
+                
+                results_text.insert(tk.END, "\n")
+                
+                # Step 4: Create diagnostic report
+                progress_bar["value"] = 80
+                progress_label.config(text="Running diagnostics: Creating diagnostic report...")
+                diag_window.update()
+                time.sleep(0.5)
+                
+                results_text.insert(tk.END, "--- Diagnostic Report ---\n", "heading")
+                
+                if debug_manager:
+                    try:
+                        report_path = create_diagnostic_report()
+                        if report_path:
+                            results_text.insert(tk.END, f"[OK] Diagnostic report created: {report_path}\n", "ok")
+                        else:
+                            results_text.insert(tk.END, "[ERROR] Failed to create diagnostic report\n", "error")
+                    except Exception as e:
+                        results_text.insert(tk.END, f"[ERROR] Error creating diagnostic report: {str(e)}\n", "error")
+                else:
+                    results_text.insert(tk.END, "[WARNING] Debug module not available, skipping diagnostic report\n", "warning")
+                
+                # Final summary
+                progress_bar["value"] = 100
+                progress_label.config(text="Diagnostics complete")
+                diag_window.update()
+                
+                results_text.insert(tk.END, "\nDiagnostics completed.\n", "heading")
                 
                 # Enable close button
                 close_btn.config(state=tk.NORMAL)
-                progress_label.config(text="Diagnostics complete")
                 
             except Exception as e:
                 results_text.insert(tk.END, f"\nError during diagnostics: {str(e)}\n", "error")
-                results_text.tag_config("error", foreground="red")
+                traceback_text = traceback.format_exc()
+                results_text.insert(tk.END, f"\n{traceback_text}\n", "error")
                 close_btn.config(state=tk.NORMAL)
                 progress_label.config(text="Diagnostics failed")
         
         # Run diagnostics in a separate thread
-        import threading
-        import random
-        from random import randint
-        threading.Thread(target=run_diagnostics).start()
+        self.root.after(100, run_diagnostics)
 
 def main():
     # Check for admin privileges

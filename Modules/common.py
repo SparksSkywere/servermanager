@@ -299,6 +299,15 @@ class ConfigManager:
         self.config[key] = value
         return self.save_config()
 
+# Import debug module for exception logging
+try:
+    from debug import log_exception
+except ImportError:
+    # Fallback if debug module not available
+    def log_exception(e, message="An exception occurred"):
+        logger.error(f"{message}: {str(e)}")
+        logger.error(traceback.format_exc())
+
 # System utilities
 class SystemUtils:
     """Class for system utilities"""
@@ -306,52 +315,63 @@ class SystemUtils:
     def get_system_info():
         """Get system information"""
         try:
-            info = {
-                "cpu_count": psutil.cpu_count(),
-                "cpu_percent": psutil.cpu_percent(interval=0.1),
-                "memory": {
-                    "total": psutil.virtual_memory().total,
-                    "available": psutil.virtual_memory().available,
-                    "percent": psutil.virtual_memory().percent
-                },
-                "disk": {
-                    "total": psutil.disk_usage('/').total,
-                    "free": psutil.disk_usage('/').free,
-                    "percent": psutil.disk_usage('/').percent
+            # Try to use debug module first
+            try:
+                from debug import get_system_info
+                return get_system_info()
+            except ImportError:
+                # Fallback to direct implementation
+                info = {
+                    "cpu_count": psutil.cpu_count(),
+                    "cpu_percent": psutil.cpu_percent(interval=0.1),
+                    "memory": {
+                        "total": psutil.virtual_memory().total,
+                        "available": psutil.virtual_memory().available,
+                        "percent": psutil.virtual_memory().percent
+                    },
+                    "disk": {
+                        "total": psutil.disk_usage('/').total,
+                        "free": psutil.disk_usage('/').free,
+                        "percent": psutil.disk_usage('/').percent
+                    }
                 }
-            }
-            
-            return info
+                
+                return info
         except Exception as e:
-            logger.error(f"Failed to get system information: {str(e)}")
+            log_exception(e, "Failed to get system information")
             return {}
     
     @staticmethod
     def get_process_info(pid):
         """Get process information by PID"""
         try:
-            if not pid or not psutil.pid_exists(pid):
-                return None
+            # Try to use debug module first
+            try:
+                from debug import get_process_info
+                return get_process_info(pid)
+            except ImportError:
+                # Fallback to direct implementation
+                if not pid or not psutil.pid_exists(pid):
+                    return None
+                    
+                process = psutil.Process(pid)
                 
-            process = psutil.Process(pid)
-            
-            info = {
-                "pid": process.pid,
-                "name": process.name(),
-                "status": process.status(),
-                "cpu_percent": process.cpu_percent(interval=0.1),
-                "memory_percent": process.memory_percent(),
-                "memory_info": {
-                    "rss": process.memory_info().rss,
-                    "vms": process.memory_info().vms
-                },
-                "create_time": datetime.datetime.fromtimestamp(process.create_time()).isoformat(),
-                "threads": len(process.threads())
-            }
-            
-            return info
+                info = {
+                    "pid": process.pid,
+                    "name": process.name(),
+                    "status": process.status(),
+                    "cpu_percent": process.cpu_percent(interval=0.1),
+                    "memory_percent": process.memory_percent(),
+                    "memory_info": {
+                        "rss": process.memory_info().rss,
+                        "vms": process.memory_info().vms
+                    },
+                    "create_time": datetime.datetime.fromtimestamp(process.create_time()).isoformat()
+                }
+                
+                return info
         except Exception as e:
-            logger.error(f"Failed to get process information for PID {pid}: {str(e)}")
+            log_exception(e, f"Failed to get process information for PID {pid}")
             return None
 
 # Create global instances for easy access

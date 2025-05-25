@@ -11,6 +11,7 @@ import platform
 import datetime
 import tempfile
 import shutil
+import socket
 from pathlib import Path
 
 import tkinter as tk
@@ -58,7 +59,9 @@ class ServerManagerDashboard:
             "systemInfo": {},
             "diskInfo": [],
             "gpuInfo": None,
-            "systemRefreshInterval": 10
+            "systemRefreshInterval": 5,
+            "webserverStatus": "Disconnected",  # New: track web server status
+            "webserverPort": 8080  # New: web server port
         }
         
         # Initialize paths from registry and setup the application
@@ -116,6 +119,13 @@ class ServerManagerDashboard:
                 self.steam_cmd_path = winreg.QueryValueEx(key, "SteamCmdPath")[0]
             except:
                 self.steam_cmd_path = None
+                
+            # Try to get WebPort from registry
+            try:
+                self.variables["webserverPort"] = int(winreg.QueryValueEx(key, "WebPort")[0])
+            except:
+                self.variables["webserverPort"] = 8080
+                logger.warning(f"WebPort not found in registry, using default: 8080")
                 
             winreg.CloseKey(key)
             
@@ -237,6 +247,24 @@ class ServerManagerDashboard:
         
         self.os_info = ttk.Label(self.system_header, text="Loading OS info...", foreground="gray")
         self.os_info.pack(anchor=tk.W)
+        
+        # Web server status
+        self.webserver_frame = ttk.Frame(self.system_header)
+        self.webserver_frame.pack(anchor=tk.W, pady=5)
+        
+        ttk.Label(self.webserver_frame, text="Web Server: ").pack(side=tk.LEFT)
+        self.webserver_status = ttk.Label(self.webserver_frame, text="Checking...", foreground="gray")
+        self.webserver_status.pack(side=tk.LEFT)
+        
+        # Offline mode toggle
+        self.offline_var = tk.BooleanVar(value=self.variables["offlineMode"])
+        self.offline_check = ttk.Checkbutton(
+            self.webserver_frame,
+            text="Offline Mode",
+            variable=self.offline_var,
+            command=self.toggle_offline_mode
+        )
+        self.offline_check.pack(side=tk.LEFT, padx=10)
         
         # System metrics grid
         self.metrics_frame = ttk.Frame(self.system_frame, padding=(10, 5))
@@ -1076,9 +1104,95 @@ class ServerManagerDashboard:
         # Update last refresh time
         self.variables["lastServerListUpdate"] = datetime.datetime.now()
     
+    def check_webserver_status(self):
+        """Check if the web server is running and return status"""
+        if self.variables["offlineMode"]:
+            return "Offline Mode"
+            
+        try:
+            # Try to read the web server PID file first
+            webserver_pid_file = os.path.join(self.paths["temp"], "webserver.pid")
+            if os.path.exists(webserver_pid_file):
+                try:
+                    with open(webserver_pid_file, 'r') as f:
+                        pid_info = json.load(f)
+                    
+                    pid = pid_info.get("ProcessId")
+                    port = pid_info.get("Port", self.variables["webserverPort"])
+                    
+                    # Update web port from PID file if available
+                    if port:
+                        self.variables["webserverPort"] = port
+                    
+                    # Check if process is running
+                    if pid and self.is_process_running(pid):
+                        # Now check if we can connect to the port
+                        if self.is_port_open('localhost', self.variables["webserverPort"]):
+                            return "Connected"
+                except Exception as e:
+                    logger.debug(f"Error checking web server PID file: {str(e)}")
+            
+            # If we get here, try to connect to the port directly
+            if self.is_port_open('localhost', self.variables["webserverPort"]):
+                return "Connected"
+            else:
+                return "Disconnected"
+                
+        except Exception as e:
+            logger.error(f"Error checking web server status: {str(e)}")
+            return "Error"
+    
+    def is_process_running(self, pid):
+        """Check if a process with the given PID is running"""
+        try:
+            return psutil.pid_exists(pid)
+        except:
+            return False
+    
+    def is_port_open(self, host, port, timeout=1):
+        """Check if a port is open on the specified host"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            return result == 0
+        except:
+            return False
+    
+    def toggle_offline_mode(self):
+        """Toggle offline mode"""
+        self.variables["offlineMode"] = self.offline_var.get()
+        self.update_webserver_status()
+        logger.info(f"Offline mode set to {self.variables['offlineMode']}")
+    
+    def update_webserver_status(self):
+        """Update the web server status display"""
+        try:
+            status = self.check_webserver_status()
+            self.variables["webserverStatus"] = status
+            
+            # Update status label with appropriate color
+            if status == "Connected":
+                self.webserver_status.config(text=status, foreground="green")
+            elif status == "Offline Mode":
+                self.webserver_status.config(text=status, foreground="orange")
+            else:
+                self.webserver_status.config(text=status, foreground="red")
+                
+            # Update offline mode checkbox
+            self.offline_var.set(self.variables["offlineMode"])
+            
+        except Exception as e:
+            logger.error(f"Error updating web server status: {str(e)}")
+            self.webserver_status.config(text="Error", foreground="red")
+    
     def update_system_info(self):
         """Update system information in the UI"""
         try:
+            # Update web server status
+            self.update_webserver_status()
+            
             # Computer name and OS info
             computer_name = platform.node()
             os_info = f"{platform.system()} {platform.version()}"
@@ -1164,6 +1278,9 @@ class ServerManagerDashboard:
         
         # Server list update timer - 30 seconds
         self.root.after(30000, self.server_list_timer)
+        
+        # Web server status update timer - 15 seconds
+        self.root.after(15000, self.webserver_status_timer)
     
     def system_info_timer(self):
         """Timer callback for system info updates"""
@@ -1174,6 +1291,11 @@ class ServerManagerDashboard:
         """Timer callback for server list updates"""
         self.update_server_list()
         self.root.after(30000, self.server_list_timer)
+    
+    def webserver_status_timer(self):
+        """Timer callback for web server status updates"""
+        self.update_webserver_status()
+        self.root.after(15000, self.webserver_status_timer)
     
     def run(self):
         """Run the dashboard application"""

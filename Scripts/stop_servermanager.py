@@ -8,6 +8,7 @@ import argparse
 import psutil
 import time
 import ctypes
+import signal
 
 # Setup logging
 logging.basicConfig(
@@ -26,7 +27,12 @@ def is_admin():
 
 def run_as_admin():
     """Re-run the script with admin privileges"""
-    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+    # Use hidden window when restarting as admin
+    if sys.platform == 'win32':
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 0)  # 0 = SW_HIDE
+    else:
+        # Unix systems may handle this differently
+        print("Administrator privileges required")
     sys.exit()
 
 class ServerManagerStopper:
@@ -105,10 +111,28 @@ class ServerManagerStopper:
                 logger.info(f"Process {pid} terminated gracefully")
                 return True
             except psutil.TimeoutExpired:
-                if self.force_stop:
+                # Use more forceful approaches depending on platform
+                if self.force_stop or True:  # Always force kill if process doesn't terminate
                     logger.warning(f"Process {pid} did not terminate gracefully, killing forcefully")
-                    process.kill()
-                    return True
+                    try:
+                        if sys.platform == 'win32':
+                            # On Windows, use taskkill which is more forceful
+                            subprocess.call(['taskkill', '/F', '/PID', str(pid)], 
+                                           stdout=subprocess.DEVNULL, 
+                                           stderr=subprocess.DEVNULL)
+                        else:
+                            # On Unix, use SIGKILL
+                            os.kill(pid, signal.SIGKILL)
+                        
+                        # Verify process is terminated
+                        time.sleep(0.5)
+                        if psutil.pid_exists(pid):
+                            logger.error(f"Failed to kill process {pid} forcefully")
+                            return False
+                        return True
+                    except Exception as e:
+                        logger.error(f"Error forcefully killing process {pid}: {str(e)}")
+                        return False
                 else:
                     logger.warning(f"Process {pid} did not terminate gracefully")
                     return False
@@ -158,13 +182,28 @@ class ServerManagerStopper:
             "servermanager",
             "trayicon",
             "webserver",
-            "launcher"
+            "launcher",
+            "dashboard"  # Added dashboard to ensure it's also terminated
+        ]
+        
+        # Add additional Python scripts to check for
+        python_scripts = [
+            'launcher.py', 
+            'trayicon.py', 
+            'webserver.py',
+            'dashboard.py',
+            'stop_servermanager.py', 
+            'start_servermanager.py'
         ]
         
         stopped_count = 0
         
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
+                # Skip self
+                if proc.pid == os.getpid():
+                    continue
+                    
                 # Check if process name matches
                 proc_name = proc.info['name'].lower()
                 proc_match = any(name in proc_name for name in process_names)
@@ -176,23 +215,14 @@ class ServerManagerStopper:
                 # Check if Python script matches
                 python_script_match = False
                 if 'python' in proc_name and cmdline:
-                    python_script_match = any(
-                        script in cmdline for script in [
-                            'launcher.py', 'trayicon.py', 'webserver.py',
-                            'stop_servermanager.py', 'start_servermanager.py'
-                        ]
-                    )
-                
-                # Skip self
-                if proc.pid == os.getpid():
-                    continue
+                    python_script_match = any(script in cmdline for script in python_scripts)
                 
                 # Stop matching processes
                 if proc_match or cmdline_match or python_script_match:
                     logger.info(f"Found matching process: {proc.info['name']} (PID: {proc.pid})")
                     if self.stop_process_by_pid(proc.pid, proc.info['name']):
                         stopped_count += 1
-                
+            
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
             except Exception as e:
@@ -207,7 +237,28 @@ class ServerManagerStopper:
             stop_all_script = os.path.join(self.paths["scripts"], "stop_all_servers.py")
             if os.path.exists(stop_all_script):
                 logger.info("Stopping all game servers using stop_all_servers.py")
-                subprocess.run([sys.executable, stop_all_script], timeout=30)
+                
+                # Run with hidden console
+                if sys.platform == 'win32':
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0  # SW_HIDE
+                    
+                    subprocess.run(
+                        [sys.executable, stop_all_script], 
+                        timeout=30,
+                        startupinfo=startupinfo,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                else:
+                    # Unix platforms
+                    subprocess.run(
+                        [sys.executable, stop_all_script], 
+                        timeout=30,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
+                    )
+                    
                 return True
                 
             # Alternative method: look for PIDS.txt
@@ -253,8 +304,15 @@ class ServerManagerStopper:
                 if filename.endswith('.pid'):
                     try:
                         os.remove(os.path.join(self.paths["temp"], filename))
-                    except:
-                        pass
+                        logger.debug(f"Removed PID file: {filename}")
+                    except Exception as e:
+                        logger.error(f"Failed to remove PID file {filename}: {str(e)}")
+            
+            # Final check for any remaining processes
+            time.sleep(1)  # Wait a moment for processes to terminate
+            count3 = self.stop_processes_by_name()  # Run again to catch any stragglers
+            if count3 > 0:
+                logger.info(f"Stopped {count3} additional processes in final cleanup")
             
             logger.info("Server Manager shutdown complete")
             return 0

@@ -10,6 +10,8 @@ from pathlib import Path
 from datetime import datetime
 import threading
 import json
+import socket
+import time
 
 # Import required for system tray functionality
 try:
@@ -39,23 +41,35 @@ class ServerManagerTrayIcon:
         self.server_status = "Unknown"
         self.debug_mode = False
         self.dashboard_process = None
+        self.webserver_status = "Disconnected"
+        self.offline_mode = False
+        self.standalone_mode = False  # New: track if running in standalone mode
         
         # Parse command line arguments
         parser = argparse.ArgumentParser(description='Server Manager Tray Icon')
         parser.add_argument('--debug', action='store_true', help='Enable debug logging')
         parser.add_argument('--logpath', help='Path to log file')
+        parser.add_argument('--standalone', action='store_true', help='Run in standalone mode')
         args = parser.parse_args()
         
         # Configure logging based on arguments
         if args.debug:
             logger.setLevel(logging.DEBUG)
             self.debug_mode = True
+            
+        # Set standalone mode
+        if args.standalone:
+            self.standalone_mode = True
+            logger.info("Running in standalone mode")
         
         # Initialize and start the tray icon
         self.initialize()
         if args.logpath:
             self.configure_file_logging(args.logpath)
-        
+        else:
+            # Set up file logging with default path
+            self.configure_file_logging()
+
     def configure_file_logging(self, log_path=None):
         """Set up logging to file"""
         try:
@@ -163,8 +177,21 @@ class ServerManagerTrayIcon:
                 enabled=False
             ),
             pystray.MenuItem(
+                "Web Server",
+                lambda: None,
+                enabled=False
+            ),
+            pystray.MenuItem(
                 "Open Dashboard",
                 self.open_dashboard
+            ),
+            pystray.MenuItem(
+                "Open Web Interface",
+                self.open_web_interface
+            ),
+            pystray.MenuItem(
+                "Toggle Offline Mode",
+                self.toggle_offline_mode
             ),
             pystray.MenuItem(
                 "Toggle Debug Mode",
@@ -178,8 +205,6 @@ class ServerManagerTrayIcon:
     
     def update_server_status(self):
         """Update server status in the menu"""
-        # This would normally check the actual server status
-        # For now, we'll just toggle between running and stopped
         threading.Timer(10.0, self.update_server_status).start()
         
         # In a real implementation, this would query the server status
@@ -187,10 +212,202 @@ class ServerManagerTrayIcon:
             self.server_status = "Stopped"
         else:
             self.server_status = "Running"
-            
+        
+        # Check web server status
+        self.check_webserver_status()
+        
         if self.icon:
-            self.icon.title = f"Server Manager - {self.server_status}"
+            # Update with combined status
+            status_text = f"Server: {self.server_status} | Web: {self.webserver_status}"
+            if self.offline_mode:
+                status_text += " (Offline Mode)"
+            self.icon.title = f"Server Manager - {status_text}"
+            
+            # Update menu items
+            menu = self.create_menu(self.icon)
+            # Set the text of the first menu item to show server status
+            menu_items = list(menu.items)
+            menu_items[0] = pystray.MenuItem(
+                f"Server Status: {self.server_status}",
+                lambda: None,
+                enabled=False
+            )
+            
+            # Set the text of the web server status menu item
+            status_text = f"Web Server: {self.webserver_status}"
+            if self.offline_mode:
+                status_text += " (Offline Mode)"
+            menu_items[1] = pystray.MenuItem(
+                status_text,
+                lambda: None,
+                enabled=False
+            )
+            
+            # Create a new menu with the updated items
+            self.icon.menu = pystray.Menu(*menu_items)
     
+    def check_webserver_status(self):
+        """Check if the web server is running and update status"""
+        if self.offline_mode:
+            self.webserver_status = "Offline Mode"
+            return
+            
+        try:
+            # Try to read the web server PID file first
+            webserver_pid_file = os.path.join(self.paths["temp"], "webserver.pid")
+            if os.path.exists(webserver_pid_file):
+                try:
+                    with open(webserver_pid_file, 'r') as f:
+                        pid_info = json.load(f)
+                    
+                    pid = pid_info.get("ProcessId")
+                    port = pid_info.get("Port", self.web_port)
+                    
+                    # Update web port from PID file if available
+                    if port:
+                        self.web_port = port
+                    
+                    # Check if process is running
+                    if pid and self.is_process_running(pid):
+                        # Now check if we can connect to the port
+                        if self.is_port_open('localhost', self.web_port):
+                            self.webserver_status = "Connected"
+                            return
+                except Exception as e:
+                    logger.debug(f"Error checking web server PID file: {str(e)}")
+            
+            # If we get here, try to connect to the port directly
+            if self.is_port_open('localhost', self.web_port):
+                self.webserver_status = "Connected"
+            else:
+                self.webserver_status = "Disconnected"
+                
+        except Exception as e:
+            logger.error(f"Error checking web server status: {str(e)}")
+            self.webserver_status = "Error"
+    
+    def is_port_open(self, host, port, timeout=1):
+        """Check if a port is open on the specified host"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            return result == 0
+        except:
+            return False
+    
+    def toggle_offline_mode(self):
+        """Toggle offline mode"""
+        self.offline_mode = not self.offline_mode
+        
+        if self.offline_mode:
+            logger.info("Offline mode enabled")
+        else:
+            logger.info("Offline mode disabled")
+            
+        # Update status immediately
+        self.check_webserver_status()
+        
+        # Show notification
+        if self.icon:
+            self.icon.notify(
+                f"Offline mode {'enabled' if self.offline_mode else 'disabled'}",
+                "Server Manager"
+            )
+            
+            # Force menu update
+            self.update_server_status()
+    
+    def open_web_interface(self):
+        """Open the web interface in a browser"""
+        if self.offline_mode:
+            if self.icon:
+                self.icon.notify(
+                    "Cannot open web interface in offline mode",
+                    "Server Manager"
+                )
+            return
+            
+        # Check if web server is running
+        if self.webserver_status != "Connected":
+            if self.icon:
+                self.icon.notify(
+                    "Web server is not connected. Starting web server...",
+                    "Server Manager"
+                )
+                
+            # Try to start the web server
+            try:
+                webserver_script = os.path.join(self.paths["scripts"], "webserver.py")
+                if not os.path.exists(webserver_script):
+                    logger.error(f"Web server script not found: {webserver_script}")
+                    if self.icon:
+                        self.icon.notify("Web server script not found", "Server Manager Error")
+                    return
+                
+                # Build command with debug flag if needed
+                cmd = [sys.executable, webserver_script]
+                if self.debug_mode:
+                    cmd.append("--debug")
+                
+                # Launch web server process with hidden console
+                logger.info(f"Starting web server: {' '.join(cmd)}")
+                
+                if sys.platform == 'win32':
+                    # On Windows, use CREATE_NO_WINDOW to hide console
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0  # SW_HIDE
+                    
+                    subprocess.Popen(
+                        cmd,
+                        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                        startupinfo=startupinfo,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        stdin=subprocess.PIPE,
+                        close_fds=True
+                    )
+                else:
+                    # On Unix, use start_new_session
+                    subprocess.Popen(
+                        cmd,
+                        start_new_session=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        stdin=subprocess.PIPE,
+                        close_fds=True
+                    )
+                
+                # Wait for web server to start
+                for _ in range(5):  # Try for 5 seconds
+                    time.sleep(1)
+                    if self.is_port_open('localhost', self.web_port):
+                        self.webserver_status = "Connected"
+                        break
+                
+            except Exception as e:
+                logger.error(f"Failed to start web server: {str(e)}")
+                if self.icon:
+                    self.icon.notify(f"Failed to start web server: {str(e)}", "Server Manager Error")
+                return
+    
+        # Open the web interface in a browser
+        try:
+            url = f"http://localhost:{self.web_port}"
+            logger.info(f"Opening web interface: {url}")
+            webbrowser.open(url)
+            
+            # Show notification
+            if self.icon:
+                self.icon.notify("Web interface opened in browser", "Server Manager")
+                
+        except Exception as e:
+            logger.error(f"Failed to open web interface: {str(e)}")
+            if self.icon:
+                self.icon.notify(f"Failed to open web interface: {str(e)}", "Server Manager Error")
+
     def open_dashboard(self):
         """Open the Python dashboard instead of web dashboard"""
         try:
@@ -224,21 +441,32 @@ class ServerManagerTrayIcon:
             if self.debug_mode:
                 cmd.append("--debug")
             
-            # Launch dashboard process detached from current process
+            # Launch dashboard process with hidden console
             logger.info(f"Starting dashboard: {' '.join(cmd)}")
             
             if sys.platform == 'win32':
-                # On Windows, use CREATE_NEW_PROCESS_GROUP flag to detach
+                # On Windows, use CREATE_NO_WINDOW to hide console
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
+                
                 self.dashboard_process = subprocess.Popen(
                     cmd, 
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                    creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                    startupinfo=startupinfo,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.PIPE,
                     close_fds=True
                 )
             else:
-                # On Unix, use start_new_session to detach
+                # On Unix, use start_new_session
                 self.dashboard_process = subprocess.Popen(
                     cmd,
                     start_new_session=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.PIPE,
                     close_fds=True
                 )
             
@@ -252,7 +480,7 @@ class ServerManagerTrayIcon:
             logger.error(f"Failed to open dashboard: {str(e)}")
             if self.icon:
                 self.icon.notify(f"Failed to open dashboard: {str(e)}", "Server Manager Error")
-    
+
     def is_process_running(self, pid):
         """Check if a process with the given PID is running"""
         try:
@@ -294,6 +522,30 @@ class ServerManagerTrayIcon:
         """Exit the application"""
         logger.info("Exiting application")
         
+        # First, attempt to stop the launcher process
+        try:
+            launcher_pid_file = os.path.join(self.paths["temp"], "launcher.pid")
+            if os.path.exists(launcher_pid_file):
+                try:
+                    with open(launcher_pid_file, 'r') as f:
+                        pid_data = json.load(f)
+                    
+                    pid = pid_data.get("ProcessId")
+                    if pid and self.is_process_running(pid):
+                        logger.info(f"Terminating launcher process: {pid}")
+                        if sys.platform == 'win32':
+                            subprocess.call(['taskkill', '/F', '/PID', str(pid)], 
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        else:
+                            os.kill(pid, signal.SIGTERM)
+                        
+                        # Wait a moment to allow the process to terminate
+                        time.sleep(1)
+                except Exception as e:
+                    logger.error(f"Error terminating launcher process: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error accessing launcher PID file: {str(e)}")
+        
         # Remove PID file
         try:
             pid_file = os.path.join(self.paths["temp"], "trayicon.pid")
@@ -332,6 +584,38 @@ class ServerManagerTrayIcon:
         except Exception as e:
             logger.error(f"Error terminating existing dashboard: {str(e)}")
         
+        # As a final failsafe, call the stop_servermanager script to ensure all processes are terminated
+        try:
+            stop_script = os.path.join(self.paths["scripts"], "stop_servermanager.py")
+            if os.path.exists(stop_script):
+                logger.info("Running stop_servermanager.py to ensure all processes are terminated")
+                # Run in a hidden way
+                if sys.platform == 'win32':
+                    # On Windows, use CREATE_NO_WINDOW to hide console
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0  # SW_HIDE
+                    
+                    subprocess.Popen(
+                        [sys.executable, stop_script, "--force"], 
+                        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                        startupinfo=startupinfo,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        stdin=subprocess.PIPE
+                    )
+                else:
+                    # On Unix, use start_new_session
+                    subprocess.Popen(
+                        [sys.executable, stop_script, "--force"],
+                        start_new_session=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        stdin=subprocess.PIPE
+                    )
+        except Exception as e:
+            logger.error(f"Error running stop_servermanager.py: {str(e)}")
+        
         # Stop the icon
         if self.icon:
             self.icon.stop()
@@ -355,6 +639,8 @@ class ServerManagerTrayIcon:
             # Show notification on startup
             def setup(icon):
                 icon.visible = True
+                # Log that the icon is now visible and running
+                logger.info("Tray icon is now visible and running")
                 icon.notify(
                     "Server Manager is now running in the system tray",
                     "Server Manager"
@@ -362,23 +648,52 @@ class ServerManagerTrayIcon:
             
             # Run the icon
             logger.info("Starting tray icon")
+            
+            # Prevent immediate exit in standalone mode
+            if self.standalone_mode:
+                # Add signal handlers for graceful shutdown
+                if sys.platform != 'win32':  # Unix-like systems
+                    signal.signal(signal.SIGTERM, lambda sig, frame: self.exit_app())
+                    signal.signal(signal.SIGINT, lambda sig, frame: self.exit_app())
+                
+                # Keep a strong reference to the icon to prevent garbage collection
+                self._icon_ref = self.icon
+            
+            # Run the icon (this is blocking)
             self.icon.run(setup=setup)
             
         except Exception as e:
             logger.error(f"Error running tray icon: {str(e)}")
+            # Print to stderr for immediate visibility
+            print(f"ERROR: {str(e)}", file=sys.stderr)
             return False
-            
+        
         return True
 
 def main():
     try:
         # Create and run tray icon
         tray_icon = ServerManagerTrayIcon()
-        tray_icon.run()
+        result = tray_icon.run()
+        
+        if not result:
+            logger.error("Tray icon failed to run properly")
+            return 1
+            
+        logger.info("Tray icon exited normally")
         return 0
     except Exception as e:
         logger.error(f"Unhandled exception: {str(e)}")
+        # Print to stderr for immediate visibility
+        print(f"CRITICAL ERROR: {str(e)}", file=sys.stderr)
         return 1
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Capture the exit code
+    exit_code = main()
+    
+    # Log before exiting
+    logger.info(f"Exiting with code {exit_code}")
+    
+    # Exit with the appropriate code
+    sys.exit(exit_code)
