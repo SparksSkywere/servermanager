@@ -9,3 +9,5 @@ paramiko
 schedule
 pystray
 pillow
+sqlalchemy
+pyodbc

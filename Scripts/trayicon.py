@@ -45,6 +45,7 @@ class ServerManagerTrayIcon:
         self.offline_mode = False
         self.standalone_mode = False  # New: track if running in standalone mode
         self.notifications_enabled = False  # Add flag to control notifications
+        self.admin_dashboard_process = None  # Track admin dashboard process
         
         # Parse command line arguments
         parser = argparse.ArgumentParser(description='Server Manager Tray Icon')
@@ -203,6 +204,10 @@ class ServerManagerTrayIcon:
             pystray.MenuItem(
                 "Toggle Debug Mode",
                 self.toggle_debug_mode
+            ),
+            pystray.MenuItem(
+                "Open Admin Dashboard",
+                self.open_admin_dashboard
             ),
             pystray.MenuItem(
                 "Exit",
@@ -506,6 +511,53 @@ class ServerManagerTrayIcon:
             logger.error(f"Failed to open dashboard: {str(e)}")
             if self.icon and self.notifications_enabled:
                 self.icon.notify(f"Failed to open dashboard: {str(e)}", "Server Manager Error")
+
+    def open_admin_dashboard(self):
+        """Open the admin dashboard for user management"""
+        try:
+            from pathlib import Path
+            admin_dashboard_script = os.path.join(self.paths["scripts"], "admin_dashboard.py")
+            if not os.path.exists(admin_dashboard_script):
+                logger.error(f"Admin dashboard script not found: {admin_dashboard_script}")
+                if self.icon and self.notifications_enabled:
+                    self.icon.notify("Admin dashboard script not found", "Server Manager Error")
+                return
+
+            # Launch admin dashboard process
+            cmd = [sys.executable, admin_dashboard_script]
+            if self.debug_mode:
+                cmd.append("--debug")
+
+            logger.info(f"Starting admin dashboard: {' '.join(cmd)}")
+            if sys.platform == 'win32':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
+                self.admin_dashboard_process = subprocess.Popen(
+                    cmd,
+                    creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                    startupinfo=startupinfo,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.PIPE,
+                    close_fds=True
+                )
+            else:
+                self.admin_dashboard_process = subprocess.Popen(
+                    cmd,
+                    start_new_session=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.PIPE,
+                    close_fds=True
+                )
+            logger.info(f"Admin dashboard started with PID: {self.admin_dashboard_process.pid}")
+            if self.icon and self.notifications_enabled:
+                self.icon.notify("Admin dashboard opened", "Server Manager")
+        except Exception as e:
+            logger.error(f"Failed to open admin dashboard: {str(e)}")
+            if self.icon and self.notifications_enabled:
+                self.icon.notify(f"Failed to open admin dashboard: {str(e)}", "Server Manager Error")
 
     def is_process_running(self, pid):
         """Check if a process with the given PID is running"""
