@@ -1,25 +1,32 @@
-1. Finalise the dashboard's primary functions (executable starts and stops, process tracking PID)
-2. Make sure the cross host-platform is working between the dashboards (web and local)
-3. Clusterise the hosts so that you can setup a master host that slave hosts, this will allow machines on the same network to communicate easier, only internal for now
-4. Basic information will need to parse between hosts such as CPU, RAM, Disk space, network load, etc for load balancing between the clustered hosts
-5. The servermanager must encrypt all connections internally and externally during operation (https too)
-6. Limit permissions to standard user only for server hosting, main host connections can use admin (with services)
-7. Logging for all scripts
-8. Webhosting dashboard needs to support sql (MSSQL, MSSQLEXPRESS, Mysql, MariaDB) with forms to create and register accounts (inlude 2FA for logins)
-9. Admin dashboard to create, remove, alter user accounts with SQL
-10. Dashboard.py will deal with the instances that are created by other users, to assist with starting and stopping games
-11. Outbound ports to be limited and is to be seperated from the main host and kept on a seperate machine to handle web requests, must support IIS, Apache2 and Nginx and simplicity implied to keep website loading to a minimal.
-12. User customisation features, admin access is to be kept for 2 users (root and host) and must authenticate using 2FA (enforced)
-13. Easy creation and deletion, folder/file access for the users
-14. Limit to only what the user is paying for, this is to prevent a user accessing more than is needed (ram mainly, maybe able to lock down core count?)
-15. Process consoles are open to the user allowing commands to be put through directly
-16. Payment tracker
-17. During installation of the servermanager 2 directories are to be made, 1 for steamcmd and the other for "other servers" like Minecraft
-18. Download of files, if multiple files it is to be zipped and downloaded
-19. Uploading files as to allow extraction for server hosting, the space given per folder generation allows one large zip to uploaded, extracted and then deployed or individual files can be uploaded.
-20. Dedicated debugging to test all the functions of the scripts and to see how it will react in certain situations such as a host failure
-21. A status website to show the status of api's or processes that are running to show the end users if something has gone down or wrong
-22. Emailing services to send out emails for service updates, tos, etc for a more professional approach
-23. Add a list function to the online dashboard to setup server states faster, could have a way of running multiple instances on one process? To limit downloading
-24. Binding to outbound and inbound ports (add firewall functions)
-25. Make sure some services are handled correctly like java version hunting, each of the versions are to be listed
+# TODO List (Status-tracked)
+
+1. [WIP] Finalise the dashboard's primary functions (executable starts and stops, process tracking PID)
+2. [WIP] Make sure the cross host-platform is working between the dashboards (web and local)
+3. [TODO] Clusterise the hosts so that you can setup a master host that slave hosts, this will allow machines on the same network to communicate easier, only internal for now
+4. [TODO] Basic information will need to parse between hosts such as CPU, RAM, Disk space, network load, etc for load balancing between the clustered hosts
+5. [WIP] The servermanager must encrypt all connections internally and externally during operation (https too)
+6. [WIP] Limit permissions to standard user only for server hosting, main host connections can use admin (with services)
+7. [WIP] Logging for all scripts
+8. [WIP] Webhosting dashboard needs to support sql (MSSQL, MSSQLEXPRESS, Mysql, MariaDB) with forms to create and register accounts (inlude 2FA for logins)
+9. [WIP] Admin dashboard to create, remove, alter user accounts with SQL
+10. [WIP] Dashboard.py will deal with the instances that are created by other users, to assist with starting and stopping games
+11. [TODO] Outbound ports to be limited and is to be seperated from the main host and kept on a seperate machine to handle web requests, must support IIS, Apache2 and Nginx and simplicity implied to keep website loading to a minimal.
+12. [WIP] User customisation features, admin access is to be kept for 2 users (root and host) and must authenticate using 2FA (enforced)
+13. [WIP] Easy creation and deletion, folder/file access for the users
+14. [WIP] Limit to only what the user is paying for, this is to prevent a user accessing more than is needed (ram mainly, maybe able to lock down core count?)
+15. [WIP] Process consoles are open to the user allowing commands to be put through directly
+16. [TODO] Payment tracker
+17. [WIP] During installation of the servermanager 2 directories are to be made, 1 for steamcmd and the other for "other servers" like Minecraft
+18. [WIP] Download of files, if multiple files it is to be zipped and downloaded
+19. [WIP] Uploading files as to allow extraction for server hosting, the space given per folder generation allows one large zip to uploaded, extracted and then deployed or individual files can be uploaded.
+20. [TODO] Dedicated debugging to test all the functions of the scripts and to see how it will react in certain situations such as a host failure
+21. [TODO] A status website to show the status of api's or processes that are running to show the end users if something has gone down or wrong
+22. [WIP] Emailing services to send out emails for service updates, tos, etc for a more professional approach
+23. [TODO] Add a list function to the online dashboard to setup server states faster, could have a way of running multiple instances on one process? To limit downloading
+24. [WIP] Binding to outbound and inbound ports (add firewall functions)
+25. [WIP] Make sure some services are handled correctly like java version hunting, each of the versions are to be listed
+
+# Legend:
+# [TODO] - Not started
+# [WIP]  - Work in progress / partially implemented
+# [DONE] - Fully implemented (remove from list or move to completed section)

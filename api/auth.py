@@ -86,15 +86,37 @@ class AdminDashboard(tk.Tk):
 if __name__ == "__main__":
     main()
 
+from flask import Blueprint, request, jsonify, session
+from Scripts.user_management import UserManager
+from Modules.SQL_Connection import get_engine
+
+auth_bp = Blueprint('auth', __name__)
+
+@auth_bp.route('/api/login', methods=['POST'])
 def login():
-    # ...existing code...
-    user = um.get_user(username)
-    # ...password check...
-    if user.two_factor_enabled:
-        # If admin override, skip 2FA
-        if is_admin_override:  # Set this flag if admin is using override
-            pass
-        else:
-            if not um.verify_2fa(username, provided_2fa_token):
-                return {"error": "Invalid 2FA token"}, 401
-    # ...existing code...
+    data = request.json
+    username = data.get("username")
+    password = data.get("password")
+    auth_type = data.get("authType", "Local")
+    token_2fa = data.get("token2fa")  # Optional: 2FA token from frontend
+
+    if auth_type == "Database":
+        engine = get_engine()
+        um = UserManager(engine)
+        user = um.get_user(username)
+        if not user or not user.is_active:
+            return jsonify({"error": "Invalid credentials"}), 401
+        # TODO: Use password hashing in production!
+        if user.password != password:
+            return jsonify({"error": "Invalid credentials"}), 401
+        # 2FA check if enabled
+        if getattr(user, "two_factor_enabled", False):
+            if not token_2fa or not um.verify_2fa(username, token_2fa):
+                return jsonify({"error": "2FA required"}), 401
+        # Set session or return token as needed
+        session["username"] = user.username
+        session["is_admin"] = user.is_admin
+        return jsonify({"success": True, "username": user.username, "isAdmin": user.is_admin})
+    else:
+        # ...existing Windows/Local authentication...
+        pass
