@@ -18,6 +18,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 from PIL import Image, ImageTk
 import ctypes
+import urllib.request
+import urllib.error
 
 # Try to import required libraries, install if not present
 try:
@@ -91,6 +93,8 @@ class ServerManagerDashboard:
         # Initialize system info and timers
         self.update_system_info()
         self.start_timers()
+        
+        self.supported_server_types = ["Steam", "Minecraft", "Other"]
         
     def configure_file_logging(self):
         """Set up logging to file"""
@@ -416,313 +420,398 @@ class ServerManagerDashboard:
         # Return credentials if successful, None otherwise
         return credentials if result["success"] else None
     
+    def fetch_minecraft_versions(self):
+        """Fetch available Minecraft server versions from Mojang's manifest."""
+        try:
+            manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest.json"
+            with urllib.request.urlopen(manifest_url, timeout=10) as resp:
+                manifest = json.load(resp)
+            versions = []
+            for v in manifest["versions"]:
+                if v["type"] in ("release", "snapshot"):
+                    versions.append({
+                        "id": v["id"],
+                        "type": v["type"],
+                        "url": v["url"]
+                    })
+            return versions
+        except Exception as e:
+            logger.error(f"Failed to fetch Minecraft versions: {str(e)}")
+            return []
+
+    def get_minecraft_server_jar_url(self, version_id, versions_list):
+        """Get the download URL for the server jar for a given version."""
+        try:
+            for v in versions_list:
+                if v["id"] == version_id:
+                    with urllib.request.urlopen(v["url"], timeout=10) as resp:
+                        version_data = json.load(resp)
+                    return version_data["downloads"]["server"]["url"]
+        except Exception as e:
+            logger.error(f"Failed to get server jar URL for {version_id}: {str(e)}")
+        return None
+
+    def fetch_fabric_installer_url(self, mc_version):
+        """Fetch Fabric installer URL for a given Minecraft version."""
+        try:
+            meta_url = "https://meta.fabricmc.net/v2/versions/installer"
+            with urllib.request.urlopen(meta_url, timeout=10) as resp:
+                installers = json.load(resp)
+            if installers:
+                return installers[0]["url"]  # Always use latest installer
+        except Exception as e:
+            logger.error(f"Failed to fetch Fabric installer: {str(e)}")
+        return None
+
+    def fetch_forge_installer_url(self, mc_version):
+        """Fetch Forge installer URL for a given Minecraft version."""
+        try:
+            meta_url = f"https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json"
+            with urllib.request.urlopen(meta_url, timeout=10) as resp:
+                promotions = json.load(resp)
+            key = f"{mc_version}-recommended"
+            if key in promotions["promos"]:
+                forge_version = promotions["promos"][key]
+                url = f"https://maven.minecraftforge.net/net/minecraftforge/forge/{mc_version}-{forge_version}/forge-{mc_version}-{forge_version}-installer.jar"
+                return url
+        except Exception as e:
+            logger.error(f"Failed to fetch Forge installer: {str(e)}")
+        return None
+
+    def fetch_neoforge_installer_url(self, mc_version):
+        """Fetch NeoForge installer URL for a given Minecraft version."""
+        try:
+            meta_url = f"https://api.neoforged.net/v1/projects/neoforge/versions?game_versions={mc_version}"
+            with urllib.request.urlopen(meta_url, timeout=10) as resp:
+                versions = json.load(resp)
+            if versions:
+                # Pick latest version for this MC version
+                version = versions[0]
+                url = version.get("installer_url")
+                if url:
+                    return url
+        except Exception as e:
+            logger.error(f"Failed to fetch NeoForge installer: {str(e)}")
+        return None
+
     def add_server(self):
-        """Add a new game server"""
-        # Get Steam credentials
-        credentials = self.get_steam_credentials()
-        if not credentials:
-            logger.debug("User cancelled Steam login")
-            return
-            
-        logger.debug(f"Steam login type: {'Anonymous' if credentials['anonymous'] else 'Account'}")
-        
+        """Add a new game server (Steam, Minecraft, or Other)"""
+        # Select server type dialog
+        type_dialog = tk.Toplevel(self.root)
+        type_dialog.title("Select Server Type")
+        type_dialog.geometry("300x200")
+        type_dialog.transient(self.root)
+        type_dialog.grab_set()
+        ttk.Label(type_dialog, text="Select Server Type:").pack(pady=10)
+        type_var = tk.StringVar(value="Steam")
+        for stype in self.supported_server_types:
+            ttk.Radiobutton(type_dialog, text=stype, variable=type_var, value=stype).pack(anchor=tk.W, padx=30)
+        def proceed():
+            type_dialog.destroy()
+        ttk.Button(type_dialog, text="Next", command=proceed).pack(pady=20)
+        self.root.wait_window(type_dialog)
+        server_type = type_var.get()
+
+        if server_type == "Steam":
+            credentials = self.get_steam_credentials()
+            if not credentials:
+                logger.debug("User cancelled Steam login")
+                return
+        else:
+            credentials = None
+
         # Create dialog for server details
         dialog = tk.Toplevel(self.root)
-        dialog.title("Create Game Server")
+        dialog.title(f"Create {server_type} Server")
         dialog.geometry("600x500")
         dialog.transient(self.root)
         dialog.grab_set()
-        
+
         # Server name
         ttk.Label(dialog, text="Server Name:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
         name_var = tk.StringVar()
         name_entry = ttk.Entry(dialog, textvariable=name_var, width=35)
         name_entry.grid(row=0, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        
-        # App ID
-        ttk.Label(dialog, text="App ID:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
-        app_id_var = tk.StringVar()
-        app_id_entry = ttk.Entry(dialog, textvariable=app_id_var, width=35)
-        app_id_entry.grid(row=1, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        
+
+        # Server type (readonly)
+        ttk.Label(dialog, text="Server Type:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
+        ttk.Label(dialog, text=server_type).grid(row=1, column=1, sticky=tk.W)
+
+        # Minecraft version list (fetch only if needed)
+        mc_versions = []
+        if server_type == "Minecraft":
+            mc_versions = self.fetch_minecraft_versions()
+            if not mc_versions:
+                messagebox.showerror("Error", "Could not fetch Minecraft versions from Mojang.")
+                return
+            # Default to latest release
+            latest_release = next((v for v in mc_versions if v["id"] == mc_versions[0]["id"]), mc_versions[0])
+            selected_version = tk.StringVar(value=latest_release["id"])
+        else:
+            selected_version = tk.StringVar(value="")
+
+        # App ID (Steam only)
+        if server_type == "Steam":
+            ttk.Label(dialog, text="App ID:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
+            app_id_var = tk.StringVar()
+            app_id_entry = ttk.Entry(dialog, textvariable=app_id_var, width=35)
+            app_id_entry.grid(row=2, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+        else:
+            app_id_var = tk.StringVar(value="")
+
         # Install directory
-        ttk.Label(dialog, text="Install Directory:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
+        ttk.Label(dialog, text="Install Directory:").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
         install_dir_var = tk.StringVar()
         install_dir_entry = ttk.Entry(dialog, textvariable=install_dir_var, width=25)
-        install_dir_entry.grid(row=2, column=1, padx=10, pady=10, sticky=tk.W)
-        
-        ttk.Label(dialog, text="(Leave blank for default location)", foreground="gray").grid(row=3, column=1, padx=10, sticky=tk.W)
-        
-        # Browse button
+        install_dir_entry.grid(row=3, column=1, padx=10, pady=10, sticky=tk.W)
+        ttk.Label(dialog, text="(Leave blank for default location)", foreground="gray").grid(row=4, column=1, padx=10, sticky=tk.W)
         def browse_directory():
             directory = filedialog.askdirectory(title="Select Installation Directory")
             if directory:
                 install_dir_var.set(directory)
-                
-        ttk.Button(dialog, text="Browse", command=browse_directory, width=10).grid(row=2, column=2, padx=5, pady=10)
-        
+        ttk.Button(dialog, text="Browse", command=browse_directory, width=10).grid(row=3, column=2, padx=5, pady=10)
+
+        # Executable (Minecraft/Other)
+        if server_type in ("Minecraft", "Other"):
+            ttk.Label(dialog, text="Executable Path:").grid(row=5, column=0, padx=10, pady=10, sticky=tk.W)
+            exe_var = tk.StringVar()
+            exe_entry = ttk.Entry(dialog, textvariable=exe_var, width=35)
+            exe_entry.grid(row=5, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            def browse_exe():
+                fp = filedialog.askopenfilename(title="Select Executable",
+                    filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd"),("All","*.*")])
+                if fp:
+                    exe_var.set(fp)
+            ttk.Button(dialog, text="Browse", command=browse_exe, width=10).grid(row=5, column=2, padx=5, pady=10)
+        else:
+            exe_var = tk.StringVar(value="")
+
+        # Startup Args (all)
+        ttk.Label(dialog, text="Startup Args:").grid(row=6, column=0, padx=10, pady=10, sticky=tk.W)
+        args_var = tk.StringVar()
+        args_entry = ttk.Entry(dialog, textvariable=args_var, width=35)
+        args_entry.grid(row=6, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+
         # Console output
-        ttk.Label(dialog, text="Installation Progress:").grid(row=4, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
-        
+        ttk.Label(dialog, text="Installation Progress:").grid(row=7, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
         console_frame = ttk.Frame(dialog)
-        console_frame.grid(row=5, column=0, columnspan=3, padx=10, pady=5, sticky="nsew")
-        
-        console_output = scrolledtext.ScrolledText(console_frame, width=70, height=15, background="black", foreground="white")
+        console_frame.grid(row=8, column=0, columnspan=3, padx=10, pady=5, sticky="nsew")
+        console_output = scrolledtext.ScrolledText(console_frame, width=70, height=10, background="black", foreground="white")
         console_output.pack(fill=tk.BOTH, expand=True)
         console_output.config(state=tk.DISABLED)
-        
-        # Status and progress
+
         status_var = tk.StringVar(value="")
         status_label = ttk.Label(dialog, textvariable=status_var)
-        status_label.grid(row=6, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
-        
+        status_label.grid(row=9, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
         progress = ttk.Progressbar(dialog, mode="indeterminate")
-        progress.grid(row=7, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
-        
-        # Configure grid weights
-        dialog.grid_rowconfigure(5, weight=1)
+        progress.grid(row=10, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
+
+        dialog.grid_rowconfigure(8, weight=1)
         for i in range(3):
             dialog.grid_columnconfigure(i, weight=1 if i == 1 else 0)
-        
-        # Installation thread
+
         self.install_cancelled = False
-        
         def append_console(text):
             console_output.config(state=tk.NORMAL)
             console_output.insert(tk.END, text + "\n")
             console_output.see(tk.END)
             console_output.config(state=tk.DISABLED)
-        
+
         def install_server():
             try:
-                # Validate inputs
                 server_name = name_var.get().strip()
-                app_id = app_id_var.get().strip()
+                app_id = app_id_var.get().strip() if server_type == "Steam" else ""
                 install_dir = install_dir_var.get().strip()
-                
+                executable_path = exe_var.get().strip() if server_type in ("Minecraft", "Other") else ""
+                startup_args = args_var.get().strip()
+
                 if not server_name:
                     messagebox.showerror("Validation Error", "Server name is required.")
                     return
-                    
-                if not app_id or not app_id.isdigit():
+                if server_type == "Steam" and (not app_id or not app_id.isdigit()):
                     messagebox.showerror("Validation Error", "Steam App ID must be a number.")
                     return
-                
-                # Check if server already exists
+                if server_type in ("Minecraft", "Other") and not executable_path:
+                    messagebox.showerror("Validation Error", "Executable path is required.")
+                    return
+
                 server_config_path = os.path.join(self.paths["servers"], f"{server_name}.json")
                 if os.path.exists(server_config_path):
                     messagebox.showerror("Validation Error", "A server with this name already exists.")
                     return
-                
-                # Check if SteamCmd exists
-                steam_cmd_exe = os.path.join(self.steam_cmd_path, "steamcmd.exe")
-                if not os.path.exists(steam_cmd_exe):
-                    messagebox.showerror("Configuration Error", 
-                                        f"SteamCmd executable not found at: {steam_cmd_exe}\n"
-                                        "Please make sure SteamCmd is properly installed.")
-                    return
-                
-                # Validate install directory if specified
-                if install_dir:
-                    # Check if path is valid
-                    try:
-                        install_dir = os.path.abspath(install_dir)
-                    except:
-                        messagebox.showerror("Validation Error", "Invalid installation path specified.")
-                        return
-                        
-                    # Check if directory exists and is empty
-                    if os.path.exists(install_dir) and os.listdir(install_dir):
-                        result = messagebox.askyesno("Warning", 
-                                                    "The specified installation directory is not empty. Continue anyway?",
-                                                    icon=messagebox.WARNING)
-                        if not result:
-                            return
-                    
-                # Update UI
+
+                # Set default install dir if blank
+                if not install_dir:
+                    if server_type == "Steam":
+                        install_dir = os.path.join(self.steam_cmd_path, "steamapps", "common", server_name)
+                    elif server_type == "Minecraft":
+                        install_dir = os.path.join(self.server_manager_dir, "minecraft_servers", server_name)
+                    else:
+                        install_dir = os.path.join(self.server_manager_dir, "other_servers", server_name)
+                if not os.path.exists(install_dir):
+                    os.makedirs(install_dir, exist_ok=True)
+                    append_console(f"[INFO] Created installation directory: {install_dir}")
+
                 create_button.config(state=tk.DISABLED)
                 cancel_button.config(state=tk.NORMAL)
                 progress.start(10)
                 status_var.set("Installing server...")
-                
-                # Reset console
-                console_output.config(state=tk.NORMAL)
-                console_output.delete(1.0, tk.END)
-                console_output.config(state=tk.DISABLED)
-                
-                # Log basic info
-                append_console("Starting server installation...")
-                append_console(f"[INFO] SteamCmd path: {self.steam_cmd_path}")
-                append_console(f"[INFO] Server name: {server_name}")
-                append_console(f"[INFO] App ID: {app_id}")
-                
-                # Show the appropriate install directory message
-                if not install_dir:
-                    default_path = os.path.join(os.path.join(self.steam_cmd_path, "steamapps", "common"), server_name)
-                    append_console(f"[INFO] Using default install directory: {default_path}")
-                    install_dir = default_path
-                else:
-                    append_console(f"[INFO] Install directory: {install_dir}")
-                
-                # Create install directory if it doesn't exist
-                if not os.path.exists(install_dir):
-                    os.makedirs(install_dir, exist_ok=True)
-                    append_console(f"[INFO] Created installation directory: {install_dir}")
-                
-                # Prepare SteamCMD command
-                if credentials["anonymous"]:
-                    login_cmd = "+login anonymous"
-                else:
-                    login_cmd = f"+login \"{credentials['username']}\" \"{credentials['password']}\""
-                
-                steam_cmd_args = [
-                    steam_cmd_exe,
-                    login_cmd,
-                    f"+force_install_dir \"{install_dir}\"",
-                    f"+app_update {app_id} validate",
-                    "+quit"
-                ]
-                
-                append_console(f"[INFO] Running SteamCMD with command: {' '.join(steam_cmd_args)}")
-                
-                # Start installation process
-                self.install_process = subprocess.Popen(
-                    " ".join(steam_cmd_args),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    shell=True,
-                    text=True,
-                    encoding='utf-8',
-                    errors='replace'
-                )
-                
-                # Flags for tracking installation progress
-                installation_success = False
-                verification_in_progress = False
-                
-                # Monitor installation process
-                while True:
-                    # Check if cancelled
-                    if self.install_cancelled:
-                        append_console("[INFO] Installation cancelled by user")
-                        self.install_process.terminate()
-                        break
-                    
-                    # Read output line
-                    line = self.install_process.stdout.readline()
-                    if not line and self.install_process.poll() is not None:
-                        break
-                    
-                    if line:
-                        line = line.strip()
-                        append_console(line)
-                        
-                        # Track installation progress
-                        if "Success! App" in line and "fully installed" in line:
-                            installation_success = True
-                            verification_in_progress = False
-                            status_var.set("Installation complete!")
-                        
-                        elif any(marker in line for marker in ["Verifying installation", "[    ] Verifying", "Update state", "verifying"]):
-                            verification_in_progress = True
-                            
-                            # Extract progress percentage if available
-                            if "verifying install, progress:" in line:
-                                try:
-                                    progress_pct = line.split("progress:")[1].strip().split()[0]
-                                    status_var.set(f"Verifying installation: {progress_pct}%")
-                                except:
-                                    status_var.set("Verifying installation...")
-                            else:
-                                status_var.set("Verifying installation...")
-                
-                # Get error output
-                error_output = self.install_process.stderr.read()
-                if error_output:
-                    append_console("[WARN] SteamCMD Errors:")
-                    append_console(error_output)
-                
-                # Check installation result
-                exit_code = self.install_process.returncode
-                append_console(f"[INFO] SteamCMD process completed with exit code: {exit_code}")
-                
-                if exit_code != 0 and not installation_success:
-                    raise Exception(f"SteamCMD failed with exit code: {exit_code}")
-                
-                # Verify installation directory exists and contains files
-                if not os.path.exists(install_dir):
-                    raise Exception(f"Installation directory not created: {install_dir}")
-                
-                # Count files in installation directory
-                file_count = sum(len(files) for _, _, files in os.walk(install_dir))
-                append_console(f"[INFO] Installation directory contains {file_count} files/directories")
-                
-                # Create server configuration
+
+                if server_type == "Steam":
+                    # ...existing Steam install logic...
+                    # (copy from original add_server, but only for Steam)
+                    steam_cmd_exe = os.path.join(self.steam_cmd_path, "steamcmd.exe")
+                    if not os.path.exists(steam_cmd_exe):
+                        messagebox.showerror("Configuration Error", 
+                                            f"SteamCmd executable not found at: {steam_cmd_exe}\n"
+                                            "Please make sure SteamCmd is properly installed.")
+                        return
+                    append_console("Starting Steam server installation...")
+                    login_cmd = "+login anonymous" if credentials["anonymous"] else f"+login \"{credentials['username']}\" \"{credentials['password']}\""
+                    steam_cmd_args = [
+                        steam_cmd_exe,
+                        login_cmd,
+                        f"+force_install_dir \"{install_dir}\"",
+                        f"+app_update {app_id} validate",
+                        "+quit"
+                    ]
+                    append_console(f"[INFO] Running SteamCMD: {' '.join(steam_cmd_args)}")
+                    self.install_process = subprocess.Popen(
+                        " ".join(steam_cmd_args),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        shell=True,
+                        text=True,
+                        encoding='utf-8',
+                        errors='replace'
+                    )
+                    # ...existing Steam install monitoring...
+                    installation_success = False
+                    while True:
+                        if self.install_cancelled:
+                            append_console("[INFO] Installation cancelled by user")
+                            self.install_process.terminate()
+                            break
+                        line = self.install_process.stdout.readline()
+                        if not line and self.install_process.poll() is not None:
+                            break
+                        if line:
+                            line = line.strip()
+                            append_console(line)
+                            if "Success! App" in line and "fully installed" in line:
+                                installation_success = True
+                                status_var.set("Installation complete!")
+                    error_output = self.install_process.stderr.read()
+                    if error_output:
+                        append_console("[WARN] SteamCMD Errors:")
+                        append_console(error_output)
+                    exit_code = self.install_process.returncode
+                    append_console(f"[INFO] SteamCMD process completed with exit code: {exit_code}")
+                    if exit_code != 0 and not installation_success:
+                        raise Exception(f"SteamCMD failed with exit code: {exit_code}")
+                elif server_type == "Minecraft":
+                    mc_version = selected_version.get()
+                    modloader = selected_modloader.get()
+                    if modloader == "Vanilla":
+                        jar_url = self.get_minecraft_server_jar_url(mc_version, mc_versions)
+                        if not jar_url:
+                            raise Exception(f"Could not find server jar for version {mc_version}")
+                        append_console(f"[INFO] Downloading Minecraft Vanilla server {mc_version} ...")
+                        jar_path = os.path.join(install_dir, f"minecraft_server.{mc_version}.jar")
+                        urllib.request.urlretrieve(jar_url, jar_path)
+                        append_console("[INFO] Download complete.")
+                        executable_path = jar_path
+                        # Accept EULA
+                        with open(os.path.join(install_dir, "eula.txt"), "w") as f:
+                            f.write("eula=true\n")
+                        append_console("[INFO] EULA accepted.")
+                    elif modloader == "Fabric":
+                        append_console(f"[INFO] Downloading Fabric installer for {mc_version} ...")
+                        fabric_url = self.fetch_fabric_installer_url(mc_version)
+                        if not fabric_url:
+                            raise Exception("Could not fetch Fabric installer.")
+                        fabric_installer = os.path.join(install_dir, "fabric-installer.jar")
+                        urllib.request.urlretrieve(fabric_url, fabric_installer)
+                        append_console("[INFO] Fabric installer downloaded.")
+                        # Run Fabric installer
+                        cmd = [sys.executable, "-m", "subprocess", "java", "-jar", fabric_installer, "server", "-mcversion", mc_version, "-downloadMinecraft"]
+                        subprocess.run(["java", "-jar", fabric_installer, "server", "-mcversion", mc_version, "-downloadMinecraft"], cwd=install_dir)
+                        # Find fabric-server-launch.jar
+                        for fname in os.listdir(install_dir):
+                            if fname.startswith("fabric-server-launch") and fname.endswith(".jar"):
+                                executable_path = os.path.join(install_dir, fname)
+                                break
+                        else:
+                            raise Exception("Fabric server jar not found after install.")
+                        with open(os.path.join(install_dir, "eula.txt"), "w") as f:
+                            f.write("eula=true\n")
+                        append_console("[INFO] Fabric server installed and EULA accepted.")
+                    elif modloader == "Forge":
+                        append_console(f"[INFO] Downloading Forge installer for {mc_version} ...")
+                        forge_url = self.fetch_forge_installer_url(mc_version)
+                        if not forge_url:
+                            raise Exception("Could not fetch Forge installer.")
+                        forge_installer = os.path.join(install_dir, "forge-installer.jar")
+                        urllib.request.urlretrieve(forge_url, forge_installer)
+                        append_console("[INFO] Forge installer downloaded.")
+                        # Run Forge installer (server)
+                        subprocess.run(["java", "-jar", forge_installer, "--installServer"], cwd=install_dir)
+                        # Find forge jar
+                        forge_jar = None
+                        for fname in os.listdir(install_dir):
+                            if fname.startswith("forge-") and fname.endswith(".jar") and "installer" not in fname:
+                                forge_jar = os.path.join(install_dir, fname)
+                                break
+                        if not forge_jar:
+                            raise Exception("Forge server jar not found after install.")
+                        executable_path = forge_jar
+                        with open(os.path.join(install_dir, "eula.txt"), "w") as f:
+                            f.write("eula=true\n")
+                        append_console("[INFO] Forge server installed and EULA accepted.")
+                    elif modloader == "NeoForge":
+                        append_console(f"[INFO] Downloading NeoForge installer for {mc_version} ...")
+                        neoforge_url = self.fetch_neoforge_installer_url(mc_version)
+                        if not neoforge_url:
+                            raise Exception("Could not fetch NeoForge installer.")
+                        neoforge_installer = os.path.join(install_dir, "neoforge-installer.jar")
+                        urllib.request.urlretrieve(neoforge_url, neoforge_installer)
+                        append_console("[INFO] NeoForge installer downloaded.")
+                        subprocess.run(["java", "-jar", neoforge_installer, "--installServer"], cwd=install_dir)
+                        # Find neoforge jar
+                        neoforge_jar = None
+                        for fname in os.listdir(install_dir):
+                            if fname.startswith("neoforge-") and fname.endswith(".jar") and "installer" not in fname:
+                                neoforge_jar = os.path.join(install_dir, fname)
+                                break
+                        if not neoforge_jar:
+                            raise Exception("NeoForge server jar not found after install.")
+                        executable_path = neoforge_jar
+                        with open(os.path.join(install_dir, "eula.txt"), "w") as f:
+                            f.write("eula=true\n")
+                        append_console("[INFO] NeoForge server installed and EULA accepted.")
+                    else:
+                        raise Exception("Unknown mod loader selected.")
+                # Save server configuration
                 server_config = {
                     "Name": server_name,
+                    "Type": server_type,
                     "AppID": app_id,
                     "InstallDir": install_dir,
+                    "ExecutablePath": executable_path,
+                    "StartupArgs": startup_args,
                     "Created": datetime.datetime.now().isoformat(),
                     "LastUpdate": datetime.datetime.now().isoformat()
                 }
-                
-                # Create servers directory if it doesn't exist
+                if server_type == "Minecraft":
+                    server_config["Version"] = selected_version.get()
+                    server_config["ModLoader"] = selected_modloader.get()
                 os.makedirs(self.paths["servers"], exist_ok=True)
-                
-                # Save server configuration
-                config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-                with open(config_file, 'w') as f:
+                with open(server_config_path, 'w') as f:
                     json.dump(server_config, f, indent=4)
-                
-                append_console(f"[INFO] Server configuration saved to: {config_file}")
-                
-                # Save installation log
-                game_logs_path = os.path.join(self.paths["logs"], "Game_Logs")
-                os.makedirs(game_logs_path, exist_ok=True)
-                
-                log_file_path = os.path.join(game_logs_path, f"{server_name}_install.log")
-                with open(log_file_path, 'w', encoding='utf-8') as f:
-                    f.write(f"# Server Installation Log\n")
-                    f.write(f"# Server Name: {server_name}\n")
-                    f.write(f"# App ID: {app_id}\n")
-                    f.write(f"# Installation Directory: {install_dir}\n")
-                    f.write(f"# Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                    
-                    # Get console contents
-                    console_output.config(state=tk.NORMAL)
-                    log_content = console_output.get(1.0, tk.END)
-                    console_output.config(state=tk.DISABLED)
-                    
-                    f.write(log_content)
-                
-                append_console("[INFO] Installation log saved to: " + log_file_path)
-                
-                # Also save a copy in the server directory
-                server_logs_path = os.path.join(install_dir, "logs")
-                os.makedirs(server_logs_path, exist_ok=True)
-                
-                server_log_file = os.path.join(server_logs_path, "Game_Install.log")
-                with open(server_log_file, 'w', encoding='utf-8') as f:
-                    f.write(f"# Server Installation Log\n")
-                    f.write(f"# Server Name: {server_name}\n")
-                    f.write(f"# App ID: {app_id}\n")
-                    f.write(f"# Installation Directory: {install_dir}\n")
-                    f.write(f"# Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                    
-                    f.write(log_content)
-                
-                append_console("[INFO] Installation log copy saved in server directory")
-                append_console("[SUCCESS] Server created successfully")
-                
-                # Update server list
+                append_console(f"[INFO] Server configuration saved to: {server_config_path}")
                 self.update_server_list(force_refresh=True)
-                
-                # Show success message
                 messagebox.showinfo("Success", "Server created successfully!")
-                
-                # Close dialog
                 dialog.destroy()
-                
             except Exception as e:
                 logger.error(f"Error installing server: {str(e)}")
                 append_console(f"[ERROR] {str(e)}")
@@ -730,35 +819,25 @@ class ServerManagerDashboard:
                 create_button.config(state=tk.NORMAL)
                 cancel_button.config(state=tk.DISABLED)
             finally:
-                # Reset UI
                 progress.stop()
-                
-        # Create and cancel buttons
+
         button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=8, column=0, columnspan=3, padx=10, pady=10)
-        
+        button_frame.grid(row=11, column=0, columnspan=3, padx=10, pady=10)
         create_button = ttk.Button(button_frame, text="Create", width=15)
         create_button.pack(side=tk.LEFT, padx=5)
-        
         cancel_button = ttk.Button(button_frame, text="Cancel", width=15, state=tk.DISABLED)
         cancel_button.pack(side=tk.LEFT, padx=5)
-        
-        # Button commands
         def start_installation():
             installation_thread = threading.Thread(target=install_server)
             installation_thread.daemon = True
             installation_thread.start()
-            
         def cancel_installation():
             self.install_cancelled = True
             cancel_button.config(state=tk.DISABLED)
             status_var.set("Cancelling installation...")
             append_console("[INFO] Cancellation requested, stopping installation process...")
-        
         create_button.config(command=start_installation)
         cancel_button.config(command=cancel_installation)
-        
-        # Dialog close handling
         def on_close():
             if cancel_button.instate(['!disabled']):
                 result = messagebox.askyesno("Confirm Exit", 
@@ -766,21 +845,17 @@ class ServerManagerDashboard:
                                            icon=messagebox.QUESTION)
                 if result:
                     cancel_installation()
-                    # Give some time for cancellation to process
                     dialog.after(1000, dialog.destroy)
                     return
                 else:
                     return
             dialog.destroy()
-            
         dialog.protocol("WM_DELETE_WINDOW", on_close)
-        
-        # Center dialog on parent window
         dialog.update_idletasks()
         x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
         y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
         dialog.geometry(f"+{x}+{y}")
-    
+
     def remove_server(self):
         """Remove a selected game server"""
         selected_items = self.server_list.selection()
@@ -887,78 +962,60 @@ class ServerManagerDashboard:
             messagebox.showerror("Error", f"Failed to open directory: {str(e)}")
     
     def import_server(self):
-        """Import an existing server"""
+        """Import an existing server (Steam/Minecraft/Other)"""
         dialog = tk.Toplevel(self.root)
         dialog.title("Import Existing Server")
-        dialog.geometry("450x250")
+        dialog.geometry("450x300")
         dialog.transient(self.root)
         dialog.grab_set()
-        
-        # Server name
         ttk.Label(dialog, text="Server Name:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
         name_var = tk.StringVar()
         name_entry = ttk.Entry(dialog, textvariable=name_var, width=35)
         name_entry.grid(row=0, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        
-        # Server path
-        ttk.Label(dialog, text="Server Path:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
+        ttk.Label(dialog, text="Server Type:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
+        type_var = tk.StringVar(value="Other")
+        ttk.Combobox(dialog, textvariable=type_var, values=self.supported_server_types, state="readonly").grid(row=1, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+        ttk.Label(dialog, text="Server Path:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
         path_var = tk.StringVar()
         path_entry = ttk.Entry(dialog, textvariable=path_var, width=25)
-        path_entry.grid(row=1, column=1, padx=10, pady=10, sticky=tk.W)
-        
-        # Browse button
+        path_entry.grid(row=2, column=1, padx=10, pady=10, sticky=tk.W)
         def browse_directory():
             directory = filedialog.askdirectory(title="Select Server Directory")
             if directory:
                 path_var.set(directory)
-                
-        ttk.Button(dialog, text="Browse", command=browse_directory, width=10).grid(row=1, column=2, padx=5, pady=10)
-        
-        # App ID
-        ttk.Label(dialog, text="Steam AppID:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
-        app_id_var = tk.StringVar()
-        app_id_entry = ttk.Entry(dialog, textvariable=app_id_var, width=35)
-        app_id_entry.grid(row=2, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        
-        # Executable Path
+        ttk.Button(dialog, text="Browse", command=browse_directory, width=10).grid(row=2, column=2, padx=5, pady=10)
         ttk.Label(dialog, text="Executable Path:").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
         exec_path_var = tk.StringVar()
         exec_path_entry = ttk.Entry(dialog, textvariable=exec_path_var, width=35)
         exec_path_entry.grid(row=3, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        
-        # Import button
+        ttk.Label(dialog, text="Startup Args:").grid(row=4, column=0, padx=10, pady=10, sticky=tk.W)
+        args_var = tk.StringVar()
+        args_entry = ttk.Entry(dialog, textvariable=args_var, width=35)
+        args_entry.grid(row=4, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
         def do_import():
             try:
                 server_name = name_var.get().strip()
+                server_type = type_var.get()
                 server_path = path_var.get().strip()
-                app_id = app_id_var.get().strip()
                 exec_path = exec_path_var.get().strip()
-                
-                # Validate inputs
-                if not server_name or not server_path or not app_id:
-                    messagebox.showerror("Error", "Server name, path and AppID are required fields.")
+                startup_args = args_var.get().strip()
+                if not server_name or not server_path:
+                    messagebox.showerror("Error", "Server name and path are required fields.")
                     return
-                    
-                # Validate path exists
                 if not os.path.exists(server_path):
                     messagebox.showerror("Error", "The specified server path does not exist.")
                     return
-                
-                # Create server configuration
                 server_config = {
                     "Name": server_name,
+                    "Type": server_type,
                     "InstallDir": server_path,
-                    "AppID": app_id,
                     "ExecutablePath": exec_path,
+                    "StartupArgs": startup_args,
                     "Created": datetime.datetime.now().isoformat(),
                     "LastUpdate": datetime.datetime.now().isoformat(),
                     "Imported": True
                 }
-                
-                # Create servers directory if it doesn't exist
                 os.makedirs(self.paths["servers"], exist_ok=True)
-                
-                # Check if server already exists
                 config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
                 if os.path.exists(config_file):
                     result = messagebox.askyesno("Warning", 
@@ -966,25 +1023,16 @@ class ServerManagerDashboard:
                                                icon=messagebox.WARNING)
                     if not result:
                         return
-                
-                # Save server configuration
                 with open(config_file, 'w') as f:
                     json.dump(server_config, f, indent=4)
-                    
-                # Update server list
                 self.update_server_list(force_refresh=True)
-                
                 messagebox.showinfo("Success", "Server imported successfully!")
                 dialog.destroy()
-                
             except Exception as e:
                 logger.error(f"Error importing server: {str(e)}")
                 messagebox.showerror("Error", f"Failed to import server: {str(e)}")
-        
         import_button = ttk.Button(dialog, text="Import", command=do_import, width=15)
-        import_button.grid(row=4, column=0, columnspan=3, padx=10, pady=20)
-        
-        # Center dialog on parent window
+        import_button.grid(row=5, column=0, columnspan=3, padx=10, pady=20)
         dialog.update_idletasks()
         x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
         y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
@@ -1549,145 +1597,97 @@ class ServerManagerDashboard:
         self.root.destroy()
 
     def start_server(self):
-        """Start the selected game server"""
+        """Start the selected game server (Steam/Minecraft/Other)"""
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
-            
         server_name = self.server_list.item(selected_items[0])['values'][0]
-        
-        try:
-            # Get server config file path
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-            
-            if not os.path.exists(config_file):
-                messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
-                return
-                
-            # Read server configuration
-            with open(config_file, 'r') as f:
-                server_config = json.load(f)
-                
-            # Check if server is already running
-            if 'ProcessId' in server_config and self.is_process_running(server_config['ProcessId']):
-                messagebox.showinfo("Already Running", f"Server '{server_name}' is already running with PID {server_config['ProcessId']}.")
-                return
-                
-            # Check for executable path
-            if 'ExecutablePath' not in server_config or not server_config['ExecutablePath']:
-                # No executable path specified, show configuration dialog
-                messagebox.showinfo("Configuration Needed", 
-                                    "No executable specified. Please configure the server startup settings.")
-                self.configure_server()
-                return
-                
-            executable_path = server_config['ExecutablePath']
-            install_dir = server_config.get('InstallDir', '')
-            
-            # Validate executable path
-            if not os.path.exists(os.path.join(install_dir, executable_path)) and not os.path.exists(executable_path):
-                messagebox.showerror("Error", f"Executable not found: {executable_path}")
-                return
-                
-            # Get startup arguments if available
-            startup_args = server_config.get('StartupArgs', '')
-            
-            # Build the command
-            if executable_path.lower().endswith(('.bat', '.cmd')):
-                # For batch files, use call to ensure we don't block
-                cmd = f'start "" /D "{install_dir}" cmd /c "{executable_path}" {startup_args}'
-                shell = True
-            elif executable_path.lower().endswith('.sh') and sys.platform != 'win32':
-                # For shell scripts on non-Windows platforms
-                cmd = ['/bin/sh', executable_path]
-                if startup_args:
-                    cmd.extend(startup_args.split())
-                shell = False
+        config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+        if not os.path.exists(config_file):
+            messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
+            return
+        with open(config_file, 'r') as f:
+            server_config = json.load(f)
+        if 'ProcessId' in server_config and self.is_process_running(server_config['ProcessId']):
+            messagebox.showinfo("Already Running", f"Server '{server_name}' is already running with PID {server_config['ProcessId']}.")
+            return
+        server_type = server_config.get("Type", "Other")
+        install_dir = server_config.get('InstallDir', '')
+        executable_path = server_config.get('ExecutablePath', '')
+        startup_args = server_config.get('StartupArgs', '')
+        if not executable_path:
+            messagebox.showinfo("Configuration Needed", "No executable specified. Please configure the server startup settings.")
+            self.configure_server()
+            return
+        # Resolve executable path
+        exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
+        if not os.path.exists(exe_full):
+            messagebox.showerror("Error", f"Executable not found: {exe_full}")
+            return
+        # Build command
+        if server_type == "Minecraft":
+            cmd = f'java -Xmx1024M -Xms1024M -jar "{exe_full}" nogui {startup_args}'
+            shell = True
+        elif exe_full.lower().endswith(('.bat', '.cmd')):
+            cmd = f'start "" /D "{install_dir}" cmd /c "{exe_full}" {startup_args}'
+            shell = True
+        elif exe_full.lower().endswith('.sh') and sys.platform != 'win32':
+            cmd = ['/bin/sh', exe_full] + (startup_args.split() if startup_args else [])
+            shell = False
+        else:
+            cmd = f'"{exe_full}" {startup_args}'
+            shell = True
+        # ...existing log setup...
+        server_logs_dir = os.path.join(install_dir, "logs")
+        os.makedirs(server_logs_dir, exist_ok=True)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        stdout_log = os.path.join(server_logs_dir, f"server_stdout_{timestamp}.log")
+        stderr_log = os.path.join(server_logs_dir, f"server_stderr_{timestamp}.log")
+        logger.info(f"Starting server: {server_name} with command: {cmd}")
+        self.update_server_status(server_name, "Starting...")
+        with open(stdout_log, 'a') as stdout_file, open(stderr_log, 'a') as stderr_file:
+            start_time = datetime.datetime.now()
+            time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+            stdout_file.write(f"\n--- Server started at {time_str} ---\n")
+            stdout_file.write(f"Command: {cmd}\n\n")
+            if shell:
+                process = subprocess.Popen(
+                    cmd,
+                    shell=True,
+                    cwd=install_dir,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
+                )
             else:
-                # For regular executables
-                cmd = f'"{executable_path}" {startup_args}'
-                shell = True
-                
-            # Create logs directory if it doesn't exist
-            server_logs_dir = os.path.join(install_dir, "logs")
-            os.makedirs(server_logs_dir, exist_ok=True)
-            
-            # Set up log files with timestamp
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            stdout_log = os.path.join(server_logs_dir, f"server_stdout_{timestamp}.log")
-            stderr_log = os.path.join(server_logs_dir, f"server_stderr_{timestamp}.log")
-            
-            # Start the process
-            logger.info(f"Starting server: {server_name} with command: {cmd}")
-            
-            # Update status in UI temporarily
-            self.update_server_status(server_name, "Starting...")
-            
-            # Open log files
-            with open(stdout_log, 'a') as stdout_file, open(stderr_log, 'a') as stderr_file:
-                # Write startup timestamp
-                start_time = datetime.datetime.now()
-                time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
-                stdout_file.write(f"\n--- Server started at {time_str} ---\n")
-                stdout_file.write(f"Command: {cmd}\n\n")
-                
-                # Start the process
-                if shell:
-                    process = subprocess.Popen(
-                        cmd,
-                        shell=True,
-                        cwd=install_dir,
-                        stdout=stdout_file,
-                        stderr=stderr_file,
-                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
-                    )
-                else:
-                    process = subprocess.Popen(
-                        cmd,
-                        cwd=install_dir,
-                        stdout=stdout_file,
-                        stderr=stderr_file,
-                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
-                    )
-                
-            # Wait a moment to ensure process started
-            time.sleep(1)
-            
-            # Verify process is still running
-            if not psutil.pid_exists(process.pid):
-                messagebox.showerror("Start Failed", f"Server process terminated immediately after starting. Check logs at {stderr_log}")
-                return
-                
-            # Initialize process statistics
-            self.variables["processStatHistory"][process.pid] = {
-                "cpu": [],
-                "memory": [],
-                "timestamps": []
-            }
-                
-            # Update server configuration with process ID
-            server_config['ProcessId'] = process.pid
-            server_config['StartTime'] = start_time.isoformat()
-            server_config['LastUpdate'] = datetime.datetime.now().isoformat()
-            server_config['LogStdout'] = stdout_log
-            server_config['LogStderr'] = stderr_log
-            
-            # Save updated configuration
-            with open(config_file, 'w') as f:
-                json.dump(server_config, f, indent=4)
-                
-            # Update server list
-            self.update_server_list(force_refresh=True)
-            
-            messagebox.showinfo("Success", f"Server '{server_name}' started successfully with PID {process.pid}.")
-            
-        except Exception as e:
-            logger.error(f"Error starting server: {str(e)}")
-            messagebox.showerror("Error", f"Failed to start server: {str(e)}")
-    
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=install_dir,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
+                )
+        time.sleep(1)
+        if not psutil.pid_exists(process.pid):
+            messagebox.showerror("Start Failed", f"Server process terminated immediately after starting. Check logs at {stderr_log}")
+            return
+        self.variables["processStatHistory"][process.pid] = {
+            "cpu": [], "memory": [], "timestamps": []
+        }
+        server_config['ProcessId'] = process.pid
+        server_config['StartTime'] = start_time.isoformat()
+        server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+        server_config['LogStdout'] = stdout_log
+        server_config['LogStderr'] = stderr_log
+        with open(config_file, 'w') as f:
+            json.dump(server_config, f, indent=4)
+        self.update_server_list(force_refresh=True)
+        messagebox.showinfo("Success", f"Server '{server_name}' started successfully with PID {process.pid}.")
+
     def stop_server(self):
         """Stop the selected game server"""
+
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -1859,9 +1859,6 @@ class ServerManagerDashboard:
             logger.error(f"Error stopping server: {str(e)}")
             messagebox.showerror("Error", f"Failed to stop server: {str(e)}")
     
-       
-    
-       
     def restart_server(self):
         """Restart the selected game server"""
         selected_items = self.server_list.selection()
@@ -2309,11 +2306,11 @@ class ServerManagerDashboard:
 def main():
     # Parse command line arguments
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Server Manager Dashboard')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     args = parser.parse_args()
-    
+
     # Create and run dashboard
     dashboard = ServerManagerDashboard(debug_mode=args.debug)
     dashboard.run()

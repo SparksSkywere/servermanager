@@ -12,3 +12,4 @@ pillow
 sqlalchemy
 pyodbc
 pyotp
+vdf
