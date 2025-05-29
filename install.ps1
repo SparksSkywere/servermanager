@@ -1,8 +1,22 @@
+# --- Hide console and relaunch as WinForms GUI if needed ---
 Add-Type -AssemblyName System.Windows.Forms
+
+# Relaunch in hidden window if not already
+if ($Host.Name -eq 'ConsoleHost' -and !$env:SERVERMANAGER_INSTALLER_GUI) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "powershell.exe"
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File `"$($MyInvocation.MyCommand.Path)`""
+    $psi.UseShellExecute = $true
+    $psi.EnvironmentVariables["SERVERMANAGER_INSTALLER_GUI"] = "1"
+    [System.Diagnostics.Process]::Start($psi) | Out-Null
+    exit
+}
+
+# --- Main installer script ---
 
 # Define global variables first
 $global:logMemory = @()
-$global:logFilePath = $null
+$global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Install-Log.txt"
 $CurrentVersion = "0.3"
 $steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
@@ -264,13 +278,13 @@ function Initialize-SQLDatabase {
         [string]$SQLLocation,
         [string]$DataFolder
     )
-    Write-Host "Setting up SQL database..."
+    Write-Log "Setting up SQL database..."
 
     if ($SQLType -eq "SQLite") {
         $dbFile = Join-Path $DataFolder "users.db"
         $global:SQLDatabaseFile = $dbFile
         if (-not (Test-Path $dbFile)) {
-            Write-Host "Creating SQLite database at $dbFile"
+            Write-Log "Creating SQLite database at $dbFile"
             # Use Python to create the DB and table for cross-platform compatibility
             $pythonScript = @"
 import sqlite3
@@ -345,7 +359,7 @@ conn.close()
                 try {
                     & $sqlcmd -S $q.server -Q $query 2>$null
                     if ($LASTEXITCODE -eq 0) {
-                        Write-Host "Ensured SQL Server database '$dbName' exists on instance $($q.desc)"
+                        Write-Log "Ensured SQL Server database '$dbName' exists on instance $($q.desc)"
                         $success = $true
                         # Now ensure the users table exists and is up-to-date
                         $tableQuery = @"
@@ -379,12 +393,12 @@ END
                 } catch {}
             }
             if (-not $success) {
-                Write-Host "Could not create or verify SQL Server database '$dbName' on any tested instance. Please ensure permissions and connectivity." -ForegroundColor Yellow
-                Write-Host "TIP: Make sure the SQL Server instance is running, TCP/IP is enabled, and your user has permission to create databases."
-                Write-Host "You can also try running this installer as an administrator, or manually create the database named '$dbName' in SQL Server Management Studio."
+                Write-Log "Could not create or verify SQL Server database '$dbName' on any tested instance. Please ensure permissions and connectivity." -ForegroundColor Yellow
+                Write-Log "TIP: Make sure the SQL Server instance is running, TCP/IP is enabled, and your user has permission to create databases."
+                Write-Log "You can also try running this installer as an administrator, or manually create the database named '$dbName' in SQL Server Management Studio."
             }
         } else {
-            Write-Host "sqlcmd.exe not found. Please ensure SQL Server command line tools are installed." -ForegroundColor Yellow
+            Write-Log "sqlcmd.exe not found. Please ensure SQL Server command line tools are installed." -ForegroundColor Yellow
         }
         return $SQLLocation
     }
@@ -465,15 +479,15 @@ function New-Servermanager {
     )
     if (-Not (Test-Path -Path $dir)) {
         try {
-            Write-Host "Directory does not exist, creating: $dir"
+            Write-Log "Directory does not exist, creating: $dir"
             New-Item -ItemType Directory -Force -Path $dir
-            Write-Host "Successfully created directory: $dir"
+            Write-Log "Successfully created directory: $dir"
         } catch {
-            Write-Host "Failed to create directory: $($_.Exception.Message)"
+            Write-Log "Failed to create directory: $($_.Exception.Message)"
             throw
         }
     } else {
-        Write-Host "Directory already exists: $dir"
+        Write-Log "Directory already exists: $dir"
     }
 }
 
@@ -482,11 +496,8 @@ function Write-Log {
     param (
         [string]$message
     )
-
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $logMessage = "$timestamp - $message"
-    
-    # Store the log message in memory
     $global:logMemory += $logMessage
 }
 
@@ -495,30 +506,19 @@ function Write-LogToFile {
     param (
         [string]$logFilePath
     )
-
-    if (-not $logFilePath) {
-        Write-Host "Log file path is not set. Cannot write log."
-        return
-    }
-
+    if (-not $logFilePath) { return }
     try {
-        # Write each log entry stored in memory to the log file
         foreach ($logMessage in $global:logMemory) {
             Add-Content -Path $logFilePath -Value $logMessage
         }
-        Write-Host "Log successfully written to file: $logFilePath"
-    } catch {
-        Write-Host "Failed to write to log file: $($_.Exception.Message)"
-    }
-
-    # Clear the in-memory log after flushing
+    } catch {}
     $global:logMemory = @()
 }
 
 # Function to check and install Git if missing
 function Install-Git {
     if (-Not (Get-Command git -ErrorAction SilentlyContinue)) {
-        Write-Host "Git is not installed. Installing Git..."
+        Write-Log "Git is not installed. Installing Git..."
         try {
             # Use a more reliable Git download URL
             $installerUrl = "https://api.github.com/repos/git-for-windows/git/releases/latest"
@@ -526,10 +526,10 @@ function Install-Git {
             $installerUrl = ($latestRelease.assets | Where-Object { $_.name -like "*64-bit.exe" }).browser_download_url
             $installerPath = Join-Path $env:TEMP "git-installer.exe"
 
-            Write-Host "Downloading Git installer..."
+            Write-Log "Downloading Git installer..."
             Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
 
-            Write-Host "Running Git installer..."
+            Write-Log "Running Git installer..."
             Start-Process -FilePath $installerPath -ArgumentList "/VERYSILENT /NORESTART" -Wait
 
             # Verify installation
@@ -538,14 +538,14 @@ function Install-Git {
                 throw "Git installation failed verification"
             }
 
-            Write-Host "Git installation completed."
+            Write-Log "Git installation completed."
             Remove-Item -Path $installerPath -Force
         } catch {
-            Write-Host "Failed to install Git: $($_.Exception.Message)"
+            Write-Log "Failed to install Git: $($_.Exception.Message)"
             exit 1
         }
     } else {
-        Write-Host "Git is already installed."
+        Write-Log "Git is already installed."
     }
 }
 
@@ -556,7 +556,7 @@ function Select-FolderDialog {
     $dialog.ShowNewFolderButton = $true
     [void]$dialog.ShowDialog()
     if ($null -eq $dialog.SelectedPath) {
-        Write-Host "No directory selected, exiting..."
+        Write-Log "No directory selected, exiting..."
         exit
     }
     return $dialog.SelectedPath
@@ -567,18 +567,18 @@ function Update-SteamCmd {
     param (
         [string]$steamCmdPath
     )
-    Write-Host "Running SteamCMD update..."
+    Write-Log "Running SteamCMD update..."
     try {
         if (Test-Path $steamCmdPath) {
-            Write-Host "SteamCMD executable found at $steamCmdPath"
+            Write-Log "SteamCMD executable found at $steamCmdPath"
             Start-Process -FilePath $steamCmdPath -ArgumentList "+login anonymous +quit" -NoNewWindow -Wait
-            Write-Host "SteamCMD updated successfully."
+            Write-Log "SteamCMD updated successfully."
         } else {
-            Write-Host "SteamCMD executable not found. Cannot run update."
+            Write-Log "SteamCMD executable not found. Cannot run update."
             exit
         }
     } catch {
-        Write-Host "Failed to update SteamCMD: $($_.Exception.Message)"
+        Write-Log "Failed to update SteamCMD: $($_.Exception.Message)"
     }
 }
 
@@ -589,23 +589,23 @@ function Initialize-GitRepo {
         [string]$destination
     )
     
-    Write-Host "Initializing Git repository at $destination"
+    Write-Log "Initializing Git repository at $destination"
     try {
         if (Get-Command git -ErrorAction SilentlyContinue) {
             if (Test-Path $destination) {
-                Write-Host "Removing existing directory..."
+                Write-Log "Removing existing directory..."
                 Remove-Item -Path $destination -Recurse -Force
             }
             
-            Write-Host "Cloning repository..."
+            Write-Log "Cloning repository..."
             git clone $repoUrl $destination
-            Write-Host "Git repository successfully cloned."
+            Write-Log "Git repository successfully cloned."
         } else {
-            Write-Host "Git is not installed or not found in the PATH."
+            Write-Log "Git is not installed or not found in the PATH."
             exit
         }
     } catch {
-        Write-Host "Failed to clone Git repository: $($_.Exception.Message)"
+        Write-Log "Failed to clone Git repository: $($_.Exception.Message)"
         throw
     }
 }
@@ -618,9 +618,9 @@ function New-AppIDFile {
     $appIDFile = Join-Path $serverManagerDir "AppID.txt"
     if (-Not (Test-Path $appIDFile)) {
         New-Item -Path $appIDFile -ItemType File
-        Write-Host "Created AppID.txt file."
+        Write-Log "Created AppID.txt file."
     } else {
-        Write-Host "AppID.txt file already exists."
+        Write-Log "AppID.txt file already exists."
     }
 }
 
@@ -628,7 +628,7 @@ function New-AppIDFile {
 function Install-RequiredModules {
     param([string]$ServerManagerDir)
     
-    Write-Host "Installing required PowerShell modules..." -ForegroundColor Cyan
+    Write-Log "Installing required PowerShell modules..." -ForegroundColor Cyan
     
     try {
         $modulesPath = Join-Path $ServerManagerDir "Modules"
@@ -653,30 +653,30 @@ function Install-RequiredModules {
             $modulePath = Join-Path $modulesPath "$moduleName.psm1"
             if (Test-Path $modulePath) {
                 try {
-                    Write-Host "Importing installation module: $moduleName"
+                    Write-Log "Importing installation module: $moduleName"
                     Import-Module -Name $modulePath -Force -Global -ErrorAction Stop
                     $successCount++
                 } catch {
-                    Write-Host "Error importing module $moduleName : $($_.Exception.Message)" -ForegroundColor Red
-                    Write-Host "Full Error: $($_)" -ForegroundColor Red
+                    Write-Log "Error importing module $moduleName : $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Log "Full Error: $($_)" -ForegroundColor Red
                 }
             } else {
-                Write-Host "Critical module not found: $modulePath" -ForegroundColor Red
+                Write-Log "Critical module not found: $modulePath" -ForegroundColor Red
                 return $false
             }
         }
 
         # Verify core modules were loaded
         if ($successCount -ne $installModules.Count) {
-            Write-Host "Not all required installation modules were loaded." -ForegroundColor Red
+            Write-Log "Not all required installation modules were loaded." -ForegroundColor Red
             return $false
         }
 
-        Write-Host "Successfully loaded installation modules." -ForegroundColor Green
+        Write-Log "Successfully loaded installation modules." -ForegroundColor Green
         return $true
     }
     catch {
-        Write-Host "Module installation error: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Log "Module installation error: $($_.Exception.Message)" -ForegroundColor Red
         return $false
     }
 }
@@ -732,11 +732,11 @@ function Initialize-EncryptionKey {
             Set-Acl $keyFile $acl
         }
         
-        Write-Host "Encryption key setup completed successfully" -ForegroundColor Green
+        Write-Log "Encryption key setup completed successfully" -ForegroundColor Green
         return $true
     }
     catch {
-        Write-Host "Failed to initialize encryption key: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Log "Failed to initialize encryption key: $($_.Exception.Message)" -ForegroundColor Red
         return $false
     }
 }
@@ -772,7 +772,7 @@ function Set-InitialAuthConfig {
         do {
             $adminUser = Read-Host "Enter root admin username (minimum 4 characters)"
             if ($adminUser.Length -lt 4) {
-                Write-Host "Username must be at least 4 characters long" -ForegroundColor Red
+                Write-Log "Username must be at least 4 characters long" -ForegroundColor Red
             }
         } while ($adminUser.Length -lt 4)
 
@@ -786,12 +786,12 @@ function Set-InitialAuthConfig {
                 [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPassConfirm))
             
             if ($passPlain.Length -lt 12) {
-                Write-Host "Password must be at least 12 characters long" -ForegroundColor Red
+                Write-Log "Password must be at least 12 characters long" -ForegroundColor Red
                 continue
             }
             
             if ($passPlain -ne $passConfirmPlain) {
-                Write-Host "Passwords do not match. Please try again." -ForegroundColor Red
+                Write-Log "Passwords do not match. Please try again." -ForegroundColor Red
             }
             
             # Clear sensitive data
@@ -849,7 +849,7 @@ function Set-InitialAuthConfig {
         Protect-ConfigFile -FilePath $adminConfigFile | Out-Null
         
         Write-Log "Authentication configuration completed successfully"
-        Write-Host "`nAdmin account created successfully with username: $adminUser" -ForegroundColor Green
+        Write-Log "`nAdmin account created successfully with username: $adminUser" -ForegroundColor Green
         
         return $true
     }
@@ -901,7 +901,7 @@ function Test-RegistryAccess {
         Remove-Item -Path $testPath -Force
         return $true
     } catch {
-        Write-Host "Registry access test failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Log "Registry access test failed: $($_.Exception.Message)" -ForegroundColor Yellow
         return $false
     }
 }
@@ -909,7 +909,7 @@ function Test-RegistryAccess {
 # Add function to ensure admin elevation
 function Test-AdminPrivileges {
     if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Host "Requesting administrative privileges..." -ForegroundColor Yellow
+        Write-Log "Requesting administrative privileges..." -ForegroundColor Yellow
         $arguments = "& '" + $MyInvocation.MyCommand.Path + "'"
         Start-Process powershell -Verb RunAs -ArgumentList $arguments
         exit
@@ -968,11 +968,11 @@ function Test-Python310 {
 }
 
 function Install-Python310 {
-    Write-Host "Python 3.10 (64-bit) not found. Downloading and installing Python 3.10 (64-bit)..."
+    Write-Log "Python 3.10 (64-bit) not found. Downloading and installing Python 3.10 (64-bit)..."
     $pythonInstallerUrl = "https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe"
     $installerPath = Join-Path $env:TEMP "python-3.10.11-amd64.exe"
     Invoke-WebRequest -Uri $pythonInstallerUrl -OutFile $installerPath
-    Write-Host "Running Python installer..."
+    Write-Log "Running Python installer..."
     Start-Process -FilePath $installerPath -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0" -Wait
     Remove-Item $installerPath -Force
     # Refresh environment variables for current session
@@ -981,23 +981,23 @@ function Install-Python310 {
 
 function Install-PythonRequirements {
     param([string]$RequirementsPath)
-    Write-Host "Installing Python requirements using pip..." -ForegroundColor Cyan
+    Write-Log "Installing Python requirements using pip..." -ForegroundColor Cyan
     if (-not (Test-Path $RequirementsPath)) {
-        Write-Host "Python requirements.txt not found at: $RequirementsPath" -ForegroundColor Yellow
+        Write-Log "Python requirements.txt not found at: $RequirementsPath" -ForegroundColor Yellow
         return $false
     }
     $python = Get-Command python -ErrorAction SilentlyContinue
     if (-not $python) {
-        Write-Host "Python not found in PATH after install. Please restart your shell and try again." -ForegroundColor Red
+        Write-Log "Python not found in PATH after install. Please restart your shell and try again." -ForegroundColor Red
         return $false
     }
     $pipInstall = & python -m pip install --upgrade pip
     $pipReq = & python -m pip install -r $RequirementsPath
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "Failed to install Python requirements." -ForegroundColor Red
+        Write-Log "Failed to install Python requirements." -ForegroundColor Red
         return $false
     }
-    Write-Host "Python requirements installed successfully." -ForegroundColor Green
+    Write-Log "Python requirements installed successfully." -ForegroundColor Green
     return $true
 }
 
@@ -1037,7 +1037,7 @@ function Protect-ConfigFile {
         [string]$FilePath
     )
     if (-not (Test-Path $FilePath)) {
-        Write-Host "File not found: $FilePath" -ForegroundColor Yellow
+        Write-Log "File not found: $FilePath" -ForegroundColor Yellow
         return $false
     }
     try {
@@ -1062,11 +1062,80 @@ function Protect-ConfigFile {
         $acl.AddAccessRule($adminRule)
 
         Set-Acl -Path $FilePath -AclObject $acl
-        Write-Host "Protected config file: $FilePath" -ForegroundColor Green
+        Write-Log "Protected config file: $FilePath" -ForegroundColor Green
         return $true
     } catch {
-        Write-Host "Failed to protect config file: $FilePath - $($_.Exception.Message)" -ForegroundColor Red
+        Write-Log "Failed to protect config file: $FilePath - $($_.Exception.Message)" -ForegroundColor Red
         return $false
+    }
+}
+
+# --- Host/Subhost selection ---
+function Get-HostTypeOptions {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Cluster Role Selection"
+    $form.Size = New-Object System.Drawing.Size(400,180)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = "Select the role for this machine in the cluster:"
+    $label.Location = New-Object System.Drawing.Point(20,20)
+    $label.Size = New-Object System.Drawing.Size(350,20)
+    $form.Controls.Add($label)
+
+    $hostRadio = New-Object System.Windows.Forms.RadioButton
+    $hostRadio.Text = "Host (Master)"
+    $hostRadio.Location = New-Object System.Drawing.Point(40,50)
+    $hostRadio.Size = New-Object System.Drawing.Size(150,20)
+    $hostRadio.Checked = $true
+    $form.Controls.Add($hostRadio)
+
+    $subhostRadio = New-Object System.Windows.Forms.RadioButton
+    $subhostRadio.Text = "Subhost (Slave/Agent)"
+    $subhostRadio.Location = New-Object System.Drawing.Point(200,50)
+    $subhostRadio.Size = New-Object System.Drawing.Size(150,20)
+    $form.Controls.Add($subhostRadio)
+
+    $hostAddrLabel = New-Object System.Windows.Forms.Label
+    $hostAddrLabel.Text = "Host Address (for Subhost):"
+    $hostAddrLabel.Location = New-Object System.Drawing.Point(40,80)
+    $hostAddrLabel.Size = New-Object System.Drawing.Size(180,20)
+    $hostAddrLabel.Visible = $false
+    $form.Controls.Add($hostAddrLabel)
+
+    $hostAddrBox = New-Object System.Windows.Forms.TextBox
+    $hostAddrBox.Location = New-Object System.Drawing.Point(220,80)
+    $hostAddrBox.Size = New-Object System.Drawing.Size(140,20)
+    $hostAddrBox.Visible = $false
+    $form.Controls.Add($hostAddrBox)
+
+    $okButton = New-Object System.Windows.Forms.Button
+    $okButton.Text = "Continue"
+    $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $okButton.Location = New-Object System.Drawing.Point(150,120)
+    $form.Controls.Add($okButton)
+    $form.AcceptButton = $okButton
+
+    $subhostRadio.Add_CheckedChanged({
+        if ($subhostRadio.Checked) {
+            $hostAddrLabel.Visible = $true
+            $hostAddrBox.Visible = $true
+        } else {
+            $hostAddrLabel.Visible = $false
+            $hostAddrBox.Visible = $false
+        }
+    })
+
+    $result = $form.ShowDialog()
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+        $role = if ($hostRadio.Checked) { "Host" } else { "Subhost" }
+        $hostAddr = if ($subhostRadio.Checked) { $hostAddrBox.Text } else { $null }
+        return @{ HostType = $role; HostAddress = $hostAddr }
+    } else {
+        return $null
     }
 }
 
@@ -1074,14 +1143,21 @@ function Protect-ConfigFile {
 try {
     Test-AdminPrivileges
 
+    # --- Host/Subhost selection ---
+    $hostTypeOptions = Get-HostTypeOptions
+    if (-not $hostTypeOptions) {
+        Write-Log "Installation cancelled by user." -ForegroundColor Yellow
+        exit 0
+    }
+
     # Check for existing installation and prompt for reinstall
     if (Test-ExistingInstallation -RegPath $registryPath) {
         if (-not (Prompt-Reinstall)) {
-            Write-Host "Installation cancelled by user." -ForegroundColor Yellow
+            Write-Log "Installation cancelled by user." -ForegroundColor Yellow
             exit 0
         }
         else {
-            Write-Host "Proceeding with reinstall. Existing settings will be overwritten." -ForegroundColor Yellow
+            Write-Log "Proceeding with reinstall. Existing settings will be overwritten." -ForegroundColor Yellow
         }
     }
 
@@ -1089,7 +1165,7 @@ try {
     if (-not (Test-Python310)) {
         Install-Python310
         if (-not (Test-Python310)) {
-            Write-Host "Python 3.10 (64-bit) installation failed or not detected in PATH." -ForegroundColor Red
+            Write-Log "Python 3.10 (64-bit) installation failed or not detected in PATH." -ForegroundColor Red
             exit 1
         }
     }
@@ -1127,6 +1203,10 @@ try {
         'WebPort' = '8080'
         'ModulePath' = "$ServerManagerDir\Modules"
         'LogPath' = "$ServerManagerDir\logs"
+        'HostType' = $hostTypeOptions.HostType
+    }
+    if ($hostTypeOptions.HostType -eq "Subhost" -and $hostTypeOptions.HostAddress) {
+        $registryValues['HostAddress'] = $hostTypeOptions.HostAddress
     }
 
     New-Item -Path "HKLM:\Software\SkywereIndustries" -Force | Out-Null
@@ -1324,8 +1404,7 @@ except Exception as e:
     Show-CompletionDialog
 }
 catch {
-    Write-Host "Installation failed: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Log "Installation failed: $($_.Exception.Message)"
+    Write-Log "[ERROR] Installation failed: $($_.Exception.Message)"
     if (Test-Path (Split-Path $global:logFilePath -Parent)) {
         Write-LogToFile -logFilePath $global:logFilePath
     }

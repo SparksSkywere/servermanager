@@ -20,6 +20,7 @@ from PIL import Image, ImageTk
 import ctypes
 import urllib.request
 import urllib.error
+import requests
 
 # Try to import required libraries, install if not present
 try:
@@ -95,6 +96,12 @@ class ServerManagerDashboard:
         self.start_timers()
         
         self.supported_server_types = ["Steam", "Minecraft", "Other"]
+        
+        self.api_url = f"http://localhost:{self.variables['webserverPort']}/api/tracker/servers"
+        self.api_token = None  # Set after login
+        
+        # Prompt for login and set self.api_token
+        self.api_login()
         
     def configure_file_logging(self):
         """Set up logging to file"""
@@ -856,272 +863,33 @@ class ServerManagerDashboard:
         y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
         dialog.geometry(f"+{x}+{y}")
 
-    def remove_server(self):
-        """Remove a selected game server"""
-        selected_items = self.server_list.selection()
-        if not selected_items:
-            messagebox.showinfo("No Selection", "Please select a server first.")
-            return
-            
-        server_name = self.server_list.item(selected_items[0])['values'][0]
-        
-        # Confirm removal
-        confirm = messagebox.askyesno("Confirm Removal", 
-                                     f"Are you sure you want to remove the server '{server_name}'?",
-                                     icon=messagebox.WARNING)
-        
-        if not confirm:
-            return
-            
-        try:
-            # Get server config file path
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-            
-            if os.path.exists(config_file):
-                # Read server configuration
-                with open(config_file, 'r') as f:
-                    server_config = json.load(f)
-                    
-                # Check if server has a process ID registered
-                if 'ProcessId' in server_config:
-                    try:
-                        process_id = server_config['ProcessId']
-                        # Check if process is running
-                        if psutil.pid_exists(process_id):
-                            process = psutil.Process(process_id)
-                            process.terminate()
-                            logger.info(f"Terminated server process with PID {process_id}")
-                    except Exception as e:
-                        logger.warning(f"Failed to stop server process: {str(e)}")
-                
-                # Remove configuration file
-                os.remove(config_file)
-                logger.info(f"Removed server configuration file: {config_file}")
-                
-                # Update server list
-                self.update_server_list(force_refresh=True)
-                
-                messagebox.showinfo("Success", "Server removed successfully.")
-            else:
-                messagebox.showinfo("Not Found", f"Server configuration file not found: {config_file}")
-        except Exception as e:
-            logger.error(f"Error removing server: {str(e)}")
-            messagebox.showerror("Error", f"Failed to remove server: {str(e)}")
-    
-    def open_server_directory(self):
-        """Open the directory of a selected server"""
-        selected_items = self.server_list.selection()
-        if not selected_items:
-            messagebox.showinfo("No Selection", "Please select a server first.")
-            return
-            
-        server_name = self.server_list.item(selected_items[0])['values'][0]
-        
-        try:
-            # Get server config file path
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-            
-            if not os.path.exists(config_file):
-                messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
-                return
-                
-            # Read server configuration
-            with open(config_file, 'r') as f:
-                server_config = json.load(f)
-                
-            # Get installation directory
-            if 'InstallDir' not in server_config:
-                messagebox.showerror("Error", "Installation directory not specified in server configuration.")
-                return
-                
-            install_dir = server_config['InstallDir']
-            
-            # Check if directory exists
-            if not os.path.exists(install_dir):
-                result = messagebox.askyesno("Directory Not Found", 
-                                          f"The installation directory does not exist: {install_dir}\n\nDo you want to create it?",
-                                          icon=messagebox.WARNING)
-                
-                if result:
-                    os.makedirs(install_dir, exist_ok=True)
+    def api_login(self):
+        """Prompt for login and obtain API token"""
+        from tkinter.simpledialog import askstring
+        while True:
+            username = askstring("Login", "Username:")
+            password = askstring("Login", "Password:", show="*")
+            if not username or not password:
+                messagebox.showerror("Login Required", "Username and password required.")
+                continue
+            try:
+                resp = requests.post(
+                    f"http://localhost:{self.variables['webserverPort']}/api/auth/login",
+                    json={"username": username, "password": password},
+                    timeout=5
+                )
+                if resp.status_code == 200:
+                    self.api_token = resp.json()["token"]
+                    break
                 else:
-                    return
-            
-            # Open directory in file explorer
-            if sys.platform == 'win32':
-                os.startfile(install_dir)
-            elif sys.platform == 'darwin':
-                subprocess.Popen(['open', install_dir])
-            else:
-                subprocess.Popen(['xdg-open', install_dir])
-                
-            logger.debug(f"Opened directory: {install_dir}")
-            
-        except Exception as e:
-            logger.error(f"Error opening server directory: {str(e)}")
-            messagebox.showerror("Error", f"Failed to open directory: {str(e)}")
-    
-    def import_server(self):
-        """Import an existing server (Steam/Minecraft/Other)"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Import Existing Server")
-        dialog.geometry("450x300")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        ttk.Label(dialog, text="Server Name:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
-        name_var = tk.StringVar()
-        name_entry = ttk.Entry(dialog, textvariable=name_var, width=35)
-        name_entry.grid(row=0, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        ttk.Label(dialog, text="Server Type:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
-        type_var = tk.StringVar(value="Other")
-        ttk.Combobox(dialog, textvariable=type_var, values=self.supported_server_types, state="readonly").grid(row=1, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        ttk.Label(dialog, text="Server Path:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
-        path_var = tk.StringVar()
-        path_entry = ttk.Entry(dialog, textvariable=path_var, width=25)
-        path_entry.grid(row=2, column=1, padx=10, pady=10, sticky=tk.W)
-        def browse_directory():
-            directory = filedialog.askdirectory(title="Select Server Directory")
-            if directory:
-                path_var.set(directory)
-        ttk.Button(dialog, text="Browse", command=browse_directory, width=10).grid(row=2, column=2, padx=5, pady=10)
-        ttk.Label(dialog, text="Executable Path:").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
-        exec_path_var = tk.StringVar()
-        exec_path_entry = ttk.Entry(dialog, textvariable=exec_path_var, width=35)
-        exec_path_entry.grid(row=3, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        ttk.Label(dialog, text="Startup Args:").grid(row=4, column=0, padx=10, pady=10, sticky=tk.W)
-        args_var = tk.StringVar()
-        args_entry = ttk.Entry(dialog, textvariable=args_var, width=35)
-        args_entry.grid(row=4, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        def do_import():
-            try:
-                server_name = name_var.get().strip()
-                server_type = type_var.get()
-                server_path = path_var.get().strip()
-                exec_path = exec_path_var.get().strip()
-                startup_args = args_var.get().strip()
-                if not server_name or not server_path:
-                    messagebox.showerror("Error", "Server name and path are required fields.")
-                    return
-                if not os.path.exists(server_path):
-                    messagebox.showerror("Error", "The specified server path does not exist.")
-                    return
-                server_config = {
-                    "Name": server_name,
-                    "Type": server_type,
-                    "InstallDir": server_path,
-                    "ExecutablePath": exec_path,
-                    "StartupArgs": startup_args,
-                    "Created": datetime.datetime.now().isoformat(),
-                    "LastUpdate": datetime.datetime.now().isoformat(),
-                    "Imported": True
-                }
-                os.makedirs(self.paths["servers"], exist_ok=True)
-                config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-                if os.path.exists(config_file):
-                    result = messagebox.askyesno("Warning", 
-                                               "A server with this name already exists. Do you want to overwrite it?",
-                                               icon=messagebox.WARNING)
-                    if not result:
-                        return
-                with open(config_file, 'w') as f:
-                    json.dump(server_config, f, indent=4)
-                self.update_server_list(force_refresh=True)
-                messagebox.showinfo("Success", "Server imported successfully!")
-                dialog.destroy()
+                    messagebox.showerror("Login Failed", resp.json().get("error", "Unknown error"))
             except Exception as e:
-                logger.error(f"Error importing server: {str(e)}")
-                messagebox.showerror("Error", f"Failed to import server: {str(e)}")
-        import_button = ttk.Button(dialog, text="Import", command=do_import, width=15)
-        import_button.grid(row=5, column=0, columnspan=3, padx=10, pady=20)
-        dialog.update_idletasks()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
-        dialog.geometry(f"+{x}+{y}")
-    
-    def add_agent(self):
-        """Add a new agent"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Add Agent")
-        dialog.geometry("400x300")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        # Agent name
-        ttk.Label(dialog, text="Agent Name:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
-        name_var = tk.StringVar()
-        name_entry = ttk.Entry(dialog, textvariable=name_var, width=30)
-        name_entry.grid(row=0, column=1, padx=10, pady=10, sticky=tk.W)
-        
-        # IP Address
-        ttk.Label(dialog, text="IP Address:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
-        ip_var = tk.StringVar()
-        ip_entry = ttk.Entry(dialog, textvariable=ip_var, width=30)
-        ip_entry.grid(row=1, column=1, padx=10, pady=10, sticky=tk.W)
-        
-        # Port
-        ttk.Label(dialog, text="Port:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
-        port_var = tk.StringVar(value="8080")
-        port_entry = ttk.Entry(dialog, textvariable=port_var, width=30)
-        port_entry.grid(row=2, column=1, padx=10, pady=10, sticky=tk.W)
-        
-        # Add button
-        def do_add():
-            try:
-                agent_name = name_var.get().strip()
-                ip_address = ip_var.get().strip()
-                port = port_var.get().strip()
-                
-                # Validate inputs
-                if not agent_name or not ip_address or not port:
-                    messagebox.showerror("Error", "Please fill in all fields.")
-                    return
-                
-                # Create agent configuration
-                agent_config = {
-                    "Name": agent_name,
-                    "IP": ip_address,
-                    "Port": port,
-                    "Added": datetime.datetime.now().isoformat()
-                }
-                
-                # Create agents directory if it doesn't exist
-                agents_path = os.path.join(self.server_manager_dir, "agents")
-                os.makedirs(agents_path, exist_ok=True)
-                
-                # Save agent configuration
-                with open(os.path.join(agents_path, f"{agent_name}.json"), 'w') as f:
-                    json.dump(agent_config, f, indent=4)
-                
-                messagebox.showinfo("Success", "Agent added successfully!")
-                dialog.destroy()
-                
-            except Exception as e:
-                logger.error(f"Error adding agent: {str(e)}")
-                messagebox.showerror("Error", f"Failed to add agent: {str(e)}")
-        
-        add_button = ttk.Button(dialog, text="Add Agent", command=do_add, width=15)
-        add_button.grid(row=3, column=0, columnspan=2, padx=10, pady=20)
-        
-        # Center dialog on parent window
-        dialog.update_idletasks()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
-        dialog.geometry(f"+{x}+{y}")
-    
-    def sync_all(self):
-        """Sync all servers (placeholder)"""
-        messagebox.showinfo("Sync Disabled", "Sync functionality is not available in this version.")
-    
-    def refresh_all(self):
-        """Refresh server list and system info"""
-        self.update_server_list(force_refresh=True)
-        self.update_system_info()
-        
-        if self.variables["debugMode"]:
-            messagebox.showinfo("Update Complete", "System information updated successfully.")
-    
+                messagebox.showerror("Login Error", str(e))
+
+    def api_headers(self):
+        return {"Authorization": f"Bearer {self.api_token}"} if self.api_token else {}
+
     def update_server_list(self, force_refresh=False):
-        """Update the server list in the UI"""
         # Skip update if it's been less than 5 seconds since the last update and force_refresh isn't specified
         if not force_refresh and \
            (self.variables["lastServerListUpdate"] != datetime.datetime.min) and \

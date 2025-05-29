@@ -11,6 +11,13 @@ import uuid
 import hashlib
 from pathlib import Path
 
+# Import dashboard tracker
+try:
+    from services.dashboard_tracker import tracker
+except ImportError as e:
+    logger.error(f"Failed to import dashboard tracker: {e}")
+    tracker = None
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -243,6 +250,8 @@ class ServerManagerWebServer:
         self.web_port = 8080
         self.debug_mode = False
         self.paths = {}
+        self.host_type = "Unknown"  # New: HostType ("Host" or "Subhost")
+        self.host_address = None    # New: HostAddress (for subhost, if present)
         
         # Parse command line arguments
         parser = argparse.ArgumentParser(description='Server Manager Web Server')
@@ -283,7 +292,27 @@ class ServerManagerWebServer:
         
         # Write PID file
         self.write_pid_file()
-    
+        
+        # Start dashboard tracker in a background thread
+        self.tracker = tracker
+        if self.tracker:
+            self.tracker.start_auto_refresh()
+            logger.info("Dashboard tracker started in background thread")
+        else:
+            logger.warning("Dashboard tracker not available")
+
+        # Start subhost communication thread (placeholder)
+        self.subhost_thread = threading.Thread(target=self.subhost_communication_loop, daemon=True)
+        self.subhost_thread.start()
+        logger.info("Subhost communication thread started")
+
+    def subhost_communication_loop(self):
+        """Placeholder: Communicate with subhosts for sending/receiving info"""
+        while True:
+            # TODO: Implement subhost communication logic here
+            # Example: poll subhosts, send/receive data, etc.
+            time.sleep(10)
+
     def initialize_from_registry(self):
         """Initialize paths and settings from registry"""
         try:
@@ -296,6 +325,16 @@ class ServerManagerWebServer:
                 self.web_port = int(winreg.QueryValueEx(key, "WebPort")[0])
             except:
                 pass
+            
+            # Get HostType and HostAddress if present
+            try:
+                self.host_type = winreg.QueryValueEx(key, "HostType")[0]
+            except Exception:
+                self.host_type = "Unknown"
+            try:
+                self.host_address = winreg.QueryValueEx(key, "HostAddress")[0]
+            except Exception:
+                self.host_address = None
                 
             winreg.CloseKey(key)
             
@@ -322,6 +361,7 @@ class ServerManagerWebServer:
             
             logger.info(f"Initialized from registry. Server Manager directory: {self.server_manager_dir}")
             logger.info(f"Web server port: {self.web_port}")
+            logger.info(f"Cluster role: {self.host_type}" + (f", HostAddress: {self.host_address}" if self.host_address else ""))
             return True
             
         except Exception as e:
@@ -608,6 +648,101 @@ class ServerManagerWebServer:
                 logger.error(f"Get settings error: {e}")
                 return jsonify({"error": "Failed to get settings"}), 500
         
+        # --- Cluster role API ---
+        @app.route('/api/cluster/role', methods=['GET'])
+        def api_cluster_role():
+            return jsonify({
+                "role": self.host_type,
+                "hostAddress": self.host_address
+            })
+
+        # --- Tracker API ---
+        @app.route('/api/tracker/dashboards', methods=['GET'])
+        def api_tracker_dashboards():
+            if self.tracker:
+                return jsonify(self.tracker.get_dashboards())
+            return jsonify({"error": "Dashboard tracker not available"}), 500
+
+        @app.route('/api/tracker/servers', methods=['GET', 'POST', 'DELETE', 'PATCH'])
+        def api_tracker_servers():
+            # Require authentication
+            auth_header = request.headers.get('Authorization')
+            if not auth_header or not auth_header.startswith('Bearer '):
+                return jsonify({"error": "Authentication required"}), 401
+            token = auth_header.split(' ')[1]
+            token_data = self.auth.verify_token(token)
+            if not token_data:
+                return jsonify({"error": "Invalid or expired token"}), 401
+
+            # GET: List all servers
+            if request.method == 'GET':
+                if self.tracker:
+                    return jsonify(self.tracker.get_servers())
+                return jsonify({"error": "Dashboard tracker not available"}), 500
+
+            # POST: Add a new server
+            if request.method == 'POST':
+                data = request.json
+                name = data.get("Name")
+                config = data
+                if not name:
+                    return jsonify({"error": "Missing server name"}), 400
+                servers_dir = self.paths["servers"]
+                os.makedirs(servers_dir, exist_ok=True)
+                config_file = os.path.join(servers_dir, f"{name}.json")
+                if os.path.exists(config_file):
+                    return jsonify({"error": "Server already exists"}), 409
+                with open(config_file, 'w') as f:
+                    json.dump(config, f, indent=4)
+                if self.tracker:
+                    self.tracker.refresh()
+                return jsonify({"success": True})
+
+            # DELETE: Remove a server
+            if request.method == 'DELETE':
+                data = request.json
+                name = data.get("Name")
+                if not name:
+                    return jsonify({"error": "Missing server name"}), 400
+                servers_dir = self.paths["servers"]
+                config_file = os.path.join(servers_dir, f"{name}.json")
+                if not os.path.exists(config_file):
+                    return jsonify({"error": "Server not found"}), 404
+                os.remove(config_file)
+                if self.tracker:
+                    self.tracker.refresh()
+                return jsonify({"success": True})
+
+            # PATCH: Update server status (start/stop/restart)
+            if request.method == 'PATCH':
+                data = request.json
+                name = data.get("Name")
+                action = data.get("Action")
+                if not name or not action:
+                    return jsonify({"error": "Missing server name or action"}), 400
+                # For demo, just update status in config file
+                servers_dir = self.paths["servers"]
+                config_file = os.path.join(servers_dir, f"{name}.json")
+                if not os.path.exists(config_file):
+                    return jsonify({"error": "Server not found"}), 404
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                if action == "start":
+                    config["Status"] = "Running"
+                elif action == "stop":
+                    config["Status"] = "Stopped"
+                elif action == "restart":
+                    config["Status"] = "Restarting"
+                else:
+                    return jsonify({"error": "Unknown action"}), 400
+                with open(config_file, 'w') as f:
+                    json.dump(config, f, indent=4)
+                if self.tracker:
+                    self.tracker.refresh()
+                return jsonify({"success": True, "status": config["Status"]})
+
+            return jsonify({"error": "Unsupported method"}), 405
+
         # Error handlers
         @app.errorhandler(404)
         def page_not_found(e):
