@@ -306,7 +306,6 @@ except ImportError:
     # Fallback if debug module not available
     def log_exception(e, message="An exception occurred"):
         logger.error(f"{message}: {str(e)}")
-        logger.error(traceback.format_exc())
 
 # System utilities
 class SystemUtils:

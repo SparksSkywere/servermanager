@@ -9,7 +9,7 @@ from flask import Blueprint, request, jsonify, session
 
 # Try to import user management and SQL connection with fallback
 try:
-    from user_management import UserManager
+    from Scripts.user_management import UserManager
     from Modules.SQL_Connection import get_engine, ensure_root_admin
     SQL_AVAILABLE = True
 except ImportError as e:
