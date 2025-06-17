@@ -1,5 +1,6 @@
 flask
 flask-cors
+flask-limiter
 psutil
 requests
 pywin32
@@ -10,6 +11,10 @@ schedule
 pystray
 pillow
 sqlalchemy
+cryptography
 pyodbc
 pyotp
 vdf
+python-dotenv
+waitress
+bcrypt

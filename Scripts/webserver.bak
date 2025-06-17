@@ -8,20 +8,10 @@ import datetime
 import threading
 import time
 import uuid
-import bcrypt
-import win32security
+import hashlib
 from pathlib import Path
-from dotenv import load_dotenv
-from waitress import serve
-from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 
-# Load environment variables
-load_dotenv()
-
-# Configure logging with structured JSON format for production
+# Configure logging FIRST
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -29,55 +19,49 @@ logging.basicConfig(
 )
 logger = logging.getLogger("WebServer")
 
-# Import dashboard tracker with fallback
+# Import dashboard tracker with better error handling
 tracker = None
 try:
     from services.dashboard_tracker import tracker
     logger.info("Dashboard tracker imported successfully")
 except ImportError as e:
     logger.warning(f"Dashboard tracker not available: {e}")
-    class DummyDashboardTracker:
-        def start_auto_refresh(self):
-            pass
-        def get_dashboards(self):
-            return []
-        def get_servers(self):
-            return []
-        def refresh(self):
-            pass
-    tracker = DummyDashboardTracker()
+    tracker = None
 
-# Import Flask dependencies
+# Import Flask for web server - with better error handling
 try:
-    from flask import Flask, request, jsonify, send_from_directory
+    from flask import Flask, render_template, request, jsonify, redirect, url_for, session, send_from_directory
     logger.info("Flask imported successfully")
     try:
         from flask_cors import CORS
         logger.info("Flask-CORS imported successfully")
     except ImportError:
-        logger.warning("Flask-CORS not installed. Running without CORS support.")
+        logger.error("Flask-CORS not installed. Running without CORS support.")
+        # Define a dummy CORS class that does nothing
         class CORS:
             def __init__(self, app):
                 logger.warning("Using dummy CORS implementation")
                 pass
 except ImportError as e:
-    logger.critical(f"Flask not installed: {e}. Please install with: pip install flask flask-cors flask-limiter python-dotenv waitress pywin32 bcrypt")
+    logger.critical(f"Flask not installed: {e}. Please run setup.py or install manually.")
+    logger.critical("You can install required packages with: pip install flask flask-cors")
     sys.exit(1)
 
-# Import SQL modules
+# Import get_engine and ensure_root_admin for root admin SQL setup
 try:
-    from Modules.SQL_Connection import get_engine, ensure_root_admin, build_db_url, get_sql_config_from_registry
+    from Modules.SQL_Connection import get_engine, ensure_root_admin
     from Scripts.user_management import User, UserManager
     logger.info("SQL modules imported successfully")
 except ImportError as e:
     logger.error(f"Failed to import SQL modules: {e}")
     import traceback
-    logger.error(f"SQL import traceback:\n{traceback.format_exc()}")
+    logger.error("SQL import traceback:\n" + traceback.format_exc())
     get_engine = None
     ensure_root_admin = None
     User = None
     UserManager = None
 
+# Get server manager directory from registry to find modules
 def get_server_manager_dir():
     try:
         registry_path = r"Software\SkywereIndustries\Servermanager"
@@ -87,6 +71,7 @@ def get_server_manager_dir():
         return server_manager_dir
     except Exception as e:
         logger.error(f"Failed to get server manager directory from registry: {e}")
+        # Use fallback approach based on script location
         script_dir = os.path.dirname(os.path.abspath(__file__))
         server_manager_dir = os.path.dirname(script_dir)
         logger.warning(f"Using fallback server manager directory: {server_manager_dir}")
@@ -97,26 +82,36 @@ class Authentication:
     def __init__(self, config_path):
         self.config_path = config_path
         self.users = self._load_users()
-        self.tokens = {}
+        self.tokens = {}  # Store active tokens
 
     def _hash_password(self, password):
-        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-    def _check_password(self, password, hashed):
-        return bcrypt.checkpw(password.encode(), hashed.encode())
+        import hashlib
+        return hashlib.sha256(password.encode()).hexdigest()
 
     def _load_users(self):
         try:
             users_file = os.path.join(self.config_path, "users.json")
             if not os.path.exists(users_file):
-                logger.warning("Users file not found. No default admin created in production.")
-                return {}
+                # Create default admin user if file doesn't exist
+                default_users = {
+                    "admin": {
+                        "password": self._hash_password("admin"),
+                        "isAdmin": True
+                    }
+                }
+                os.makedirs(os.path.dirname(users_file), exist_ok=True)
+                with open(users_file, 'w') as f:
+                    json.dump(default_users, f, indent=4)
+                logger.info("Created default users file with admin user")
+                return default_users
+            
             with open(users_file, 'r') as f:
                 return json.load(f)
         except Exception as e:
             logger.error(f"Failed to load users: {e}")
-            return {}
-
+            # Return a default admin user if there's an error
+            return {"admin": {"password": self._hash_password("admin"), "isAdmin": True}}
+    
     def _save_users(self):
         try:
             users_file = os.path.join(self.config_path, "users.json")
@@ -131,7 +126,8 @@ class Authentication:
     def authenticate(self, username, password):
         if username in self.users:
             stored_hash = self.users[username]["password"]
-            if self._check_password(password, stored_hash):
+            if self._hash_password(password) == stored_hash:
+                # Generate token
                 token = str(uuid.uuid4())
                 self.tokens[token] = {
                     "username": username,
@@ -140,78 +136,79 @@ class Authentication:
                 }
                 return {"token": token, "username": username, "isAdmin": self.users[username].get("isAdmin", False)}
         return None
-
+    
     def verify_token(self, token):
         if token in self.tokens:
             token_data = self.tokens[token]
             expires = datetime.datetime.fromisoformat(token_data["expires"])
             if datetime.datetime.now() < expires:
                 return token_data
-            del self.tokens[token]
         return None
-
+    
     def is_admin(self, username):
-        return self.users.get(username, {}).get("isAdmin", False)
-
+        if username in self.users:
+            return self.users[username].get("isAdmin", False)
+        return False
+    
     def get_all_users(self):
-        return [{"username": u, "isAdmin": d.get("isAdmin", False)} for u, d in self.users.items()]
-
+        user_list = []
+        for username, data in self.users.items():
+            user_list.append({
+                "username": username,
+                "isAdmin": data.get("isAdmin", False)
+            })
+        return user_list
+    
     def add_user(self, username, password, is_admin=False):
         if username in self.users:
             return False
-        if not self._validate_password(password):
-            logger.error(f"Invalid password for user {username}: Must be at least 8 characters")
-            return False
+        
         self.users[username] = {
             "password": self._hash_password(password),
             "isAdmin": is_admin
         }
-        return self._save_users()
-
+        self._save_users()
+        return True
+    
     def delete_user(self, username):
-        if username in self.users and username != "admin":
+        if username in self.users:
+            if username == "admin":
+                return False  # Prevent deleting the main admin
+            
             del self.users[username]
-            return self._save_users()
+            self._save_users()
+            return True
         return False
-
+    
     def change_password(self, username, new_password):
         if username in self.users:
-            if not self._validate_password(new_password):
-                logger.error(f"Invalid new password for user {username}: Must be at least 8 characters")
-                return False
             self.users[username]["password"] = self._hash_password(new_password)
-            return self._save_users()
+            self._save_users()
+            return True
         return False
-
-    def _validate_password(self, password):
-        return len(password) >= 8
 
 # SQL Authentication system
 class SQLAuthentication:
+    """Authenticate users using the SQL database."""
     def __init__(self, engine):
         self.engine = engine
         self.user_manager = UserManager(engine)
         self.tokens = {}
 
-    def _hash_password(self, password):
-        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-    def _check_password(self, password, hashed):
-        return bcrypt.checkpw(password.encode(), hashed.encode())
-
     def authenticate(self, username, password):
         user = self.user_manager.get_user(username)
         if not user or not getattr(user, 'is_active', True):
             return None
-        if self._check_password(password, user.password):
-            token = str(uuid.uuid4())
-            self.tokens[token] = {
-                "username": username,
-                "created": datetime.datetime.now().isoformat(),
-                "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat()
-            }
-            return {"token": token, "username": username, "isAdmin": getattr(user, "is_admin", False)}
-        return None
+        # TODO: Use proper password hashing in production!
+        if user.password != password:
+            return None
+        token = str(uuid.uuid4())
+        self.tokens[token] = {
+            "username": username,
+            "created": datetime.datetime.now().isoformat(),
+            "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat()
+        }
+        return {"token": token, "username": username, "isAdmin": getattr(user, "is_admin", False)}
 
     def verify_token(self, token):
         if token in self.tokens:
@@ -219,7 +216,6 @@ class SQLAuthentication:
             expires = datetime.datetime.fromisoformat(token_data["expires"])
             if datetime.datetime.now() < expires:
                 return token_data
-            del self.tokens[token]
         return None
 
     def is_admin(self, username):
@@ -232,156 +228,187 @@ class SQLAuthentication:
 
     def add_user(self, username, password, is_admin=False):
         try:
-            if not self._validate_password(password):
-                logger.error(f"Invalid password for user {username}: Must be at least 8 characters")
-                return False
-            self.user_manager.add_user(username, self._hash_password(password), "", is_admin)
+            self.user_manager.add_user(username, password, "", is_admin)
             return True
-        except Exception as e:
-            logger.error(f"Failed to add SQL user: {e}")
+        except Exception:
             return False
 
     def delete_user(self, username):
         try:
             self.user_manager.delete_user(username)
             return True
-        except Exception as e:
-            logger.error(f"Failed to delete SQL user: {e}")
+        except Exception:
             return False
 
     def change_password(self, username, new_password):
         try:
-            if not self._validate_password(new_password):
-                logger.error(f"Invalid new password for user {username}: Must be at least 8 characters")
-                return False
-            self.user_manager.update_user(username, password=self._hash_password(new_password))
+            self.user_manager.update_user(username, password=new_password)
             return True
-        except Exception as e:
-            logger.error(f"Failed to change SQL user password: {e}")
+        except Exception:
             return False
-
-    def _validate_password(self, password):
-        return len(password) >= 8
 
 class ServerManager:
     def __init__(self, servers_path):
         self.servers_path = servers_path
-
+        
     def get_all_servers(self):
         try:
             servers = []
-            if os.path.exists(self.servers_path):
-                for file in os.listdir(self.servers_path):
+            servers_path = self.servers_path
+            
+            if os.path.exists(servers_path):
+                for file in os.listdir(servers_path):
                     if file.endswith(".json"):
                         try:
-                            with open(os.path.join(self.servers_path, file), 'r') as f:
+                            with open(os.path.join(servers_path, file), 'r') as f:
                                 server_config = json.load(f)
+                            
+                            # Convert server config to API format
                             server = {
                                 "id": server_config.get("Name", "unknown"),
                                 "name": server_config.get("Name", "Unknown Server"),
                                 "status": "running" if "ProcessId" in server_config else "stopped",
                                 "type": server_config.get("Type", "other").lower(),
-                                "cpu": 0,
-                                "memory": 0,
-                                "disk": 0
+                                "cpu": 0,  # Placeholder
+                                "memory": 0,  # Placeholder
+                                "disk": 0  # Placeholder
                             }
+                            
+                            # Try to get real resource usage if process is running
                             if "ProcessId" in server_config:
                                 try:
                                     import psutil
                                     process = psutil.Process(server_config["ProcessId"])
                                     server["cpu"] = round(process.cpu_percent(interval=0.1), 1)
                                     server["memory"] = round(process.memory_percent(), 1)
-                                except Exception:
+                                except:
                                     pass
+                            
                             servers.append(server)
                         except Exception as e:
                             logger.error(f"Error reading server config {file}: {e}")
+            
             return servers
         except Exception as e:
             logger.error(f"Error getting servers: {e}")
             return []
-
+    
     def get_server(self, server_id):
         servers = self.get_all_servers()
         for server in servers:
             if server["id"] == server_id:
                 return server
         return None
-
+    
     def start_server(self, server_id):
+        # This is a placeholder - in a real implementation, this would
+        # actually start the server process
         server = self.get_server(server_id)
         if server:
+            # Simulate starting server
             server["status"] = "running"
             logger.info(f"Started server: {server_id}")
             return True
         return False
-
+    
     def stop_server(self, server_id):
+        # This is a placeholder - in a real implementation, this would
+        # actually stop the server process
         server = self.get_server(server_id)
         if server:
+            # Simulate stopping server
             server["status"] = "stopped"
             logger.info(f"Stopped server: {server_id}")
             return True
         return False
-
+    
     def restart_server(self, server_id):
+        # This is a placeholder - in a real implementation, this would
+        # actually restart the server process
         server = self.get_server(server_id)
         if server:
+            # Simulate restarting server
             logger.info(f"Restarted server: {server_id}")
             return True
         return False
 
 class ServerManagerWebServer:
+    """Web server for Server Manager"""
     def __init__(self):
         self.registry_path = r"Software\SkywereIndustries\Servermanager"
-        self.server_manager_dir = get_server_manager_dir()
-        self.web_port = int(os.getenv("WEB_PORT", "8080"))
+        self.server_manager_dir = get_server_manager_dir()  # Use the already determined directory
+        self.web_port = 8080
+        self.debug_mode = False
         self.paths = {}
-        self.host_type = "Unknown"
-        self.host_address = None
-        self.sql_available = False
+        self.host_type = "Unknown"  # New: HostType ("Host" or "Subhost")
+        self.host_address = None    # New: HostAddress (for subhost, if present)
+        self.sql_available = False  # Track if SQL connection is available
         self.sql_auth = None
-        self.engine = None
-
+        self.engine = None  # Store engine for SQL auth
+        
+        # Parse command line arguments
         parser = argparse.ArgumentParser(description='Server Manager Web Server')
         parser.add_argument('--port', type=int, help='Web server port')
+        parser.add_argument('--debug', action='store_true', help='Enable debug mode')
         args = parser.parse_args()
-
+        
+        # Set debug mode if specified
+        if args.debug:
+            self.debug_mode = True
+            logger.setLevel(logging.DEBUG)
+        
+        # Set port if specified
         if args.port:
             self.web_port = args.port
-
+        
+        # Initialize paths
         self.initialize_from_registry()
+        
+        # Check SQL availability and initialize authentication
         self.check_sql_availability()
+
+        # Test XML authentication module availability
+        self.test_xml_auth_module()
 
         try:
             if self.sql_available and get_engine and UserManager:
-                self.engine = get_engine()
-                self.sql_auth = SQLAuthentication(self.engine)
+                self.auth = SQLAuthentication(self.engine)
                 logger.info("SQL authentication system initialized successfully")
             else:
                 self.auth = Authentication(self.paths["config"])
-                logger.warning("SQL not available, using file-based authentication")
+                if not self.sql_available:
+                    logger.warning("SQL not available, using fallback file-based authentication.")
+                logger.info("File-based authentication system initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize authentication: {e}")
             self.auth = self.create_fallback_auth()
-
+        
         try:
             self.server_manager = ServerManager(self.paths["servers"])
             logger.info("Server manager initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize server manager: {e}")
             self.server_manager = None
-
+        
+        # Create Flask app
         self.app = Flask(
             __name__,
             static_folder=os.path.join(self.server_manager_dir, "www")
         )
+        
+        # Enable CORS for API
         CORS(self.app)
-        self.app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(24))
-        self.limiter = Limiter(self.app, key_func=get_remote_address, default_limits=["200 per day", "50 per hour"])
+        
+        # Set up Flask secret key
+        self.app.secret_key = os.urandom(24)
+        
+        # Set up routes
         self.setup_routes()
+        
+        # Write PID file
         self.write_pid_file()
-
+        
+        # Start dashboard tracker in a background thread if available
         self.tracker = tracker
         if self.tracker:
             try:
@@ -389,102 +416,151 @@ class ServerManagerWebServer:
                 logger.info("Dashboard tracker started in background thread")
             except Exception as e:
                 logger.warning(f"Failed to start dashboard tracker: {e}")
-                self.tracker = DummyDashboardTracker()
+                self.tracker = None
+        else:
+            logger.warning("Dashboard tracker not available")
 
+        # Start subhost communication thread (placeholder)
         self.subhost_thread = threading.Thread(target=self.subhost_communication_loop, daemon=True)
         self.subhost_thread.start()
         logger.info("Subhost communication thread started")
 
     def check_sql_availability(self):
+        """Check if SQL connection is available"""
         try:
             if get_engine:
+                from Modules.SQL_Connection import get_sql_config_from_registry, build_db_url
                 sql_conf = get_sql_config_from_registry()
                 logger.info(f"SQL config from registry: {sql_conf}")
                 db_url = build_db_url(sql_conf)
                 logger.info(f"SQLAlchemy DB URL: {db_url}")
+                # For SQLite, check if the file exists and log permissions
                 if sql_conf["type"].lower() == "sqlite":
                     db_path = sql_conf["db_path"]
+                    logger.info(f"Checking SQLite DB file: {db_path}")
                     if not os.path.isabs(db_path):
                         db_path = os.path.abspath(db_path)
                         logger.info(f"Resolved absolute SQLite DB path: {db_path}")
                     if not os.path.exists(db_path):
                         logger.error(f"SQLite DB file does not exist: {db_path}")
-                        raise FileNotFoundError(f"Database file missing: {db_path}")
-                    try:
-                        with open(db_path, "rb"):
-                            logger.info(f"SQLite DB file exists and is readable: {db_path}")
-                    except Exception as e:
-                        logger.error(f"SQLite DB file exists but is not readable: {e}")
-                        raise
+                        logger.error("You may need to re-run the installer or check permissions.")
+                    else:
+                        try:
+                            with open(db_path, "rb"):
+                                logger.info(f"SQLite DB file exists and is readable: {db_path}")
+                        except Exception as e:
+                            logger.error(f"SQLite DB file exists but is not readable: {e}")
                 self.engine = get_engine()
                 from sqlalchemy import text
                 with self.engine.connect() as conn:
-                    result = conn.execute(text("SELECT 1")).fetchone()
-                    logger.info(f"SQL connection test result: {result}")
+                    conn.execute(text("SELECT 1"))
                 self.sql_available = True
                 logger.info("SQL connection available")
             else:
                 self.sql_available = False
-                logger.warning("SQL modules not available")
         except Exception as e:
             logger.warning(f"SQL connection not available: {e}")
             import traceback
-            logger.error(f"SQL connection traceback:\n{traceback.format_exc()}")
+            logger.error("SQL connection traceback:\n" + traceback.format_exc())
             self.sql_available = False
 
     def create_fallback_auth(self):
+        """Create a fallback authentication system when SQL is not available"""
         class FallbackAuth:
             def __init__(self, config_path):
                 self.config_path = config_path
-                self.users = {}
+                self.users = {"admin": {"password": self._hash_password("admin"), "isAdmin": True}}
                 self.tokens = {}
                 logger.info("Using fallback authentication system")
-
+            
+            def _hash_password(self, password):
+                import hashlib
+                return hashlib.sha256(password.encode()).hexdigest()
+            
             def authenticate(self, username, password):
+                if username in self.users:
+                    stored_hash = self.users[username]["password"]
+                    if self._hash_password(password) == stored_hash:
+                        token = str(__import__('uuid').uuid4())
+                        self.tokens[token] = {
+                            "username": username,
+                            "created": datetime.datetime.now().isoformat(),
+                            "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat()
+                        }
+                        return {"token": token, "username": username, "isAdmin": self.users[username].get("isAdmin", False)}
                 return None
-
+            
             def verify_token(self, token):
+                if token in self.tokens:
+                    token_data = self.tokens[token]
+                    expires = datetime.datetime.fromisoformat(token_data["expires"])
+                    if datetime.datetime.now() < expires:
+                        return token_data
                 return None
-
+            
             def is_admin(self, username):
-                return False
-
+                return self.users.get(username, {}).get("isAdmin", False)
+            
             def get_all_users(self):
-                return []
-
+                return [{"username": u, "isAdmin": d.get("isAdmin", False)} for u, d in self.users.items()]
+            
             def add_user(self, username, password, is_admin=False):
+                if username not in self.users:
+                    self.users[username] = {"password": self._hash_password(password), "isAdmin": is_admin}
+                    return True
                 return False
-
+            
             def delete_user(self, username):
+                if username in self.users and username != "admin":
+                    del self.users[username]
+                    return True
                 return False
-
+            
             def change_password(self, username, new_password):
+                if username in self.users:
+                    self.users[username]["password"] = self._hash_password(new_password)
+                    return True
                 return False
-
+        
         return FallbackAuth(self.paths["config"])
 
     def subhost_communication_loop(self):
+        """Placeholder: Communicate with subhosts for sending/receiving info"""
         while True:
             try:
+                # TODO: Implement subhost communication logic here
+                # Example: poll subhosts, send/receive data, etc.
                 time.sleep(10)
             except Exception as e:
                 logger.error(f"Error in subhost communication loop: {e}")
-                time.sleep(30)
+                time.sleep(30)  # Wait longer on error
 
     def initialize_from_registry(self):
+        """Initialize paths and settings from registry"""
         try:
+            # Read registry for paths
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
+            
+            # Get web port from registry if available
+            try:
+                self.web_port = int(winreg.QueryValueEx(key, "WebPort")[0])
+            except:
+                pass
+            
+            # Get HostType and HostAddress if present
             try:
                 self.host_type = winreg.QueryValueEx(key, "HostType")[0]
-            except:
+            except Exception:
                 self.host_type = "Unknown"
             try:
                 self.host_address = winreg.QueryValueEx(key, "HostAddress")[0]
-            except:
+            except Exception:
                 self.host_address = None
+                
             winreg.CloseKey(key)
-
+            
+            # Define paths structure
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
@@ -494,23 +570,29 @@ class ServerManagerWebServer:
                 "scripts": os.path.join(self.server_manager_dir, "scripts"),
                 "www": os.path.join(self.server_manager_dir, "www")
             }
-
+            
+            # Ensure directories exist
             for path in self.paths.values():
                 os.makedirs(path, exist_ok=True)
-
+            
+            # Set up file logging
             log_file = os.path.join(self.paths["logs"], "webserver.log")
             file_handler = logging.FileHandler(log_file)
             file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
             logger.addHandler(file_handler)
-
+            
             logger.info(f"Initialized from registry. Server Manager directory: {self.server_manager_dir}")
             logger.info(f"Web server port: {self.web_port}")
             logger.info(f"Cluster role: {self.host_type}" + (f", HostAddress: {self.host_address}" if self.host_address else ""))
             return True
+            
         except Exception as e:
-            logger.error(f"Failed to initialize from registry: {e}")
+            logger.error(f"Failed to initialize from registry: {str(e)}")
+            
+            # Use fallback paths based on script location
             script_dir = os.path.dirname(os.path.abspath(__file__))
             self.server_manager_dir = os.path.dirname(script_dir)
+            
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
@@ -520,18 +602,26 @@ class ServerManagerWebServer:
                 "scripts": script_dir,
                 "www": os.path.join(self.server_manager_dir, "www")
             }
+            
+            # Ensure directories exist
             for path in self.paths.values():
                 os.makedirs(path, exist_ok=True)
+                
+            # Set up file logging in fallback location
             log_file = os.path.join(self.paths["logs"], "webserver.log")
             file_handler = logging.FileHandler(log_file)
             file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
             logger.addHandler(file_handler)
-            logger.warning(f"Using fallback paths. Server Manager directory: {self.server_manager_dir}")
+            
+            logger.warning(f"Using fallback paths. Server Manager directory: {server_manager_dir}")
             return False
-
+    
     def write_pid_file(self):
+        """Write process ID to file"""
         try:
             pid_file = os.path.join(self.paths["temp"], "webserver.pid")
+            
+            # Create PID info dictionary
             pid_info = {
                 "ProcessId": os.getpid(),
                 "StartTime": datetime.datetime.now().isoformat(),
@@ -539,115 +629,181 @@ class ServerManagerWebServer:
                 "Port": self.web_port,
                 "Status": "Running"
             }
+            
+            # Write PID info to file as JSON
             with open(pid_file, 'w') as f:
                 json.dump(pid_info, f, indent=4)
+                
             logger.debug(f"PID file created: {pid_file}")
             return True
         except Exception as e:
-            logger.error(f"Failed to write PID file: {e}")
+            logger.error(f"Failed to write PID file: {str(e)}")
             return False
-
+    
     def setup_routes(self):
+        """Set up Flask routes"""
         app = self.app
+        
+        # Serve static files from www directory
+        @app.route('/', defaults={'path': 'login.html'})
+        @app.route('/<path:path>')
+        def serve_static(path):
+            if path == "" or path == "/":
+                path = "login.html"
+            
+            # Check if file exists in www directory
+            www_path = os.path.join(self.paths["www"], path)
+            if os.path.exists(www_path) and os.path.isfile(www_path):
+                # Determine directory and filename
+                directory = os.path.dirname(path)
+                filename = os.path.basename(path)
+                
+                # If directory is empty, serve from root of www
+                if not directory:
+                    return send_from_directory(self.paths["www"], filename)
+                else:
+                    # Serve from subdirectory of www
+                    return send_from_directory(os.path.join(self.paths["www"], directory), filename)
+            
+            # Default to 404 if file not found
+            return "File not found", 404
 
-        @self.limiter.limit("5 per minute")
+        # API routes
+        
+        # Authentication API
         @app.route('/api/auth/login', methods=['POST'])
         def api_login():
             try:
                 data = request.json
-                if not data or not isinstance(data, dict):
-                    return jsonify({"error": "Invalid request body"}), 400
                 username = data.get('username')
                 password = data.get('password')
                 auth_type = data.get('authType', 'Database')
-
-                if not username or not password or not isinstance(username, str) or not isinstance(password, str):
-                    return jsonify({"error": "Username and password must be non-empty strings"}), 400
-
+                
+                if not username or not password:
+                    return jsonify({"error": "Username and password are required"}), 400
+                
                 logger.info(f"Login attempt for user: {username} with auth type: {auth_type}")
-
+                
+                # Try SQL authentication first if available
                 if auth_type == "Database" and self.sql_available and self.sql_auth:
-                    auth_result = self.sql_auth.authenticate(username, password)
-                    if auth_result:
-                        logger.info(f"Successful SQL login for user: {username}")
-                        return jsonify({
-                            "token": auth_result["token"],
-                            "username": auth_result["username"],
-                            "isAdmin": auth_result["isAdmin"]
-                        })
-                    logger.warning(f"SQL authentication failed for user: {username}")
-
+                    try:
+                        auth_result = self.sql_auth.authenticate(username, password)
+                        if auth_result:
+                            logger.info(f"Successful SQL login for user: {username}")
+                            return jsonify({
+                                "token": auth_result["token"],
+                                "username": auth_result["username"],
+                                "isAdmin": auth_result["isAdmin"]
+                            })
+                        else:
+                            logger.warning(f"SQL authentication failed for user: {username}")
+                    except Exception as e:
+                        logger.error(f"SQL authentication error: {e}")
+                
+                # Try XML-based authentication
                 try:
+                    # Import the authentication module
                     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
                     from Modules.authentication import authenticate_user, is_admin_user
+                    
                     logger.info(f"Attempting XML authentication for user: {username}")
+                    
                     if authenticate_user(username, password):
-                        token = str(uuid.uuid4())
+                        # Generate token for successful authentication
+                        token = str(__import__('uuid').uuid4())
+                        # Store token in session or memory (simple implementation)
                         if not hasattr(self, 'auth_tokens'):
                             self.auth_tokens = {}
+                        
                         is_admin = is_admin_user(username)
+                        
                         self.auth_tokens[token] = {
                             "username": username,
                             "created": datetime.datetime.now().isoformat(),
                             "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat(),
                             "isAdmin": is_admin
                         }
+                        
                         logger.info(f"Successful XML authentication for user: {username}, isAdmin: {is_admin}")
                         return jsonify({
                             "token": token,
                             "username": username,
                             "isAdmin": is_admin
                         })
-                    logger.warning(f"XML authentication failed for user: {username}")
+                    else:
+                        logger.warning(f"XML authentication failed for user: {username}")
+                        
                 except ImportError as e:
-                    logger.warning(f"XML authentication module not available: {e}")
+                    logger.error(f"Failed to import authentication module: {e}")
+                    logger.error(f"Module path attempted: {os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))}")
                 except Exception as e:
                     logger.error(f"XML authentication error: {e}")
                     import traceback
                     logger.error(f"XML authentication traceback: {traceback.format_exc()}")
-
-                auth_result = self.auth.authenticate(username, password)
-                if auth_result:
-                    logger.info(f"Successful file-based authentication for user: {username}")
+                
+                # Try the regular auth system as fallback
+                try:
+                    auth_result = self.auth.authenticate(username, password)
+                    if auth_result:
+                        logger.info(f"Successful fallback authentication for user: {username}")
+                        return jsonify({
+                            "token": auth_result["token"],
+                            "username": auth_result["username"],
+                            "isAdmin": auth_result["isAdmin"]
+                        })
+                except Exception as e:
+                    logger.error(f"Fallback authentication error: {e}")
+                
+                # Final fallback to simple admin/admin
+                if username.lower() == "admin" and password == "admin":
+                    token = str(__import__('uuid').uuid4())
+                    if not hasattr(self, 'auth_tokens'):
+                        self.auth_tokens = {}
+                    
+                    self.auth_tokens[token] = {
+                        "username": username,
+                        "created": datetime.datetime.now().isoformat(),
+                        "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat(),
+                        "isAdmin": True
+                    }
+                    
+                    logger.info(f"Successful final fallback authentication for user: {username}")
                     return jsonify({
-                        "token": auth_result["token"],
-                        "username": auth_result["username"],
-                        "isAdmin": auth_result["isAdmin"]
+                        "token": token,
+                        "username": username,
+                        "isAdmin": True
                     })
-
+                
+                # Try Windows authentication as a last resort (if username matches current user)
                 try:
                     import getpass
                     current_user = getpass.getuser()
                     if username.lower() == current_user.lower():
-                        try:
-                            handle = win32security.LogonUser(
-                                username, None, password,
-                                win32security.LOGON32_LOGON_NETWORK,
-                                win32security.LOGON32_PROVIDER_DEFAULT
-                            )
-                            win32security.CloseHandle(handle)
-                            token = str(uuid.uuid4())
-                            if not hasattr(self, 'auth_tokens'):
-                                self.auth_tokens = {}
-                            self.auth_tokens[token] = {
-                                "username": username,
-                                "created": datetime.datetime.now().isoformat(),
-                                "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat(),
-                                "isAdmin": True
-                            }
-                            logger.info(f"Successful Windows authentication for user: {username}")
-                            return jsonify({
-                                "token": token,
-                                "username": username,
-                                "isAdmin": True
-                            })
-                        except Exception as e:
-                            logger.debug(f"Windows authentication failed: {e}")
+                        # For Windows authentication, we'll accept any password for now
+                        # In production, you'd want to use proper Windows authentication
+                        token = str(__import__('uuid').uuid4())
+                        if not hasattr(self, 'auth_tokens'):
+                            self.auth_tokens = {}
+                        
+                        self.auth_tokens[token] = {
+                            "username": username,
+                            "created": datetime.datetime.now().isoformat(),
+                            "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat(),
+                            "isAdmin": True  # Assume Windows user is admin for now
+                        }
+                        
+                        logger.info(f"Successful Windows user authentication for user: {username}")
+                        return jsonify({
+                            "token": token,
+                            "username": username,
+                            "isAdmin": True
+                        })
                 except Exception as e:
                     logger.debug(f"Windows authentication attempt failed: {e}")
-
+                
                 logger.warning(f"All authentication methods failed for user: {username}")
-                return jsonify({"error": "Invalid username or password"}), 401
+                return jsonify({"error": "Invalid username or password. Try 'admin'/'admin' or your Windows username."}), 401
+                
             except Exception as e:
                 logger.error(f"Login error: {e}")
                 import traceback
@@ -660,9 +816,10 @@ class ServerManagerWebServer:
                 auth_header = request.headers.get('Authorization')
                 if not auth_header or not auth_header.startswith('Bearer '):
                     return jsonify({"authenticated": False}), 401
-
+                
                 token = auth_header.split(' ')[1]
-
+                
+                # Check SQL auth tokens first
                 if self.sql_auth:
                     token_data = self.sql_auth.verify_token(token)
                     if token_data:
@@ -671,7 +828,8 @@ class ServerManagerWebServer:
                             "username": token_data["username"],
                             "isAdmin": self.sql_auth.is_admin(token_data["username"])
                         })
-
+                
+                # Check local auth tokens
                 if hasattr(self, 'auth_tokens') and token in self.auth_tokens:
                     token_data = self.auth_tokens[token]
                     expires = datetime.datetime.fromisoformat(token_data["expires"])
@@ -681,148 +839,160 @@ class ServerManagerWebServer:
                             "username": token_data["username"],
                             "isAdmin": token_data.get("isAdmin", False)
                         })
-                    del self.auth_tokens[token]
-
+                    else:
+                        # Token expired, remove it
+                        del self.auth_tokens[token]
+                
                 return jsonify({"authenticated": False}), 401
             except Exception as e:
                 logger.error(f"Auth verification error: {e}")
                 return jsonify({"error": "Authentication verification error"}), 500
-
+        
         @app.route('/api/verify-admin', methods=['GET'])
         def api_verify_admin():
             try:
                 auth_header = request.headers.get('Authorization')
                 if not auth_header or not auth_header.startswith('Bearer '):
                     return jsonify({"isAdmin": False}), 401
-
+                
                 token = auth_header.split(' ')[1]
                 token_data = self.auth.verify_token(token)
-
+                
                 if token_data:
                     is_admin = self.auth.is_admin(token_data["username"])
                     return jsonify({"isAdmin": is_admin})
-                return jsonify({"isAdmin": False}), 401
+                else:
+                    return jsonify({"isAdmin": False}), 401
             except Exception as e:
                 logger.error(f"Admin verification error: {e}")
                 return jsonify({"error": "Admin verification error"}), 500
-
+        
+        # Server management API
         @app.route('/api/servers', methods=['GET'])
         def api_get_servers():
             try:
                 auth_header = request.headers.get('Authorization')
                 if not auth_header or not auth_header.startswith('Bearer '):
                     return jsonify({"error": "Authentication required"}), 401
-
+                
                 token = auth_header.split(' ')[1]
                 token_data = self.auth.verify_token(token)
-
+                
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
-
+                
                 servers = self.server_manager.get_all_servers()
                 return jsonify(servers)
             except Exception as e:
                 logger.error(f"Get servers error: {e}")
                 return jsonify({"error": "Failed to get servers"}), 500
-
+        
+        # Server control API
         @app.route('/api/servers/<server_id>/start', methods=['POST'])
         def api_start_server(server_id):
             try:
                 auth_header = request.headers.get('Authorization')
                 if not auth_header or not auth_header.startswith('Bearer '):
                     return jsonify({"error": "Authentication required"}), 401
-
+                
                 token = auth_header.split(' ')[1]
                 token_data = self.auth.verify_token(token)
-
+                
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
-
+                
                 result = self.server_manager.start_server(server_id)
                 if result:
                     return jsonify({"success": True, "message": f"Server {server_id} started successfully"})
-                return jsonify({"error": f"Failed to start server {server_id}"}), 400
+                else:
+                    return jsonify({"error": f"Failed to start server {server_id}"}), 400
             except Exception as e:
                 logger.error(f"Start server error: {e}")
                 return jsonify({"error": "Failed to start server"}), 500
-
+        
         @app.route('/api/servers/<server_id>/stop', methods=['POST'])
         def api_stop_server(server_id):
             try:
                 auth_header = request.headers.get('Authorization')
                 if not auth_header or not auth_header.startswith('Bearer '):
                     return jsonify({"error": "Authentication required"}), 401
-
+                
                 token = auth_header.split(' ')[1]
                 token_data = self.auth.verify_token(token)
-
+                
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
-
+                
                 result = self.server_manager.stop_server(server_id)
                 if result:
                     return jsonify({"success": True, "message": f"Server {server_id} stopped successfully"})
-                return jsonify({"error": f"Failed to stop server {server_id}"}), 400
+                else:
+                    return jsonify({"error": f"Failed to stop server {server_id}"}), 400
             except Exception as e:
                 logger.error(f"Stop server error: {e}")
                 return jsonify({"error": "Failed to stop server"}), 500
-
+        
         @app.route('/api/servers/<server_id>/restart', methods=['POST'])
         def api_restart_server(server_id):
             try:
                 auth_header = request.headers.get('Authorization')
                 if not auth_header or not auth_header.startswith('Bearer '):
                     return jsonify({"error": "Authentication required"}), 401
-
+                
                 token = auth_header.split(' ')[1]
                 token_data = self.auth.verify_token(token)
-
+                
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
-
+                
                 result = self.server_manager.restart_server(server_id)
                 if result:
                     return jsonify({"success": True, "message": f"Server {server_id} restarted successfully"})
-                return jsonify({"error": f"Failed to restart server {server_id}"}), 400
+                else:
+                    return jsonify({"error": f"Failed to restart server {server_id}"}), 400
             except Exception as e:
                 logger.error(f"Restart server error: {e}")
                 return jsonify({"error": "Failed to restart server"}), 500
-
+        
+        # User management API (admin only)
         @app.route('/api/users', methods=['GET'])
         def api_get_users():
             try:
                 auth_header = request.headers.get('Authorization')
                 if not auth_header or not auth_header.startswith('Bearer '):
                     return jsonify({"error": "Authentication required"}), 401
-
+                
                 token = auth_header.split(' ')[1]
                 token_data = self.auth.verify_token(token)
-
+                
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
-
+                
+                # Check if user is admin
                 if not self.auth.is_admin(token_data["username"]):
                     return jsonify({"error": "Admin privileges required"}), 403
-
+                
                 users = self.auth.get_all_users()
                 return jsonify(users)
             except Exception as e:
                 logger.error(f"Get users error: {e}")
                 return jsonify({"error": "Failed to get users"}), 500
-
+        
+        # System settings API
         @app.route('/api/settings', methods=['GET'])
         def api_get_settings():
             try:
                 auth_header = request.headers.get('Authorization')
                 if not auth_header or not auth_header.startswith('Bearer '):
                     return jsonify({"error": "Authentication required"}), 401
-
+                
                 token = auth_header.split(' ')[1]
                 token_data = self.auth.verify_token(token)
-
+                
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
-
+                
+                # Return some default settings
                 return jsonify({
                     "autoUpdate": True,
                     "backupSchedule": 24,
@@ -831,7 +1001,8 @@ class ServerManagerWebServer:
             except Exception as e:
                 logger.error(f"Get settings error: {e}")
                 return jsonify({"error": "Failed to get settings"}), 500
-
+        
+        # --- Cluster role API ---
         @app.route('/api/cluster/role', methods=['GET'])
         def api_cluster_role():
             return jsonify({
@@ -839,161 +1010,163 @@ class ServerManagerWebServer:
                 "hostAddress": self.host_address
             })
 
+        # --- Tracker API ---
         @app.route('/api/tracker/dashboards', methods=['GET'])
         def api_tracker_dashboards():
-            try:
+            if self.tracker:
                 return jsonify(self.tracker.get_dashboards())
-            except Exception as e:
-                logger.error(f"Tracker dashboards error: {e}")
-                return jsonify({"error": "Dashboard tracker not available"}), 500
+            return jsonify({"error": "Dashboard tracker not available"}), 500
 
         @app.route('/api/tracker/servers', methods=['GET', 'POST', 'DELETE', 'PATCH'])
         def api_tracker_servers():
-            try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-                token = auth_header.split(' ')[1]
-                token_data = self.auth.verify_token(token)
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
+            # Require authentication
+            auth_header = request.headers.get('Authorization')
+            if not auth_header or not auth_header.startswith('Bearer '):
+                return jsonify({"error": "Authentication required"}), 401
+            token = auth_header.split(' ')[1]
+            token_data = self.auth.verify_token(token)
+            if not token_data:
+                return jsonify({"error": "Invalid or expired token"}), 401
 
-                if request.method == 'GET':
+            # GET: List all servers
+            if request.method == 'GET':
+                if self.tracker:
                     return jsonify(self.tracker.get_servers())
+                return jsonify({"error": "Dashboard tracker not available"}), 500
 
-                if request.method == 'POST':
-                    data = request.json
-                    if not data or not isinstance(data, dict):
-                        return jsonify({"error": "Invalid request body"}), 400
-                    name = data.get("Name")
-                    config = data
-                    if not name or not isinstance(name, str):
-                        return jsonify({"error": "Missing or invalid server name"}), 400
-                    servers_dir = self.paths["servers"]
-                    os.makedirs(servers_dir, exist_ok=True)
-                    config_file = os.path.join(servers_dir, f"{name}.json")
-                    if os.path.exists(config_file):
-                        return jsonify({"error": "Server already exists"}), 409
-                    with open(config_file, 'w') as f:
-                        json.dump(config, f, indent=4)
+            # POST: Add a new server
+            if request.method == 'POST':
+                data = request.json
+                name = data.get("Name")
+                config = data
+                if not name:
+                    return jsonify({"error": "Missing server name"}), 400
+                servers_dir = self.paths["servers"]
+                os.makedirs(servers_dir, exist_ok=True)
+                config_file = os.path.join(servers_dir, f"{name}.json")
+                if os.path.exists(config_file):
+                    return jsonify({"error": "Server already exists"}), 409
+                with open(config_file, 'w') as f:
+                    json.dump(config, f, indent=4)
+                if self.tracker:
                     self.tracker.refresh()
-                    return jsonify({"success": True})
+                return jsonify({"success": True})
 
-                if request.method == 'DELETE':
-                    data = request.json
-                    if not data or not isinstance(data, dict):
-                        return jsonify({"error": "Invalid request body"}), 400
-                    name = data.get("Name")
-                    if not name or not isinstance(name, str):
-                        return jsonify({"error": "Missing or invalid server name"}), 400
-                    servers_dir = self.paths["servers"]
-                    config_file = os.path.join(servers_dir, f"{name}.json")
-                    if not os.path.exists(config_file):
-                        return jsonify({"error": "Server not found"}), 404
-                    os.remove(config_file)
+            # DELETE: Remove a server
+            if request.method == 'DELETE':
+                data = request.json
+                name = data.get("Name")
+                if not name:
+                    return jsonify({"error": "Missing server name"}), 400
+                servers_dir = self.paths["servers"]
+                config_file = os.path.join(servers_dir, f"{name}.json")
+                if not os.path.exists(config_file):
+                    return jsonify({"error": "Server not found"}), 404
+                os.remove(config_file)
+                if self.tracker:
                     self.tracker.refresh()
-                    return jsonify({"success": True})
+                return jsonify({"success": True})
 
-                if request.method == 'PATCH':
-                    data = request.json
-                    if not data or not isinstance(data, dict):
-                        return jsonify({"error": "Invalid request body"}), 400
-                    name = data.get("Name")
-                    action = data.get("Action")
-                    if not name or not action or not isinstance(name, str) or not isinstance(action, str):
-                        return jsonify({"error": "Missing or invalid server name or action"}), 400
-                    servers_dir = self.paths["servers"]
-                    config_file = os.path.join(servers_dir, f"{name}.json")
-                    if not os.path.exists(config_file):
-                        return jsonify({"error": "Server not found"}), 404
-                    with open(config_file, 'r') as f:
-                        config = json.load(f)
-                    if action == "start":
-                        config["Status"] = "Running"
-                    elif action == "stop":
-                        config["Status"] = "Stopped"
-                    elif action == "restart":
-                        config["Status"] = "Restarting"
-                    else:
-                        return jsonify({"error": "Unknown action"}), 400
-                    with open(config_file, 'w') as f:
-                        json.dump(config, f, indent=4)
+            # PATCH: Update server status (start/stop/restart)
+            if request.method == 'PATCH':
+                data = request.json
+                name = data.get("Name")
+                action = data.get("Action")
+                if not name or not action:
+                    return jsonify({"error": "Missing server name or action"}), 400
+                # For demo, just update status in config file
+                servers_dir = self.paths["servers"]
+                config_file = os.path.join(servers_dir, f"{name}.json")
+                if not os.path.exists(config_file):
+                    return jsonify({"error": "Server not found"}), 404
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                if action == "start":
+                    config["Status"] = "Running"
+                elif action == "stop":
+                    config["Status"] = "Stopped"
+                elif action == "restart":
+                    config["Status"] = "Restarting"
+                else:
+                    return jsonify({"error": "Unknown action"}), 400
+                with open(config_file, 'w') as f:
+                    json.dump(config, f, indent=4)
+                if self.tracker:
                     self.tracker.refresh()
-                    return jsonify({"success": True, "status": config["Status"]})
+                return jsonify({"success": True, "status": config["Status"]})
 
-                return jsonify({"error": "Unsupported method"}), 405
-            except Exception as e:
-                logger.error(f"Tracker servers error: {e}")
-                return jsonify({"error": "Failed to process tracker request"}), 500
+            return jsonify({"error": "Unsupported method"}), 405
 
+        # Error handlers
         @app.errorhandler(404)
         def page_not_found(e):
             return jsonify({"error": "Not found"}), 404
-
+        
         @app.errorhandler(500)
         def internal_server_error(e):
             logger.error(f"Internal server error: {e}")
             return jsonify({"error": "Internal server error"}), 500
-
-        @app.errorhandler(429)
-        def ratelimit_handler(e):
-            logger.warning(f"Rate limit exceeded: {e}")
-            return jsonify({"error": "Too many requests"}), 429
-
+    
     def run(self):
+        """Run the web server"""
         try:
             logger.info(f"Starting web server on port {self.web_port}")
-            ssl_context = None
-            if os.getenv("SSL_ENABLED", "false").lower() == "true":
-                cert_path = os.getenv("SSL_CERT_PATH")
-                key_path = os.getenv("SSL_KEY_PATH")
-                if not cert_path or not key_path or not os.path.exists(cert_path) or not os.path.exists(key_path):
-                    logger.error("SSL enabled but certificate or key file missing")
-                    raise ValueError("Invalid SSL configuration")
-                ssl_context = (cert_path, key_path)
-            serve(
-                self.app,
-                host='0.0.0.0',
+            
+            # Instead of running in a thread, run directly in the main thread
+            # This provides better error reporting and stability
+            self.app.run(
+                host='0.0.0.0',  # Bind to all interfaces
                 port=self.web_port,
-                threads=8,
-                ssl_context=ssl_context
+                debug=self.debug_mode,
+                threaded=True,
+                use_reloader=False  # Disable reloader to prevent duplicate processes
             )
+                
         except KeyboardInterrupt:
             logger.info("Web server stopping due to keyboard interrupt")
         except Exception as e:
-            logger.error(f"Web server error: {e}")
+            logger.error(f"Web server error: {str(e)}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
+        
         return True
 
     def test_xml_auth_module(self):
+        """Test if the XML authentication module is available and working"""
         try:
+            # Add the server manager directory to Python path
             sys.path.insert(0, self.server_manager_dir)
-            from Modules.authentication import authenticate_user, is_admin_user
+            
+            # Try to import authentication module
+            from Modules.authentication import authenticate_user, is_admin_user, initialize_default_admin
+            
             logger.info("XML authentication module imported successfully")
+            
+            # Test if the module can initialize
             config_dir = os.path.join(self.server_manager_dir, "config")
             users_file = os.path.join(config_dir, "users.xml")
+            
             logger.info(f"Checking authentication files:")
             logger.info(f"  Config dir: {config_dir} (exists: {os.path.exists(config_dir)})")
             logger.info(f"  Users file: {users_file} (exists: {os.path.exists(users_file)})")
-            try:
-                from Modules.authentication import initialize_default_admin
-                if not os.path.exists(users_file):
-                    logger.info("Users file doesn't exist, attempting to initialize")
-                    result = initialize_default_admin()
-                    logger.info(f"Default admin initialization result: {result}")
-            except ImportError:
-                logger.warning("initialize_default_admin not available in XML authentication module")
+            
+            # Try to initialize default admin if needed
+            if not os.path.exists(users_file):
+                logger.info("Users file doesn't exist, attempting to initialize")
+                result = initialize_default_admin()
+                logger.info(f"Default admin initialization result: {result}")
+            
         except ImportError as e:
-            logger.warning(f"Failed to import XML authentication module: {e}")
-            logger.info(f"Python path: {sys.path}")
+            logger.error(f"Failed to import XML authentication module: {e}")
+            logger.error(f"Python path: {sys.path}")
         except Exception as e:
             logger.error(f"Error testing XML authentication module: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
 
 def is_admin():
+    """Check if running with admin privileges"""
     try:
         import ctypes
         return ctypes.windll.shell32.IsUserAnAdmin() != 0
@@ -1001,20 +1174,25 @@ def is_admin():
         return False
 
 def main():
+    """Main function"""
     try:
+        # Check if admin (informational only)
         if not is_admin():
             logger.warning("Not running with administrator privileges. Some features may be limited.")
+
+        # Ensure root admin user in SQL if possible
         if get_engine and ensure_root_admin:
             try:
                 engine = get_engine()
                 ensure_root_admin(engine)
-                logger.info("Root admin ensured in SQL database")
             except Exception as e:
                 logger.error(f"Could not ensure root admin in SQL: {e}")
+
+        # Create and run web server
         web_server = ServerManagerWebServer()
         return web_server.run()
     except Exception as e:
-        logger.error(f"Unhandled exception: {e}")
+        logger.error(f"Unhandled exception: {str(e)}")
         return False
 
 if __name__ == "__main__":

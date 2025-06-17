@@ -1,0 +1,203 @@
+# Server Manager Project Planner
+
+## Project Phases Overview
+- **Phase 1**: Core Infrastructure & Security Foundation
+- **Phase 2**: User Management & Authentication
+- **Phase 3**: Dashboard & Web Interface
+- **Phase 4**: Host Clustering & Load Balancing
+- **Phase 5**: Advanced Features & Optimization
+- **Phase 6**: Monitoring & Business Features
+
+---
+
+## Phase 1: Core Infrastructure & Security Foundation
+**Priority: CRITICAL** | **Dependencies: None** | **Est. Duration: 4-6 weeks**
+
+### 1.1 Basic System Setup
+- [ ] **Task 18** [WIP] - Directory structure creation (steamcmd, other servers)
+  - **Priority**: High
+  - **Effort**: 1-2 days
+  - **Dependencies**: None
+
+- [ ] **Task 7** [WIP] - User permission limitations (standard user only)
+  - **Priority**: High
+  - **Effort**: 3-5 days
+  - **Dependencies**: Task 18
+
+### 1.2 Security Implementation
+- [ ] **Task 6** [WIP] - Encryption for all connections (internal/external + HTTPS)
+  - **Priority**: Critical
+  - **Effort**: 1-2 weeks
+  - **Dependencies**: Task 7
+
+- [ ] **Task 25** [WIP] - Port binding and firewall functions
+  - **Priority**: High
+  - **Effort**: 3-5 days
+  - **Dependencies**: Task 6
+
+### 1.3 Process Management
+- [ ] **Task 1** [WIP] - Dashboard primary functions (start/stop, PID tracking)
+  - **Priority**: High
+  - **Effort**: 1 week
+  - **Dependencies**: Task 25
+
+- [ ] **Task 8** [WIP] - Comprehensive logging system
+  - **Priority**: Medium
+  - **Effort**: 3-4 days
+  - **Dependencies**: Task 1
+
+---
+
+## Phase 2: User Management & Authentication
+**Priority: HIGH** | **Dependencies: Phase 1** | **Est. Duration: 3-4 weeks**
+
+### 2.1 Database Integration
+- [ ] **Task 9** [WIP] - SQL support (MSSQL, MySQL, MariaDB) with user registration
+  - **Priority**: High
+  - **Effort**: 1-2 weeks
+  - **Dependencies**: Task 6 (encryption)
+
+### 2.2 Authentication System
+- [ ] **Task 13** [WIP] - 2FA enforcement for admin users (root, host)
+  - **Priority**: Critical
+  - **Effort**: 1 week
+  - **Dependencies**: Task 9
+
+- [ ] **Task 10** [WIP] - Admin dashboard for user account management
+  - **Priority**: High
+  - **Effort**: 1 week
+  - **Dependencies**: Task 13
+
+### 2.3 User Resource Management
+- [ ] **Task 15** [WIP] - Resource limitations per user (RAM, cores)
+  - **Priority**: High
+  - **Effort**: 3-5 days
+  - **Dependencies**: Task 10
+
+- [ ] **Task 14** [WIP] - File/folder access management
+  - **Priority**: Medium
+  - **Effort**: 3-4 days
+  - **Dependencies**: Task 15
+
+---
+
+## Phase 3: Dashboard & Web Interface
+**Priority: HIGH** | **Dependencies: Phase 1-2** | **Est. Duration: 4-5 weeks**
+
+### 3.1 File Management
+- [ ] **Task 19** [WIP] - File download system (zip for multiple files)
+  - **Priority**: Medium
+  - **Effort**: 3-5 days
+  - **Dependencies**: Task 14
+
+- [ ] **Task 20** [WIP] - File upload and extraction system
+  - **Priority**: Medium
+  - **Effort**: 1 week
+  - **Dependencies**: Task 19
+
+### 3.2 Server Instance Management
+- [ ] **Task 11** [WIP] - User instance management (start/stop servers)
+  - **Priority**: High
+  - **Effort**: 1-2 weeks
+  - **Dependencies**: Task 20
+
+- [ ] **Task 16** [WIP] - Process console access for users
+  - **Priority**: Medium
+  - **Effort**: 1 week
+  - **Dependencies**: Task 11
+
+### 3.3 Server Environment Support
+- [ ] **Task 26** [WIP] - Java version management and listing
+  - **Priority**: Medium
+  - **Effort**: 3-4 days
+  - **Dependencies**: Task 16
+
+- [ ] **Task 24** [TODO] - Server template system for faster deployment
+  - **Priority**: Low
+  - **Effort**: 1 week
+  - **Dependencies**: Task 26
+
+---
+
+## Phase 4: Host Clustering & Load Balancing
+**Priority: MEDIUM** | **Dependencies: Phase 1-3** | **Est. Duration: 3-4 weeks**
+
+### 4.1 Architecture Separation
+- [ ] **Task 2** [WIP] - File organization (master/slave host structure)
+  - **Priority**: Medium
+  - **Effort**: 1 week
+  - **Dependencies**: Task 11
+
+- [ ] **Task 3** [WIP] - Cross-platform dashboard communication
+  - **Priority**: Medium
+  - **Effort**: 1 week
+  - **Dependencies**: Task 2
+
+### 4.2 Clustering Implementation
+- [ ] **Task 4** [TODO] - Master-slave host clustering (internal network)
+  - **Priority**: Medium
+  - **Effort**: 2 weeks
+  - **Dependencies**: Task 3
+
+- [ ] **Task 5** [TODO] - System information parsing (CPU, RAM, disk, network)
+  - **Priority**: Medium
+  - **Effort**: 1 week
+  - **Dependencies**: Task 4
+
+### 4.3 External Web Hosting
+- [ ] **Task 12** [TODO] - Separate web server (IIS, Apache2, Nginx)
+  - **Priority**: Low
+  - **Effort**: 1-2 weeks
+  - **Dependencies**: Task 5
+
+---
+
+## Phase 5: Advanced Features & Optimization
+**Priority: LOW** | **Dependencies: Phase 1-4** | **Est. Duration: 2-3 weeks**
+
+### 5.1 Communication Systems
+- [ ] **Task 23** [WIP] - Email service integration
+  - **Priority**: Low
+  - **Effort**: 3-5 days
+  - **Dependencies**: Task 12
+
+### 5.2 Testing & Quality Assurance
+- [ ] **Task 21** [TODO] - Comprehensive debugging and failure testing
+  - **Priority**: Medium
+  - **Effort**: 1-2 weeks
+  - **Dependencies**: All previous tasks
+
+---
+
+## Phase 6: Monitoring & Business Features
+**Priority: LOW** | **Dependencies: Phase 1-5** | **Est. Duration: 2-3 weeks**
+
+### 6.1 Status & Monitoring
+- [ ] **Task 22** [TODO] - Status website for API/process monitoring
+  - **Priority**: Low
+  - **Effort**: 1 week
+  - **Dependencies**: Task 21
+
+### 6.2 Business Logic
+- [ ] **Task 17** [TODO] - Payment tracking system
+  - **Priority**: Low
+  - **Effort**: 1-2 weeks
+  - **Dependencies**: Task 22
+
+---
+
+## Critical Path Summary
+1. **Tasks 18, 7** → **Task 6** → **Task 25** → **Task 1** (Core foundation)
+2. **Task 9** → **Task 13** → **Task 10** (Authentication system)
+3. **Task 11** → **Task 16** (Server management)
+4. **Task 2** → **Task 3** → **Task 4** (Clustering)
+
+## Risk Assessment
+- **High Risk**: Security implementation (Task 6) - Critical for all other features
+- **Medium Risk**: Database integration (Task 9) - Affects user management
+- **Low Risk**: External features (Tasks 17, 22, 23) - Nice to have but not essential
+
+## Resource Allocation Recommendations
+- **Immediate Focus**: Phase 1 (Security & Infrastructure)
+- **Next Priority**: Phase 2 (User Management)
+- **Parallel Development**: File management (Tasks 19, 20) can be developed alongside Phase 2

@@ -1,16 +1,50 @@
 # --- Hide console and relaunch as WinForms GUI if needed ---
 Add-Type -AssemblyName System.Windows.Forms
 
-# Relaunch in hidden window if not already
-if ($Host.Name -eq 'ConsoleHost' -and !$env:SERVERMANAGER_INSTALLER_GUI) {
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = "powershell.exe"
-    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File `"$($MyInvocation.MyCommand.Path)`""
-    $psi.UseShellExecute = $true
-    $psi.EnvironmentVariables["SERVERMANAGER_INSTALLER_GUI"] = "1"
-    [System.Diagnostics.Process]::Start($psi) | Out-Null
-    exit
+# --- Logging functions must be defined before any usage ---
+function Write-Log {
+    param (
+        [string]$message
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logMessage = "$timestamp - $message"
+    $global:logMemory += $logMessage
 }
+
+function Write-LogToFile {
+    param (
+        [string]$logFilePath
+    )
+    if (-not $logFilePath) { return }
+    try {
+        foreach ($logMessage in $global:logMemory) {
+            Add-Content -Path $logFilePath -Value $logMessage
+        }
+    } catch {}
+    $global:logMemory = @()
+}
+
+# Console window handling function (unified version)
+function Show-Console {
+    param ([Switch]$Show, [Switch]$Hide)
+    if (-not ("Console.Window" -as [type])) {
+        Add-Type -Name Window -Namespace Console -MemberDefinition '
+        [DllImport("Kernel32.dll")]
+        public static extern IntPtr GetConsoleWindow();
+
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+        '
+    }
+    $consolePtr = [Console.Window]::GetConsoleWindow()
+    $nCmdShow = if ($Show) { 5 } elseif ($Hide) { 0 } else { return }
+    [Console.Window]::ShowWindow($consolePtr, $nCmdShow) | Out-Null
+    $script:DebugLoggingEnabled = $Show.IsPresent
+    Write-Log -Message "Console visibility set to: $($Show.IsPresent)" -Level DEBUG
+}
+
+# Hide Console
+Show-Console -Hide
 
 # --- Main installer script ---
 
@@ -491,30 +525,6 @@ function New-Servermanager {
     }
 }
 
-# Function to write messages to log (stored in memory first)
-function Write-Log {
-    param (
-        [string]$message
-    )
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $logMessage = "$timestamp - $message"
-    $global:logMemory += $logMessage
-}
-
-# Function to write the log from memory to file
-function Write-LogToFile {
-    param (
-        [string]$logFilePath
-    )
-    if (-not $logFilePath) { return }
-    try {
-        foreach ($logMessage in $global:logMemory) {
-            Add-Content -Path $logFilePath -Value $logMessage
-        }
-    } catch {}
-    $global:logMemory = @()
-}
-
 # Function to check and install Git if missing
 function Install-Git {
     if (-Not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -748,123 +758,70 @@ function Set-InitialAuthConfig {
     Write-Log "Starting authentication configuration setup"
     
     try {
-        # Initialize encryption key before proceeding
-        if (-not (Initialize-EncryptionKey)) {
-            throw "Failed to initialize encryption key"
-        }
+        # Import the authentication module to create the default admin user
+        $authModulePath = Join-Path $ServerManagerDir "Modules\authentication.py"
         
-        $configDir = Join-Path $ServerManagerDir "config"
-        $usersFile = Join-Path $configDir "users.xml"
-        
-        # Create config directory with restricted access
-        New-Item -ItemType Directory -Path $configDir -Force | Out-Null
-        $acl = Get-Acl $configDir
-        $acl.SetAccessRuleProtection($true, $false)
-        $rule = New-Object Security.AccessControl.FileSystemAccessRule(
-            "SYSTEM", "FullControl", "Allow")
-        $acl.AddAccessRule($rule)
-        $rule = New-Object Security.AccessControl.FileSystemAccessRule(
-            $env:USERNAME, "FullControl", "Allow")
-        $acl.AddAccessRule($rule)
-        Set-Acl $configDir $acl | Out-Null
-        
-        # Setup root admin account with enhanced security
-        do {
-            $adminUser = Read-Host "Enter root admin username (minimum 4 characters)"
-            if ($adminUser.Length -lt 4) {
-                Write-Log "Username must be at least 4 characters long" -ForegroundColor Red
-            }
-        } while ($adminUser.Length -lt 4)
+        if (Test-Path $authModulePath) {
+            Write-Log "Initializing authentication system with default admin user"
+            
+            # Use Python to initialize the authentication system
+            $initScript = @"
+import sys
+import os
+sys.path.insert(0, r'$ServerManagerDir')
 
-        do {
-            $adminPass = Read-Host "Enter root admin password (minimum 12 characters)" -AsSecureString
-            $adminPassConfirm = Read-Host "Confirm root admin password" -AsSecureString
+try:
+    from Modules.authentication import initialize_default_admin, create_user
+    
+    # Initialize default admin
+    result = initialize_default_admin()
+    if result:
+        print("SUCCESS: Default admin user initialized")
+    else:
+        print("ERROR: Failed to initialize default admin user")
+        # Try to create manually as fallback
+        try:
+            result = create_user("admin", "admin", True)
+            if result:
+                print("SUCCESS: Fallback admin user created")
+            else:
+                print("ERROR: Failed to create fallback admin user")
+        except Exception as e:
+            print(f"ERROR: Exception during fallback creation: {e}")
             
-            $passPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPass))
-            $passConfirmPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPassConfirm))
+except Exception as e:
+    print(f"ERROR: {e}")
+    import traceback
+    print(f"TRACEBACK: {traceback.format_exc()}")
+"@
             
-            if ($passPlain.Length -lt 12) {
-                Write-Log "Password must be at least 12 characters long" -ForegroundColor Red
-                continue
-            }
+            $tempPyFile = [System.IO.Path]::GetTempFileName() + ".py"
+            Set-Content -Path $tempPyFile -Value $initScript
             
-            if ($passPlain -ne $passConfirmPlain) {
-                Write-Log "Passwords do not match. Please try again." -ForegroundColor Red
-            }
-            
-            # Clear sensitive data
-            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR(
-                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPass))
-            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR(
-                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($adminPassConfirm))
-            
-        } while ($passPlain.Length -lt 12 -or $passPlain -ne $passConfirmPlain)
-
-        # Generate unique salt and hash password
-        $salt = New-Salt
-        $hash = Get-SecureHash -SecurePassword $adminPass -Salt $salt
-        
-        # Modified user object structure
-        $users = @(
-            @{
-                Username = $adminUser
-                PasswordHash = $hash
-                Salt = $salt
-                IsAdmin = $true
-                Created = Get-Date -Format "o"
-                LastModified = Get-Date -Format "o"
-                Type = "Admin"
-                Enabled = $true
-                Permissions = @{
-                    IsAdmin = $true
-                    CanManageUsers = $true
-                    CanManageServers = $true
+            try {
+                $result = & python $tempPyFile 2>&1
+                Write-Log "Authentication initialization result: $result"
+                
+                if ($result -match "SUCCESS") {
+                    Write-Log "Authentication system initialized successfully"
+                } else {
+                    Write-Log "Warning: Authentication initialization may have failed: $result" -Level WARNING
                 }
+            } finally {
+                Remove-Item $tempPyFile -Force -ErrorAction SilentlyContinue
             }
-        )
-        
-        # Create config directory if it doesn't exist
-        $configDir = Join-Path $ServerManagerDir "config"
-        if (-not (Test-Path $configDir)) {
-            New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+        } else {
+            Write-Log "Authentication module not found at: $authModulePath" -Level WARNING
         }
-
-        # Export with specific encoding and format
-        $usersFile = Join-Path $configDir "users.xml"
-        $users | Export-Clixml -Path $usersFile -Force | Out-Null
-
-        # Also create an admin config file to ensure admin status is preserved
-        $adminConfig = @{
-            AdminUsers = @($adminUser)
-            LastModified = Get-Date -Format "o"
-        }
-        
-        $adminConfigFile = Join-Path $configDir "admin.xml"
-        $adminConfig | Export-Clixml -Path $adminConfigFile -Force | Out-Null
-
-        # Protect both files (suppress output)
-        Protect-ConfigFile -FilePath $usersFile | Out-Null
-        Protect-ConfigFile -FilePath $adminConfigFile | Out-Null
-        
-        Write-Log "Authentication configuration completed successfully"
-        Write-Log "`nAdmin account created successfully with username: $adminUser" -ForegroundColor Green
         
         return $true
     }
     catch {
-        Write-Log "Failed to configure authentication: $($_.Exception.Message)"
-        throw
+        Write-Log "Error during authentication setup: $($_.Exception.Message)" -Level ERROR
+        return $false
     }
     finally {
-        # Clear sensitive data from memory
-        if ($adminPass) { $adminPass.Dispose() }
-        if ($adminPassConfirm) { $adminPassConfirm.Dispose() }
-        if ($passPlain) { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR([System.Runtime.InteropServices.Marshal]::StringToBSTR($passPlain)) }
-        if ($passConfirmPlain) { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR([System.Runtime.InteropServices.Marshal]::StringToBSTR($passConfirmPlain)) }
-        if ($hash) { Clear-Variable hash }
-        if ($salt) { Clear-Variable salt }
+        Write-Log "Authentication configuration setup completed"
     }
 }
 
@@ -1115,7 +1072,7 @@ function Get-HostTypeOptions {
     $okButton = New-Object System.Windows.Forms.Button
     $okButton.Text = "Continue"
     $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
-    $okButton.Location = New-Object System.Drawing.Point(150,120)
+    $okButton.Location = New-Object System.Drawing.Point(150,80)
     $form.Controls.Add($okButton)
     $form.AcceptButton = $okButton
 

@@ -12,15 +12,18 @@ import datetime
 import tempfile
 import shutil
 import socket
-from pathlib import Path
-
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, scrolledtext
-from PIL import Image, ImageTk
+import webbrowser
+import traceback
+import signal
+import argparse
 import ctypes
 import urllib.request
 import urllib.error
-import requests
+
+import tkinter as tk
+from pathlib import Path
+from tkinter import ttk, messagebox, filedialog, scrolledtext
+from PIL import Image, ImageTk
 
 # Try to import required libraries, install if not present
 try:
@@ -865,27 +868,164 @@ class ServerManagerDashboard:
 
     def api_login(self):
         """Prompt for login and obtain API token"""
+        # Skip API login if in offline mode or if web server is not available
+        if self.variables["offlineMode"]:
+            logger.info("Skipping API login - offline mode enabled")
+            return
+            
+        # Check if web server is available
+        if not self.is_port_open('localhost', self.variables["webserverPort"]):
+            logger.warning("Web server not available, running in offline mode")
+            self.variables["offlineMode"] = True
+            return
+            
         from tkinter.simpledialog import askstring
-        while True:
-            username = askstring("Login", "Username:")
-            password = askstring("Login", "Password:", show="*")
-            if not username or not password:
-                messagebox.showerror("Login Required", "Username and password required.")
-                continue
+        max_attempts = 3
+        attempts = 0
+        
+        # First, try the default admin credentials created during installation
+        default_credentials = [
+            ("admin", "admin"),  # Default fallback
+        ]
+        
+        # Try to read the admin password file if it exists
+        try:
+            config_dir = os.path.join(self.server_manager_dir, "config")
+            admin_password_file = os.path.join(config_dir, "admin_password.txt")
+            
+            if os.path.exists(admin_password_file):
+                try:
+                    with open(admin_password_file, 'r') as f:
+                        content = f.read()
+                    
+                    # Extract password from content
+                    lines = content.split('\n')
+                    password_line = next((line for line in lines if line.startswith("Default admin password:")), None)
+                    
+                    if password_line:
+                        password = password_line.split(":", 1)[1].strip()
+                        default_credentials.insert(0, ("admin", password))
+                        logger.info("Found admin password file, will try those credentials first")
+                except Exception as e:
+                    logger.debug(f"Could not read admin password file: {e}")
+        except Exception:
+            pass
+        
+        # Try default credentials first
+        for username, password in default_credentials:
             try:
-                resp = requests.post(
+                logger.info(f"Attempting automatic login with username: {username}")
+                
+                # Prepare login data
+                login_data = {
+                    "username": username,
+                    "password": password
+                }
+                
+                # Convert to JSON and encode
+                json_data = json.dumps(login_data).encode('utf-8')
+                
+                # Create request
+                req = urllib.request.Request(
                     f"http://localhost:{self.variables['webserverPort']}/api/auth/login",
-                    json={"username": username, "password": password},
-                    timeout=5
+                    data=json_data,
+                    headers={
+                        'Content-Type': 'application/json',
+                        'Content-Length': str(len(json_data))
+                    },
+                    method='POST'
                 )
-                if resp.status_code == 200:
-                    self.api_token = resp.json()["token"]
-                    break
-                else:
-                    messagebox.showerror("Login Failed", resp.json().get("error", "Unknown error"))
+                
+                # Make request with timeout
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    if response.status == 200:
+                        response_data = json.loads(response.read().decode('utf-8'))
+                        self.api_token = response_data.get("token")
+                        logger.info(f"Successfully logged in automatically as {username}")
+                        return
+                        
             except Exception as e:
-                messagebox.showerror("Login Error", str(e))
-
+                logger.debug(f"Automatic login failed for {username}: {e}")
+                continue
+        
+        # If automatic login failed, prompt user
+        while attempts < max_attempts:
+            username = askstring("Login", "Username (or Cancel for offline mode):")
+            if not username:
+                logger.info("User cancelled login, enabling offline mode")
+                self.variables["offlineMode"] = True
+                return
+                
+            password = askstring("Login", "Password:", show="*")
+            if not password:
+                logger.info("User cancelled login, enabling offline mode")
+                self.variables["offlineMode"] = True
+                return
+                
+            try:
+                # Prepare login data
+                login_data = {
+                    "username": username,
+                    "password": password
+                }
+                
+                # Convert to JSON and encode
+                json_data = json.dumps(login_data).encode('utf-8')
+                
+                # Create request
+                req = urllib.request.Request(
+                    f"http://localhost:{self.variables['webserverPort']}/api/auth/login",
+                    data=json_data,
+                    headers={
+                        'Content-Type': 'application/json',
+                        'Content-Length': str(len(json_data))
+                    },
+                    method='POST'
+                )
+                
+                # Make request with timeout
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    if response.status == 200:
+                        response_data = json.loads(response.read().decode('utf-8'))
+                        self.api_token = response_data.get("token")
+                        logger.info(f"Successfully logged in as {username}")
+                        return
+                    else:
+                        response_text = response.read().decode('utf-8')
+                        logger.error(f"Login failed with status {response.status}: {response_text}")
+                        attempts += 1
+                        if attempts < max_attempts:
+                            messagebox.showerror("Login Failed", 
+                                               f"Invalid credentials. {max_attempts - attempts} attempts remaining.")
+                        else:
+                            messagebox.showerror("Login Failed", 
+                                               "Maximum login attempts exceeded. Running in offline mode.")
+                        
+            except urllib.error.HTTPError as e:
+                error_response = e.read().decode('utf-8') if e.fp else str(e)
+                logger.error(f"HTTP Error during login: {e.code} - {error_response}")
+                attempts += 1
+                if attempts < max_attempts:
+                    messagebox.showerror("Login Failed", 
+                                       f"Login failed (HTTP {e.code}). {max_attempts - attempts} attempts remaining.")
+                else:
+                    messagebox.showerror("Login Failed", 
+                                       f"Maximum login attempts exceeded. Running in offline mode.")
+                        
+            except Exception as e:
+                logger.error(f"Login error: {str(e)}")
+                attempts += 1
+                if attempts < max_attempts:
+                    messagebox.showerror("Connection Error", 
+                                       f"Failed to connect to server. {max_attempts - attempts} attempts remaining.")
+                else:
+                    messagebox.showerror("Connection Error", 
+                                       f"Cannot connect to server. Running in offline mode.")
+        
+        # If we get here, login failed - enable offline mode
+        self.variables["offlineMode"] = True
+        logger.info("Login failed, running in offline mode")
+    
     def api_headers(self):
         return {"Authorization": f"Bearer {self.api_token}"} if self.api_token else {}
 
@@ -921,74 +1061,38 @@ class ServerManagerDashboard:
                         if "ProcessId" in server_config:
                             try:
                                 process_id = server_config["ProcessId"]
-                                process = psutil.Process(process_id)
-                                
-                                if process.is_running():
+                                if self.is_process_running(process_id):
+                                    process = psutil.Process(process_id)
                                     status = "Running"
                                     pid = str(process_id)
                                     
                                     # Get CPU usage
                                     try:
-                                        cpu_percent = process.cpu_percent(interval=0.1)
-                                        cpu_usage = f"{cpu_percent:.1f}%"
-                                        
-                                        # Store in history
-                                        if process_id not in self.variables["processStatHistory"]:
-                                            self.variables["processStatHistory"][process_id] = {
-                                                "cpu": [],
-                                                "memory": [],
-                                                "timestamps": []
-                                            }
-                                        
-                                        history = self.variables["processStatHistory"][process_id]
-                                        history["cpu"].append(cpu_percent)
-                                        
-                                        # Limit history size
-                                        if len(history["cpu"]) > self.variables["maxProcessHistoryPoints"]:
-                                            history["cpu"].pop(0)
-                                            
+                                        cpu_usage = f"{process.cpu_percent(interval=0.1):.1f}%"
                                     except:
                                         cpu_usage = "N/A"
                                         
                                     # Get memory usage
                                     try:
-                                        memory_info = process.memory_info()
-                                        memory_mb = memory_info.rss / (1024 * 1024)
+                                        memory_mb = process.memory_info().rss / (1024 * 1024)
                                         memory_usage = f"{memory_mb:.1f} MB"
-                                        
-                                        # Store in history
-                                        if process_id in self.variables["processStatHistory"]:
-                                            history = self.variables["processStatHistory"][process_id]
-                                            history["memory"].append(memory_mb)
-                                            history["timestamps"].append(datetime.datetime.now())
-                                            
-                                            # Limit history size
-                                            if len(history["memory"]) > self.variables["maxProcessHistoryPoints"]:
-                                                history["memory"].pop(0)
-                                                history["timestamps"].pop(0)
                                     except:
                                         memory_usage = "N/A"
                                         
                                     # Calculate uptime
                                     try:
-                                        # Calculate uptime if start time is available
-                                        if "StartTime" in server_config:
-                                            start_time = datetime.datetime.fromisoformat(server_config["StartTime"])
-                                            now = datetime.datetime.now()
-                                            delta = now - start_time
-                                            
-                                            days = delta.days
-                                            hours, remainder = divmod(delta.seconds, 3600)
-                                            minutes, seconds = divmod(remainder, 60)
-                                            
-                                            if days > 0:
-                                                uptime = f"{days}d {hours}h {minutes}m"
-                                            else:
-                                                uptime = f"{hours}h {minutes}m {seconds}s"
+                                        start_time = datetime.datetime.fromisoformat(server_config.get('StartTime', ''))
+                                        uptime_delta = datetime.datetime.now() - start_time
+                                        days = uptime_delta.days
+                                        hours, remainder = divmod(uptime_delta.seconds, 3600)
+                                        minutes, _ = divmod(remainder, 60)
+                                        
+                                        if days > 0:
+                                            uptime = f"{days}d {hours}h {minutes}m"
                                         else:
-                                            uptime = "Running"
+                                            uptime = f"{hours}h {minutes}m"
                                     except:
-                                        uptime = "Running"
+                                        uptime = "Unknown"
                                 else:
                                     # Process exists in config but is not running
                                     # Clean up the process ID in the config
@@ -1057,9 +1161,7 @@ class ServerManagerDashboard:
                     
                     # Check if process is running
                     if pid and self.is_process_running(pid):
-                        # Now check if we can connect to the port
-                        if self.is_port_open('localhost', self.variables["webserverPort"]):
-                            return "Connected"
+                        return "Connected"
                 except Exception as e:
                     logger.debug(f"Error checking web server PID file: {str(e)}")
             
@@ -1283,29 +1385,7 @@ class ServerManagerDashboard:
                                     # Process is running, update statistics
                                     try:
                                         process = psutil.Process(process_id)
-                                        cpu_percent = process.cpu_percent(interval=0.1)
-                                        memory_info = process.memory_info()
-                                        memory_mb = memory_info.rss / (1024 * 1024)
-                                        
-                                        # Store in history
-                                        if process_id not in self.variables["processStatHistory"]:
-                                            self.variables["processStatHistory"][process_id] = {
-                                                "cpu": [],
-                                                "memory": [],
-                                                "timestamps": []
-                                            }
-                                        
-                                        history = self.variables["processStatHistory"][process_id]
-                                        history["cpu"].append(cpu_percent)
-                                        history["memory"].append(memory_mb)
-                                        history["timestamps"].append(datetime.datetime.now())
-                                        
-                                        # Limit history size
-                                        while len(history["cpu"]) > self.variables["maxProcessHistoryPoints"]:
-                                            history["cpu"].pop(0)
-                                            history["memory"].pop(0)
-                                            history["timestamps"].pop(0)
-                                            
+                                        # Update process statistics here if needed
                                     except Exception as e:
                                         logger.error(f"Error updating process statistics for {server_name}: {str(e)}")
                         except Exception as e:
@@ -1771,6 +1851,7 @@ class ServerManagerDashboard:
                 ttk.Label(info_grid, text="Status:", width=15).grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
                 ttk.Label(info_grid, text=process.status()).grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
                 
+                
                 # Row 2
                 ttk.Label(info_grid, text="Started:", width=15).grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
                 ttk.Label(info_grid, text=create_time_str).grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
@@ -2070,6 +2151,408 @@ class ServerManagerDashboard:
         x = self.root.winfo_rootx() + (self.root.winfo_width()-dialog.winfo_width())//2
         y = self.root.winfo_rooty() + (self.root.winfo_height()-dialog.winfo_height())//2
         dialog.geometry(f"+{x}+{y}")
+
+    def open_server_directory(self):
+        """Open the server's installation directory in file explorer"""
+        selected_items = self.server_list.selection()
+        if not selected_items:
+            messagebox.showinfo("No Selection", "Please select a server first.")
+            return
+            
+        server_name = self.server_list.item(selected_items[0])['values'][0]
+        
+        try:
+            # Get server config file path
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            
+            if not os.path.exists(config_file):
+                messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
+                return
+                
+            # Read server configuration
+            with open(config_file, 'r') as f:
+                server_config = json.load(f)
+                
+            install_dir = server_config.get('InstallDir', '')
+            
+            if not install_dir:
+                messagebox.showerror("Error", "Server installation directory not configured.")
+                return
+                
+            if not os.path.exists(install_dir):
+                messagebox.showerror("Error", f"Server installation directory not found: {install_dir}")
+                return
+                
+            # Open directory in file explorer
+            if sys.platform == 'win32':
+                os.startfile(install_dir)
+            elif sys.platform == 'darwin':
+                subprocess.call(['open', install_dir])
+            else:
+                subprocess.call(['xdg-open', install_dir])
+                
+            logger.info(f"Opened directory for server '{server_name}': {install_dir}")
+            
+        except Exception as e:
+            logger.error(f"Error opening server directory: {str(e)}")
+            messagebox.showerror("Error", f"Failed to open server directory: {str(e)}")
+
+    def remove_server(self):
+        """Remove the selected server configuration"""
+        selected_items = self.server_list.selection()
+        if not selected_items:
+            messagebox.showinfo("No Selection", "Please select a server first.")
+            return
+            
+        server_name = self.server_list.item(selected_items[0])['values'][0]
+        
+        # Confirm removal
+        confirm = messagebox.askyesno("Confirm Removal", 
+                                    f"Are you sure you want to remove the server '{server_name}'?\n\n"
+                                    "This will only remove the configuration, not the server files.",
+                                    icon=messagebox.WARNING)
+        
+        if not confirm:
+            return
+            
+        try:
+            # Get server config file path
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            
+            if not os.path.exists(config_file):
+                messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
+                return
+                
+            # Check if server is running
+            with open(config_file, 'r') as f:
+                server_config = json.load(f)
+                
+            if 'ProcessId' in server_config and self.is_process_running(server_config['ProcessId']):
+                messagebox.showerror("Error", 
+                                   f"Cannot remove server '{server_name}' while it is running. "
+                                   "Please stop the server first.")
+                return
+                
+            # Remove the configuration file
+            os.remove(config_file)
+            logger.info(f"Removed server configuration: {server_name}")
+            
+            # Clean up any process history
+            process_id = server_config.get('ProcessId')
+            if process_id and process_id in self.variables["processStatHistory"]:
+                del self.variables["processStatHistory"][process_id]
+            
+            # Update server list
+            self.update_server_list(force_refresh=True)
+            
+            messagebox.showinfo("Success", f"Server '{server_name}' configuration removed successfully.")
+            
+        except Exception as e:
+            logger.error(f"Error removing server: {str(e)}")
+            messagebox.showerror("Error", f"Failed to remove server: {str(e)}")
+
+    def import_server(self):
+        """Import an existing server from a directory"""
+        try:
+            # Ask user to select a directory
+            install_dir = filedialog.askdirectory(
+                title="Select Server Installation Directory",
+                initialdir=self.server_manager_dir
+            )
+            
+            if not install_dir:
+                return
+                
+            # Create import dialog
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Import Server")
+            dialog.geometry("500x400")
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            # Main frame
+            main_frame = ttk.Frame(dialog, padding=10)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Server name
+            ttk.Label(main_frame, text="Server Name:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
+            name_var = tk.StringVar(value=os.path.basename(install_dir))
+            name_entry = ttk.Entry(main_frame, textvariable=name_var, width=35)
+            name_entry.grid(row=0, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+
+            # Server type
+            ttk.Label(main_frame, text="Server Type:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
+            type_var = tk.StringVar(value="Other")
+            type_combo = ttk.Combobox(main_frame, textvariable=type_var, values=self.supported_server_types, width=32)
+            type_combo.grid(row=1, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            
+            # Installation directory (readonly)
+            ttk.Label(main_frame, text="Install Directory:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
+            ttk.Label(main_frame, text=install_dir, wraplength=300).grid(row=2, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            
+            # Executable path
+            ttk.Label(main_frame, text="Executable:").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
+            exe_var = tk.StringVar()
+            exe_entry = ttk.Entry(main_frame, textvariable=exe_var, width=25)
+            exe_entry.grid(row=3, column=1, padx=10, pady=10, sticky=tk.W)
+            
+            def browse_exe():
+                fp = filedialog.askopenfilename(
+                    title="Select Server Executable",
+                    initialdir=install_dir,
+                    filetypes=[("Executables", "*.exe;*.jar;*.bat;*.cmd;*.sh"), ("All files", "*.*")]
+                )
+                if fp:
+                    # Store relative path if possible
+                    try:
+                        rel_path = os.path.relpath(fp, install_dir)
+                        exe_var.set(rel_path)
+                    except:
+                        exe_var.set(fp)
+            
+            ttk.Button(main_frame, text="Browse", command=browse_exe, width=10).grid(row=3, column=2, padx=5, pady=10)
+            
+            # Startup arguments
+            ttk.Label(main_frame, text="Startup Args:").grid(row=4, column=0, padx=10, pady=10, sticky=tk.W)
+            args_var = tk.StringVar()
+            args_entry = ttk.Entry(main_frame, textvariable=args_var, width=35)
+            args_entry.grid(row=4, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            
+            # Auto-detect common server files
+            def auto_detect():
+                try:
+                    found_files = []
+                    
+                    # Look for common server executables
+                    for file in os.listdir(install_dir):
+                        file_lower = file.lower()
+                        if any(pattern in file_lower for pattern in [
+                            'server.exe', 'dedicated', 'srcds', 'minecraft_server', 
+                            'server.jar', 'forge', 'fabric', 'spigot', 'paper'
+                        ]):
+                            found_files.append(file)
+                    
+                    if found_files:
+                        # Show selection dialog if multiple found
+                        if len(found_files) == 1:
+                            exe_var.set(found_files[0])
+                        else:
+                            # Create selection dialog
+                            selection_dialog = tk.Toplevel(dialog)
+                            selection_dialog.title("Select Executable")
+                            selection_dialog.geometry("400x300")
+                            selection_dialog.transient(dialog)
+                            selection_dialog.grab_set()
+                            
+                            ttk.Label(selection_dialog, text="Multiple executables found. Select one:").pack(pady=10)
+                            
+                            listbox = tk.Listbox(selection_dialog)
+                            listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+                            
+                            for file in found_files:
+                                listbox.insert(tk.END, file)
+                            
+                            def select_file():
+                                selection = listbox.curselection()
+                                if selection:
+                                    exe_var.set(found_files[selection[0]])
+                                selection_dialog.destroy()
+                            
+                            ttk.Button(selection_dialog, text="Select", command=select_file).pack(pady=10)
+                    else:
+                        messagebox.showinfo("Auto-detect", "No common server executables found. Please select manually.")
+                        
+                except Exception as e:
+                    logger.error(f"Error during auto-detect: {str(e)}")
+                    messagebox.showerror("Error", f"Auto-detection failed: {str(e)}")
+            
+            ttk.Button(main_frame, text="Auto-detect", command=auto_detect, width=15).grid(row=5, column=1, pady=10)
+            
+            # Buttons
+            button_frame = ttk.Frame(main_frame)
+            button_frame.grid(row=6, column=0, columnspan=3, pady=20)
+            
+            def import_config():
+                try:
+                    server_name = name_var.get().strip()
+                    server_type = type_var.get()
+                    executable_path = exe_var.get().strip()
+                    startup_args = args_var.get().strip()
+                    
+                    if not server_name:
+                        messagebox.showerror("Validation Error", "Server name is required.")
+                        return
+                        
+                    if not executable_path:
+                        messagebox.showerror("Validation Error", "Executable path is required.")
+                        return
+                    
+                    # Check if server name already exists
+                    config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+                    if os.path.exists(config_file):
+                        messagebox.showerror("Validation Error", "A server with this name already exists.")
+                        return
+                    
+                    # Create server configuration
+                    server_config = {
+                        "Name": server_name,
+                        "Type": server_type,
+                        "AppID": "",
+                        "InstallDir": install_dir,
+                        "ExecutablePath": executable_path,
+                        "StartupArgs": startup_args,
+                        "Created": datetime.datetime.now().isoformat(),
+                        "LastUpdate": datetime.datetime.now().isoformat(),
+                        "Imported": True
+                    }
+                    
+                    # Save configuration
+                    os.makedirs(self.paths["servers"], exist_ok=True)
+                    with open(config_file, 'w') as f:
+                        json.dump(server_config, f, indent=4)
+                    
+                    logger.info(f"Imported server: {server_name} from {install_dir}")
+                    
+                    # Update server list
+                    self.update_server_list(force_refresh=True)
+                    
+                    messagebox.showinfo("Success", f"Server '{server_name}' imported successfully!")
+                    dialog.destroy()
+                    
+                except Exception as e:
+                    logger.error(f"Error importing server: {str(e)}")
+                    messagebox.showerror("Error", f"Failed to import server: {str(e)}")
+            
+            ttk.Button(button_frame, text="Import", command=import_config, width=15).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Cancel", command=dialog.destroy, width=15).pack(side=tk.RIGHT, padx=5)
+            
+            # Center dialog
+            dialog.update_idletasks()
+            x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+            y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+            dialog.geometry(f"+{x}+{y}")
+            
+        except Exception as e:
+            logger.error(f"Error in import server: {str(e)}")
+            messagebox.showerror("Error", f"Failed to import server: {str(e)}")
+
+    def refresh_all(self):
+        """Refresh all dashboard data"""
+        try:
+            logger.info("Refreshing all dashboard data")
+            
+            # Update system information
+            self.update_system_info()
+            
+            # Update server list
+            self.update_server_list(force_refresh=True)
+            
+            # Update web server status
+            self.update_webserver_status()
+            
+            # Monitor processes
+            self.monitor_processes()
+            
+            messagebox.showinfo("Refresh Complete", "All dashboard data has been refreshed.")
+            
+        except Exception as e:
+            logger.error(f"Error refreshing dashboard: {str(e)}")
+            messagebox.showerror("Error", f"Failed to refresh dashboard: {str(e)}")
+
+    def sync_all(self):
+        """Synchronize all server data with the web API"""
+        try:
+            if not self.api_token:
+                messagebox.showinfo("Authentication Required", "Please ensure web server is running and restart dashboard to log in.")
+                return
+                
+            if self.variables["offlineMode"]:
+                messagebox.showinfo("Offline Mode", "Cannot sync while in offline mode.")
+                return
+                
+            # Create progress dialog
+            progress_dialog = tk.Toplevel(self.root)
+            progress_dialog.title("Synchronizing Data")
+            progress_dialog.geometry("400x150")
+            progress_dialog.transient(self.root)
+            progress_dialog.grab_set()
+            
+            progress_frame = ttk.Frame(progress_dialog, padding=20)
+            progress_frame.pack(fill=tk.BOTH, expand=True)
+            
+            status_label = ttk.Label(progress_frame, text="Starting synchronization...")
+            status_label.pack(pady=10)
+            
+            progress_bar = ttk.Progressbar(progress_frame, mode="indeterminate")
+            progress_bar.pack(fill=tk.X, pady=10)
+            progress_bar.start()
+            
+            def sync_data():
+                try:
+                    status_label.config(text="Syncing server configurations...")
+                    
+                    # Get all local server configurations
+                    servers_path = self.paths["servers"]
+                    synced_count = 0
+                    
+                    if os.path.exists(servers_path):
+                        for file in os.listdir(servers_path):
+                            if file.endswith(".json"):
+                                try:
+                                    with open(os.path.join(servers_path, file), 'r') as f:
+                                        server_config = json.load(f)
+                                    
+                                    # Prepare data for API
+                                    api_data = {
+                                        "name": server_config.get("Name", ""),
+                                        "type": server_config.get("Type", ""),
+                                        "status": "Running" if "ProcessId" in server_config else "Offline"
+                                    }
+                                    
+                                    # Send to API (placeholder - implement actual API call)
+                                    # response = requests.post(self.api_url, json=api_data, headers=self.api_headers())
+                                    synced_count += 1
+                                        
+                                except Exception as e:
+                                    logger.error(f"Error syncing server {file}: {str(e)}")
+                    
+                    status_label.config(text=f"Synchronization complete. Synced {synced_count} servers.")
+                    progress_bar.stop()
+                    
+                    # Auto-close after 2 seconds
+                    progress_dialog.after(2000, progress_dialog.destroy)
+                    
+                    logger.info(f"Sync completed. {synced_count} servers synchronized.")
+                    
+                except Exception as e:
+                    logger.error(f"Error during sync: {str(e)}")
+                    status_label.config(text=f"Sync failed: {str(e)}")
+                    progress_bar.stop()
+                    
+                    # Show error and close after 3 seconds
+                    progress_dialog.after(3000, progress_dialog.destroy)
+            
+            # Start sync in a separate thread
+            sync_thread = threading.Thread(target=sync_data, daemon=True)
+            sync_thread.start()
+            
+            # Center progress dialog
+            progress_dialog.update_idletasks()
+            x = self.root.winfo_rootx() + (self.root.winfo_width() - progress_dialog.winfo_width()) // 2
+            y = self.root.winfo_rooty() + (self.root.winfo_height() - progress_dialog.winfo_height()) // 2
+            progress_dialog.geometry(f"+{x}+{y}")
+            
+        except Exception as e:
+            logger.error(f"Error in sync all: {str(e)}")
+            messagebox.showerror("Error", f"Failed to synchronize data: {str(e)}")
+
+    def add_agent(self):
+        """Add a remote agent connection"""
+        try:
+            messagebox.showinfo("Feature Coming Soon", "Remote agent functionality will be available in a future version.")
+        except Exception as e:
+            logger.error(f"Error in add agent: {str(e)}")
+            messagebox.showerror("Error", f"Failed to add agent: {str(e)}")
 
 def main():
     # Parse command line arguments

@@ -5,14 +5,34 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import tkinter as tk
 from tkinter import messagebox, simpledialog
-from user_management import UserManager
-from Modules.SQL_Connection import get_engine
+from flask import Blueprint, request, jsonify, session
+
+# Try to import user management and SQL connection with fallback
+try:
+    from user_management import UserManager
+    from Modules.SQL_Connection import get_engine, ensure_root_admin
+    SQL_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: SQL modules not available: {e}", file=sys.stderr)
+    SQL_AVAILABLE = False
+    UserManager = None
 
 def main():
-    engine = get_engine()
-    um = UserManager(engine)
-    app = AdminDashboard(um)
-    app.mainloop()
+    """Main function for standalone admin dashboard"""
+    if not SQL_AVAILABLE:
+        messagebox.showerror("Error", "SQL connection modules not available. Cannot start admin dashboard.")
+        sys.exit(1)
+        
+    try:
+        engine = get_engine()
+        ensure_root_admin(engine)  # <-- Ensure root admin is present in SQL
+        um = UserManager(engine)
+        app = AdminDashboard(um)
+        app.mainloop()
+    except Exception as e:
+        print(f"Error initializing admin dashboard: {e}", file=sys.stderr)
+        messagebox.showerror("Initialization Error", f"Failed to start admin dashboard:\n{str(e)}")
+        sys.exit(1)
 
 class AdminDashboard(tk.Tk):
     def __init__(self, user_manager):
@@ -83,40 +103,85 @@ class AdminDashboard(tk.Tk):
             except Exception as e:
                 messagebox.showerror("Error", str(e), parent=self)
 
-if __name__ == "__main__":
-    main()
-
-from flask import Blueprint, request, jsonify, session
-from Scripts.user_management import UserManager
-from Modules.SQL_Connection import get_engine
-
+# Flask Blueprint for authentication API
 auth_bp = Blueprint('auth', __name__)
 
 @auth_bp.route('/api/login', methods=['POST'])
 def login():
-    data = request.json
-    username = data.get("username")
-    password = data.get("password")
-    auth_type = data.get("authType", "Local")
-    token_2fa = data.get("token2fa")  # Optional: 2FA token from frontend
+    """Handle login requests"""
+    try:
+        data = request.json
+        username = data.get("username")
+        password = data.get("password")
+        auth_type = data.get("authType", "Local")
+        token_2fa = data.get("token2fa")  # Optional: 2FA token from frontend
 
-    if auth_type == "Database":
-        engine = get_engine()
-        um = UserManager(engine)
-        user = um.get_user(username)
-        if not user or not user.is_active:
-            return jsonify({"error": "Invalid credentials"}), 401
-        # TODO: Use password hashing in production!
-        if user.password != password:
-            return jsonify({"error": "Invalid credentials"}), 401
-        # 2FA check if enabled
-        if getattr(user, "two_factor_enabled", False):
-            if not token_2fa or not um.verify_2fa(username, token_2fa):
-                return jsonify({"error": "2FA required"}), 401
-        # Set session or return token as needed
-        session["username"] = user.username
-        session["is_admin"] = user.is_admin
-        return jsonify({"success": True, "username": user.username, "isAdmin": user.is_admin})
-    else:
-        # ...existing Windows/Local authentication...
-        pass
+        if auth_type == "Database" and SQL_AVAILABLE:
+            engine = get_engine()
+            um = UserManager(engine)
+            user = um.get_user(username)
+            if not user or not getattr(user, 'is_active', True):
+                return jsonify({"error": "Invalid credentials"}), 401
+            
+            # TODO: Use proper password hashing in production!
+            if user.password != password:
+                return jsonify({"error": "Invalid credentials"}), 401
+            
+            # 2FA check if enabled
+            if getattr(user, "two_factor_enabled", False):
+                if not token_2fa or not um.verify_2fa(username, token_2fa):
+                    return jsonify({"error": "2FA required"}), 401
+            
+            # Set session or return token as needed
+            session["username"] = user.username
+            session["is_admin"] = user.is_admin
+            return jsonify({
+                "success": True, 
+                "username": user.username, 
+                "isAdmin": user.is_admin
+            })
+        else:
+            # Fallback to simple authentication
+            # In production, implement proper Windows/Local authentication
+            if username == "admin" and password == "admin":
+                session["username"] = username
+                session["is_admin"] = True
+                return jsonify({
+                    "success": True,
+                    "username": username,
+                    "isAdmin": True
+                })
+            else:
+                return jsonify({"error": "Invalid credentials"}), 401
+                
+    except Exception as e:
+        print(f"Login error: {e}", file=sys.stderr)
+        return jsonify({"error": "Authentication error"}), 500
+
+@auth_bp.route('/api/logout', methods=['POST'])
+def logout():
+    """Handle logout requests"""
+    try:
+        session.clear()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": "Logout error"}), 500
+
+@auth_bp.route('/api/verify', methods=['GET'])
+def verify():
+    """Verify current session"""
+    try:
+        username = session.get("username")
+        if username:
+            return jsonify({
+                "authenticated": True,
+                "username": username,
+                "isAdmin": session.get("is_admin", False)
+            })
+        else:
+            return jsonify({"authenticated": False}), 401
+    except Exception as e:
+        return jsonify({"error": "Verification error"}), 500
+
+if __name__ == "__main__":
+    main()

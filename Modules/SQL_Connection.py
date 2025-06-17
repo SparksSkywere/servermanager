@@ -1,100 +1,115 @@
 import os
 import sys
+import logging
 import winreg
-import base64
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
-def get_encryption_key():
-    key_path = r"C:\ProgramData\ServerManager\encryption.key"
-    if not os.path.exists(key_path):
-        raise RuntimeError("Encryption key not found at " + key_path)
-    with open(key_path, "rb") as f:
-        key = f.read()
-        # Fernet keys must be 32 bytes base64-encoded (44 bytes)
-        if len(key) == 32:
-            key = base64.urlsafe_b64encode(key)
-        return key
-
-def decrypt_value(enc_value, key):
-    try:
-        from cryptography.fernet import Fernet
-        f = Fernet(key)
-        # Registry stores as base64-encoded string, decode first
-        if isinstance(enc_value, str):
-            enc_value = base64.b64decode(enc_value)
-        return f.decrypt(enc_value).decode("utf-8")
-    except Exception:
-        # fallback: assume plain text if not encrypted
-        if isinstance(enc_value, bytes):
-            return enc_value.decode("utf-8")
-        return enc_value
+logger = logging.getLogger("SQL_Connection")
 
 def get_sql_config_from_registry():
+    """Get SQL configuration from Windows registry"""
     try:
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\SkywereIndustries\Servermanager")
-        sql_type = winreg.QueryValueEx(key, "SQLType")[0]
-        sql_version = winreg.QueryValueEx(key, "SQLVersion")[0]
-        sql_location = winreg.QueryValueEx(key, "SQLLocation")[0]
-        sql_db_path = winreg.QueryValueEx(key, "SQLDatabasePath")[0]
-        # Optional: Encrypted user/pass
+        registry_path = r"Software\SkywereIndustries\Servermanager"
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
+        
+        # Try to get SQL type
         try:
-            sql_user = winreg.QueryValueEx(key, "SQLUser")[0]
-            sql_pass = winreg.QueryValueEx(key, "SQLPassword")[0]
-        except FileNotFoundError:
-            sql_user = ""
-            sql_pass = ""
+            sql_type = winreg.QueryValueEx(key, "SQLType")[0]
+        except:
+            sql_type = "SQLite"  # Default to SQLite
+        
+        # Get database path/connection info based on type
+        if sql_type.lower() == "sqlite":
+            try:
+                db_path = winreg.QueryValueEx(key, "SQLDatabasePath")[0]
+            except:
+                # Default SQLite path
+                try:
+                    server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
+                    db_path = os.path.join(server_manager_dir, "config", "servermanager.db")
+                except:
+                    db_path = "servermanager.db"
+            
+            config = {
+                "type": "sqlite",
+                "db_path": db_path
+            }
+        else:
+            # For other SQL types (MySQL, PostgreSQL, etc.)
+            config = {
+                "type": sql_type.lower(),
+                "host": winreg.QueryValueEx(key, "SQLHost")[0],
+                "port": winreg.QueryValueEx(key, "SQLPort")[0],
+                "database": winreg.QueryValueEx(key, "SQLDatabase")[0],
+                "username": winreg.QueryValueEx(key, "SQLUsername")[0],
+                "password": winreg.QueryValueEx(key, "SQLPassword")[0]
+            }
+        
         winreg.CloseKey(key)
-        return {
-            "type": sql_type,
-            "version": sql_version,
-            "location": sql_location,
-            "db_path": sql_db_path,
-            "user": sql_user,
-            "password": sql_pass
-        }
+        return config
+        
     except Exception as e:
-        print(f"Could not read SQL configuration from registry: {e}", file=sys.stderr)
-        sys.exit(1)
+        logger.error(f"Failed to read SQL config from registry: {e}")
+        # Return default SQLite config
+        return {
+            "type": "sqlite",
+            "db_path": "servermanager.db"
+        }
 
-def build_db_url(sql_conf):
-    sql_type = sql_conf["type"].lower()
-    key = None
-    user = sql_conf.get("user", "")
-    password = sql_conf.get("password", "")
-    # Decrypt user/pass if present and not empty
-    if user and password:
-        try:
-            key = get_encryption_key()
-            user = decrypt_value(user, key)
-            password = decrypt_value(password, key)
-        except Exception:
-            pass
-    if sql_type == "sqlite":
-        db_path = sql_conf["db_path"]
+def build_db_url(config):
+    """Build SQLAlchemy database URL from config"""
+    if config["type"] == "sqlite":
+        # For SQLite, use absolute path
+        db_path = config["db_path"]
         if not os.path.isabs(db_path):
             db_path = os.path.abspath(db_path)
         return f"sqlite:///{db_path}"
-    elif sql_type.startswith("mssql") or "express" in sql_type:
-        instance = sql_conf['type'] if sql_type != "mssql" else "SQLEXPRESS"
-        location = sql_conf['location']
-        if os.path.isabs(location) or location.startswith("\\"):
-            location = f"localhost\\{instance}"
-        elif "\\" not in location and instance.lower() != "mssql":
-            location = f"{location}\\{instance}"
-        # Use Windows Authentication if user/password are empty
-        if not user and not password:
-            # Use & instead of ; for query parameters
-            return f"mssql+pyodbc://@{location}/ServerManager?driver=ODBC+Driver+17+for+SQL+Server&Trusted_Connection=yes"
-        else:
-            return f"mssql+pyodbc://{user}:{password}@{location}/ServerManager?driver=ODBC+Driver+17+for+SQL+Server"
-    elif sql_type == "mysql":
-        return f"mysql+pymysql://{user}:{password}@{sql_conf['location']}/servermanager"
-    elif sql_type == "mariadb":
-        return f"mariadb+pymysql://{user}:{password}@{sql_conf['location']}/servermanager"
+    elif config["type"] == "mysql":
+        return f"mysql+pymysql://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
+    elif config["type"] == "postgresql":
+        return f"postgresql://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
     else:
-        raise Exception(f"Unsupported SQL type: {sql_conf['type']}")
+        raise ValueError(f"Unsupported database type: {config['type']}")
 
-def get_engine(echo=False):
-    sql_conf = get_sql_config_from_registry()
-    db_url = build_db_url(sql_conf)
-    return create_engine(db_url, echo=echo)
+def get_engine():
+    """Get SQLAlchemy engine"""
+    config = get_sql_config_from_registry()
+    db_url = build_db_url(config)
+    
+    # Create engine with appropriate settings
+    if config["type"] == "sqlite":
+        engine = create_engine(
+            db_url,
+            echo=False,
+            connect_args={"check_same_thread": False}
+        )
+    else:
+        engine = create_engine(db_url, echo=False)
+    
+    return engine
+
+def ensure_root_admin(engine):
+    """Ensure root admin user exists in database"""
+    try:
+        # This is a placeholder - implement based on your user table structure
+        with engine.connect() as conn:
+            # Check if users table exists and create if needed
+            conn.execute(text("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, is_admin BOOLEAN)"))
+            
+            # Check if admin user exists
+            result = conn.execute(text("SELECT COUNT(*) FROM users WHERE username = 'admin'"))
+            count = result.scalar()
+            
+            if count == 0:
+                # Create admin user with default password
+                import hashlib
+                admin_password = hashlib.sha256("admin".encode()).hexdigest()
+                conn.execute(text("INSERT INTO users (username, password, is_admin) VALUES ('admin', :password, 1)"), 
+                           {"password": admin_password})
+                conn.commit()
+                logger.info("Created default admin user")
+            
+    except Exception as e:
+        logger.error(f"Failed to ensure root admin: {e}")
+        raise

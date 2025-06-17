@@ -1,105 +1,201 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Login - Server Manager</title>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
-    <link rel="stylesheet" href="css/style.css">
-    <link rel="stylesheet" href="css/login.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Manager Login</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .login-container {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .login-header h1 {
+            color: #333;
+            margin: 0;
+            font-size: 28px;
+        }
+        .login-header p {
+            color: #666;
+            margin: 5px 0 0 0;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 500;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+            box-sizing: border-box;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .login-btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .login-btn:hover {
+            transform: translateY(-2px);
+        }
+        .login-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .error-message {
+            color: #e74c3c;
+            margin-top: 10px;
+            padding: 10px;
+            background: #ffeaea;
+            border-radius: 5px;
+            display: none;
+        }
+        .success-message {
+            color: #27ae60;
+            margin-top: 10px;
+            padding: 10px;
+            background: #eafaf1;
+            border-radius: 5px;
+            display: none;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 10px;
+        }
+        .help-text {
+            text-align: center;
+            margin-top: 20px;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
 </head>
 <body>
     <div class="login-container">
-        <div class="login-card">
+        <div class="login-header">
             <h1>Server Manager</h1>
-            <div id="error" class="error"></div>
-            <form id="loginForm">
-                <div class="form-group">
-                    <label for="authType">Authentication Method:</label>
-                    <select id="authType" required>
-                        <option value="Local" selected>Windows Authentication</option>
-                        <option value="Database">Database Authentication</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="username">Username:</label>
-                    <input type="text" id="username" required placeholder="Enter username">
-                </div>
-                <div class="form-group">
-                    <label for="password">Password:</label>
-                    <input type="password" id="password" required placeholder="Enter password">
-                </div>
-                <button type="submit" class="btn btn-primary">Login</button>
-                <div id="loading" class="loading-spinner" style="display: none;">Authenticating...</div>
-            </form>
+            <p>Please sign in to continue</p>
+        </div>
+        
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required autofocus>
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            
+            <button type="submit" class="login-btn" id="loginBtn">Sign In</button>
+            
+            <div id="errorMessage" class="error-message"></div>
+            <div id="successMessage" class="success-message"></div>
+            <div id="loading" class="loading">Signing in...</div>
+        </form>
+        
+        <div class="help-text">
+            Try: username "admin", password "admin"<br>
+            Or use your Windows username with any password
         </div>
     </div>
 
-    <script type="module">
-        import { login, checkAuth } from './js/auth.js';
-
-        let loginInProgress = false;
-
-        async function checkExistingAuth() {
-            // Don't check auth if we just got redirected from dashboard
-            if (document.referrer.includes('dashboard.html')) {
-                console.log('Skipping auth check - redirected from dashboard');
-                return false;
-            }
-
-            console.log('Checking existing auth...');
-            try {
-                if (await checkAuth()) {
-                    console.log('Valid session found, redirecting to dashboard');
-                    window.location.replace('dashboard.html');
-                    return true;
-                }
-                return false;
-            } catch (error) {
-                console.error('Auth check error:', error);
-                sessionStorage.clear();
-                return false;
-            }
-        }
-
-        // Clear any existing session data on page load
-        sessionStorage.clear();
-        
-        document.addEventListener('DOMContentLoaded', checkExistingAuth);
-
-        document.getElementById('loginForm').addEventListener('submit', async function(event) {
-            event.preventDefault();
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
             
-            if (loginInProgress) {
-                console.log('Login already in progress');
-                return;
-            }
-
-            loginInProgress = true;
-            const loading = document.getElementById('loading');
-            const error = document.getElementById('error');
-            const submitButton = document.querySelector('button[type="submit"]');
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const loginBtn = document.getElementById('loginBtn');
+            const errorDiv = document.getElementById('errorMessage');
+            const successDiv = document.getElementById('successMessage');
+            const loadingDiv = document.getElementById('loading');
             
-            error.textContent = '';
-            loading.style.display = 'block';
-            submitButton.disabled = true;
+            // Reset messages
+            errorDiv.style.display = 'none';
+            successDiv.style.display = 'none';
+            loadingDiv.style.display = 'block';
+            loginBtn.disabled = true;
             
             try {
-                const username = document.getElementById('username').value;
-                const password = document.getElementById('password').value;
-                const authType = document.getElementById('authType').value;
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        password: password,
+                        authType: 'Database'
+                    })
+                });
                 
-                await login(username, password, authType);
-                console.log('Login successful, redirecting...');
-                window.location.replace('dashboard.html');
-            } catch (err) {
-                console.error('Login error:', err);
-                error.textContent = err.message || 'Authentication failed';
-                sessionStorage.clear();
+                const data = await response.json();
+                
+                if (response.ok && data.token) {
+                    // Store token
+                    localStorage.setItem('authToken', data.token);
+                    localStorage.setItem('username', data.username);
+                    localStorage.setItem('isAdmin', data.isAdmin);
+                    
+                    // Show success message
+                    successDiv.textContent = 'Login successful! Redirecting...';
+                    successDiv.style.display = 'block';
+                    
+                    // Redirect to dashboard (create a simple dashboard page)
+                    setTimeout(() => {
+                        window.location.href = '/dashboard.html';
+                    }, 1000);
+                } else {
+                    // Show error message
+                    errorDiv.textContent = data.error || 'Login failed. Please check your credentials.';
+                    errorDiv.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                errorDiv.textContent = 'Connection error. Please try again.';
+                errorDiv.style.display = 'block';
             } finally {
-                loading.style.display = 'none';
-                submitButton.disabled = false;
-                loginInProgress = false;
+                loadingDiv.style.display = 'none';
+                loginBtn.disabled = false;
             }
         });
     </script>

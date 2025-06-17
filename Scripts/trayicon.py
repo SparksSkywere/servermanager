@@ -1,17 +1,22 @@
 import os
 import sys
 import subprocess
+import threading
 import logging
 import winreg
+import json
+import time
+import psutil
+import platform
+import datetime
+import tempfile
+import shutil
+import socket
 import webbrowser
+import traceback
 import signal
 import argparse
-from pathlib import Path
-from datetime import datetime
-import threading
-import json
-import socket
-import time
+import ctypes
 
 # Import required for system tray functionality
 try:
@@ -137,7 +142,7 @@ class ServerManagerTrayIcon:
             # Create PID info dictionary
             pid_info = {
                 "ProcessId": pid,
-                "StartTime": datetime.now().isoformat(),
+                "StartTime": datetime.datetime.now().isoformat(),
                 "ProcessType": process_type
             }
             
@@ -214,7 +219,7 @@ class ServerManagerTrayIcon:
                 self.exit_app
             )
         )
-    
+
     def update_server_status(self):
         """Update server status in the menu"""
         threading.Timer(10.0, self.update_server_status).start()
@@ -281,10 +286,8 @@ class ServerManagerTrayIcon:
                     
                     # Check if process is running
                     if pid and self.is_process_running(pid):
-                        # Now check if we can connect to the port
-                        if self.is_port_open('localhost', self.web_port):
-                            self.webserver_status = "Connected"
-                            return
+                        self.webserver_status = "Connected"
+                        return
                 except Exception as e:
                     logger.debug(f"Error checking web server PID file: {str(e)}")
             
@@ -297,42 +300,14 @@ class ServerManagerTrayIcon:
         except Exception as e:
             logger.error(f"Error checking web server status: {str(e)}")
             self.webserver_status = "Error"
-    
-    def is_port_open(self, host, port, timeout=1):
-        """Check if a port is open on the specified host"""
+
+    def is_process_running(self, pid):
+        """Check if a process with the given PID is running"""
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(timeout)
-            result = sock.connect_ex((host, port))
-            sock.close()
-            logger.debug(f"Port {port} check result: {result} (0 means open)")
-            return result == 0
-        except Exception as e:
-            logger.error(f"Error checking port {port}: {str(e)}")
+            return psutil.pid_exists(pid)
+        except:
             return False
-    
-    def toggle_offline_mode(self):
-        """Toggle offline mode"""
-        self.offline_mode = not self.offline_mode
-        
-        if self.offline_mode:
-            logger.info("Offline mode enabled")
-        else:
-            logger.info("Offline mode disabled")
-            
-        # Update status immediately
-        self.check_webserver_status()
-        
-        # Show notification only if enabled
-        if self.icon and self.notifications_enabled:
-            self.icon.notify(
-                f"Offline mode {'enabled' if self.offline_mode else 'disabled'}",
-                "Server Manager"
-            )
-            
-        # Force menu update
-        self.update_server_status()
-    
+
     def open_web_interface(self):
         """Open the web interface in a browser"""
         if self.offline_mode:
@@ -357,7 +332,7 @@ class ServerManagerTrayIcon:
                 if not os.path.exists(webserver_script):
                     logger.error(f"Web server script not found: {webserver_script}")
                     if self.icon and self.notifications_enabled:
-                        self.icon.notify("Web server script not found", "Server Manager Error")
+                        self.icon.notify(f"Web server script not found: {webserver_script}", "Server Manager Error")
                     return
                 
                 # Build command with debug flag if needed
@@ -374,22 +349,21 @@ class ServerManagerTrayIcon:
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                     startupinfo.wShowWindow = 0  # SW_HIDE
                     
-                    # Use shell=False for better process management
-                    subprocess.Popen(
+                    proc = subprocess.Popen(
                         cmd,
                         creationflags=subprocess.CREATE_NO_WINDOW,
                         startupinfo=startupinfo,
-                        shell=False,  # Important: Don't use shell
+                        shell=False,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         stdin=subprocess.PIPE
                     )
                 else:
                     # On Unix, use start_new_session
-                    subprocess.Popen(
+                    proc = subprocess.Popen(
                         cmd,
                         start_new_session=True,
-                        shell=False,  # Important: Don't use shell
+                        shell=False,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         stdin=subprocess.PIPE
@@ -398,25 +372,22 @@ class ServerManagerTrayIcon:
                 # Wait for web server to start
                 connected = False
                 logger.info(f"Waiting for web server to start on port {self.web_port}...")
-                for attempt in range(10):  # Try for 10 seconds
+                for attempt in range(10):
                     time.sleep(1)
                     logger.debug(f"Connection attempt {attempt+1}/10...")
                     if self.is_port_open('localhost', self.web_port):
-                        self.webserver_status = "Connected"
                         connected = True
-                        logger.info(f"Web server successfully started and connected on port {self.web_port}")
+                        self.webserver_status = "Connected"
                         break
                 
                 if not connected:
                     logger.error(f"Failed to connect to web server after 10 seconds")
                     if self.icon and self.notifications_enabled:
-                        self.icon.notify("Failed to start web server. Check logs for details.", 
-                                        "Server Manager Error")
+                        self.icon.notify("Failed to start web server", "Server Manager Error")
                     return
                 
             except Exception as e:
                 logger.error(f"Failed to start web server: {str(e)}")
-                import traceback
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 if self.icon and self.notifications_enabled:
                     self.icon.notify(f"Failed to start web server: {str(e)}", "Server Manager Error")
@@ -434,7 +405,6 @@ class ServerManagerTrayIcon:
                 
         except Exception as e:
             logger.error(f"Failed to open web interface: {str(e)}")
-            import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             if self.icon and self.notifications_enabled:
                 self.icon.notify(f"Failed to open web interface: {str(e)}", "Server Manager Error")
@@ -442,6 +412,11 @@ class ServerManagerTrayIcon:
     def open_dashboard(self):
         """Open the Python dashboard instead of web dashboard"""
         try:
+            # First, ensure the web server is running for API calls
+            if not self.offline_mode and self.webserver_status != "Connected":
+                logger.info("Web server not running, starting it for dashboard API support...")
+                self.start_webserver_for_dashboard()
+            
             # Check if dashboard is already running
             dashboard_pid_file = os.path.join(self.paths["temp"], "dashboard.pid")
             if os.path.exists(dashboard_pid_file):
@@ -451,21 +426,21 @@ class ServerManagerTrayIcon:
                     
                     pid = pid_info.get("ProcessId")
                     if pid and self.is_process_running(pid):
-                        logger.info(f"Dashboard is already running with PID {pid}")
-                        # Show notification only if enabled
-                        if self.icon and self.notifications_enabled:
-                            self.icon.notify("Dashboard is already running", "Server Manager")
+                        logger.info("Dashboard already running, bringing to front")
                         return
                 except Exception as e:
                     logger.error(f"Error checking dashboard PID file: {str(e)}")
             
             # Launch the dashboard script
-            dashboard_script = os.path.join(self.paths["scripts"], "dashboard.py")
+            dashboard_script = os.path.join(self.paths["scripts"], "..", "host", "dashboard.py")
             if not os.path.exists(dashboard_script):
-                logger.error(f"Dashboard script not found: {dashboard_script}")
-                if self.icon and self.notifications_enabled:
-                    self.icon.notify("Dashboard script not found", "Server Manager Error")
-                return
+                # Try alternative path
+                dashboard_script = os.path.join(self.paths["scripts"], "dashboard.py")
+                if not os.path.exists(dashboard_script):
+                    logger.error(f"Dashboard script not found: {dashboard_script}")
+                    if self.icon and self.notifications_enabled:
+                        self.icon.notify("Dashboard script not found", "Server Manager Error")
+                    return
             
             # Build command with debug flag if needed
             cmd = [sys.executable, dashboard_script]
@@ -512,29 +487,130 @@ class ServerManagerTrayIcon:
             if self.icon and self.notifications_enabled:
                 self.icon.notify(f"Failed to open dashboard: {str(e)}", "Server Manager Error")
 
-    def open_admin_dashboard(self):
-        """Open the admin dashboard for user management"""
+    def start_webserver_for_dashboard(self):
+        """Start the web server specifically for dashboard API support"""
         try:
-            from pathlib import Path
-            admin_dashboard_script = os.path.join(self.paths["scripts"], "admin_dashboard.py")
-            if not os.path.exists(admin_dashboard_script):
-                logger.error(f"Admin dashboard script not found: {admin_dashboard_script}")
-                if self.icon and self.notifications_enabled:
-                    self.icon.notify("Admin dashboard script not found", "Server Manager Error")
-                return
+            webserver_script = os.path.join(self.paths["scripts"], "webserver.py")
+            if not os.path.exists(webserver_script):
+                logger.error(f"Web server script not found: {webserver_script}")
+                return False
 
-            # Launch admin dashboard process
-            cmd = [sys.executable, admin_dashboard_script]
+            cmd = [sys.executable, webserver_script]
             if self.debug_mode:
                 cmd.append("--debug")
 
-            logger.info(f"Starting admin dashboard: {' '.join(cmd)}")
+            logger.info(f"Starting web server for dashboard: {' '.join(cmd)}")
+
             if sys.platform == 'win32':
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 0  # SW_HIDE
-                self.admin_dashboard_process = subprocess.Popen(
+
+                proc = subprocess.Popen(
                     cmd,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    startupinfo=startupinfo,
+                    shell=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.PIPE
+                )
+            else:
+                proc = subprocess.Popen(
+                    cmd,
+                    start_new_session=True,
+                    shell=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.PIPE
+                )
+
+            # Wait for web server to start
+            connected = False
+            logger.info(f"Waiting for web server to start on port {self.web_port}...")
+            for attempt in range(15):  # Try for 15 seconds
+                time.sleep(1)
+                logger.debug(f"Connection attempt {attempt+1}/15...")
+                if self.is_port_open('localhost', self.web_port):
+                    connected = True
+                    self.webserver_status = "Connected"
+                    break
+                # Check if process exited
+                if proc.poll() is not None:
+                    break
+
+            if not connected:
+                # Read and log output
+                try:
+                    stdout, stderr = proc.communicate(timeout=2)
+                    logger.error(f"Webserver failed to start. Output:\n{stdout.decode(errors='replace')}\n{stderr.decode(errors='replace')}")
+                    print(f"Webserver failed to start. Output:\n{stdout.decode(errors='replace')}\n{stderr.decode(errors='replace')}", file=sys.stderr)
+                except Exception as e:
+                    logger.error(f"Webserver failed to start and output could not be read: {e}")
+                if self.icon and self.notifications_enabled:
+                    self.icon.notify("Failed to start web server", "Server Manager Error")
+                return False
+
+            logger.info("Web server started successfully for dashboard support")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to start web server for dashboard: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            print(f"Failed to start web server for dashboard: {str(e)}", file=sys.stderr)
+            return False
+
+    def open_admin_dashboard(self):
+        """Open the admin dashboard for user management"""
+        try:
+            # Check if admin dashboard is already running
+            admin_pid_file = os.path.join(self.paths["temp"], "admin_dashboard.pid")
+            if os.path.exists(admin_pid_file):
+                try:
+                    with open(admin_pid_file, 'r') as f:
+                        pid_info = json.load(f)
+                    
+                    pid = pid_info.get("ProcessId")
+                    if pid and self.is_process_running(pid):
+                        logger.info("Admin dashboard already running, bringing to front")
+                        if self.icon and self.notifications_enabled:
+                            self.icon.notify("Admin dashboard already running", "Server Manager")
+                        return
+                except Exception as e:
+                    logger.error(f"Error checking admin dashboard PID file: {str(e)}")
+            
+            # First, ensure the web server is running for SQL connection
+            if not self.offline_mode and self.webserver_status != "Connected":
+                logger.info("Web server not running, starting it for admin dashboard SQL support...")
+                self.start_webserver_for_dashboard()
+            
+            # Launch the admin dashboard script
+            admin_script = os.path.join(self.paths["scripts"], "..", "Host", "admin_dashboard.py")
+            if not os.path.exists(admin_script):
+                # Try alternative path
+                admin_script = os.path.join(self.paths["scripts"], "admin_dashboard.py")
+                if not os.path.exists(admin_script):
+                    logger.error(f"Admin dashboard script not found: {admin_script}")
+                    if self.icon and self.notifications_enabled:
+                        self.icon.notify("Admin dashboard script not found", "Server Manager Error")
+                    return
+            
+            # Build command with debug flag if needed
+            cmd = [sys.executable, admin_script]
+            if self.debug_mode:
+                cmd.append("--debug")
+            
+            # Launch admin dashboard process with hidden console
+            logger.info(f"Starting admin dashboard: {' '.join(cmd)}")
+            
+            if sys.platform == 'win32':
+                # On Windows, use CREATE_NO_WINDOW to hide console
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
+                
+                self.admin_dashboard_process = subprocess.Popen(
+                    cmd, 
                     creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
                     startupinfo=startupinfo,
                     stdout=subprocess.PIPE,
@@ -543,6 +619,7 @@ class ServerManagerTrayIcon:
                     close_fds=True
                 )
             else:
+                # On Unix, use start_new_session
                 self.admin_dashboard_process = subprocess.Popen(
                     cmd,
                     start_new_session=True,
@@ -551,32 +628,68 @@ class ServerManagerTrayIcon:
                     stdin=subprocess.PIPE,
                     close_fds=True
                 )
+            
+            # Write PID file for admin dashboard
+            try:
+                pid_info = {
+                    "ProcessId": self.admin_dashboard_process.pid,
+                    "StartTime": datetime.datetime.now().isoformat(),
+                    "ProcessType": "admin_dashboard"
+                }
+                
+                with open(admin_pid_file, 'w') as f:
+                    json.dump(pid_info, f)
+                    
+                logger.debug(f"Admin dashboard PID file created: {admin_pid_file}")
+            except Exception as e:
+                logger.error(f"Failed to write admin dashboard PID file: {str(e)}")
+            
             logger.info(f"Admin dashboard started with PID: {self.admin_dashboard_process.pid}")
+            
+            # Show notification only if enabled
             if self.icon and self.notifications_enabled:
                 self.icon.notify("Admin dashboard opened", "Server Manager")
+                
         except Exception as e:
             logger.error(f"Failed to open admin dashboard: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             if self.icon and self.notifications_enabled:
                 self.icon.notify(f"Failed to open admin dashboard: {str(e)}", "Server Manager Error")
 
-    def is_process_running(self, pid):
-        """Check if a process with the given PID is running"""
+    def is_port_open(self, host, port, timeout=1):
+        """Check if a port is open on the specified host"""
         try:
-            if sys.platform == 'win32':
-                # Windows implementation
-                import ctypes
-                kernel32 = ctypes.windll.kernel32
-                handle = kernel32.OpenProcess(1, False, pid)
-                if handle == 0:
-                    return False
-                kernel32.CloseHandle(handle)
-                return True
-            else:
-                # Unix implementation
-                os.kill(pid, 0)
-                return True
-        except:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            logger.debug(f"Port {port} check result: {result} (0 means open)")
+            return result == 0
+        except Exception as e:
+            logger.error(f"Error checking port {port}: {str(e)}")
             return False
+    
+    def toggle_offline_mode(self):
+        """Toggle offline mode"""
+        self.offline_mode = not self.offline_mode
+        
+        if self.offline_mode:
+            logger.info("Offline mode enabled")
+        else:
+            logger.info("Offline mode disabled")
+            
+        # Update status immediately
+        self.check_webserver_status()
+        
+        # Show notification only if enabled
+        if self.icon and self.notifications_enabled:
+            self.icon.notify(
+                f"Offline mode {'enabled' if self.offline_mode else 'disabled'}",
+                "Server Manager"
+            )
+            
+        # Force menu update
+        self.update_server_status()
     
     def toggle_debug_mode(self):
         """Toggle debug mode"""
@@ -604,23 +717,17 @@ class ServerManagerTrayIcon:
         try:
             launcher_pid_file = os.path.join(self.paths["temp"], "launcher.pid")
             if os.path.exists(launcher_pid_file):
-                try:
-                    with open(launcher_pid_file, 'r') as f:
-                        pid_data = json.load(f)
-                    
-                    pid = pid_data.get("ProcessId")
-                    if pid and self.is_process_running(pid):
-                        logger.info(f"Terminating launcher process: {pid}")
-                        if sys.platform == 'win32':
-                            subprocess.call(['taskkill', '/F', '/PID', str(pid)], 
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        else:
-                            os.kill(pid, signal.SIGTERM)
-                        
-                        # Wait a moment to allow the process to terminate
-                        time.sleep(1)
-                except Exception as e:
-                    logger.error(f"Error terminating launcher process: {str(e)}")
+                with open(launcher_pid_file, 'r') as f:
+                    pid_info = json.load(f)
+                
+                launcher_pid = pid_info.get("ProcessId")
+                if launcher_pid and self.is_process_running(launcher_pid):
+                    try:
+                        launcher_process = psutil.Process(launcher_pid)
+                        launcher_process.terminate()
+                        logger.info(f"Terminated launcher process with PID {launcher_pid}")
+                    except Exception as e:
+                        logger.error(f"Error terminating launcher process: {str(e)}")
         except Exception as e:
             logger.error(f"Error accessing launcher PID file: {str(e)}")
         
@@ -629,17 +736,25 @@ class ServerManagerTrayIcon:
             pid_file = os.path.join(self.paths["temp"], "trayicon.pid")
             if os.path.exists(pid_file):
                 os.remove(pid_file)
-                logger.debug("Removed trayicon PID file")
+                logger.debug("Removed tray icon PID file")
         except Exception as e:
             logger.error(f"Error removing PID file: {str(e)}")
         
         # Stop dashboard if we started it
         if self.dashboard_process and self.dashboard_process.poll() is None:
             try:
-                logger.info(f"Terminating dashboard process: {self.dashboard_process.pid}")
                 self.dashboard_process.terminate()
+                logger.info("Terminated dashboard process")
             except Exception as e:
                 logger.error(f"Error terminating dashboard process: {str(e)}")
+        
+        # Stop admin dashboard if we started it
+        if self.admin_dashboard_process and self.admin_dashboard_process.poll() is None:
+            try:
+                self.admin_dashboard_process.terminate()
+                logger.info("Terminated admin dashboard process")
+            except Exception as e:
+                logger.error(f"Error terminating admin dashboard process: {str(e)}")
         
         # Also try to find and close other dashboard instances by PID file
         try:
@@ -648,49 +763,47 @@ class ServerManagerTrayIcon:
                 with open(dashboard_pid_file, 'r') as f:
                     pid_info = json.load(f)
                 
-                pid = pid_info.get("ProcessId")
-                if pid and self.is_process_running(pid):
-                    logger.info(f"Terminating existing dashboard with PID {pid}")
-                    if sys.platform == 'win32':
-                        subprocess.call(['taskkill', '/F', '/PID', str(pid)])
-                    else:
-                        os.kill(pid, signal.SIGTERM)
-                        
+                dashboard_pid = pid_info.get("ProcessId")
+                if dashboard_pid and self.is_process_running(dashboard_pid):
+                    try:
+                        dashboard_process = psutil.Process(dashboard_pid)
+                        dashboard_process.terminate()
+                        logger.info(f"Terminated existing dashboard process with PID {dashboard_pid}")
+                    except Exception as e:
+                        logger.error(f"Error terminating existing dashboard: {str(e)}")
+                
                 # Remove the PID file
                 os.remove(dashboard_pid_file)
-                logger.debug("Removed dashboard PID file")
         except Exception as e:
             logger.error(f"Error terminating existing dashboard: {str(e)}")
+        
+        # Also try to find and close admin dashboard instances by PID file
+        try:
+            admin_pid_file = os.path.join(self.paths["temp"], "admin_dashboard.pid")
+            if os.path.exists(admin_pid_file):
+                with open(admin_pid_file, 'r') as f:
+                    pid_info = json.load(f)
+                
+                admin_pid = pid_info.get("ProcessId")
+                if admin_pid and self.is_process_running(admin_pid):
+                    try:
+                        admin_process = psutil.Process(admin_pid)
+                        admin_process.terminate()
+                        logger.info(f"Terminated existing admin dashboard process with PID {admin_pid}")
+                    except Exception as e:
+                        logger.error(f"Error terminating existing admin dashboard: {str(e)}")
+                
+                # Remove the PID file
+                os.remove(admin_pid_file)
+        except Exception as e:
+            logger.error(f"Error terminating existing admin dashboard: {str(e)}")
         
         # As a final failsafe, call the stop_servermanager script to ensure all processes are terminated
         try:
             stop_script = os.path.join(self.paths["scripts"], "stop_servermanager.py")
             if os.path.exists(stop_script):
-                logger.info("Running stop_servermanager.py to ensure all processes are terminated")
-                # Run in a hidden way
-                if sys.platform == 'win32':
-                    # On Windows, use CREATE_NO_WINDOW to hide console
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = 0  # SW_HIDE
-                    
-                    subprocess.Popen(
-                        [sys.executable, stop_script, "--force"], 
-                        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
-                        startupinfo=startupinfo,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        stdin=subprocess.PIPE
-                    )
-                else:
-                    # On Unix, use start_new_session
-                    subprocess.Popen(
-                        [sys.executable, stop_script, "--force"],
-                        start_new_session=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        stdin=subprocess.PIPE
-                    )
+                subprocess.run([sys.executable, stop_script], timeout=10)
+                logger.info("Executed stop_servermanager.py")
         except Exception as e:
             logger.error(f"Error running stop_servermanager.py: {str(e)}")
         
@@ -700,7 +813,7 @@ class ServerManagerTrayIcon:
         
         # Exit the application
         logger.info("Server Manager tray icon terminated")
-    
+
     def run(self):
         """Run the tray icon application"""
         try:
@@ -717,26 +830,16 @@ class ServerManagerTrayIcon:
             # Show notification on startup only if enabled
             def setup(icon):
                 icon.visible = True
-                # Log that the icon is now visible and running
-                logger.info("Tray icon is now visible and running")
                 if self.notifications_enabled:
-                    icon.notify(
-                        "Server Manager is now running in the system tray",
-                        "Server Manager"
-                    )
+                    icon.notify("Server Manager started", "Tray Icon")
+                logger.info("Tray icon is now visible and running")
             
             # Run the icon
             logger.info("Starting tray icon")
             
             # Prevent immediate exit in standalone mode
             if self.standalone_mode:
-                # Add signal handlers for graceful shutdown
-                if sys.platform != 'win32':  # Unix-like systems
-                    signal.signal(signal.SIGTERM, lambda sig, frame: self.exit_app())
-                    signal.signal(signal.SIGINT, lambda sig, frame: self.exit_app())
-                
-                # Keep a strong reference to the icon to prevent garbage collection
-                self._icon_ref = self.icon
+                logger.info("Running in standalone mode - tray icon will remain active")
             
             # Run the icon (this is blocking)
             self.icon.run(setup=setup)

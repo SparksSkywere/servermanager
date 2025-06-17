@@ -129,17 +129,30 @@ def authenticate_user(username, password):
     """Authenticate a user with the given credentials"""
     if not config_dir or not users_file:
         logger.error("Configuration directory not initialized")
+        logger.error(f"config_dir: {config_dir}, users_file: {users_file}")
         return False
     
     if not os.path.exists(users_file):
-        logger.error("Users file not found")
-        return False
+        logger.error(f"Users file not found at: {users_file}")
+        # Try to initialize if file doesn't exist
+        logger.info("Attempting to initialize default admin user")
+        if initialize_default_admin():
+            logger.info("Default admin user created, retrying authentication")
+        else:
+            logger.error("Failed to initialize default admin user")
+            return False
     
     try:
+        logger.debug(f"Attempting to authenticate user: {username}")
+        logger.debug(f"Using users file: {users_file}")
+        
         # Parse the XML file
         tree = ET.parse(users_file)
         root = tree.getroot()
         
+        logger.debug(f"XML file parsed successfully, root element: {root.tag}")
+        
+        user_found = False
         for user_elem in root.findall('.//Obj'):
             user_data = {}
             for prop in user_elem.findall('.//MS/S'):
@@ -148,16 +161,24 @@ def authenticate_user(username, password):
                     user_data[name] = prop.text
             
             if user_data.get('Username') == username:
+                user_found = True
+                logger.debug(f"User {username} found in XML file")
+                
                 # Found the user, verify password
                 stored_hash = user_data.get('PasswordHash')
                 salt = user_data.get('Salt')
                 
                 if not stored_hash or not salt:
-                    logger.error(f"Incomplete user data for {username}")
+                    logger.error(f"Incomplete user data for {username}: hash={bool(stored_hash)}, salt={bool(salt)}")
                     return False
                 
                 # Hash the provided password with the stored salt
                 calculated_hash = hash_password(password, salt)
+                
+                logger.debug(f"Password verification for {username}:")
+                logger.debug(f"  Stored hash: {stored_hash[:20]}...")
+                logger.debug(f"  Calculated hash: {calculated_hash[:20]}...")
+                logger.debug(f"  Salt: {salt[:10]}...")
                 
                 # Compare the hashes
                 if calculated_hash == stored_hash:
@@ -167,11 +188,25 @@ def authenticate_user(username, password):
                     logger.warning(f"Invalid password for user {username}")
                     return False
         
-        logger.warning(f"User {username} not found")
+        if not user_found:
+            logger.warning(f"User {username} not found in XML file")
+            
+            # List all users for debugging
+            logger.debug("Available users in XML file:")
+            for user_elem in root.findall('.//Obj'):
+                user_data = {}
+                for prop in user_elem.findall('.//MS/S'):
+                    name = prop.get('N')
+                    if name == 'Username':
+                        logger.debug(f"  Found user: {prop.text}")
+                        break
+        
         return False
     
     except Exception as e:
         logger.error(f"Error authenticating user: {e}")
+        import traceback
+        logger.error(f"Authentication traceback: {traceback.format_exc()}")
         return False
 
 def is_admin_user(username):
@@ -403,40 +438,6 @@ def set_user_admin_status(username, is_admin):
     except Exception as e:
         logger.error(f"Error setting admin status: {e}")
         return False
-
-# Initialize the users file with a default admin if it doesn't exist
-def initialize_default_admin():
-    """Initialize the users file with a default admin if it doesn't exist"""
-    if not config_dir or not users_file:
-        logger.error("Configuration directory not initialized")
-        return False
-    
-    if os.path.exists(users_file):
-        # Check if there are any users
-        users = get_all_users()
-        if users:
-            # Users already exist, no need to initialize
-            return True
-    
-    # Create default admin user
-    default_password = "adminpassword" + generate_salt(4)
-    success = create_user("admin", default_password, True)
-    
-    if success:
-        logger.info(f"Default admin user created with password: {default_password}")
-        logger.info("IMPORTANT: Please change this password immediately!")
-        
-        # Write password to a temporary file for first login
-        temp_file = os.path.join(config_dir, "admin_password.txt")
-        try:
-            with open(temp_file, 'w') as f:
-                f.write(f"Default admin password: {default_password}\n")
-                f.write("IMPORTANT: Please change this password immediately!\n")
-                f.write(f"This file will be automatically deleted after {datetime.now().isoformat()}\n")
-        except Exception as e:
-            logger.error(f"Error writing temporary password file: {e}")
-    
-    return success
 
 # Initialize the users file if needed
 if config_dir and not os.path.exists(users_file):
