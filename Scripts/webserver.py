@@ -30,8 +30,27 @@ logging.basicConfig(
 logger = logging.getLogger("WebServer")
 
 # Import dashboard tracker with fallback
+def get_server_manager_dir():
+    try:
+        registry_path = r"Software\SkywereIndustries\Servermanager"
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
+        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
+        winreg.CloseKey(key)
+        return server_manager_dir
+    except Exception as e:
+        logger.error(f"Failed to get server manager directory from registry: {e}")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        server_manager_dir = os.path.dirname(script_dir)
+        logger.warning(f"Using fallback server manager directory: {server_manager_dir}")
+        return server_manager_dir
+
 tracker = None
 try:
+    # Try to import from services directory
+    server_manager_dir = get_server_manager_dir()
+    services_path = os.path.join(server_manager_dir, "services")
+    if os.path.exists(services_path):
+        sys.path.insert(0, server_manager_dir)
     from services.dashboard_tracker import tracker
     logger.info("Dashboard tracker imported successfully")
 except ImportError as e:
@@ -46,6 +65,19 @@ except ImportError as e:
         def refresh(self):
             pass
     tracker = DummyDashboardTracker()
+except NameError:
+    # Handle case where get_server_manager_dir is not yet defined
+    class DummyDashboardTracker:
+        def start_auto_refresh(self):
+            pass
+        def get_dashboards(self):
+            return []
+        def get_servers(self):
+            return []
+        def refresh(self):
+            pass
+    tracker = DummyDashboardTracker()
+    logger.warning("Dashboard tracker not available - using dummy implementation")
 
 # Import Flask dependencies
 try:
@@ -66,6 +98,11 @@ except ImportError as e:
 
 # Import SQL modules
 try:
+    # Add server manager directory to Python path for module imports
+    server_manager_dir = get_server_manager_dir()
+    if server_manager_dir not in sys.path:
+        sys.path.insert(0, server_manager_dir)
+    
     from Modules.SQL_Connection import get_engine, ensure_root_admin, build_db_url, get_sql_config_from_registry
     from Scripts.user_management import User, UserManager
     logger.info("SQL modules imported successfully")
@@ -109,10 +146,28 @@ class Authentication:
         try:
             users_file = os.path.join(self.config_path, "users.json")
             if not os.path.exists(users_file):
-                logger.warning("Users file not found. No default admin created in production.")
+                logger.warning("Users file not found. Creating empty users file.")
+                # Create empty users file with proper permissions
+                try:
+                    os.makedirs(self.config_path, exist_ok=True)
+                    with open(users_file, 'w') as f:
+                        json.dump({}, f)
+                    logger.info(f"Created empty users file: {users_file}")
+                except Exception as e:
+                    logger.error(f"Failed to create users file: {e}")
                 return {}
-            with open(users_file, 'r') as f:
-                return json.load(f)
+            
+            # Try to read the users file with error handling for permissions
+            try:
+                with open(users_file, 'r') as f:
+                    return json.load(f)
+            except PermissionError:
+                logger.error(f"Permission denied accessing users file: {users_file}")
+                logger.warning("Using in-memory user storage due to file permission issues")
+                return {}
+            except json.JSONDecodeError:
+                logger.error(f"Invalid JSON in users file: {users_file}")
+                return {}
         except Exception as e:
             logger.error(f"Failed to load users: {e}")
             return {}
@@ -334,11 +389,13 @@ class ServerManager:
 class ServerManagerWebServer:
     def __init__(self):
         self.registry_path = r"Software\SkywereIndustries\Servermanager"
-        self.server_manager_dir = get_server_manager_dir()
+        # Read from environment first, fall back to registry
+        self.server_manager_dir = os.getenv("SERVERMANAGER_DIR") or get_server_manager_dir()
         self.web_port = int(os.getenv("WEB_PORT", "8080"))
         self.paths = {}
-        self.host_type = "Unknown"
-        self.host_address = None
+        # Read host type and address from environment
+        self.host_type = os.getenv("HOST_TYPE", "Unknown")
+        self.host_address = os.getenv("HOST_ADDRESS", None)
         self.sql_available = False
         self.sql_auth = None
         self.engine = None
@@ -378,7 +435,7 @@ class ServerManagerWebServer:
         )
         CORS(self.app)
         self.app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(24))
-        self.limiter = Limiter(self.app, key_func=get_remote_address, default_limits=["200 per day", "50 per hour"])
+        self.limiter = Limiter(app=self.app, key_func=get_remote_address, default_limits=["200 per day", "50 per hour"])
         self.setup_routes()
         self.write_pid_file()
 
@@ -473,17 +530,26 @@ class ServerManagerWebServer:
 
     def initialize_from_registry(self):
         try:
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
-            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-            try:
-                self.host_type = winreg.QueryValueEx(key, "HostType")[0]
-            except:
-                self.host_type = "Unknown"
-            try:
-                self.host_address = winreg.QueryValueEx(key, "HostAddress")[0]
-            except:
-                self.host_address = None
-            winreg.CloseKey(key)
+            # Prefer environment variables over registry
+            if os.getenv("SERVERMANAGER_DIR"):
+                self.server_manager_dir = os.getenv("SERVERMANAGER_DIR")
+                self.host_type = os.getenv("HOST_TYPE", "Unknown")
+                self.host_address = os.getenv("HOST_ADDRESS", None)
+                logger.info("Using configuration from environment variables")
+            else:
+                # Fallback to registry
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
+                self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
+                try:
+                    self.host_type = winreg.QueryValueEx(key, "HostType")[0]
+                except:
+                    self.host_type = "Unknown"
+                try:
+                    self.host_address = winreg.QueryValueEx(key, "HostAddress")[0]
+                except:
+                    self.host_address = None
+                winreg.CloseKey(key)
+                logger.info("Using configuration from registry")
 
             self.paths = {
                 "root": self.server_manager_dir,
@@ -498,17 +564,24 @@ class ServerManagerWebServer:
             for path in self.paths.values():
                 os.makedirs(path, exist_ok=True)
 
-            log_file = os.path.join(self.paths["logs"], "webserver.log")
-            file_handler = logging.FileHandler(log_file)
-            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-            logger.addHandler(file_handler)
+            # Use log file path from environment if specified
+            log_file_path = os.getenv("LOG_FILE_PATH")
+            if log_file_path:
+                log_file = log_file_path
+            else:
+                log_file = os.path.join(self.paths["logs"], "webserver.log")
+            
+            if os.getenv("LOG_FILE_ENABLED", "true").lower() == "true":
+                file_handler = logging.FileHandler(log_file)
+                file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+                logger.addHandler(file_handler)
 
-            logger.info(f"Initialized from registry. Server Manager directory: {self.server_manager_dir}")
+            logger.info(f"Initialized from environment/registry. Server Manager directory: {self.server_manager_dir}")
             logger.info(f"Web server port: {self.web_port}")
             logger.info(f"Cluster role: {self.host_type}" + (f", HostAddress: {self.host_address}" if self.host_address else ""))
             return True
         except Exception as e:
-            logger.error(f"Failed to initialize from registry: {e}")
+            logger.error(f"Failed to initialize from environment/registry: {e}")
             script_dir = os.path.dirname(os.path.abspath(__file__))
             self.server_manager_dir = os.path.dirname(script_dir)
             self.paths = {
@@ -943,29 +1016,43 @@ class ServerManagerWebServer:
     def run(self):
         try:
             logger.info(f"Starting web server on port {self.web_port}")
-            ssl_context = None
+            
+            # Get host from environment variable
+            host = os.getenv("WEB_HOST", "0.0.0.0")
+            
+            # Prepare server arguments
+            server_args = {
+                'host': host,
+                'port': self.web_port,
+                'threads': 8
+            }
+            
+            # Add SSL configuration if enabled
             if os.getenv("SSL_ENABLED", "false").lower() == "true":
                 cert_path = os.getenv("SSL_CERT_PATH")
                 key_path = os.getenv("SSL_KEY_PATH")
-                if not cert_path or not key_path or not os.path.exists(cert_path) or not os.path.exists(key_path):
-                    logger.error("SSL enabled but certificate or key file missing")
-                    raise ValueError("Invalid SSL configuration")
-                ssl_context = (cert_path, key_path)
-            serve(
-                self.app,
-                host='0.0.0.0',
-                port=self.web_port,
-                threads=8,
-                ssl_context=ssl_context
-            )
+                if cert_path and key_path and os.path.exists(cert_path) and os.path.exists(key_path):
+                    server_args.update({
+                        'ssl_cert': cert_path,
+                        'ssl_key': key_path
+                    })
+                    logger.info(f"SSL enabled with certificate and key files on {host}:{self.web_port}")
+                else:
+                    logger.warning("SSL enabled but certificate or key file missing/invalid - falling back to HTTP")
+                    logger.info(f"SSL disabled - running HTTP only on {host}:{self.web_port}")
+            else:
+                logger.info(f"SSL disabled - running HTTP only on {host}:{self.web_port}")
+            
+            serve(self.app, **server_args)
+            return True
         except KeyboardInterrupt:
             logger.info("Web server stopping due to keyboard interrupt")
+            return True
         except Exception as e:
             logger.error(f"Web server error: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
-        return True
 
     def test_xml_auth_module(self):
         try:

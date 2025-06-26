@@ -94,8 +94,21 @@ def ensure_root_admin(engine):
     try:
         # This is a placeholder - implement based on your user table structure
         with engine.connect() as conn:
-            # Check if users table exists and create if needed
-            conn.execute(text("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, is_admin BOOLEAN)"))
+            # Check if users table exists and create if needed with all columns
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL,
+                    email TEXT,
+                    is_admin BOOLEAN DEFAULT 0,
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at DATETIME,
+                    last_login DATETIME,
+                    two_factor_enabled BOOLEAN DEFAULT 0,
+                    two_factor_secret TEXT
+                )
+            """))
             
             # Check if admin user exists
             result = conn.execute(text("SELECT COUNT(*) FROM users WHERE username = 'admin'"))
@@ -104,9 +117,15 @@ def ensure_root_admin(engine):
             if count == 0:
                 # Create admin user with default password
                 import hashlib
+                from datetime import datetime
                 admin_password = hashlib.sha256("admin".encode()).hexdigest()
-                conn.execute(text("INSERT INTO users (username, password, is_admin) VALUES ('admin', :password, 1)"), 
-                           {"password": admin_password})
+                conn.execute(text("""
+                    INSERT INTO users (username, password, is_admin, is_active, created_at, email) 
+                    VALUES ('admin', :password, 1, 1, :created_at, 'admin@localhost')
+                """), {
+                    "password": admin_password,
+                    "created_at": datetime.utcnow()
+                })
                 conn.commit()
                 logger.info("Created default admin user")
             

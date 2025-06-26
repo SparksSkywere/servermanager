@@ -19,11 +19,19 @@ import argparse
 import ctypes
 import urllib.request
 import urllib.error
+import hashlib
 
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 from PIL import Image, ImageTk
+
+# Add project root to sys.path for module resolution
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Import user management system
+from Scripts.user_management import UserManager
+from Modules.SQL_Connection import get_engine
 
 # Try to import required libraries, install if not present
 try:
@@ -48,6 +56,8 @@ class ServerManagerDashboard:
         self.paths = {}
         self.servers = []
         self.debug_mode = debug_mode
+        self.user_manager = None  # Add user manager
+        self.current_user = None  # Add current user tracking
         self.variables = {
             "previousNetworkStats": {},
             "previousNetworkTime": datetime.datetime.now(),
@@ -79,6 +89,16 @@ class ServerManagerDashboard:
         if not self.initialize():
             logger.error("Failed to initialize dashboard")
             sys.exit(1)
+        
+        # Initialize user management system
+        try:
+            engine = get_engine()
+            self.user_manager = UserManager(engine)
+            logger.info("User management system initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize user management: {e}")
+            messagebox.showerror("Database Error", f"Failed to connect to user database:\n{str(e)}")
+            sys.exit(1)
             
         # Configure file logging after paths are initialized
         self.configure_file_logging()
@@ -100,12 +120,13 @@ class ServerManagerDashboard:
         
         self.supported_server_types = ["Steam", "Minecraft", "Other"]
         
-        self.api_url = f"http://localhost:{self.variables['webserverPort']}/api/tracker/servers"
-        self.api_token = None  # Set after login
+        # Remove API URL and token - we'll use direct SQL access
+        # self.api_url = f"http://localhost:{self.variables['webserverPort']}/api/tracker/servers"
+        # self.api_token = None  # Set after login
         
-        # Prompt for login and set self.api_token
-        self.api_login()
-        
+        # Prompt for login using SQL authentication
+        self.sql_login()
+
     def configure_file_logging(self):
         """Set up logging to file"""
         try:
@@ -866,90 +887,35 @@ class ServerManagerDashboard:
         y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
         dialog.geometry(f"+{x}+{y}")
 
-    def api_login(self):
-        """Prompt for login and obtain API token"""
-        # Skip API login if in offline mode or if web server is not available
-        if self.variables["offlineMode"]:
-            logger.info("Skipping API login - offline mode enabled")
-            return
-            
-        # Check if web server is available
-        if not self.is_port_open('localhost', self.variables["webserverPort"]):
-            logger.warning("Web server not available, running in offline mode")
-            self.variables["offlineMode"] = True
-            return
-            
-        from tkinter.simpledialog import askstring
+    def sql_login(self):
+        """Prompt for login using SQL database authentication"""
         max_attempts = 3
         attempts = 0
         
-        # First, try the default admin credentials created during installation
-        default_credentials = [
-            ("admin", "admin"),  # Default fallback
-        ]
-        
-        # Try to read the admin password file if it exists
+        # Try default admin credentials first
         try:
-            config_dir = os.path.join(self.server_manager_dir, "config")
-            admin_password_file = os.path.join(config_dir, "admin_password.txt")
+            logger.info("Attempting automatic login with default admin credentials")
             
-            if os.path.exists(admin_password_file):
-                try:
-                    with open(admin_password_file, 'r') as f:
-                        content = f.read()
-                    
-                    # Extract password from content
-                    lines = content.split('\n')
-                    password_line = next((line for line in lines if line.startswith("Default admin password:")), None)
-                    
-                    if password_line:
-                        password = password_line.split(":", 1)[1].strip()
-                        default_credentials.insert(0, ("admin", password))
-                        logger.info("Found admin password file, will try those credentials first")
-                except Exception as e:
-                    logger.debug(f"Could not read admin password file: {e}")
-        except Exception:
-            pass
-        
-        # Try default credentials first
-        for username, password in default_credentials:
-            try:
-                logger.info(f"Attempting automatic login with username: {username}")
+            # Try to authenticate with default admin credentials
+            user = self.user_manager.get_user("admin")
+            if user:
+                # Try common default passwords
+                default_passwords = ["admin", "password", "123456"]
                 
-                # Prepare login data
-                login_data = {
-                    "username": username,
-                    "password": password
-                }
-                
-                # Convert to JSON and encode
-                json_data = json.dumps(login_data).encode('utf-8')
-                
-                # Create request
-                req = urllib.request.Request(
-                    f"http://localhost:{self.variables['webserverPort']}/api/auth/login",
-                    data=json_data,
-                    headers={
-                        'Content-Type': 'application/json',
-                        'Content-Length': str(len(json_data))
-                    },
-                    method='POST'
-                )
-                
-                # Make request with timeout
-                with urllib.request.urlopen(req, timeout=5) as response:
-                    if response.status == 200:
-                        response_data = json.loads(response.read().decode('utf-8'))
-                        self.api_token = response_data.get("token")
-                        logger.info(f"Successfully logged in automatically as {username}")
+                for password in default_passwords:
+                    hashed_password = hashlib.sha256(password.encode()).hexdigest()
+                    if user.password == hashed_password:
+                        self.current_user = user
+                        logger.info(f"Successfully logged in automatically as admin")
                         return
                         
-            except Exception as e:
-                logger.debug(f"Automatic login failed for {username}: {e}")
-                continue
+        except Exception as e:
+            logger.debug(f"Automatic login failed: {e}")
         
         # If automatic login failed, prompt user
         while attempts < max_attempts:
+            from tkinter.simpledialog import askstring
+            
             username = askstring("Login", "Username (or Cancel for offline mode):")
             if not username:
                 logger.info("User cancelled login, enabling offline mode")
@@ -963,71 +929,92 @@ class ServerManagerDashboard:
                 return
                 
             try:
-                # Prepare login data
-                login_data = {
-                    "username": username,
-                    "password": password
-                }
-                
-                # Convert to JSON and encode
-                json_data = json.dumps(login_data).encode('utf-8')
-                
-                # Create request
-                req = urllib.request.Request(
-                    f"http://localhost:{self.variables['webserverPort']}/api/auth/login",
-                    data=json_data,
-                    headers={
-                        'Content-Type': 'application/json',
-                        'Content-Length': str(len(json_data))
-                    },
-                    method='POST'
-                )
-                
-                # Make request with timeout
-                with urllib.request.urlopen(req, timeout=5) as response:
-                    if response.status == 200:
-                        response_data = json.loads(response.read().decode('utf-8'))
-                        self.api_token = response_data.get("token")
-                        logger.info(f"Successfully logged in as {username}")
-                        return
+                # Get user from database
+                user = self.user_manager.get_user(username)
+                if not user:
+                    logger.warning(f"User not found: {username}")
+                    attempts += 1
+                    if attempts < max_attempts:
+                        messagebox.showerror("Login Failed", 
+                                           f"Invalid username or password. {max_attempts - attempts} attempts remaining.")
                     else:
-                        response_text = response.read().decode('utf-8')
-                        logger.error(f"Login failed with status {response.status}: {response_text}")
+                        messagebox.showerror("Login Failed", 
+                                           "Maximum login attempts exceeded. Running in offline mode.")
+                    continue
+                
+                # Check if user is active
+                if not getattr(user, 'is_active', True):
+                    logger.warning(f"Inactive user attempted login: {username}")
+                    attempts += 1
+                    if attempts < max_attempts:
+                        messagebox.showerror("Login Failed", 
+                                           f"Account is inactive. {max_attempts - attempts} attempts remaining.")
+                    else:
+                        messagebox.showerror("Login Failed", 
+                                           "Maximum login attempts exceeded. Running in offline mode.")
+                    continue
+                
+                # Verify password
+                hashed_password = hashlib.sha256(password.encode()).hexdigest()
+                if user.password != hashed_password:
+                    logger.warning(f"Invalid password for user: {username}")
+                    attempts += 1
+                    if attempts < max_attempts:
+                        messagebox.showerror("Login Failed", 
+                                           f"Invalid username or password. {max_attempts - attempts} attempts remaining.")
+                    else:
+                        messagebox.showerror("Login Failed", 
+                                           "Maximum login attempts exceeded. Running in offline mode.")
+                    continue
+                
+                # Check 2FA if enabled
+                if getattr(user, 'two_factor_enabled', False):
+                    token = askstring("2FA Authentication", "Enter your 2FA token:")
+                    if not token:
+                        logger.info("User cancelled 2FA, enabling offline mode")
+                        self.variables["offlineMode"] = True
+                        return
+                    
+                    if not self.user_manager.verify_2fa(username, token):
+                        logger.warning(f"Invalid 2FA token for user: {username}")
                         attempts += 1
                         if attempts < max_attempts:
-                            messagebox.showerror("Login Failed", 
-                                               f"Invalid credentials. {max_attempts - attempts} attempts remaining.")
+                            messagebox.showerror("2FA Failed", 
+                                               f"Invalid 2FA token. {max_attempts - attempts} attempts remaining.")
                         else:
-                            messagebox.showerror("Login Failed", 
+                            messagebox.showerror("2FA Failed", 
                                                "Maximum login attempts exceeded. Running in offline mode.")
-                        
-            except urllib.error.HTTPError as e:
-                error_response = e.read().decode('utf-8') if e.fp else str(e)
-                logger.error(f"HTTP Error during login: {e.code} - {error_response}")
-                attempts += 1
-                if attempts < max_attempts:
-                    messagebox.showerror("Login Failed", 
-                                       f"Login failed (HTTP {e.code}). {max_attempts - attempts} attempts remaining.")
-                else:
-                    messagebox.showerror("Login Failed", 
-                                       f"Maximum login attempts exceeded. Running in offline mode.")
-                        
+                        continue
+                
+                # Successful login
+                self.current_user = user
+                logger.info(f"Successfully logged in as {username}")
+                
+                # Update last login time
+                try:
+                    self.user_manager.update_user(username, last_login=datetime.datetime.now())
+                except Exception as e:
+                    logger.warning(f"Failed to update last login time: {e}")
+                
+                return
+                
             except Exception as e:
                 logger.error(f"Login error: {str(e)}")
                 attempts += 1
                 if attempts < max_attempts:
-                    messagebox.showerror("Connection Error", 
-                                       f"Failed to connect to server. {max_attempts - attempts} attempts remaining.")
+                    messagebox.showerror("Database Error", 
+                                       f"Database error during login. {max_attempts - attempts} attempts remaining.")
                 else:
-                    messagebox.showerror("Connection Error", 
-                                       f"Cannot connect to server. Running in offline mode.")
+                    messagebox.showerror("Database Error", 
+                                       f"Cannot access user database. Running in offline mode.")
         
         # If we get here, login failed - enable offline mode
         self.variables["offlineMode"] = True
         logger.info("Login failed, running in offline mode")
     
     def api_headers(self):
-        return {"Authorization": f"Bearer {self.api_token}"} if self.api_token else {}
+        # Remove API headers since we're using direct SQL access
+        return {}
 
     def update_server_list(self, force_refresh=False):
         # Skip update if it's been less than 5 seconds since the last update and force_refresh isn't specified
@@ -2460,14 +2447,14 @@ class ServerManagerDashboard:
             messagebox.showerror("Error", f"Failed to refresh dashboard: {str(e)}")
 
     def sync_all(self):
-        """Synchronize all server data with the web API"""
+        """Synchronize all server data with the database"""
         try:
-            if not self.api_token:
-                messagebox.showinfo("Authentication Required", "Please ensure web server is running and restart dashboard to log in.")
-                return
-                
             if self.variables["offlineMode"]:
                 messagebox.showinfo("Offline Mode", "Cannot sync while in offline mode.")
+                return
+                
+            if not self.current_user:
+                messagebox.showinfo("Authentication Required", "Please log in to synchronize data.")
                 return
                 
             # Create progress dialog
@@ -2502,15 +2489,14 @@ class ServerManagerDashboard:
                                     with open(os.path.join(servers_path, file), 'r') as f:
                                         server_config = json.load(f)
                                     
-                                    # Prepare data for API
-                                    api_data = {
-                                        "name": server_config.get("Name", ""),
-                                        "type": server_config.get("Type", ""),
-                                        "status": "Running" if "ProcessId" in server_config else "Offline"
-                                    }
+                                    # Update local configuration timestamp
+                                    server_config['LastSync'] = datetime.datetime.now().isoformat()
+                                    server_config['SyncedBy'] = self.current_user.username
                                     
-                                    # Send to API (placeholder - implement actual API call)
-                                    # response = requests.post(self.api_url, json=api_data, headers=self.api_headers())
+                                    # Save updated configuration
+                                    with open(os.path.join(servers_path, file), 'w') as f:
+                                        json.dump(server_config, f, indent=4)
+                                    
                                     synced_count += 1
                                         
                                 except Exception as e:
@@ -2554,6 +2540,20 @@ class ServerManagerDashboard:
             logger.error(f"Error in add agent: {str(e)}")
             messagebox.showerror("Error", f"Failed to add agent: {str(e)}")
 
+def main():
+    # Parse command line arguments
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Server Manager Dashboard')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    args = parser.parse_args()
+
+    # Create and run dashboard
+    dashboard = ServerManagerDashboard(debug_mode=args.debug)
+    dashboard.run()
+
+if __name__ == "__main__":
+    main()
 def main():
     # Parse command line arguments
     import argparse

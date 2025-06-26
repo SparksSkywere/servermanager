@@ -132,16 +132,6 @@ def authenticate_user(username, password):
         logger.error(f"config_dir: {config_dir}, users_file: {users_file}")
         return False
     
-    if not os.path.exists(users_file):
-        logger.error(f"Users file not found at: {users_file}")
-        # Try to initialize if file doesn't exist
-        logger.info("Attempting to initialize default admin user")
-        if initialize_default_admin():
-            logger.info("Default admin user created, retrying authentication")
-        else:
-            logger.error("Failed to initialize default admin user")
-            return False
-    
     try:
         logger.debug(f"Attempting to authenticate user: {username}")
         logger.debug(f"Using users file: {users_file}")
@@ -438,7 +428,3 @@ def set_user_admin_status(username, is_admin):
     except Exception as e:
         logger.error(f"Error setting admin status: {e}")
         return False
-
-# Initialize the users file if needed
-if config_dir and not os.path.exists(users_file):
-    initialize_default_admin()

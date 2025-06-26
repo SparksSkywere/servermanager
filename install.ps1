@@ -1210,6 +1210,11 @@ try {
     # Initialize SQL database and get DB path/location
     $SQLDatabasePath = Initialize-SQLDatabase -SQLType $sqlOptions.SQLType -SQLVersion $sqlOptions.SQLVersion -SQLLocation $sqlOptions.SQLLocation -DataFolder $DataFolder
 
+    # Create the .env file with all configuration settings
+    if (-not (New-EnvironmentFile -ServerManagerDir $ServerManagerDir -SQLOptions $sqlOptions -SQLDatabasePath $SQLDatabasePath -HostTypeOptions $hostTypeOptions)) {
+        throw "Failed to create environment configuration file"
+    }
+
     # --- Ensure SQL registry keys are always created/updated ---
     # For SQLLocation: 
     #   - SQLite: store the absolute path to the DB file (in data folder)

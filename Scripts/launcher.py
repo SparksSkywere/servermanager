@@ -245,6 +245,14 @@ class ServerManagerLauncher:
             if not os.path.exists(web_script):
                 logger.error(f"Web server script not found: {web_script}")
                 return False
+            
+            # Add the server manager directory to PYTHONPATH for module imports
+            env = os.environ.copy()
+            pythonpath = env.get('PYTHONPATH', '')
+            if pythonpath:
+                env['PYTHONPATH'] = f"{self.server_manager_dir};{pythonpath}"
+            else:
+                env['PYTHONPATH'] = self.server_manager_dir
                 
             # Start web server process with hidden console
             if sys.platform == 'win32':
@@ -253,12 +261,12 @@ class ServerManagerLauncher:
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 0  # SW_HIDE
                 
-                # Don't use DETACHED_PROCESS as it can cause issues
                 web_process = subprocess.Popen(
                     [sys.executable, web_script],
                     creationflags=subprocess.CREATE_NO_WINDOW,
                     startupinfo=startupinfo,
-                    shell=False,  # Explicitly don't use shell
+                    shell=False,
+                    env=env,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     stdin=subprocess.PIPE
@@ -268,27 +276,30 @@ class ServerManagerLauncher:
                 web_process = subprocess.Popen(
                     [sys.executable, web_script],
                     start_new_session=True,
-                    shell=False,  # Explicitly don't use shell
+                    shell=False,
+                    env=env,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     stdin=subprocess.PIPE
                 )
             
-            # Wait a moment to see if the process exits immediately
-            time.sleep(2)
+            # Wait longer to see if the process exits immediately
+            time.sleep(5)
             if web_process.poll() is not None:
                 exit_code = web_process.returncode
-                stdout, stderr = web_process.communicate()
-                logger.error(f"Web server process exited immediately with code {exit_code}")
-                logger.error(f"Stdout: {stdout.decode('utf-8', errors='replace')}")
-                logger.error(f"Stderr: {stderr.decode('utf-8', errors='replace')}")
+                try:
+                    stdout, stderr = web_process.communicate(timeout=2)
+                    logger.error(f"Web server process exited immediately with code {exit_code}")
+                    logger.error(f"Stdout: {stdout.decode('utf-8', errors='replace')}")
+                    logger.error(f"Stderr: {stderr.decode('utf-8', errors='replace')}")
+                except subprocess.TimeoutExpired:
+                    logger.error(f"Web server process exited immediately with code {exit_code} (output timeout)")
                 return False
             
             self.processes["web_server"] = web_process
             self.write_pid_file("webserver", web_process.pid)
             
             # Check if the web server is actually listening on the port
-            # Give it some time to start up
             web_port = 8080  # Default port
             try:
                 # Try to get the port from registry
@@ -299,12 +310,16 @@ class ServerManagerLauncher:
                 logger.warning("Could not get web port from registry, using default 8080")
             
             logger.info(f"Checking if web server is listening on port {web_port}...")
-            for attempt in range(5):
-                time.sleep(1)
+            for attempt in range(15):  # Increased timeout
+                time.sleep(2)
                 if self.is_port_open('localhost', web_port):
                     logger.info(f"Web server successfully started and listening on port {web_port}")
                     return True
-                logger.debug(f"Attempt {attempt+1}/5: Web server not yet listening")
+                logger.debug(f"Attempt {attempt+1}/15: Web server not yet listening")
+                # Check if process is still running
+                if web_process.poll() is not None:
+                    logger.error(f"Web server process died during startup with exit code {web_process.returncode}")
+                    return False
             
             logger.warning(f"Web server process started (PID: {web_process.pid}) but not listening on port {web_port}")
             return True  # Return True anyway to keep the process managed

@@ -181,16 +181,16 @@ class ServerManagerTrayIcon:
         
         return image
     
-    def create_menu(self, icon):
+    def create_menu(self):
         """Create the tray icon menu"""
         return pystray.Menu(
             pystray.MenuItem(
-                "Server Status",
+                f"Server Status: {self.server_status}",
                 lambda: None,
                 enabled=False
             ),
             pystray.MenuItem(
-                "Web Server",
+                f"Web Server: {self.webserver_status}",
                 lambda: None,
                 enabled=False
             ),
@@ -222,8 +222,6 @@ class ServerManagerTrayIcon:
 
     def update_server_status(self):
         """Update server status in the menu"""
-        threading.Timer(10.0, self.update_server_status).start()
-        
         # In a real implementation, this would query the server status
         if self.server_status == "Running":
             self.server_status = "Stopped"
@@ -240,29 +238,12 @@ class ServerManagerTrayIcon:
                 status_text += " (Offline Mode)"
             self.icon.title = f"Server Manager - {status_text}"
             
-            # Update menu items
-            menu = self.create_menu(self.icon)
-            # Set the text of the first menu item to show server status
-            menu_items = list(menu.items)
-            menu_items[0] = pystray.MenuItem(
-                f"Server Status: {self.server_status}",
-                lambda: None,
-                enabled=False
-            )
-            
-            # Set the text of the web server status menu item
-            status_text = f"Web Server: {self.webserver_status}"
-            if self.offline_mode:
-                status_text += " (Offline Mode)"
-            menu_items[1] = pystray.MenuItem(
-                status_text,
-                lambda: None,
-                enabled=False
-            )
-            
-            # Create a new menu with the updated items
-            self.icon.menu = pystray.Menu(*menu_items)
-    
+            # Recreate the entire menu with updated status
+            self.icon.menu = self.create_menu()
+        
+        # Schedule next update
+        threading.Timer(10.0, self.update_server_status).start()
+
     def check_webserver_status(self):
         """Check if the web server is running and update status"""
         if self.offline_mode:
@@ -528,25 +509,29 @@ class ServerManagerTrayIcon:
             # Wait for web server to start
             connected = False
             logger.info(f"Waiting for web server to start on port {self.web_port}...")
-            for attempt in range(15):  # Try for 15 seconds
+            for attempt in range(20):  # Increased timeout to 20 seconds
                 time.sleep(1)
-                logger.debug(f"Connection attempt {attempt+1}/15...")
+                logger.debug(f"Connection attempt {attempt+1}/20...")
                 if self.is_port_open('localhost', self.web_port):
                     connected = True
                     self.webserver_status = "Connected"
                     break
                 # Check if process exited
                 if proc.poll() is not None:
+                    logger.error(f"Web server process exited with code {proc.returncode}")
+                    # Read output for debugging
+                    try:
+                        stdout, stderr = proc.communicate(timeout=2)
+                        if stderr:
+                            logger.error(f"Web server stderr: {stderr.decode(errors='replace')}")
+                        if stdout:
+                            logger.info(f"Web server stdout: {stdout.decode(errors='replace')}")
+                    except:
+                        pass
                     break
 
             if not connected:
-                # Read and log output
-                try:
-                    stdout, stderr = proc.communicate(timeout=2)
-                    logger.error(f"Webserver failed to start. Output:\n{stdout.decode(errors='replace')}\n{stderr.decode(errors='replace')}")
-                    print(f"Webserver failed to start. Output:\n{stdout.decode(errors='replace')}\n{stderr.decode(errors='replace')}", file=sys.stderr)
-                except Exception as e:
-                    logger.error(f"Webserver failed to start and output could not be read: {e}")
+                logger.error(f"Failed to connect to web server after 20 seconds")
                 if self.icon and self.notifications_enabled:
                     self.icon.notify("Failed to start web server", "Server Manager Error")
                 return False
@@ -557,7 +542,6 @@ class ServerManagerTrayIcon:
         except Exception as e:
             logger.error(f"Failed to start web server for dashboard: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
-            print(f"Failed to start web server for dashboard: {str(e)}", file=sys.stderr)
             return False
 
     def open_admin_dashboard(self):
@@ -822,10 +806,7 @@ class ServerManagerTrayIcon:
             
             # Create and run the tray icon
             self.icon = pystray.Icon("server_manager", image, "Server Manager")
-            self.icon.menu = self.create_menu(self.icon)
-            
-            # Start server status update thread
-            self.update_server_status()
+            self.icon.menu = self.create_menu()
             
             # Show notification on startup only if enabled
             def setup(icon):
@@ -833,6 +814,8 @@ class ServerManagerTrayIcon:
                 if self.notifications_enabled:
                     icon.notify("Server Manager started", "Tray Icon")
                 logger.info("Tray icon is now visible and running")
+                # Start server status update thread after icon is visible
+                self.update_server_status()
             
             # Run the icon
             logger.info("Starting tray icon")

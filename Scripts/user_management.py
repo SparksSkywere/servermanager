@@ -43,6 +43,9 @@ class UserManager:
         # Create tables if they don't exist
         Base.metadata.create_all(engine)
         
+        # Migrate existing database schema
+        self._migrate_database_schema()
+        
     def get_user(self, username):
         """Get user by username"""
         try:
@@ -165,3 +168,42 @@ class UserManager:
         except Exception as e:
             logger.error(f"Error verifying 2FA for {username}: {e}")
             return False
+
+    def _migrate_database_schema(self):
+        """Migrate database schema to add missing columns"""
+        try:
+            with self.engine.connect() as conn:
+                # Check which columns exist and add missing ones
+                # This is a simple migration approach - in production you'd want proper migrations
+                
+                # Get current table info
+                from sqlalchemy import text
+                
+                # For SQLite, we need to check column existence differently
+                result = conn.execute(text("PRAGMA table_info(users)"))
+                existing_columns = {row[1] for row in result.fetchall()}
+                
+                # Define required columns with their SQL definitions
+                required_columns = {
+                    'email': 'TEXT',
+                    'is_active': 'BOOLEAN DEFAULT 1',
+                    'created_at': 'DATETIME',
+                    'last_login': 'DATETIME',
+                    'two_factor_enabled': 'BOOLEAN DEFAULT 0',
+                    'two_factor_secret': 'TEXT'
+                }
+                
+                # Add missing columns
+                for column, definition in required_columns.items():
+                    if column not in existing_columns:
+                        try:
+                            alter_sql = f"ALTER TABLE users ADD COLUMN {column} {definition}"
+                            conn.execute(text(alter_sql))
+                            logger.info(f"Added column {column} to users table")
+                        except Exception as e:
+                            logger.warning(f"Failed to add column {column}: {e}")
+                
+                conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Error migrating database schema: {e}")

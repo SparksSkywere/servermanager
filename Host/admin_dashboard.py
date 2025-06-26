@@ -1,5 +1,6 @@
 import os
 import sys
+import tkinter as tk
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from tkinter import messagebox, simpledialog
@@ -9,7 +10,7 @@ from Modules.SQL_Connection import get_engine, ensure_root_admin
 def main():
     try:
         engine = get_engine()
-        ensure_root_admin(engine)  # <-- Ensure root admin is present in SQL
+        ensure_root_admin(engine)
         um = UserManager(engine)
         app = AdminDashboard(um)
         app.mainloop()
@@ -23,7 +24,7 @@ class AdminDashboard(tk.Tk):
         super().__init__()
         self.user_manager = user_manager
         self.title("Admin Dashboard - User Management")
-        self.geometry("600x450")
+        self.geometry("600x480")
         self.create_widgets()
         self.refresh_user_list()
 
@@ -56,6 +57,7 @@ class AdminDashboard(tk.Tk):
         tk.Button(btn_frame, text="Add User", command=self.add_user, width=12).pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="Edit User", command=self.edit_user, width=12).pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="Delete User", command=self.delete_user, width=12).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Reset Password", command=self.reset_password, width=12).pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="Reset 2FA", command=self.reset_2fa, width=12).pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="Refresh", command=self.refresh_user_list, width=12).pack(side=tk.LEFT, padx=5)
         
@@ -110,12 +112,15 @@ class AdminDashboard(tk.Tk):
                     enable_2fa = False
             
             # Add user with 2FA fields
-            session = self.user_manager.Session()
             try:
-                from user_management import User
+                import hashlib
+                hashed_password = hashlib.sha256(password.encode()).hexdigest()
+                
+                session = self.user_manager.Session()
+                from Scripts.user_management import User
                 user = User(
                     username=username,
-                    password=password,
+                    password=hashed_password,
                     email=email,
                     is_admin=is_admin,
                     two_factor_enabled=enable_2fa,
@@ -124,6 +129,7 @@ class AdminDashboard(tk.Tk):
                 )
                 session.add(user)
                 session.commit()
+                session.close()
                 
                 self.refresh_user_list()
                 self.status_label.config(text=f"User '{username}' added successfully")
@@ -134,10 +140,10 @@ class AdminDashboard(tk.Tk):
                                       "Save this secret - it won't be shown again!")
                                       
             except Exception as e:
-                session.rollback()
+                if 'session' in locals():
+                    session.rollback()
+                    session.close()
                 raise e
-            finally:
-                session.close()
                 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to add user: {str(e)}")
@@ -246,6 +252,37 @@ class AdminDashboard(tk.Tk):
                 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to delete user: {str(e)}")
+
+    def reset_password(self):
+        try:
+            selection = self.user_listbox.curselection()
+            if not selection:
+                messagebox.showinfo("No Selection", "Please select a user to reset password.")
+                return
+                
+            username = self.user_listbox.get(selection[0]).split(" ")[0]
+            
+            new_password = simpledialog.askstring("New Password", 
+                                                f"Enter new password for user '{username}':", 
+                                                show="*", parent=self)
+            if not new_password:
+                return
+                
+            confirm_password = simpledialog.askstring("Confirm Password", 
+                                                     "Confirm new password:", 
+                                                     show="*", parent=self)
+            if confirm_password != new_password:
+                messagebox.showerror("Error", "Passwords do not match.")
+                return
+            
+            if self.user_manager.update_user(username, password=new_password):
+                self.status_label.config(text=f"Password reset for user '{username}'")
+                messagebox.showinfo("Password Reset", f"Password has been reset for user '{username}'.", parent=self)
+            else:
+                messagebox.showerror("Error", f"Failed to reset password for user '{username}'.")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to reset password: {str(e)}")
 
 if __name__ == "__main__":
     main()
