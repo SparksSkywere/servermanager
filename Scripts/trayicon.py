@@ -203,14 +203,6 @@ class ServerManagerTrayIcon:
                 self.open_web_interface
             ),
             pystray.MenuItem(
-                "Toggle Offline Mode",
-                self.toggle_offline_mode
-            ),
-            pystray.MenuItem(
-                "Toggle Debug Mode",
-                self.toggle_debug_mode
-            ),
-            pystray.MenuItem(
                 "Open Admin Dashboard",
                 self.open_admin_dashboard
             ),
@@ -232,10 +224,8 @@ class ServerManagerTrayIcon:
         self.check_webserver_status()
         
         if self.icon:
-            # Update with combined status
+            # Update with status
             status_text = f"Server: {self.server_status} | Web: {self.webserver_status}"
-            if self.offline_mode:
-                status_text += " (Offline Mode)"
             self.icon.title = f"Server Manager - {status_text}"
             
             # Recreate the entire menu with updated status
@@ -652,46 +642,6 @@ class ServerManagerTrayIcon:
         except Exception as e:
             logger.error(f"Error checking port {port}: {str(e)}")
             return False
-    
-    def toggle_offline_mode(self):
-        """Toggle offline mode"""
-        self.offline_mode = not self.offline_mode
-        
-        if self.offline_mode:
-            logger.info("Offline mode enabled")
-        else:
-            logger.info("Offline mode disabled")
-            
-        # Update status immediately
-        self.check_webserver_status()
-        
-        # Show notification only if enabled
-        if self.icon and self.notifications_enabled:
-            self.icon.notify(
-                f"Offline mode {'enabled' if self.offline_mode else 'disabled'}",
-                "Server Manager"
-            )
-            
-        # Force menu update
-        self.update_server_status()
-    
-    def toggle_debug_mode(self):
-        """Toggle debug mode"""
-        self.debug_mode = not self.debug_mode
-        
-        if self.debug_mode:
-            logger.setLevel(logging.DEBUG)
-            logger.debug("Debug mode enabled")
-        else:
-            logger.setLevel(logging.INFO)
-            logger.info("Debug mode disabled")
-            
-        # Show notification only if enabled
-        if self.icon and self.notifications_enabled:
-            self.icon.notify(
-                f"Debug mode {'enabled' if self.debug_mode else 'disabled'}",
-                "Server Manager"
-            )
     
     def exit_app(self):
         """Exit the application"""

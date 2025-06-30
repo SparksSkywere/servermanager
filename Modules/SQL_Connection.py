@@ -101,6 +101,10 @@ def ensure_root_admin(engine):
                     username TEXT UNIQUE NOT NULL,
                     password TEXT NOT NULL,
                     email TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
+                    display_name TEXT,
+                    account_number TEXT UNIQUE,
                     is_admin BOOLEAN DEFAULT 0,
                     is_active BOOLEAN DEFAULT 1,
                     created_at DATETIME,
@@ -118,13 +122,16 @@ def ensure_root_admin(engine):
                 # Create admin user with default password
                 import hashlib
                 from datetime import datetime
+                import uuid
                 admin_password = hashlib.sha256("admin".encode()).hexdigest()
+                account_number = str(uuid.uuid4())[:8].upper()
                 conn.execute(text("""
-                    INSERT INTO users (username, password, is_admin, is_active, created_at, email) 
-                    VALUES ('admin', :password, 1, 1, :created_at, 'admin@localhost')
+                    INSERT INTO users (username, password, is_admin, is_active, created_at, email, first_name, last_name, display_name, account_number) 
+                    VALUES ('admin', :password, 1, 1, :created_at, 'admin@localhost', 'System', 'Administrator', 'Admin', :account_number)
                 """), {
                     "password": admin_password,
-                    "created_at": datetime.utcnow()
+                    "created_at": datetime.utcnow(),
+                    "account_number": account_number
                 })
                 conn.commit()
                 logger.info("Created default admin user")

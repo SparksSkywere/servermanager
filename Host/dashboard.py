@@ -1451,6 +1451,10 @@ class ServerManagerDashboard:
         install_dir = server_config.get('InstallDir', '')
         executable_path = server_config.get('ExecutablePath', '')
         startup_args = server_config.get('StartupArgs', '')
+        use_config_file = server_config.get('UseConfigFile', False)
+        config_file_path = server_config.get('ConfigFilePath', '')
+        config_argument = server_config.get('ConfigArgument', '--config')
+        
         if not executable_path:
             messagebox.showinfo("Configuration Needed", "No executable specified. Please configure the server startup settings.")
             self.configure_server()
@@ -1460,20 +1464,47 @@ class ServerManagerDashboard:
         if not os.path.exists(exe_full):
             messagebox.showerror("Error", f"Executable not found: {exe_full}")
             return
-        # Build command
+        
+        # Build command with config file support
+        cmd_parts = [f'"{exe_full}"']
+        
+        # Add startup arguments first
+        if startup_args:
+            cmd_parts.append(startup_args)
+        
+        # Add config file if enabled
+        if use_config_file and config_file_path and config_argument:
+            config_full = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
+            if os.path.exists(config_full):
+                cmd_parts.append(f'{config_argument} "{config_full}"')
+                logger.info(f"Using config file: {config_full}")
+            else:
+                logger.warning(f"Config file not found: {config_full}, starting without config file")
+        
+        # Build final command
         if server_type == "Minecraft":
-            cmd = f'java -Xmx1024M -Xms1024M -jar "{exe_full}" nogui {startup_args}'
+            # For Minecraft servers, keep the Java-specific handling
+            cmd = f'java -Xmx1024M -Xms1024M -jar "{exe_full}" nogui'
+            if startup_args:
+                cmd += f' {startup_args}'
+            if use_config_file and config_file_path and config_argument and os.path.exists(config_full):
+                cmd += f' {config_argument} "{config_full}"'
             shell = True
         elif exe_full.lower().endswith(('.bat', '.cmd')):
-            cmd = f'start "" /D "{install_dir}" cmd /c "{exe_full}" {startup_args}'
+            cmd = f'start "" /D "{install_dir}" cmd /c ' + ' '.join(cmd_parts)
             shell = True
         elif exe_full.lower().endswith('.sh') and sys.platform != 'win32':
-            cmd = ['/bin/sh', exe_full] + (startup_args.split() if startup_args else [])
+            cmd = ['/bin/sh', exe_full]
+            if startup_args:
+                cmd.extend(startup_args.split())
+            if use_config_file and config_file_path and config_argument and os.path.exists(config_full):
+                cmd.extend([config_argument, config_full])
             shell = False
         else:
-            cmd = f'"{exe_full}" {startup_args}'
+            cmd = ' '.join(cmd_parts)
             shell = True
-        # ...existing log setup...
+        
+        # ...existing log setup and process starting code...
         server_logs_dir = os.path.join(install_dir, "logs")
         os.makedirs(server_logs_dir, exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2059,7 +2090,7 @@ class ServerManagerDashboard:
 
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Configure Server: {server_name}")
-        dialog.geometry("600x450")
+        dialog.geometry("600x500")
         dialog.transient(self.root); dialog.grab_set()
         frm = ttk.Frame(dialog, padding=10); frm.pack(fill=tk.BOTH, expand=True)
 
@@ -2083,40 +2114,133 @@ class ServerManagerDashboard:
                 exe_var.set(rel)
         ttk.Button(start, text="Browse", command=browse_exe).grid(row=0,column=2)
 
-        # Args, stop command, working dir
+        # Args, stop command, config file
         ttk.Label(start, text="Startup Args:").grid(row=1,column=0,padx=10,pady=5,sticky=tk.W)
         args_var = tk.StringVar(value=server_config.get('StartupArgs',''))
         ttk.Entry(start, textvariable=args_var, width=40).grid(row=1,column=1,columnspan=2,sticky=tk.W)
+        
         ttk.Label(start, text="Stop Command:").grid(row=2,column=0,padx=10,pady=5,sticky=tk.W)
         stop_var = tk.StringVar(value=server_config.get('StopCommand',''))
         ttk.Entry(start, textvariable=stop_var, width=40).grid(row=2,column=1,columnspan=2,sticky=tk.W)
-        ttk.Label(start, text="Working Dir:").grid(row=3,column=0,padx=10,pady=5,sticky=tk.W)
-        wd_var = tk.StringVar(value=server_config.get('WorkingDir',''))
-        wd_entry = ttk.Entry(start, textvariable=wd_var, width=40); wd_entry.grid(row=3,column=1,sticky=tk.W)
-        def browse_wd():
-            d = filedialog.askdirectory(initialdir=install_dir)
-            if d:
-                rel = os.path.relpath(d, install_dir) if os.path.commonpath([d,install_dir])==install_dir else d
-                wd_var.set(rel)
-        ttk.Button(start, text="Browse", command=browse_wd).grid(row=3,column=2)
+        
+        # Config file section
+        config_frame = ttk.LabelFrame(start, text="Configuration File")
+        config_frame.grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
+        
+        # Enable config file checkbox
+        use_config_var = tk.BooleanVar(value=server_config.get('UseConfigFile', False))
+        use_config_check = ttk.Checkbutton(config_frame, text="Use Configuration File", variable=use_config_var)
+        use_config_check.grid(row=0, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
+        
+        # Config file path
+        ttk.Label(config_frame, text="Config File Path:").grid(row=1,column=0,padx=10,pady=5,sticky=tk.W)
+        config_file_var = tk.StringVar(value=server_config.get('ConfigFilePath',''))
+        config_file_entry = ttk.Entry(config_frame, textvariable=config_file_var, width=35)
+        config_file_entry.grid(row=1,column=1,sticky=tk.W,padx=5)
+        
+        def browse_config():
+            fp = filedialog.askopenfilename(
+                initialdir=install_dir,
+                title="Select Configuration File",
+                filetypes=[
+                    ("Config Files", "*.cfg;*.conf;*.ini;*.json;*.xml;*.yaml;*.yml;*.properties;*.txt"),
+                    ("All Files", "*.*")
+                ]
+            )
+            if fp:
+                rel = os.path.relpath(fp, install_dir) if os.path.commonpath([fp,install_dir])==install_dir else fp
+                config_file_var.set(rel)
+        ttk.Button(config_frame, text="Browse", command=browse_config).grid(row=1,column=2,padx=5)
+        
+        # Config file argument format
+        ttk.Label(config_frame, text="Config Argument:").grid(row=2,column=0,padx=10,pady=5,sticky=tk.W)
+        config_arg_var = tk.StringVar(value=server_config.get('ConfigArgument', '--config'))
+        config_arg_entry = ttk.Entry(config_frame, textvariable=config_arg_var, width=20)
+        config_arg_entry.grid(row=2,column=1,sticky=tk.W,padx=5)
+        ttk.Label(config_frame, text="(e.g., --config, -c, +exec)", foreground="gray").grid(row=2,column=2,sticky=tk.W,padx=5)
+        
+        # Preview command line
+        preview_frame = ttk.LabelFrame(frm, text="Command Preview")
+        preview_frame.pack(fill=tk.X, pady=5)
+        
+        preview_text = tk.Text(preview_frame, height=3, wrap=tk.WORD, background="lightgray")
+        preview_text.pack(fill=tk.X, padx=10, pady=10)
+        
+        def update_preview():
+            """Update the command preview"""
+            try:
+                exe = exe_var.get().strip()
+                args = args_var.get().strip()
+                use_config = use_config_var.get()
+                config_file_path = config_file_var.get().strip()
+                config_arg = config_arg_var.get().strip()
+                
+                # Build command preview
+                cmd_parts = []
+                if exe:
+                    exe_abs = exe if os.path.isabs(exe) else os.path.join(install_dir, exe)
+                    cmd_parts.append(f'"{exe_abs}"')
+                
+                if args:
+                    cmd_parts.append(args)
+                
+                if use_config and config_file_path and config_arg:
+                    config_abs = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
+                    cmd_parts.append(f'{config_arg} "{config_abs}"')
+                
+                cmd_preview = ' '.join(cmd_parts) if cmd_parts else "No executable specified"
+                
+                preview_text.delete(1.0, tk.END)
+                preview_text.insert(1.0, cmd_preview)
+            except Exception as e:
+                preview_text.delete(1.0, tk.END)
+                preview_text.insert(1.0, f"Error generating preview: {str(e)}")
+        
+        # Bind update events
+        def on_change(*args):
+            update_preview()
+        
+        exe_var.trace('w', on_change)
+        args_var.trace('w', on_change)
+        use_config_var.trace('w', on_change)
+        config_file_var.trace('w', on_change)
+        config_arg_var.trace('w', on_change)
+        
+        # Initial preview update
+        update_preview()
 
         # Save/Cancel/Test
         btns = ttk.Frame(frm); btns.pack(fill=tk.X,pady=10)
         def save():
             ep = exe_var.get().strip(); sa = args_var.get().strip()
-            sc = stop_var.get().strip(); wd = wd_var.get().strip()
+            sc = stop_var.get().strip()
+            use_config = use_config_var.get()
+            config_file_path = config_file_var.get().strip()
+            config_arg = config_arg_var.get().strip()
+            
             if not ep:
                 messagebox.showerror("Validation Error","Executable path is required."); return
+            
             # resolve abs paths for validation
             ep_abs = ep if os.path.isabs(ep) else os.path.join(install_dir,ep)
-            wd_abs = wd if os.path.isabs(wd) else (os.path.join(install_dir,wd) if wd else install_dir)
             if not os.path.exists(ep_abs):
                 if not messagebox.askyesno("Warning",f"Executable not found: {ep_abs}\nSave anyway?"): return
+            
+            # Validate config file if enabled
+            if use_config and config_file_path:
+                config_abs = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
+                if not os.path.exists(config_abs):
+                    if not messagebox.askyesno("Warning", f"Config file not found: {config_abs}\nSave anyway?"): return
+                if not config_arg:
+                    messagebox.showerror("Validation Error", "Config argument is required when using config file."); return
+            
             server_config.update({
                 'ExecutablePath': ep,
                 'StartupArgs': sa,
                 'StopCommand': sc,
-                'WorkingDir': wd,
+                'UseConfigFile': use_config,
+                'ConfigFilePath': config_file_path,
+                'ConfigArgument': config_arg,
                 'LastUpdate': datetime.datetime.now().isoformat()
             })
             with open(config_file,'w') as f: json.dump(server_config,f,indent=4)
@@ -2552,19 +2676,4 @@ def main():
     dashboard = ServerManagerDashboard(debug_mode=args.debug)
     dashboard.run()
 
-if __name__ == "__main__":
-    main()
-def main():
-    # Parse command line arguments
-    import argparse
-
-    parser = argparse.ArgumentParser(description='Server Manager Dashboard')
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
-    args = parser.parse_args()
-
-    # Create and run dashboard
-    dashboard = ServerManagerDashboard(debug_mode=args.debug)
-    dashboard.run()
-
-if __name__ == "__main__":
-    main()
+main()
