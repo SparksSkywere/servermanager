@@ -1,7 +1,6 @@
-# --- Hide console and relaunch as WinForms GUI if needed ---
 Add-Type -AssemblyName System.Windows.Forms
 
-# --- Logging functions must be defined before any usage ---
+# Log function
 function Write-Log {
     param (
         [string]$message
@@ -572,6 +571,19 @@ function Select-FolderDialog {
     return $dialog.SelectedPath
 }
 
+# Function to open folder selection dialog for user workspace
+function Select-UserWorkspaceDialog {
+    [System.Windows.Forms.FolderBrowserDialog]$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dialog.Description = "Select the directory where user workspace folder should be created"
+    $dialog.ShowNewFolderButton = $true
+    [void]$dialog.ShowDialog()
+    if ($null -eq $dialog.SelectedPath) {
+        Write-Log "No user workspace directory selected, using default..."
+        return $null
+    }
+    return $dialog.SelectedPath
+}
+
 # Function to update and run SteamCMD (non-admin)
 function Update-SteamCmd {
     param (
@@ -1135,6 +1147,27 @@ try {
         throw "Invalid or no directory selected"
     }
 
+    # Get user workspace directory
+    $UserWorkspaceParent = Select-UserWorkspaceDialog
+    if (-not $UserWorkspaceParent) {
+        # Default to Documents folder if no selection
+        $UserWorkspaceParent = [Environment]::GetFolderPath("MyDocuments")
+    }
+    $UserWorkspacePath = Join-Path $UserWorkspaceParent "user_workspace"
+    
+    # Create user workspace directory
+    if (-not (Test-Path $UserWorkspacePath)) {
+        try {
+            New-Item -ItemType Directory -Force -Path $UserWorkspacePath | Out-Null
+            Write-Log "Created user workspace directory: $UserWorkspacePath"
+        } catch {
+            Write-Log "Failed to create user workspace directory: $($_.Exception.Message)"
+            throw
+        }
+    } else {
+        Write-Log "User workspace directory already exists: $UserWorkspacePath"
+    }
+
     # Create base directories first
     New-Servermanager -dir $SteamCMDPath
     $ServerManagerDir = Join-Path $SteamCMDPath "Servermanager"
@@ -1144,6 +1177,7 @@ try {
     $global:logFilePath = Join-Path $ServerManagerDir "Install-Log.txt"
     Write-Log "Installation started"
     Write-Log "Selected installation directory: $SteamCMDPath"
+    Write-Log "Selected user workspace directory: $UserWorkspacePath"
     Write-Log "Installation options selected: Service install = $($installOptions.InstallService)"
 
     # Create registry structure
@@ -1155,6 +1189,7 @@ try {
         'CurrentVersion' = $CurrentVersion
         'SteamCMDPath' = $SteamCMDPath
         'Servermanagerdir' = $ServerManagerDir
+        'UserWorkspace' = $UserWorkspacePath
         'InstallDate' = (Get-Date).ToString('o')
         'LastUpdate' = (Get-Date).ToString('o')
         'WebPort' = '8080'

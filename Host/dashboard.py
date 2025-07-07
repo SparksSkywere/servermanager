@@ -9,20 +9,14 @@ import time
 import psutil
 import platform
 import datetime
-import tempfile
-import shutil
 import socket
-import webbrowser
-import traceback
-import signal
-import argparse
-import ctypes
 import urllib.request
 import urllib.error
 import hashlib
+import argparse
 
+# GUI imports
 import tkinter as tk
-from pathlib import Path
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 from PIL import Image, ImageTk
 
@@ -32,13 +26,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 # Import user management system
 from Scripts.user_management import UserManager
 from Modules.SQL_Connection import get_engine
-
-# Try to import required libraries, install if not present
-try:
-    import vdf
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "vdf"])
-    import vdf
 
 # Setup logging
 logging.basicConfig(
@@ -56,8 +43,8 @@ class ServerManagerDashboard:
         self.paths = {}
         self.servers = []
         self.debug_mode = debug_mode
-        self.user_manager = None  # Add user manager
-        self.current_user = None  # Add current user tracking
+        self.user_manager = None
+        self.current_user = None
         self.variables = {
             "previousNetworkStats": {},
             "previousNetworkTime": datetime.datetime.now(),
@@ -76,13 +63,13 @@ class ServerManagerDashboard:
             "diskInfo": [],
             "gpuInfo": None,
             "systemRefreshInterval": 4,
-            "lastProcessUpdate": datetime.datetime.min,  # New: track when processes were last updated
-            "processMonitoringInterval": 5,  # New: how often to check processes (seconds)
-            "processStatHistory": {},  # New: store historical data for processes
-            "maxProcessHistoryPoints": 20,  # New: maximum history points to keep
-            "failedProcessRestarts": {},  # New: track failed restart attempts
-            "webserverStatus": "Disconnected",  # New: track web server status
-            "webserverPort": 8080  # New: web server port
+            "lastProcessUpdate": datetime.datetime.min,
+            "processMonitoringInterval": 5,
+            "processStatHistory": {},
+            "maxProcessHistoryPoints": 20,
+            "failedProcessRestarts": {},
+            "webserverStatus": "Disconnected",
+            "webserverPort": 8080
         }
         
         # Initialize paths from registry and setup the application
@@ -120,12 +107,12 @@ class ServerManagerDashboard:
         
         self.supported_server_types = ["Steam", "Minecraft", "Other"]
         
-        # Remove API URL and token - we'll use direct SQL access
-        # self.api_url = f"http://localhost:{self.variables['webserverPort']}/api/tracker/servers"
-        # self.api_token = None  # Set after login
-        
         # Prompt for login using SQL authentication
-        self.sql_login()
+        # Exit if login is cancelled
+        if not self.sql_login():
+            logger.info("Login cancelled, exiting application")
+            self.root.destroy()
+            sys.exit(0)
 
     def configure_file_logging(self):
         """Set up logging to file"""
@@ -245,7 +232,7 @@ class ServerManagerDashboard:
         # Define column headings
         self.server_list.heading("name", text="Server Name")
         self.server_list.heading("status", text="Status")
-        self.server_list.heading("pid", text="PID")  # New column for PID
+        self.server_list.heading("pid", text="PID")
         self.server_list.heading("cpu", text="CPU Usage")
         self.server_list.heading("memory", text="Memory Usage")
         self.server_list.heading("uptime", text="Uptime")
@@ -253,7 +240,7 @@ class ServerManagerDashboard:
         # Define column widths
         self.server_list.column("name", width=150)
         self.server_list.column("status", width=80)
-        self.server_list.column("pid", width=60)  # New column width
+        self.server_list.column("pid", width=60)
         self.server_list.column("cpu", width=80)
         self.server_list.column("memory", width=100)
         self.server_list.column("uptime", width=150)
@@ -272,8 +259,8 @@ class ServerManagerDashboard:
         self.server_context_menu.add_separator()
         self.server_context_menu.add_command(label="Start Server", command=self.start_server)
         self.server_context_menu.add_command(label="Stop Server", command=self.stop_server)
-        self.server_context_menu.add_command(label="Restart Server", command=self.restart_server)  # New menu item
-        self.server_context_menu.add_command(label="View Process Details", command=self.view_process_details)  # New menu item
+        self.server_context_menu.add_command(label="Restart Server", command=self.restart_server)
+        self.server_context_menu.add_command(label="View Process Details", command=self.view_process_details)
         self.server_context_menu.add_command(label="Configure Server", command=self.configure_server)
         self.server_context_menu.add_separator()
         self.server_context_menu.add_command(label="Open Folder Directory", command=self.open_server_directory)
@@ -375,8 +362,8 @@ class ServerManagerDashboard:
             self.server_context_menu.entryconfigure("Remove Server", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("Start Server", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("Stop Server", state=tk.NORMAL)
-            self.server_context_menu.entryconfigure("Restart Server", state=tk.NORMAL)  # New menu item
-            self.server_context_menu.entryconfigure("View Process Details", state=tk.NORMAL)  # New menu item
+            self.server_context_menu.entryconfigure("Restart Server", state=tk.NORMAL)
+            self.server_context_menu.entryconfigure("View Process Details", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("Configure Server", state=tk.NORMAL)
         else:
             # Disable server-specific options
@@ -384,8 +371,8 @@ class ServerManagerDashboard:
             self.server_context_menu.entryconfigure("Remove Server", state=tk.DISABLED)
             self.server_context_menu.entryconfigure("Start Server", state=tk.DISABLED)
             self.server_context_menu.entryconfigure("Stop Server", state=tk.DISABLED)
-            self.server_context_menu.entryconfigure("Restart Server", state=tk.DISABLED)  # New menu item
-            self.server_context_menu.entryconfigure("View Process Details", state=tk.DISABLED)  # New menu item
+            self.server_context_menu.entryconfigure("Restart Server", state=tk.DISABLED)
+            self.server_context_menu.entryconfigure("View Process Details", state=tk.DISABLED)
             self.server_context_menu.entryconfigure("Configure Server", state=tk.DISABLED)
             
         # Show context menu
@@ -489,7 +476,7 @@ class ServerManagerDashboard:
             with urllib.request.urlopen(meta_url, timeout=10) as resp:
                 installers = json.load(resp)
             if installers:
-                return installers[0]["url"]  # Always use latest installer
+                return installers[0]["url"]
         except Exception as e:
             logger.error(f"Failed to fetch Fabric installer: {str(e)}")
         return None
@@ -689,8 +676,6 @@ class ServerManagerDashboard:
                 status_var.set("Installing server...")
 
                 if server_type == "Steam":
-                    # ...existing Steam install logic...
-                    # (copy from original add_server, but only for Steam)
                     steam_cmd_exe = os.path.join(self.steam_cmd_path, "steamcmd.exe")
                     if not os.path.exists(steam_cmd_exe):
                         messagebox.showerror("Configuration Error", 
@@ -716,7 +701,6 @@ class ServerManagerDashboard:
                         encoding='utf-8',
                         errors='replace'
                     )
-                    # ...existing Steam install monitoring...
                     installation_success = False
                     while True:
                         if self.install_cancelled:
@@ -888,7 +872,7 @@ class ServerManagerDashboard:
         dialog.geometry(f"+{x}+{y}")
 
     def sql_login(self):
-        """Prompt for login using SQL database authentication"""
+        """Prompt for login using SQL database authentication. Returns True if successful, False if cancelled"""
         max_attempts = 3
         attempts = 0
         
@@ -907,7 +891,7 @@ class ServerManagerDashboard:
                     if user.password == hashed_password:
                         self.current_user = user
                         logger.info(f"Successfully logged in automatically as admin")
-                        return
+                        return True
                         
         except Exception as e:
             logger.debug(f"Automatic login failed: {e}")
@@ -919,14 +903,14 @@ class ServerManagerDashboard:
             username = askstring("Login", "Username (or Cancel for offline mode):")
             if not username:
                 logger.info("User cancelled login, enabling offline mode")
-                self.variables["offlineMode"] = True
-                return
+                # Return False to indicate login was cancelled
+                return False
                 
             password = askstring("Login", "Password:", show="*")
             if not password:
                 logger.info("User cancelled login, enabling offline mode")
-                self.variables["offlineMode"] = True
-                return
+                # Return False to indicate login was cancelled
+                return False
                 
             try:
                 # Get user from database
@@ -972,8 +956,8 @@ class ServerManagerDashboard:
                     token = askstring("2FA Authentication", "Enter your 2FA token:")
                     if not token:
                         logger.info("User cancelled 2FA, enabling offline mode")
-                        self.variables["offlineMode"] = True
-                        return
+                        # Return False to indicate login was cancelled
+                        return False
                     
                     if not self.user_manager.verify_2fa(username, token):
                         logger.warning(f"Invalid 2FA token for user: {username}")
@@ -996,7 +980,7 @@ class ServerManagerDashboard:
                 except Exception as e:
                     logger.warning(f"Failed to update last login time: {e}")
                 
-                return
+                return True
                 
             except Exception as e:
                 logger.error(f"Login error: {str(e)}")
@@ -1008,9 +992,10 @@ class ServerManagerDashboard:
                     messagebox.showerror("Database Error", 
                                        f"Cannot access user database. Running in offline mode.")
         
-        # If we get here, login failed - enable offline mode
+        # If we get here after max attempts, enable offline mode
         self.variables["offlineMode"] = True
-        logger.info("Login failed, running in offline mode")
+        logger.info("Login failed after max attempts, running in offline mode")
+        return True  # Still return True to allow running in offline mode
     
     def api_headers(self):
         # Remove API headers since we're using direct SQL access
@@ -1454,6 +1439,7 @@ class ServerManagerDashboard:
         use_config_file = server_config.get('UseConfigFile', False)
         config_file_path = server_config.get('ConfigFilePath', '')
         config_argument = server_config.get('ConfigArgument', '--config')
+        additional_args = server_config.get('AdditionalArgs', '')
         
         if not executable_path:
             messagebox.showinfo("Configuration Needed", "No executable specified. Please configure the server startup settings.")
@@ -1468,43 +1454,56 @@ class ServerManagerDashboard:
         # Build command with config file support
         cmd_parts = [f'"{exe_full}"']
         
-        # Add startup arguments first
-        if startup_args:
-            cmd_parts.append(startup_args)
-        
-        # Add config file if enabled
-        if use_config_file and config_file_path and config_argument:
-            config_full = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
-            if os.path.exists(config_full):
-                cmd_parts.append(f'{config_argument} "{config_full}"')
-                logger.info(f"Using config file: {config_full}")
-            else:
-                logger.warning(f"Config file not found: {config_full}, starting without config file")
+        if use_config_file:
+            # Config file mode
+            # Add additional arguments first (if any)
+            if additional_args:
+                cmd_parts.append(additional_args)
+            
+            # Add config file argument
+            if config_file_path and config_argument:
+                config_full = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
+                if os.path.exists(config_full):
+                    cmd_parts.append(f'{config_argument} "{config_full}"')
+                    logger.info(f"Using config file: {config_full}")
+                else:
+                    logger.warning(f"Config file not found: {config_full}, starting without config file")
+        else:
+            # Manual arguments mode
+            if startup_args:
+                cmd_parts.append(startup_args)
         
         # Build final command
         if server_type == "Minecraft":
             # For Minecraft servers, keep the Java-specific handling
             cmd = f'java -Xmx1024M -Xms1024M -jar "{exe_full}" nogui'
-            if startup_args:
-                cmd += f' {startup_args}'
-            if use_config_file and config_file_path and config_argument and os.path.exists(config_full):
-                cmd += f' {config_argument} "{config_full}"'
+            if use_config_file:
+                if additional_args:
+                    cmd += f' {additional_args}'
+                if config_file_path and config_argument and os.path.exists(config_full):
+                    cmd += f' {config_argument} "{config_full}"'
+            else:
+                if startup_args:
+                    cmd += f' {startup_args}'
             shell = True
         elif exe_full.lower().endswith(('.bat', '.cmd')):
             cmd = f'start "" /D "{install_dir}" cmd /c ' + ' '.join(cmd_parts)
             shell = True
         elif exe_full.lower().endswith('.sh') and sys.platform != 'win32':
             cmd = ['/bin/sh', exe_full]
-            if startup_args:
-                cmd.extend(startup_args.split())
-            if use_config_file and config_file_path and config_argument and os.path.exists(config_full):
-                cmd.extend([config_argument, config_full])
+            if use_config_file:
+                if additional_args:
+                    cmd.extend(additional_args.split())
+                if config_file_path and config_argument and os.path.exists(config_full):
+                    cmd.extend([config_argument, config_full])
+            else:
+                if startup_args:
+                    cmd.extend(startup_args.split())
             shell = False
         else:
             cmd = ' '.join(cmd_parts)
             shell = True
         
-        # ...existing log setup and process starting code...
         server_logs_dir = os.path.join(install_dir, "logs")
         os.makedirs(server_logs_dir, exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2090,7 +2089,7 @@ class ServerManagerDashboard:
 
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Configure Server: {server_name}")
-        dialog.geometry("600x500")
+        dialog.geometry("650x550")
         dialog.transient(self.root); dialog.grab_set()
         frm = ttk.Frame(dialog, padding=10); frm.pack(fill=tk.BOTH, expand=True)
 
@@ -2103,7 +2102,7 @@ class ServerManagerDashboard:
         # Startup
         start = ttk.LabelFrame(frm, text="Startup Configuration"); start.pack(fill=tk.X,pady=5)
         # Executable
-        ttk.Label(start, text="Executable Path:").grid(row=0,column=0,padx=10,pady=5,sticky=tk.W)
+        ttk.Label(start, text="Executable:").grid(row=0,column=0,padx=10,pady=5,sticky=tk.W)
         exe_var = tk.StringVar(value=server_config.get('ExecutablePath',''))
         exe_entry = ttk.Entry(start, textvariable=exe_var, width=40); exe_entry.grid(row=0,column=1,sticky=tk.W)
         def browse_exe():
@@ -2114,29 +2113,42 @@ class ServerManagerDashboard:
                 exe_var.set(rel)
         ttk.Button(start, text="Browse", command=browse_exe).grid(row=0,column=2)
 
-        # Args, stop command, config file
-        ttk.Label(start, text="Startup Args:").grid(row=1,column=0,padx=10,pady=5,sticky=tk.W)
-        args_var = tk.StringVar(value=server_config.get('StartupArgs',''))
-        ttk.Entry(start, textvariable=args_var, width=40).grid(row=1,column=1,columnspan=2,sticky=tk.W)
-        
-        ttk.Label(start, text="Stop Command:").grid(row=2,column=0,padx=10,pady=5,sticky=tk.W)
+        # Stop command
+        ttk.Label(start, text="Stop Command:").grid(row=1,column=0,padx=10,pady=5,sticky=tk.W)
         stop_var = tk.StringVar(value=server_config.get('StopCommand',''))
-        ttk.Entry(start, textvariable=stop_var, width=40).grid(row=2,column=1,columnspan=2,sticky=tk.W)
+        ttk.Entry(start, textvariable=stop_var, width=40).grid(row=1,column=1,columnspan=2,sticky=tk.W)
+        
+        # Startup arguments section with radio button choice
+        args_frame = ttk.LabelFrame(start, text="Startup Arguments")
+        args_frame.grid(row=2, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
+        
+        # Radio button to choose between manual args or config file
+        startup_mode_var = tk.StringVar(value="manual" if not server_config.get('UseConfigFile', False) else "config")
+        
+        manual_radio = ttk.Radiobutton(args_frame, text="Manual Arguments", variable=startup_mode_var, value="manual")
+        manual_radio.grid(row=0, column=0, padx=10, pady=5, sticky=tk.W)
+        
+        config_radio = ttk.Radiobutton(args_frame, text="Use Configuration File", variable=startup_mode_var, value="config")
+        config_radio.grid(row=0, column=1, padx=10, pady=5, sticky=tk.W)
+        
+        # Manual arguments section
+        manual_frame = ttk.Frame(args_frame)
+        manual_frame.grid(row=1, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
+        
+        ttk.Label(manual_frame, text="Startup Args:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
+        args_var = tk.StringVar(value=server_config.get('StartupArgs',''))
+        args_entry = ttk.Entry(manual_frame, textvariable=args_var, width=50)
+        args_entry.grid(row=0, column=1, padx=5, pady=2, sticky="ew")
         
         # Config file section
-        config_frame = ttk.LabelFrame(start, text="Configuration File")
-        config_frame.grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
-        
-        # Enable config file checkbox
-        use_config_var = tk.BooleanVar(value=server_config.get('UseConfigFile', False))
-        use_config_check = ttk.Checkbutton(config_frame, text="Use Configuration File", variable=use_config_var)
-        use_config_check.grid(row=0, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
+        config_frame = ttk.Frame(args_frame)
+        config_frame.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
         
         # Config file path
-        ttk.Label(config_frame, text="Config File Path:").grid(row=1,column=0,padx=10,pady=5,sticky=tk.W)
+        ttk.Label(config_frame, text="Config File:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         config_file_var = tk.StringVar(value=server_config.get('ConfigFilePath',''))
         config_file_entry = ttk.Entry(config_frame, textvariable=config_file_var, width=35)
-        config_file_entry.grid(row=1,column=1,sticky=tk.W,padx=5)
+        config_file_entry.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
         
         def browse_config():
             fp = filedialog.askopenfilename(
@@ -2150,14 +2162,49 @@ class ServerManagerDashboard:
             if fp:
                 rel = os.path.relpath(fp, install_dir) if os.path.commonpath([fp,install_dir])==install_dir else fp
                 config_file_var.set(rel)
-        ttk.Button(config_frame, text="Browse", command=browse_config).grid(row=1,column=2,padx=5)
+        ttk.Button(config_frame, text="Browse", command=browse_config, width=10).grid(row=0, column=2, padx=5, pady=2)
         
         # Config file argument format
-        ttk.Label(config_frame, text="Config Argument:").grid(row=2,column=0,padx=10,pady=5,sticky=tk.W)
+        ttk.Label(config_frame, text="Config Argument:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         config_arg_var = tk.StringVar(value=server_config.get('ConfigArgument', '--config'))
         config_arg_entry = ttk.Entry(config_frame, textvariable=config_arg_var, width=20)
-        config_arg_entry.grid(row=2,column=1,sticky=tk.W,padx=5)
-        ttk.Label(config_frame, text="(e.g., --config, -c, +exec)", foreground="gray").grid(row=2,column=2,sticky=tk.W,padx=5)
+        config_arg_entry.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(config_frame, text="(e.g., --config, -c, +exec)", foreground="gray").grid(row=1, column=2, padx=5, pady=2, sticky=tk.W)
+        
+        # Additional args for config mode
+        ttk.Label(config_frame, text="Additional Args:").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
+        additional_args_var = tk.StringVar(value=server_config.get('AdditionalArgs',''))
+        additional_args_entry = ttk.Entry(config_frame, textvariable=additional_args_var, width=35)
+        additional_args_entry.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
+        ttk.Label(config_frame, text="(optional)", foreground="gray").grid(row=2, column=2, padx=5, pady=2, sticky=tk.W)
+        
+        # Configure grid weights
+        args_frame.grid_columnconfigure(0, weight=1)
+        args_frame.grid_columnconfigure(1, weight=1)
+        manual_frame.grid_columnconfigure(1, weight=1)
+        config_frame.grid_columnconfigure(1, weight=1)
+        
+        # Function to enable/disable widgets based on selection
+        def toggle_startup_mode():
+            mode = startup_mode_var.get()
+            if mode == "manual":
+                # Enable manual args, disable config file options
+                args_entry.config(state=tk.NORMAL)
+                config_file_entry.config(state=tk.DISABLED)
+                config_arg_entry.config(state=tk.DISABLED)
+                additional_args_entry.config(state=tk.DISABLED)
+            else:
+                # Disable manual args, enable config file options
+                args_entry.config(state=tk.DISABLED)
+                config_file_entry.config(state=tk.NORMAL)
+                config_arg_entry.config(state=tk.NORMAL)
+                additional_args_entry.config(state=tk.NORMAL)
+        
+        # Bind radio button changes
+        startup_mode_var.trace('w', lambda *args: toggle_startup_mode())
+        
+        # Initial toggle
+        toggle_startup_mode()
         
         # Preview command line
         preview_frame = ttk.LabelFrame(frm, text="Command Preview")
@@ -2170,10 +2217,7 @@ class ServerManagerDashboard:
             """Update the command preview"""
             try:
                 exe = exe_var.get().strip()
-                args = args_var.get().strip()
-                use_config = use_config_var.get()
-                config_file_path = config_file_var.get().strip()
-                config_arg = config_arg_var.get().strip()
+                mode = startup_mode_var.get()
                 
                 # Build command preview
                 cmd_parts = []
@@ -2181,12 +2225,25 @@ class ServerManagerDashboard:
                     exe_abs = exe if os.path.isabs(exe) else os.path.join(install_dir, exe)
                     cmd_parts.append(f'"{exe_abs}"')
                 
-                if args:
-                    cmd_parts.append(args)
-                
-                if use_config and config_file_path and config_arg:
-                    config_abs = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
-                    cmd_parts.append(f'{config_arg} "{config_abs}"')
+                if mode == "manual":
+                    # Manual arguments mode
+                    args = args_var.get().strip()
+                    if args:
+                        cmd_parts.append(args)
+                else:
+                    # Config file mode
+                    config_file_path = config_file_var.get().strip()
+                    config_arg = config_arg_var.get().strip()
+                    additional_args = additional_args_var.get().strip()
+                    
+                    # Add additional args first (if any)
+                    if additional_args:
+                        cmd_parts.append(additional_args)
+                    
+                    # Add config file argument
+                    if config_file_path and config_arg:
+                        config_abs = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
+                        cmd_parts.append(f'{config_arg} "{config_abs}"')
                 
                 cmd_preview = ' '.join(cmd_parts) if cmd_parts else "No executable specified"
                 
@@ -2202,9 +2259,10 @@ class ServerManagerDashboard:
         
         exe_var.trace('w', on_change)
         args_var.trace('w', on_change)
-        use_config_var.trace('w', on_change)
+        startup_mode_var.trace('w', on_change)
         config_file_var.trace('w', on_change)
         config_arg_var.trace('w', on_change)
+        additional_args_var.trace('w', on_change)
         
         # Initial preview update
         update_preview()
@@ -2212,11 +2270,9 @@ class ServerManagerDashboard:
         # Save/Cancel/Test
         btns = ttk.Frame(frm); btns.pack(fill=tk.X,pady=10)
         def save():
-            ep = exe_var.get().strip(); sa = args_var.get().strip()
+            ep = exe_var.get().strip()
             sc = stop_var.get().strip()
-            use_config = use_config_var.get()
-            config_file_path = config_file_var.get().strip()
-            config_arg = config_arg_var.get().strip()
+            mode = startup_mode_var.get()
             
             if not ep:
                 messagebox.showerror("Validation Error","Executable path is required."); return
@@ -2226,21 +2282,38 @@ class ServerManagerDashboard:
             if not os.path.exists(ep_abs):
                 if not messagebox.askyesno("Warning",f"Executable not found: {ep_abs}\nSave anyway?"): return
             
-            # Validate config file if enabled
-            if use_config and config_file_path:
-                config_abs = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
-                if not os.path.exists(config_abs):
-                    if not messagebox.askyesno("Warning", f"Config file not found: {config_abs}\nSave anyway?"): return
-                if not config_arg:
-                    messagebox.showerror("Validation Error", "Config argument is required when using config file."); return
+            # Validate based on mode
+            if mode == "manual":
+                startup_args = args_var.get().strip()
+                use_config = False
+                config_file_path = ""
+                config_arg = ""
+                additional_args = ""
+            else:
+                startup_args = ""
+                use_config = True
+                config_file_path = config_file_var.get().strip()
+                config_arg = config_arg_var.get().strip()
+                additional_args = additional_args_var.get().strip()
+                
+                # Validate config file if enabled
+                if config_file_path:
+                    config_abs = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
+                    if not os.path.exists(config_abs):
+                        if not messagebox.askyesno("Warning", f"Config file not found: {config_abs}\nSave anyway?"): return
+                    if not config_arg:
+                        messagebox.showerror("Validation Error", "Config argument is required when using config file."); return
+                else:
+                    messagebox.showerror("Validation Error", "Config file path is required when using config file mode."); return
             
             server_config.update({
                 'ExecutablePath': ep,
-                'StartupArgs': sa,
+                'StartupArgs': startup_args,
                 'StopCommand': sc,
                 'UseConfigFile': use_config,
                 'ConfigFilePath': config_file_path,
                 'ConfigArgument': config_arg,
+                'AdditionalArgs': additional_args,
                 'LastUpdate': datetime.datetime.now().isoformat()
             })
             with open(config_file,'w') as f: json.dump(server_config,f,indent=4)
@@ -2533,7 +2606,7 @@ class ServerManagerDashboard:
                 except Exception as e:
                     logger.error(f"Error importing server: {str(e)}")
                     messagebox.showerror("Error", f"Failed to import server: {str(e)}")
-            
+
             ttk.Button(button_frame, text="Import", command=import_config, width=15).pack(side=tk.LEFT, padx=5)
             ttk.Button(button_frame, text="Cancel", command=dialog.destroy, width=15).pack(side=tk.RIGHT, padx=5)
             
