@@ -47,11 +47,10 @@ function Show-Console {
 Show-Console -Hide
 
 # --- Main installer script ---
-
 # Define global variables first
 $global:logMemory = @()
 $global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Install-Log.txt"
-$CurrentVersion = "0.3"
+$CurrentVersion = "0.4"
 $steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
 $gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"

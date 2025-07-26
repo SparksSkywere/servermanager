@@ -40,6 +40,17 @@ from Modules.logging import (
 # Import timer management
 from Modules.timer import TimerManager
 
+# Import dashboard functions
+from Host.dashboard_functions import (
+    load_dashboard_config, initialize_paths_from_registry, initialize_registry_values,
+    is_process_running, is_port_open, check_webserver_status, update_webserver_status,
+    api_headers, get_steam_credentials, update_system_info, format_uptime_from_start_time,
+    get_process_info
+)
+
+# Import agent management
+from Modules.agents import AgentManager, show_agent_management_dialog
+
 # Get dashboard logger
 logger = get_dashboard_logger()
 
@@ -62,7 +73,7 @@ class ServerManagerDashboard:
             sys.exit(1)
         
         # Load dashboard configuration from JSON file
-        self.load_dashboard_config()
+        self.config = load_dashboard_config(self.server_manager_dir)
         
         # Initialize runtime variables from config
         self.variables = {
@@ -137,6 +148,15 @@ class ServerManagerDashboard:
         # Initialize timer manager
         self.timer_manager = TimerManager(self)
         
+        # Initialize agent manager
+        try:
+            agents_config_path = os.path.join(self.paths["data"], "agents.json")
+            self.agent_manager = AgentManager(agents_config_path)
+            logger.info("Agent manager initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize agent manager: {str(e)}")
+            self.agent_manager = None
+        
         # Initialize system info and timers
         self.update_system_info()
         self.timer_manager.start_timers()
@@ -156,115 +176,21 @@ class ServerManagerDashboard:
             sys.exit(0)
         self.current_user = user
 
-    def load_dashboard_config(self):
-        """Load dashboard configuration from JSON file"""
-        try:
-            if not self.server_manager_dir:
-                logger.warning("Server manager directory not initialized, using default config")
-                self.config = {}
-                return
-                
-            config_file = os.path.join(self.server_manager_dir, "data", "dashboard.json")
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    self.config = json.load(f)
-                logger.info(f"Loaded dashboard configuration from: {config_file}")
-            else:
-                logger.warning(f"Dashboard config file not found: {config_file}, using defaults")
-                self.config = {}
-        except Exception as e:
-            logger.error(f"Failed to load dashboard configuration: {str(e)}")
-            self.config = {}
-
     def initialize(self):
         """Initialize basic paths from registry"""
-        try:
-            # Read registry for basic paths
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
-            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-            winreg.CloseKey(key)
-            
-            # Clean up path
-            self.server_manager_dir = self.server_manager_dir.strip('"').strip()
-            
-            # Define paths structure
-            self.paths = {
-                "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config"),
-                "temp": os.path.join(self.server_manager_dir, "temp"),
-                "servers": os.path.join(self.server_manager_dir, "servers"),
-                "modules": os.path.join(self.server_manager_dir, "modules"),
-                "data": os.path.join(self.server_manager_dir, "data")
-            }
-            
-            # Ensure directories exist
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
-            
-            logger.info(f"Basic initialization complete. Server Manager directory: {self.server_manager_dir}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Basic initialization failed: {str(e)}")
-            return False
+        success, self.server_manager_dir, self.paths = initialize_paths_from_registry(self.registry_path)
+        return success
 
     def initialize_registry_values(self):
         """Initialize registry-managed values"""
-        try:
-            # Read registry for all installation-managed values
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
-            
-            # Try to get SteamCmd path
-            try:
-                self.steam_cmd_path = winreg.QueryValueEx(key, "SteamCmdPath")[0]
-                self.variables["defaultSteamPath"] = self.steam_cmd_path
-            except:
-                self.steam_cmd_path = os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), "SteamCMD")
-                self.variables["defaultSteamPath"] = self.steam_cmd_path
-                logger.warning(f"SteamCmd path not found in registry, using default: {self.steam_cmd_path}")
-                
-            # Try to get WebPort from registry
-            try:
-                self.variables["webserverPort"] = int(winreg.QueryValueEx(key, "WebPort")[0])
-            except:
-                self.variables["webserverPort"] = 8080
-                logger.warning(f"WebPort not found in registry, using default: 8080")
-            
-            # Read other registry values for reference (not stored in variables to avoid duplication)
-            try:
-                self.registry_values = {
-                    "CurrentVersion": winreg.QueryValueEx(key, "CurrentVersion")[0],
-                    "UserWorkspace": winreg.QueryValueEx(key, "UserWorkspace")[0],
-                    "InstallDate": winreg.QueryValueEx(key, "InstallDate")[0],
-                    "LastUpdate": winreg.QueryValueEx(key, "LastUpdate")[0],
-                    "ModulePath": winreg.QueryValueEx(key, "ModulePath")[0],
-                    "LogPath": winreg.QueryValueEx(key, "LogPath")[0],
-                    "HostType": winreg.QueryValueEx(key, "HostType")[0]
-                }
-                
-                # Try to get HostAddress if it exists (for subhost installations)
-                try:
-                    self.registry_values["HostAddress"] = winreg.QueryValueEx(key, "HostAddress")[0]
-                except:
-                    pass  # HostAddress only exists for subhost installations
-                    
-                logger.info("Registry values loaded successfully")
-            except Exception as e:
-                logger.warning(f"Some registry values could not be read: {str(e)}")
-                self.registry_values = {}
-                
-            winreg.CloseKey(key)
-            
+        success, self.steam_cmd_path, webserver_port, self.registry_values = initialize_registry_values(self.registry_path)
+        if success:
+            self.variables["defaultSteamPath"] = self.steam_cmd_path or ""
+            self.variables["webserverPort"] = webserver_port
             # Set default install directory
-            self.variables["defaultInstallDir"] = os.path.join(self.steam_cmd_path, "steamapps", "common")
-            
-            logger.info(f"Registry initialization complete")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Registry initialization failed: {str(e)}")
-            return False
+            if self.steam_cmd_path:
+                self.variables["defaultInstallDir"] = os.path.join(self.steam_cmd_path, "steamapps", "common")
+        return success
     
     def setup_ui(self):
         """Setup the main UI components"""
@@ -440,114 +366,6 @@ class ServerManagerDashboard:
             
         # Show context menu
         self.server_context_menu.tk_popup(event.x_root, event.y_root)
-    
-    def get_steam_credentials(self):
-        """Open a dialog to get Steam credentials"""
-        credentials = {"anonymous": False, "username": "", "password": ""}
-        
-        # Create dialog window
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Steam Login")
-        dialog.geometry("300x250")
-        dialog.resizable(False, False)
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        # Username field
-        ttk.Label(dialog, text="Username:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
-        username_var = tk.StringVar()
-        username_entry = ttk.Entry(dialog, textvariable=username_var, width=25)
-        username_entry.grid(row=0, column=1, padx=10, pady=10)
-        
-        # Password field
-        ttk.Label(dialog, text="Password:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
-        password_var = tk.StringVar()
-        password_entry = ttk.Entry(dialog, textvariable=password_var, width=25, show="*")
-        password_entry.grid(row=1, column=1, padx=10, pady=10)
-        
-        # Result variable
-        result = {"success": False}
-        
-        # Button actions
-        def on_login():
-            credentials["username"] = username_var.get()
-            credentials["password"] = password_var.get()
-            credentials["anonymous"] = False
-            result["success"] = True
-            dialog.destroy()
-            
-        def on_anonymous():
-            credentials["anonymous"] = True
-            result["success"] = True
-            dialog.destroy()
-            
-        def on_cancel():
-            dialog.destroy()
-        
-        # Buttons
-        ttk.Button(dialog, text="Login", command=on_login).grid(row=3, column=0, columnspan=2, padx=10, pady=10)
-        ttk.Button(dialog, text="Anonymous", command=on_anonymous).grid(row=4, column=0, columnspan=2, padx=10, pady=5)
-        ttk.Button(dialog, text="Cancel", command=on_cancel).grid(row=5, column=0, columnspan=2, padx=10, pady=5)
-        
-        # Center dialog on parent window
-        dialog.update_idletasks()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
-        dialog.geometry(f"+{x}+{y}")
-        
-        # Wait for dialog to close
-        self.root.wait_window(dialog)
-        
-        # Return credentials if successful, None otherwise
-        return credentials if result["success"] else None
-        exe_row = install_dir_row + 2
-        if server_type in ("Minecraft", "Other"):
-            ttk.Label(dialog, text="Executable Path:").grid(row=exe_row, column=0, padx=10, pady=10, sticky=tk.W)
-            exe_var = tk.StringVar()
-            exe_entry = ttk.Entry(dialog, textvariable=exe_var, width=35)
-            exe_entry.grid(row=exe_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-            def browse_exe():
-                fp = filedialog.askopenfilename(title="Select Executable",
-                    filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd"),("All","*.*")])
-                if fp:
-                    exe_var.set(fp)
-            ttk.Button(dialog, text="Browse", command=browse_exe, width=10).grid(row=exe_row, column=2, padx=5, pady=10)
-            args_row = exe_row + 1
-        else:
-            exe_var = tk.StringVar(value="")
-            args_row = exe_row
-
-        # Startup Args (all)
-        ttk.Label(dialog, text="Startup Args:").grid(row=args_row, column=0, padx=10, pady=10, sticky=tk.W)
-        args_var = tk.StringVar()
-        args_entry = ttk.Entry(dialog, textvariable=args_var, width=35)
-        args_entry.grid(row=args_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-
-        # Console output
-        console_row = args_row + 1
-        ttk.Label(dialog, text="Installation Progress:").grid(row=console_row, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
-        console_frame = ttk.Frame(dialog)
-        console_frame.grid(row=console_row+1, column=0, columnspan=3, padx=10, pady=5, sticky="nsew")
-        console_output = scrolledtext.ScrolledText(console_frame, width=70, height=10, background="black", foreground="white")
-        console_output.pack(fill=tk.BOTH, expand=True)
-        console_output.config(state=tk.DISABLED)
-
-        status_var = tk.StringVar(value="")
-        status_label = ttk.Label(dialog, textvariable=status_var)
-        status_label.grid(row=console_row+2, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
-        progress = ttk.Progressbar(dialog, mode="indeterminate")
-        progress.grid(row=console_row+3, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
-
-        dialog.grid_rowconfigure(console_row+1, weight=1)
-        for i in range(3):
-            dialog.grid_columnconfigure(i, weight=1 if i == 1 else 0)
-
-        self.install_cancelled = False
-        def append_console(text):
-            console_output.config(state=tk.NORMAL)
-            console_output.insert(tk.END, text + "\n")
-            console_output.see(tk.END)
-            console_output.config(state=tk.DISABLED)
 
     def add_server(self):
         """Add a new game server (Steam, Minecraft, or Other)"""
@@ -572,7 +390,7 @@ class ServerManagerDashboard:
         server_type = type_var.get()
 
         if server_type == "Steam":
-            credentials = self.get_steam_credentials()
+            credentials = get_steam_credentials(self.root)
             if not credentials:
                 logger.debug("User cancelled Steam login")
                 return
@@ -827,8 +645,8 @@ class ServerManagerDashboard:
         dialog.geometry(f"+{x}+{y}")
 
     def api_headers(self):
-        # Remove API headers since we're using direct SQL access
-        return {}
+        # Use the function from dashboard_functions
+        return api_headers()
 
     def update_server_list(self, force_refresh=False):
         # Skip update if it's been less than configured interval since the last update and force_refresh isn't specified
@@ -863,36 +681,17 @@ class ServerManagerDashboard:
                         if "ProcessId" in server_config:
                             try:
                                 process_id = server_config["ProcessId"]
-                                if self.is_process_running(process_id):
-                                    process = psutil.Process(process_id)
-                                    status = "Running"
-                                    pid = str(process_id)
+                                if is_process_running(process_id):
+                                    process_info = get_process_info(process_id)
+                                    status = process_info["status"]
+                                    pid = process_info["pid"]
+                                    cpu_usage = process_info["cpu_usage"]
+                                    memory_usage = process_info["memory_usage"]
                                     
-                                    # Get CPU usage
-                                    try:
-                                        cpu_usage = f"{process.cpu_percent(interval=0.1):.1f}%"
-                                    except:
-                                        cpu_usage = "N/A"
-                                        
-                                    # Get memory usage
-                                    try:
-                                        memory_mb = process.memory_info().rss / (1024 * 1024)
-                                        memory_usage = f"{memory_mb:.1f} MB"
-                                    except:
-                                        memory_usage = "N/A"
-                                        
                                     # Calculate uptime
                                     try:
-                                        start_time = datetime.datetime.fromisoformat(server_config.get('StartTime', ''))
-                                        uptime_delta = datetime.datetime.now() - start_time
-                                        days = uptime_delta.days
-                                        hours, remainder = divmod(uptime_delta.seconds, 3600)
-                                        minutes, _ = divmod(remainder, 60)
-                                        
-                                        if days > 0:
-                                            uptime = f"{days}d {hours}h {minutes}m"
-                                        else:
-                                            uptime = f"{hours}h {minutes}m"
+                                        start_time = server_config.get('StartTime', '')
+                                        uptime = format_uptime_from_start_time(start_time)
                                     except:
                                         uptime = "Unknown"
                                 else:
@@ -943,57 +742,15 @@ class ServerManagerDashboard:
     
     def check_webserver_status(self):
         """Check if the web server is running and return status"""
-        if self.variables["offlineMode"]:
-            return "Offline Mode"
-            
-        try:
-            # Try to read the web server PID file first
-            webserver_pid_file = os.path.join(self.paths["temp"], "webserver.pid")
-            if os.path.exists(webserver_pid_file):
-                try:
-                    with open(webserver_pid_file, 'r') as f:
-                        pid_info = json.load(f)
-                    
-                    pid = pid_info.get("ProcessId")
-                    port = pid_info.get("Port", self.variables["webserverPort"])
-                    
-                    # Update web port from PID file if available
-                    if port:
-                        self.variables["webserverPort"] = port
-                    
-                    # Check if process is running
-                    if pid and self.is_process_running(pid):
-                        return "Connected"
-                except Exception as e:
-                    logger.debug(f"Error checking web server PID file: {str(e)}")
-            
-            # If we get here, try to connect to the port directly
-            if self.is_port_open('localhost', self.variables["webserverPort"]):
-                return "Connected"
-            else:
-                return "Disconnected"
-                
-        except Exception as e:
-            logger.error(f"Error checking web server status: {str(e)}")
-            return "Error"
+        return check_webserver_status(self.paths, self.variables)
     
     def is_process_running(self, pid):
         """Check if a process with the given PID is running"""
-        try:
-            return psutil.pid_exists(pid)
-        except:
-            return False
+        return is_process_running(pid)
     
     def is_port_open(self, host, port, timeout=1):
         """Check if a port is open on the specified host"""
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(timeout)
-            result = sock.connect_ex((host, port))
-            sock.close()
-            return result == 0
-        except:
-            return False
+        return is_port_open(host, port, timeout)
     
     def toggle_offline_mode(self):
         """Toggle offline mode"""
@@ -1003,24 +760,7 @@ class ServerManagerDashboard:
     
     def update_webserver_status(self):
         """Update the web server status display"""
-        try:
-            status = self.check_webserver_status()
-            self.variables["webserverStatus"] = status
-            
-            # Update status label with appropriate color
-            if status == "Connected":
-                self.webserver_status.config(text=status, foreground="green")
-            elif status == "Offline Mode":
-                self.webserver_status.config(text=status, foreground="orange")
-            else:
-                self.webserver_status.config(text=status, foreground="red")
-                
-            # Update offline mode checkbox
-            self.offline_var.set(self.variables["offlineMode"])
-            
-        except Exception as e:
-            logger.error(f"Error updating web server status: {str(e)}")
-            self.webserver_status.config(text="Error", foreground="red")
+        update_webserver_status(self.webserver_status, self.offline_var, self.paths, self.variables)
     
     def update_system_info(self):
         """Update system information in the UI"""
@@ -1028,80 +768,8 @@ class ServerManagerDashboard:
             # Update web server status
             self.update_webserver_status()
             
-            # Computer name and OS info
-            computer_name = platform.node()
-            os_info = f"{platform.system()} {platform.version()}"
-            
-            self.system_name.config(text=computer_name)
-            self.os_info.config(text=os_info)
-            
-            # CPU usage
-            cpu_percent = psutil.cpu_percent(interval=0.1)
-            self.metric_labels["cpu"].config(text=f"{cpu_percent:.1f}%")
-            
-            # Memory usage
-            memory = psutil.virtual_memory()
-            total_mem_gb = memory.total / (1024 * 1024 * 1024)
-            used_mem_gb = memory.used / (1024 * 1024 * 1024)
-            self.metric_labels["memory"].config(text=f"{used_mem_gb:.1f} GB / {total_mem_gb:.1f} GB")
-            
-            # Disk usage
-            disk_usage = []
-            total_size = 0
-            total_used = 0
-            
-            for part in psutil.disk_partitions(all=False):
-                if part.fstype:
-                    usage = psutil.disk_usage(part.mountpoint)
-                    total_size += usage.total
-                    total_used += usage.used
-            
-            total_size_gb = total_size / (1024 * 1024 * 1024)
-            total_used_gb = total_used / (1024 * 1024 * 1024)
-            
-            self.metric_labels["disk"].config(text=f"{total_used_gb:.0f} GB / {total_size_gb:.0f} GB")
-            
-            # Network usage
-            network_stats = psutil.net_io_counters()
-            
-            if self.variables["lastNetworkStats"]:
-                last_stats = self.variables["lastNetworkStats"]
-                last_time = self.variables["lastNetworkStatsTime"]
-                time_diff = (datetime.datetime.now() - last_time).total_seconds()
-                
-                bytes_sent = network_stats.bytes_sent - last_stats.bytes_sent
-                bytes_recv = network_stats.bytes_recv - last_stats.bytes_recv
-                
-                send_rate = bytes_sent / time_diff / 1024  # KB/s
-                recv_rate = bytes_recv / time_diff / 1024  # KB/s
-                
-                if send_rate > 1024 or recv_rate > 1024:
-                    send_rate = send_rate / 1024  # MB/s
-                    recv_rate = recv_rate / 1024  # MB/s
-                    self.metric_labels["network"].config(text=f"↓{recv_rate:.1f} MB/s | ↑{send_rate:.1f} MB/s")
-                else:
-                    self.metric_labels["network"].config(text=f"↓{recv_rate:.1f} KB/s | ↑{send_rate:.1f} KB/s")
-            else:
-                self.metric_labels["network"].config(text="Calculating...")
-            
-            self.variables["lastNetworkStats"] = network_stats
-            self.variables["lastNetworkStatsTime"] = datetime.datetime.now()
-            
-            # GPU info - placeholder since getting GPU info is more complex
-            self.metric_labels["gpu"].config(text="N/A")
-            
-            # System uptime
-            boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
-            uptime = datetime.datetime.now() - boot_time
-            days = uptime.days
-            hours, remainder = divmod(uptime.seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
-            
-            uptime_str = f"{days}d {hours}h {minutes}m {seconds}s"
-            self.metric_labels["uptime"].config(text=uptime_str)
-            
-            # Update last refresh time
-            self.variables["lastFullUpdate"] = datetime.datetime.now()
+            # Use the function from dashboard_functions
+            update_system_info(self.metric_labels, self.system_name, self.os_info, self.variables)
             
         except Exception as e:
             logger.error(f"Error updating system info: {str(e)}")
@@ -1134,6 +802,11 @@ class ServerManagerDashboard:
         
         # Clean up resources
         try:
+            # Stop agent monitoring
+            if hasattr(self, 'agent_manager') and self.agent_manager:
+                self.agent_manager.stop_monitoring()
+                logger.debug("Stopped agent monitoring")
+            
             # Remove PID file
             pid_file = os.path.join(self.paths["temp"], "dashboard.pid")
             if os.path.exists(pid_file):
@@ -2239,7 +1912,14 @@ class ServerManagerDashboard:
     def add_agent(self):
         """Add a remote agent connection"""
         try:
-            messagebox.showinfo("Feature Coming Soon", "Remote agent functionality will be available in a future version.")
+            if self.agent_manager is None:
+                logger.error("Agent manager not initialized")
+                messagebox.showerror("Error", "Agent manager not initialized. Cannot add agents.")
+                return
+            
+            # Show the agent management dialog
+            show_agent_management_dialog(self.root, self.agent_manager)
+            
         except Exception as e:
             logger.error(f"Error in add agent: {str(e)}")
             messagebox.showerror("Error", f"Failed to add agent: {str(e)}")

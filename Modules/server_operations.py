@@ -4,7 +4,13 @@ import json
 import logging
 import subprocess
 import winreg
+import time
 from datetime import datetime
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 # Configure logging
 logging.basicConfig(
@@ -32,6 +38,10 @@ class ServerOperations:
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             
+            if not self.server_manager_dir:
+                logger.error("Server manager directory not found in registry")
+                return False
+            
             # Define paths structure
             self.paths = {
                 "root": self.server_manager_dir,
@@ -43,12 +53,22 @@ class ServerOperations:
             }
             
             # Ensure directories exist
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
+            for path_name, path in self.paths.items():
+                try:
+                    os.makedirs(path, exist_ok=True)
+                except Exception as e:
+                    logger.error(f"Failed to create directory {path_name} at {path}: {str(e)}")
+                    return False
                 
             logger.info(f"Server operations initialized from registry")
             return True
             
+        except FileNotFoundError:
+            logger.error(f"Registry key not found: {self.registry_path}")
+            return False
+        except winreg.error as e:
+            logger.error(f"Registry error: {str(e)}")
+            return False
         except Exception as e:
             logger.error(f"Failed to initialize server operations from registry: {str(e)}")
             return False
@@ -66,21 +86,29 @@ def get_all_servers():
         logger.error(f"Servers directory not found: {servers_dir}")
         return servers
     
-    for file in os.listdir(servers_dir):
-        if file.endswith(".json"):
-            try:
-                with open(os.path.join(servers_dir, file), 'r') as f:
-                    server_config = json.load(f)
-                servers.append(server_config)
-            except Exception as e:
-                logger.error(f"Error loading server config {file}: {str(e)}")
+    try:
+        for file in os.listdir(servers_dir):
+            if file.endswith(".json"):
+                try:
+                    with open(os.path.join(servers_dir, file), 'r') as f:
+                        server_config = json.load(f)
+                    servers.append(server_config)
+                except Exception as e:
+                    logger.error(f"Error loading server config {file}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error accessing servers directory: {str(e)}")
     
     return servers
 
 def get_server_status(server_name):
     """Get status of a specific server"""
     try:
-        config_path = os.path.join(server_ops.paths.get("servers"), f"{server_name}.json")
+        servers_dir = server_ops.paths.get("servers")
+        if not servers_dir:
+            logger.error("Servers directory path not configured")
+            return None
+            
+        config_path = os.path.join(servers_dir, f"{server_name}.json")
         
         if not os.path.exists(config_path):
             logger.error(f"Server configuration not found: {config_path}")
@@ -93,17 +121,20 @@ def get_server_status(server_name):
         status = "Unknown"
         if "PID" in config and config["PID"]:
             try:
-                import psutil
-                process = psutil.Process(config["PID"])
-                if process.is_running():
-                    status = "Running"
-                    # Add process info
-                    config["CPU"] = process.cpu_percent()
-                    config["Memory"] = process.memory_info().rss
+                if psutil:
+                    process = psutil.Process(config["PID"])
+                    if process.is_running():
+                        status = "Running"
+                        # Add process info
+                        config["CPU"] = process.cpu_percent()
+                        config["Memory"] = process.memory_info().rss
+                    else:
+                        status = "Stopped"
+                        config["PID"] = None
                 else:
-                    status = "Stopped"
-                    config["PID"] = None
-            except:
+                    logger.warning("psutil not available, cannot check process status")
+                    status = "Unknown"
+            except Exception:
                 status = "Stopped"
                 config["PID"] = None
         else:
@@ -118,7 +149,12 @@ def get_server_status(server_name):
 def start_server(server_name):
     """Start a server"""
     try:
-        script_path = os.path.join(server_ops.paths.get("scripts"), "start_server.py")
+        scripts_dir = server_ops.paths.get("scripts")
+        if not scripts_dir:
+            logger.error("Scripts directory path not configured")
+            return False
+            
+        script_path = os.path.join(scripts_dir, "start_server.py")
         
         if not os.path.exists(script_path):
             logger.error(f"Start server script not found: {script_path}")
@@ -134,7 +170,12 @@ def start_server(server_name):
 def stop_server(server_name, force=False):
     """Stop a server"""
     try:
-        script_path = os.path.join(server_ops.paths.get("scripts"), "stop_server.py")
+        scripts_dir = server_ops.paths.get("scripts")
+        if not scripts_dir:
+            logger.error("Scripts directory path not configured")
+            return False
+            
+        script_path = os.path.join(scripts_dir, "stop_server.py")
         
         if not os.path.exists(script_path):
             logger.error(f"Stop server script not found: {script_path}")
@@ -155,7 +196,6 @@ def restart_server(server_name):
     """Restart a server"""
     if stop_server(server_name):
         # Wait a moment for server to fully stop
-        import time
         time.sleep(2)
         return start_server(server_name)
     return False

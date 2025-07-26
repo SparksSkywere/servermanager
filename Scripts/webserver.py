@@ -10,9 +10,19 @@ import time
 import uuid
 import bcrypt
 import win32security
+import win32api
+import traceback
+import ctypes
 from pathlib import Path
 from dotenv import load_dotenv
 from waitress import serve
+
+# Try to import psutil with fallback
+try:
+    import psutil
+except ImportError:
+    psutil = None
+    
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_limiter import Limiter
@@ -44,6 +54,17 @@ def get_server_manager_dir():
         logger.warning(f"Using fallback server manager directory: {server_manager_dir}")
         return server_manager_dir
 
+# Create a dummy dashboard tracker class for fallback
+class DummyDashboardTracker:
+    def start_auto_refresh(self):
+        pass
+    def get_dashboards(self):
+        return []
+    def get_servers(self):
+        return []
+    def refresh(self):
+        pass
+
 tracker = None
 try:
     # Try to import from services directory
@@ -55,46 +76,25 @@ try:
     logger.info("Dashboard tracker imported successfully")
 except ImportError as e:
     logger.warning(f"Dashboard tracker not available: {e}")
-    class DummyDashboardTracker:
-        def start_auto_refresh(self):
-            pass
-        def get_dashboards(self):
-            return []
-        def get_servers(self):
-            return []
-        def refresh(self):
-            pass
     tracker = DummyDashboardTracker()
 except NameError:
     # Handle case where get_server_manager_dir is not yet defined
-    class DummyDashboardTracker:
-        def start_auto_refresh(self):
-            pass
-        def get_dashboards(self):
-            return []
-        def get_servers(self):
-            return []
-        def refresh(self):
-            pass
     tracker = DummyDashboardTracker()
     logger.warning("Dashboard tracker not available - using dummy implementation")
 
-# Import Flask dependencies
+# Import Flask dependencies - removed duplicate imports and handled CORS fallback
 try:
-    from flask import Flask, request, jsonify, send_from_directory
     logger.info("Flask imported successfully")
-    try:
-        from flask_cors import CORS
-        logger.info("Flask-CORS imported successfully")
-    except ImportError:
-        logger.warning("Flask-CORS not installed. Running without CORS support.")
-        class CORS:
-            def __init__(self, app):
-                logger.warning("Using dummy CORS implementation")
-                pass
-except ImportError as e:
-    logger.critical(f"Flask not installed: {e}. Please install with: pip install flask flask-cors flask-limiter python-dotenv waitress pywin32 bcrypt")
-    sys.exit(1)
+    # CORS is already imported at the top
+    logger.info("Flask-CORS imported successfully")
+except ImportError:
+    logger.warning("Flask-CORS not installed. Running without CORS support.")
+    # Create a dummy CORS class if import fails
+    class DummyCORS:
+        def __init__(self, app):
+            logger.warning("Using dummy CORS implementation")
+            pass
+    CORS = DummyCORS
 
 # Import SQL modules
 try:
@@ -108,26 +108,11 @@ try:
     logger.info("SQL modules imported successfully")
 except ImportError as e:
     logger.error(f"Failed to import SQL modules: {e}")
-    import traceback
     logger.error(f"SQL import traceback:\n{traceback.format_exc()}")
     get_engine = None
     ensure_root_admin = None
     User = None
     UserManager = None
-
-def get_server_manager_dir():
-    try:
-        registry_path = r"Software\SkywereIndustries\Servermanager"
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
-        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-        winreg.CloseKey(key)
-        return server_manager_dir
-    except Exception as e:
-        logger.error(f"Failed to get server manager directory from registry: {e}")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        server_manager_dir = os.path.dirname(script_dir)
-        logger.warning(f"Using fallback server manager directory: {server_manager_dir}")
-        return server_manager_dir
 
 # Authentication system
 class Authentication:
@@ -245,7 +230,10 @@ class Authentication:
 class SQLAuthentication:
     def __init__(self, engine):
         self.engine = engine
-        self.user_manager = UserManager(engine)
+        if UserManager is not None:
+            self.user_manager = UserManager(engine)
+        else:
+            self.user_manager = None
         self.tokens = {}
 
     def _hash_password(self, password):
@@ -255,6 +243,8 @@ class SQLAuthentication:
         return bcrypt.checkpw(password.encode(), hashed.encode())
 
     def authenticate(self, username, password):
+        if self.user_manager is None:
+            return None
         user = self.user_manager.get_user(username)
         if not user or not getattr(user, 'is_active', True):
             return None
@@ -278,14 +268,20 @@ class SQLAuthentication:
         return None
 
     def is_admin(self, username):
+        if self.user_manager is None:
+            return False
         user = self.user_manager.get_user(username)
         return getattr(user, "is_admin", False) if user else False
 
     def get_all_users(self):
+        if self.user_manager is None:
+            return []
         users = self.user_manager.list_users()
         return [{"username": u.username, "isAdmin": getattr(u, "is_admin", False)} for u in users]
 
     def add_user(self, username, password, is_admin=False):
+        if self.user_manager is None:
+            return False
         try:
             if not self._validate_password(password):
                 logger.error(f"Invalid password for user {username}: Must be at least 8 characters")
@@ -297,6 +293,8 @@ class SQLAuthentication:
             return False
 
     def delete_user(self, username):
+        if self.user_manager is None:
+            return False
         try:
             self.user_manager.delete_user(username)
             return True
@@ -305,6 +303,8 @@ class SQLAuthentication:
             return False
 
     def change_password(self, username, new_password):
+        if self.user_manager is None:
+            return False
         try:
             if not self._validate_password(new_password):
                 logger.error(f"Invalid new password for user {username}: Must be at least 8 characters")
@@ -340,9 +340,8 @@ class ServerManager:
                                 "memory": 0,
                                 "disk": 0
                             }
-                            if "ProcessId" in server_config:
+                            if "ProcessId" in server_config and psutil:
                                 try:
-                                    import psutil
                                     process = psutil.Process(server_config["ProcessId"])
                                     server["cpu"] = round(process.cpu_percent(interval=0.1), 1)
                                     server["memory"] = round(process.memory_percent(), 1)
@@ -399,6 +398,7 @@ class ServerManagerWebServer:
         self.sql_available = False
         self.sql_auth = None
         self.engine = None
+        self.auth_tokens = {}  # Initialize auth_tokens attribute
 
         parser = argparse.ArgumentParser(description='Server Manager Web Server')
         parser.add_argument('--port', type=int, help='Web server port')
@@ -551,6 +551,10 @@ class ServerManagerWebServer:
                 winreg.CloseKey(key)
                 logger.info("Using configuration from registry")
 
+            # Ensure server_manager_dir is not None
+            if not self.server_manager_dir:
+                raise ValueError("Server manager directory is not set")
+
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
@@ -698,7 +702,7 @@ class ServerManagerWebServer:
                                 win32security.LOGON32_LOGON_NETWORK,
                                 win32security.LOGON32_PROVIDER_DEFAULT
                             )
-                            win32security.CloseHandle(handle)
+                            handle.Close()  # Use the PyHANDLE Close method
                             token = str(uuid.uuid4())
                             if not hasattr(self, 'auth_tokens'):
                                 self.auth_tokens = {}
@@ -792,6 +796,9 @@ class ServerManagerWebServer:
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
 
+                if self.server_manager is None:
+                    return jsonify({"error": "Server manager not available"}), 500
+                    
                 servers = self.server_manager.get_all_servers()
                 return jsonify(servers)
             except Exception as e:
@@ -811,6 +818,9 @@ class ServerManagerWebServer:
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
 
+                if self.server_manager is None:
+                    return jsonify({"error": "Server manager not available"}), 500
+                    
                 result = self.server_manager.start_server(server_id)
                 if result:
                     return jsonify({"success": True, "message": f"Server {server_id} started successfully"})
@@ -832,6 +842,9 @@ class ServerManagerWebServer:
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
 
+                if self.server_manager is None:
+                    return jsonify({"error": "Server manager not available"}), 500
+                    
                 result = self.server_manager.stop_server(server_id)
                 if result:
                     return jsonify({"success": True, "message": f"Server {server_id} stopped successfully"})
@@ -853,6 +866,9 @@ class ServerManagerWebServer:
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
 
+                if self.server_manager is None:
+                    return jsonify({"error": "Server manager not available"}), 500
+                    
                 result = self.server_manager.restart_server(server_id)
                 if result:
                     return jsonify({"success": True, "message": f"Server {server_id} restarted successfully"})
@@ -915,6 +931,8 @@ class ServerManagerWebServer:
         @app.route('/api/tracker/dashboards', methods=['GET'])
         def api_tracker_dashboards():
             try:
+                if self.tracker is None or not hasattr(self.tracker, 'get_dashboards'):
+                    return jsonify({"error": "Dashboard tracker not available"}), 500
                 return jsonify(self.tracker.get_dashboards())
             except Exception as e:
                 logger.error(f"Tracker dashboards error: {e}")
@@ -932,6 +950,8 @@ class ServerManagerWebServer:
                     return jsonify({"error": "Invalid or expired token"}), 401
 
                 if request.method == 'GET':
+                    if self.tracker is None or not hasattr(self.tracker, 'get_servers'):
+                        return jsonify({"error": "Tracker not available"}), 500
                     return jsonify(self.tracker.get_servers())
 
                 if request.method == 'POST':
@@ -949,7 +969,8 @@ class ServerManagerWebServer:
                         return jsonify({"error": "Server already exists"}), 409
                     with open(config_file, 'w') as f:
                         json.dump(config, f, indent=4)
-                    self.tracker.refresh()
+                    if self.tracker and hasattr(self.tracker, 'refresh'):
+                        self.tracker.refresh()
                     return jsonify({"success": True})
 
                 if request.method == 'DELETE':
@@ -964,7 +985,8 @@ class ServerManagerWebServer:
                     if not os.path.exists(config_file):
                         return jsonify({"error": "Server not found"}), 404
                     os.remove(config_file)
-                    self.tracker.refresh()
+                    if self.tracker and hasattr(self.tracker, 'refresh'):
+                        self.tracker.refresh()
                     return jsonify({"success": True})
 
                 if request.method == 'PATCH':
@@ -991,7 +1013,8 @@ class ServerManagerWebServer:
                         return jsonify({"error": "Unknown action"}), 400
                     with open(config_file, 'w') as f:
                         json.dump(config, f, indent=4)
-                    self.tracker.refresh()
+                    if self.tracker and hasattr(self.tracker, 'refresh'):
+                        self.tracker.refresh()
                     return jsonify({"success": True, "status": config["Status"]})
 
                 return jsonify({"error": "Unsupported method"}), 405
@@ -1056,20 +1079,23 @@ class ServerManagerWebServer:
 
     def test_xml_auth_module(self):
         try:
-            sys.path.insert(0, self.server_manager_dir)
+            if self.server_manager_dir:
+                sys.path.insert(0, self.server_manager_dir)
             from Modules.authentication import authenticate_user, is_admin_user
             logger.info("XML authentication module imported successfully")
-            config_dir = os.path.join(self.server_manager_dir, "config")
-            users_file = os.path.join(config_dir, "users.xml")
-            logger.info(f"Checking authentication files:")
-            logger.info(f"  Config dir: {config_dir} (exists: {os.path.exists(config_dir)})")
-            logger.info(f"  Users file: {users_file} (exists: {os.path.exists(users_file)})")
+            if self.server_manager_dir:
+                config_dir = os.path.join(self.server_manager_dir, "config")
+                users_file = os.path.join(config_dir, "users.xml")
+                logger.info(f"Checking authentication files:")
+                logger.info(f"  Config dir: {config_dir} (exists: {os.path.exists(config_dir)})")
+                logger.info(f"  Users file: {users_file} (exists: {os.path.exists(users_file)})")
             try:
-                from Modules.authentication import initialize_default_admin
-                if not os.path.exists(users_file):
-                    logger.info("Users file doesn't exist, attempting to initialize")
-                    result = initialize_default_admin()
-                    logger.info(f"Default admin initialization result: {result}")
+                # Remove the non-existent import
+                # from Modules.authentication import initialize_default_admin
+                if self.server_manager_dir and not os.path.exists(users_file):
+                    logger.info("Users file doesn't exist, but initialize_default_admin not available")
+                    # result = initialize_default_admin()
+                    # logger.info(f"Default admin initialization result: {result}")
             except ImportError:
                 logger.warning("initialize_default_admin not available in XML authentication module")
         except ImportError as e:
