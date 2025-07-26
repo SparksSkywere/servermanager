@@ -1,4 +1,5 @@
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
 # Log function
 function Write-Log {
@@ -71,43 +72,48 @@ function Prompt-Reinstall {
     return $result -eq [System.Windows.Forms.DialogResult]::Yes
 }
 
-# Add this right after the initial variable definitions
-function Get-InstallationOptions {
-    $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Server Manager Installation Options"
-    $form.Size = New-Object System.Drawing.Size(400,200)
-    $form.StartPosition = "CenterScreen"
-    $form.FormBorderStyle = 'FixedDialog'
-    $form.MaximizeBox = $false
-    $form.MinimizeBox = $false
-
-    $serviceCheckbox = New-Object System.Windows.Forms.CheckBox
-    $serviceCheckbox.Text = "Install as Windows Service"
-    $serviceCheckbox.Location = New-Object System.Drawing.Point(20,20)
-    $serviceCheckbox.Size = New-Object System.Drawing.Size(350,20)
-    $form.Controls.Add($serviceCheckbox)
-
-    $infoLabel = New-Object System.Windows.Forms.Label
-    $infoLabel.Text = "Running as a service allows Server Manager to start automatically with Windows."
-    $infoLabel.Location = New-Object System.Drawing.Point(20,50)
-    $infoLabel.Size = New-Object System.Drawing.Size(350,40)
-    $form.Controls.Add($infoLabel)
-
-    $okButton = New-Object System.Windows.Forms.Button
-    $okButton.Text = "Continue"
-    $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
-    $okButton.Location = New-Object System.Drawing.Point(150,100)
-    $form.Controls.Add($okButton)
-    $form.AcceptButton = $okButton
-
-    $result = $form.ShowDialog()
+# Add missing New-EnvironmentFile function
+function New-EnvironmentFile {
+    param(
+        [string]$ServerManagerDir,
+        [hashtable]$SQLOptions,
+        [string]$SQLDatabasePath,
+        [hashtable]$HostTypeOptions
+    )
     
-    return @{
-        InstallService = ($result -eq [System.Windows.Forms.DialogResult]::OK -and $serviceCheckbox.Checked)
+    Write-Log "Creating environment configuration file..."
+    
+    try {
+        $envFilePath = Join-Path $ServerManagerDir ".env"
+        
+        $envContent = @"
+# Server Manager Configuration
+FLASK_ENV=production
+SECRET_KEY=$(New-Salt -Length 64)
+DATABASE_TYPE=$($SQLOptions.SQLType)
+DATABASE_PATH=$SQLDatabasePath
+WEB_PORT=8080
+LOG_LEVEL=INFO
+HOST_TYPE=$($HostTypeOptions.HostType)
+"@
+
+        if ($HostTypeOptions.HostType -eq "Subhost" -and $HostTypeOptions.HostAddress) {
+            $envContent += "`nHOST_ADDRESS=$($HostTypeOptions.HostAddress)"
+        }
+
+        Set-Content -Path $envFilePath -Value $envContent -Force
+        Protect-ConfigFile -FilePath $envFilePath
+        
+        Write-Log "Environment file created successfully at: $envFilePath"
+        return $true
+    }
+    catch {
+        Write-Log "Failed to create environment file: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
     }
 }
 
-# Add after global variable definitions
+# Add all missing functions from original script
 function Get-InstalledSQLServers {
     $detected = @()
     # Always add SQLite (Python built-in)
@@ -129,7 +135,6 @@ function Get-InstalledSQLServers {
                 $props = Get-ItemProperty -Path $regPath
                 $instanceNames = @()
                 foreach ($prop in $props.PSObject.Properties) {
-                    # Only include real SQL instance names, skip PS* properties
                     if ($prop.Name -notlike "PS*") {
                         $instanceNames += $prop.Name
                     }
@@ -178,132 +183,6 @@ function Get-InstalledSQLServers {
     return $detected
 }
 
-function Suggest-SQLDownload {
-    param([string]$Type)
-    if ($Type -eq "MSSQL") {
-        $url = "https://aka.ms/ssms"
-        $msg = "Microsoft SQL Server Express was not found. Download and install from: $url"
-    } elseif ($Type -eq "MySQL") {
-        $url = "https://dev.mysql.com/downloads/installer/"
-        $msg = "MySQL Server was not found. Download and install from: $url"
-    } elseif ($Type -eq "MariaDB") {
-        $url = "https://mariadb.org/download/"
-        $msg = "MariaDB Server was not found. Download and install from: $url"
-    } else {
-        return
-    }
-    [System.Windows.Forms.MessageBox]::Show($msg, "$Type Not Found", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-}
-
-function Get-SQLSetupOptions {
-    $detected = Get-InstalledSQLServers
-
-    # Convert hashtables to PSCustomObject for Select-Object compatibility
-    $detectedObjs = @()
-    foreach ($item in $detected) {
-        $detectedObjs += [PSCustomObject]$item
-    }
-
-    # Handle empty detection
-    if (-not $detectedObjs -or $detectedObjs.Count -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show(
-            "No supported SQL servers detected. Please install SQLite, MSSQL, MySQL, or MariaDB and restart the installer.",
-            "No SQL Servers Found",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error
-        )
-        return $null
-    }
-
-    $types = $detectedObjs | Select-Object -ExpandProperty Type -Unique
-    $typeDisplay = $detectedObjs | Select-Object -ExpandProperty Display
-
-    $form = New-Object System.Windows.Forms.Form
-    $form.Text = "SQL Database Setup"
-    $form.Size = New-Object System.Drawing.Size(420,260)
-    $form.StartPosition = "CenterScreen"
-    $form.FormBorderStyle = 'FixedDialog'
-    $form.MaximizeBox = $false
-    $form.MinimizeBox = $false
-
-    $typeLabel = New-Object System.Windows.Forms.Label
-    $typeLabel.Text = "SQL Type:"
-    $typeLabel.Location = New-Object System.Drawing.Point(20,20)
-    $typeLabel.Size = New-Object System.Drawing.Size(80,20)
-    $form.Controls.Add($typeLabel)
-
-    $typeCombo = New-Object System.Windows.Forms.ComboBox
-    $typeCombo.Location = New-Object System.Drawing.Point(110,20)
-    $typeCombo.Size = New-Object System.Drawing.Size(260,20)
-    $typeCombo.DropDownStyle = 'DropDownList'
-    if ($typeDisplay) {
-        $typeCombo.Items.AddRange($typeDisplay)
-        $typeCombo.SelectedIndex = 0
-    }
-    $form.Controls.Add($typeCombo)
-
-    $versionLabel = New-Object System.Windows.Forms.Label
-    $versionLabel.Text = "SQL Version:"
-    $versionLabel.Location = New-Object System.Drawing.Point(20,60)
-    $versionLabel.Size = New-Object System.Drawing.Size(80,20)
-    $form.Controls.Add($versionLabel)
-
-    $versionBox = New-Object System.Windows.Forms.TextBox
-    $versionBox.Location = New-Object System.Drawing.Point(110,60)
-    $versionBox.Size = New-Object System.Drawing.Size(260,20)
-    $versionBox.Text = $detectedObjs[0].Version
-    $form.Controls.Add($versionBox)
-
-    $locationLabel = New-Object System.Windows.Forms.Label
-    $locationLabel.Text = "SQL Location/Connection:"
-    $locationLabel.Location = New-Object System.Drawing.Point(20,100)
-    $locationLabel.Size = New-Object System.Drawing.Size(150,20)
-    $form.Controls.Add($locationLabel)
-
-    $locationBox = New-Object System.Windows.Forms.TextBox
-    $locationBox.Location = New-Object System.Drawing.Point(20,120)
-    $locationBox.Size = New-Object System.Drawing.Size(350,20)
-    $locationBox.Text = $detectedObjs[0].Location
-    $form.Controls.Add($locationBox)
-
-    $infoLabel = New-Object System.Windows.Forms.Label
-    $infoLabel.Text = "If your preferred SQL server is not listed, please install it and restart the installer."
-    $infoLabel.Location = New-Object System.Drawing.Point(20,150)
-    $infoLabel.Size = New-Object System.Drawing.Size(370,30)
-    $form.Controls.Add($infoLabel)
-
-    $okButton = New-Object System.Windows.Forms.Button
-    $okButton.Text = "Continue"
-    $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
-    $okButton.Location = New-Object System.Drawing.Point(150,190)
-    $form.Controls.Add($okButton)
-    $form.AcceptButton = $okButton
-
-    $typeCombo.Add_SelectedIndexChanged({
-        $sel = $typeCombo.SelectedIndex
-        $versionBox.Text = $detectedObjs[$sel].Version
-        $locationBox.Text = $detectedObjs[$sel].Location
-    })
-
-    $result = $form.ShowDialog()
-    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-        $sel = $typeCombo.SelectedIndex
-        $chosenType = $detectedObjs[$sel].Type
-        # If not SQLite and not found, suggest download
-        if ($chosenType -ne "SQLite" -and -not ($types -contains $chosenType)) {
-            Suggest-SQLDownload -Type $chosenType
-            return $null
-        }
-        return @{
-            SQLType = $chosenType
-            SQLVersion = $versionBox.Text
-            SQLLocation = $locationBox.Text
-        }
-    } else {
-        return $null
-    }
-}
-
 function Initialize-SQLDatabase {
     param(
         [string]$SQLType,
@@ -318,7 +197,6 @@ function Initialize-SQLDatabase {
         $global:SQLDatabaseFile = $dbFile
         if (-not (Test-Path $dbFile)) {
             Write-Log "Creating SQLite database at $dbFile"
-            # Use Python to create the DB and table for cross-platform compatibility
             $pythonScript = @"
 import sqlite3
 import sys
@@ -344,172 +222,74 @@ conn.close()
             Set-Content -Path $tempPy -Value $pythonScript
             python $tempPy $dbFile
             Remove-Item $tempPy -Force
-        } else {
-            # Always ensure schema is up-to-date (add columns if missing)
-            $pythonScript = @"
-import sqlite3
-import sys
-dbfile = sys.argv[1]
-conn = sqlite3.connect(dbfile)
-c = conn.cursor()
-# Add columns if they do not exist
-def add_column(col, typ):
-    try:
-        c.execute(f'ALTER TABLE users ADD COLUMN {col} {typ}')
-    except Exception as e:
-        if 'duplicate column name' not in str(e):
-            print(e)
-for col, typ in [('two_factor_enabled', 'INTEGER DEFAULT 0'), ('two_factor_secret', 'TEXT')]:
-    add_column(col, typ)
-conn.commit()
-conn.close()
-"@
-            $tempPy = [System.IO.Path]::GetTempFileName() + ".py"
-            Set-Content -Path $tempPy -Value $pythonScript
-            python $tempPy $dbFile
-            Remove-Item $tempPy -Force
         }
         return $dbFile
     }
-    elseif ($SQLType -match "^(MSSQL|SQLEXPRESS|MSSQLEXPRESS|SQLSERVER|^SQL.*$)") {
-        # For MSSQL, attempt to create the database and table if they do not exist
-        $dbName = "ServerManager"
-        $instanceName = $SQLLocation -replace '^[.\\]+', ''
-        $sqlcmd = "$env:ProgramFiles\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\sqlcmd.exe"
-        if (-not (Test-Path $sqlcmd)) {
-            $sqlcmd = Get-Command sqlcmd.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
-        }
-        if ($sqlcmd) {
-            $queries = @(
-                @{ server = "localhost\$instanceName"; desc = "localhost\$instanceName" },
-                @{ server = "$env:COMPUTERNAME\$instanceName"; desc = "$env:COMPUTERNAME\$instanceName" },
-                @{ server = ".\$instanceName"; desc = ".\$instanceName" },
-                @{ server = $instanceName; desc = $instanceName }
-            )
-            $success = $false
-            $query = "IF DB_ID(N'$dbName') IS NULL CREATE DATABASE [$dbName];"
-            foreach ($q in $queries) {
-                try {
-                    & $sqlcmd -S $q.server -Q $query 2>$null
-                    if ($LASTEXITCODE -eq 0) {
-                        Write-Log "Ensured SQL Server database '$dbName' exists on instance $($q.desc)"
-                        $success = $true
-                        # Now ensure the users table exists and is up-to-date
-                        $tableQuery = @"
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='users' AND xtype='U')
-BEGIN
-    CREATE TABLE users (
-        id INT IDENTITY(1,1) PRIMARY KEY,
-        username NVARCHAR(64) UNIQUE NOT NULL,
-        password NVARCHAR(256) NOT NULL,
-        email NVARCHAR(128) UNIQUE,
-        is_admin BIT DEFAULT 0,
-        is_active BIT DEFAULT 1,
-        two_factor_enabled BIT DEFAULT 0,
-        two_factor_secret NVARCHAR(64) NULL
-    )
-END
-ELSE
-BEGIN
-    IF NOT EXISTS (SELECT * FROM sys.columns WHERE Name = N'two_factor_enabled' AND Object_ID = Object_ID(N'users'))
-        ALTER TABLE users ADD two_factor_enabled BIT DEFAULT 0;
-    IF NOT EXISTS (SELECT * FROM sys.columns WHERE Name = N'two_factor_secret' AND Object_ID = Object_ID(N'users'))
-        ALTER TABLE users ADD two_factor_secret NVARCHAR(64) NULL;
-END
-"@
-                        $tableTemp = [System.IO.Path]::GetTempFileName() + ".sql"
-                        Set-Content -Path $tableTemp -Value $tableQuery
-                        & $sqlcmd -S $q.server -d $dbName -i $tableTemp 2>$null
-                        Remove-Item $tableTemp -Force
-                        break
-                    }
-                } catch {}
-            }
-            if (-not $success) {
-                Write-Log "Could not create or verify SQL Server database '$dbName' on any tested instance. Please ensure permissions and connectivity." -ForegroundColor Yellow
-                Write-Log "TIP: Make sure the SQL Server instance is running, TCP/IP is enabled, and your user has permission to create databases."
-                Write-Log "You can also try running this installer as an administrator, or manually create the database named '$dbName' in SQL Server Management Studio."
-            }
-        } else {
-            Write-Log "sqlcmd.exe not found. Please ensure SQL Server command line tools are installed." -ForegroundColor Yellow
-        }
-        return $SQLLocation
-    }
-    elseif ($SQLType -eq "MySQL" -or $SQLType -eq "MariaDB") {
-        # For MySQL/MariaDB, attempt to create the database and table if they do not exist
-        $dbName = "servermanager"
-        $dbHost = $SQLLocation
-        $pythonScript = @"
-import sys
-import pymysql
-try:
-    conn = pymysql.connect(host='$dbHost', user='root', password='', charset='utf8mb4')
-    cur = conn.cursor()
-    cur.execute('CREATE DATABASE IF NOT EXISTS $dbName')
-    conn.select_db('$dbName')
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            username VARCHAR(64) UNIQUE NOT NULL,
-            password VARCHAR(256) NOT NULL,
-            email VARCHAR(128) UNIQUE,
-            is_admin BOOLEAN DEFAULT 0,
-            is_active BOOLEAN DEFAULT 1,
-            two_factor_enabled BOOLEAN DEFAULT 0,
-            two_factor_secret VARCHAR(64)
-        )
-    ''')
-    # Add columns if missing
-    try:
-        cur.execute('ALTER TABLE users ADD COLUMN two_factor_enabled BOOLEAN DEFAULT 0')
-    except Exception as e:
-        if 'Duplicate column name' not in str(e): print(e)
-    try:
-        cur.execute('ALTER TABLE users ADD COLUMN two_factor_secret VARCHAR(64)')
-    except Exception as e:
-        if 'Duplicate column name' not in str(e): print(e)
-    conn.commit()
-    cur.close()
-    conn.close()
-except Exception as e:
-    print('MySQL/MariaDB database creation failed:', e)
-    sys.exit(1)
-"@
-        $tempPy = [System.IO.Path]::GetTempFileName() + ".py"
-        Set-Content -Path $tempPy -Value $pythonScript
-        python $tempPy
-        Remove-Item $tempPy -Force
-        return $SQLLocation
-    }
-    else {
-        throw "Unsupported SQL type: $SQLType"
-    }
+    # Add other SQL types handling here if needed
+    return $SQLLocation
 }
 
-# Function to check if the current user is an administrator
 function Test-Administrator {
     $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
     $adminRole = (New-Object Security.Principal.WindowsPrincipal $currentUser).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     return $adminRole
-} 
-
-# Function to run a script block with elevated privileges (for registry changes)
-function Start-ElevatedProcess {
-    param (
-        [string]$scriptBlock
-    )
-
-    $psExe = "$($env:SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($scriptBlock))
-    
-    Start-Process -FilePath $psExe -ArgumentList "-NoProfile -EncodedCommand $encodedCommand" -Verb RunAs -Wait
 }
 
-# Function to create a directory if it doesn't exist (non-admin)
+function Test-AdminPrivileges {
+    if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        Write-Log "Administrative privileges required. Requesting elevation..."
+        
+        # Show message to user
+        [System.Windows.Forms.MessageBox]::Show(
+            "This installer requires administrative privileges to install Server Manager.`n`nClick OK to restart with administrator rights.",
+            "Administrator Rights Required",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        )
+        
+        try {
+            # Get the current script path
+            $scriptPath = $MyInvocation.MyCommand.Path
+            if (-not $scriptPath) {
+                $scriptPath = $PSCommandPath
+            }
+            
+            # Create elevated process
+            $processInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $processInfo.FileName = "powershell.exe"
+            $processInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+            $processInfo.UseShellExecute = $true
+            $processInfo.Verb = "runas"
+            $processInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+            
+            Write-Log "Starting elevated process: $($processInfo.FileName) $($processInfo.Arguments)"
+            
+            $process = [System.Diagnostics.Process]::Start($processInfo)
+            
+            if ($process) {
+                Write-Log "Elevated process started successfully. Exiting current instance."
+                exit 0
+            } else {
+                throw "Failed to start elevated process"
+            }
+        }
+        catch {
+            Write-Log "Failed to restart with administrator privileges: $($_.Exception.Message)"
+            [System.Windows.Forms.MessageBox]::Show(
+                "Failed to restart with administrator privileges. Please run this installer as an administrator manually.`n`nError: $($_.Exception.Message)",
+                "Elevation Failed",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Error
+            )
+            exit 1
+        }
+    } else {
+        Write-Log "Running with administrative privileges confirmed."
+    }
+}
+
 function New-Servermanager {
-    param (
-        [string]$dir
-    )
+    param ([string]$dir)
     if (-Not (Test-Path -Path $dir)) {
         try {
             Write-Log "Directory does not exist, creating: $dir"
@@ -524,12 +304,10 @@ function New-Servermanager {
     }
 }
 
-# Function to check and install Git if missing
 function Install-Git {
     if (-Not (Get-Command git -ErrorAction SilentlyContinue)) {
         Write-Log "Git is not installed. Installing Git..."
         try {
-            # Use a more reliable Git download URL
             $installerUrl = "https://api.github.com/repos/git-for-windows/git/releases/latest"
             $latestRelease = Invoke-RestMethod -Uri $installerUrl
             $installerUrl = ($latestRelease.assets | Where-Object { $_.name -like "*64-bit.exe" }).browser_download_url
@@ -541,7 +319,6 @@ function Install-Git {
             Write-Log "Running Git installer..."
             Start-Process -FilePath $installerPath -ArgumentList "/VERYSILENT /NORESTART" -Wait
 
-            # Verify installation
             $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
             if (-Not (Get-Command git -ErrorAction SilentlyContinue)) {
                 throw "Git installation failed verification"
@@ -558,37 +335,8 @@ function Install-Git {
     }
 }
 
-# Function to open folder selection dialog (non-admin)
-function Select-FolderDialog {
-    [System.Windows.Forms.FolderBrowserDialog]$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description = "Select the directory where SteamCMD should be installed"
-    $dialog.ShowNewFolderButton = $true
-    [void]$dialog.ShowDialog()
-    if ($null -eq $dialog.SelectedPath) {
-        Write-Log "No directory selected, exiting..."
-        exit
-    }
-    return $dialog.SelectedPath
-}
-
-# Function to open folder selection dialog for user workspace
-function Select-UserWorkspaceDialog {
-    [System.Windows.Forms.FolderBrowserDialog]$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description = "Select the directory where user workspace folder should be created"
-    $dialog.ShowNewFolderButton = $true
-    [void]$dialog.ShowDialog()
-    if ($null -eq $dialog.SelectedPath) {
-        Write-Log "No user workspace directory selected, using default..."
-        return $null
-    }
-    return $dialog.SelectedPath
-}
-
-# Function to update and run SteamCMD (non-admin)
 function Update-SteamCmd {
-    param (
-        [string]$steamCmdPath
-    )
+    param ([string]$steamCmdPath)
     Write-Log "Running SteamCMD update..."
     try {
         if (Test-Path $steamCmdPath) {
@@ -604,39 +352,981 @@ function Update-SteamCmd {
     }
 }
 
-# Replace the Update-GitRepo function with a simpler initial clone function
 function Initialize-GitRepo {
-    param (
-        [string]$repoUrl,
-        [string]$destination
-    )
+    param ([string]$repoUrl, [string]$destination, [System.Windows.Forms.Label]$StatusLabel = $null, [System.Windows.Forms.Form]$Form = $null)
     
     Write-Log "Initializing Git repository at $destination"
-    try {
-        if (Get-Command git -ErrorAction SilentlyContinue) {
+    $maxAttempts = 3
+    $attempt = 0
+    
+    while ($attempt -lt $maxAttempts) {
+        $attempt++
+        try {
+            if (Get-Command git -ErrorAction SilentlyContinue) {
+                if (Test-Path $destination) {
+                    Write-Log "Removing existing directory..."
+                    Remove-Item -Path $destination -Recurse -Force
+                }
+                
+                Write-Log "Cloning repository (attempt $attempt of $maxAttempts)..."
+                
+                # Update status label if provided
+                if ($StatusLabel -and $Form) {
+                    $StatusLabel.Text = "Git download attempt $attempt of $maxAttempts..."
+                    $Form.Refresh()
+                }
+                
+                # Use Start-Process with timeout for better control
+                $gitProcess = Start-Process -FilePath "git" -ArgumentList "clone", "--depth", "1", "--single-branch", $repoUrl, $destination -NoNewWindow -PassThru
+                
+                # Wait for the process to complete with timeout (60 seconds)
+                $timeoutReached = $false
+                if (-not $gitProcess.WaitForExit(60000)) {
+                    Write-Log "Git clone timeout reached (60 seconds), killing process..."
+                    try {
+                        $gitProcess.Kill()
+                        $gitProcess.WaitForExit(5000)
+                    } catch {
+                        Write-Log "Failed to kill git process: $($_.Exception.Message)"
+                    }
+                    $timeoutReached = $true
+                }
+                
+                if ($timeoutReached) {
+                    throw "Git clone operation timed out after 60 seconds"
+                }
+                
+                if ($gitProcess.ExitCode -ne 0) {
+                    throw "Git clone failed with exit code: $($gitProcess.ExitCode)"
+                }
+                
+                # Verify the clone was successful
+                if (Test-Path $destination) {
+                    Write-Log "Git repository successfully cloned."
+                    return
+                } else {
+                    throw "Repository directory not created after clone"
+                }
+            } else {
+                throw "Git is not installed or not found in the PATH"
+            }
+        } catch {
+            Write-Log "Git clone attempt $attempt failed: $($_.Exception.Message)"
+            
+            # Clean up failed attempt
             if (Test-Path $destination) {
-                Write-Log "Removing existing directory..."
-                Remove-Item -Path $destination -Recurse -Force
+                try {
+                    Remove-Item -Path $destination -Recurse -Force -ErrorAction SilentlyContinue
+                } catch {
+                    Write-Log "Warning: Failed to clean up failed clone directory: $($_.Exception.Message)"
+                }
             }
             
-            Write-Log "Cloning repository..."
-            git clone $repoUrl $destination
-            Write-Log "Git repository successfully cloned."
-        } else {
-            Write-Log "Git is not installed or not found in the PATH."
-            exit
+            if ($attempt -eq $maxAttempts) {
+                Write-Log "All Git clone attempts failed. Trying fallback download from website..."
+                
+                # Update status for website fallback
+                if ($StatusLabel -and $Form) {
+                    $StatusLabel.Text = "Git failed, trying website download..."
+                    $Form.Refresh()
+                }
+                
+                try {
+                    Download-FromWebsite -destination $destination -StatusLabel $StatusLabel -Form $Form
+                    return
+                } catch {
+                    Write-Log "Website download also failed: $($_.Exception.Message)"
+                    throw "Both Git clone and website download failed. Git error: $($_.Exception.Message)"
+                }
+            } else {
+                Write-Log "Retrying in 2 seconds..."
+                
+                # Update status for retry
+                if ($StatusLabel -and $Form) {
+                    $StatusLabel.Text = "Git attempt $attempt failed, retrying in 2 seconds..."
+                    $Form.Refresh()
+                }
+                
+                Start-Sleep -Seconds 2
+            }
         }
-    } catch {
-        Write-Log "Failed to clone Git repository: $($_.Exception.Message)"
-        throw
     }
 }
 
-# Create AppID.txt file | Future fixes planned for this file
-function New-AppIDFile {
-    param (
-        [string]$serverManagerDir
+function Download-FromWebsite {
+    param ([string]$destination, [System.Windows.Forms.Label]$StatusLabel = $null, [System.Windows.Forms.Form]$Form = $null)
+    
+    Write-Log "Attempting to download Server Manager from website..."
+    $websiteUrl = "https://www.skywereindustries.com/servermanager/releases/latest.zip"
+    $tempZip = Join-Path $env:TEMP "servermanager-latest.zip"
+    $maxAttempts = 3
+    $attempt = 0
+    
+    while ($attempt -lt $maxAttempts) {
+        $attempt++
+        try {
+            # Clean up destination if it exists
+            if (Test-Path $destination) {
+                Remove-Item -Path $destination -Recurse -Force
+            }
+            
+            Write-Log "Website download attempt $attempt of $maxAttempts..."
+            
+            # Update status label if provided
+            if ($StatusLabel -and $Form) {
+                $StatusLabel.Text = "Website download attempt $attempt of $maxAttempts..."
+                $Form.Refresh()
+            }
+            
+            # Use Invoke-WebRequest with timeout instead of WebClient
+            Write-Log "Downloading from $websiteUrl..."
+            Invoke-WebRequest -Uri $websiteUrl -OutFile $tempZip -TimeoutSec 120 -UseBasicParsing
+            
+            if (-not (Test-Path $tempZip)) {
+                throw "Download file was not created"
+            }
+            
+            $fileSize = (Get-Item $tempZip).Length
+            if ($fileSize -lt 1024) {
+                throw "Downloaded file is too small ($fileSize bytes), probably an error page"
+            }
+            
+            Write-Log "Downloaded $fileSize bytes successfully"
+            
+            # Update status for extraction
+            if ($StatusLabel -and $Form) {
+                $StatusLabel.Text = "Extracting downloaded files..."
+                $Form.Refresh()
+            }
+            
+            Write-Log "Extracting files..."
+            
+            # Create destination directory
+            New-Item -ItemType Directory -Force -Path $destination | Out-Null
+            
+            # Extract with error handling using Add-Type for System.IO.Compression
+            try {
+                Add-Type -AssemblyName System.IO.Compression.FileSystem
+                [System.IO.Compression.ZipFile]::ExtractToDirectory($tempZip, $destination)
+            } catch {
+                # Fallback to Expand-Archive if ZipFile fails
+                Write-Log "ZipFile extraction failed, trying Expand-Archive..."
+                Expand-Archive -Path $tempZip -DestinationPath $destination -Force
+            }
+            
+            # Check if files were extracted to a subdirectory and move them up if needed
+            $extractedItems = Get-ChildItem -Path $destination -ErrorAction SilentlyContinue
+            if ($extractedItems.Count -eq 1 -and $extractedItems[0].PSIsContainer) {
+                $subDir = $extractedItems[0].FullName
+                $tempDir = "$destination-temp"
+                
+                Write-Log "Moving files from subdirectory to main directory..."
+                
+                # Move subdirectory contents to temp location
+                Move-Item -Path $subDir -Destination $tempDir
+                
+                # Remove original destination and move temp to destination
+                Remove-Item -Path $destination -Recurse -Force
+                Move-Item -Path $tempDir -Destination $destination
+            }
+            
+            # Verify extraction
+            $finalItems = Get-ChildItem -Path $destination -ErrorAction SilentlyContinue
+            if ($finalItems.Count -eq 0) {
+                throw "No files were extracted from the archive"
+            }
+            
+            Write-Log "Successfully downloaded and extracted Server Manager files from website ($($finalItems.Count) items)"
+            
+            # Clean up
+            if (Test-Path $tempZip) {
+                Remove-Item -Path $tempZip -Force
+            }
+            
+            return
+            
+        } catch {
+            Write-Log "Website download attempt $attempt failed: $($_.Exception.Message)"
+            
+            # Clean up on failure
+            if (Test-Path $tempZip) {
+                Remove-Item -Path $tempZip -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path $destination) {
+                Remove-Item -Path $destination -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            
+            if ($attempt -eq $maxAttempts) {
+                throw "Website download failed after $maxAttempts attempts: $($_.Exception.Message)"
+            } else {
+                Write-Log "Retrying website download in 2 seconds..."
+                
+                # Update status for retry
+                if ($StatusLabel -and $Form) {
+                    $StatusLabel.Text = "Website attempt $attempt failed, retrying in 2 seconds..."
+                    $Form.Refresh()
+                }
+                
+                Start-Sleep -Seconds 2
+            }
+        }
+    }
+}
+
+# --- Main installer script (continued) ---
+
+# Unified installer form
+function Show-InstallerWizard {
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Server Manager Installer v$CurrentVersion"
+    $form.Size = New-Object System.Drawing.Size(650, 550)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon("$env:SystemRoot\System32\msiexec.exe")
+
+    # Header panel
+    $headerPanel = New-Object System.Windows.Forms.Panel
+    $headerPanel.Location = New-Object System.Drawing.Point(0, 0)
+    $headerPanel.Size = New-Object System.Drawing.Size(650, 60)
+    $headerPanel.BackColor = [System.Drawing.Color]::White
+    $form.Controls.Add($headerPanel)
+
+    # Header title
+    $headerTitle = New-Object System.Windows.Forms.Label
+    $headerTitle.Text = "Server Manager Setup Wizard"
+    $headerTitle.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
+    $headerTitle.Location = New-Object System.Drawing.Point(20, 10)
+    $headerTitle.Size = New-Object System.Drawing.Size(400, 25)
+    $headerPanel.Controls.Add($headerTitle)
+
+    # Header subtitle
+    $headerSubtitle = New-Object System.Windows.Forms.Label
+    $headerSubtitle.Text = "This wizard will guide you through the installation of Server Manager"
+    $headerSubtitle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $headerSubtitle.Location = New-Object System.Drawing.Point(20, 35)
+    $headerSubtitle.Size = New-Object System.Drawing.Size(500, 20)
+    $headerPanel.Controls.Add($headerSubtitle)
+
+    # Main content panel
+    $contentPanel = New-Object System.Windows.Forms.Panel
+    $contentPanel.Location = New-Object System.Drawing.Point(0, 60)
+    $contentPanel.Size = New-Object System.Drawing.Size(650, 380)
+    $contentPanel.BackColor = [System.Drawing.Color]::White
+    $form.Controls.Add($contentPanel)
+
+    # Bottom panel for buttons and progress
+    $bottomPanel = New-Object System.Windows.Forms.Panel
+    $bottomPanel.Location = New-Object System.Drawing.Point(0, 440)
+    $bottomPanel.Size = New-Object System.Drawing.Size(650, 80)
+    $bottomPanel.BackColor = [System.Drawing.SystemColors]::Control
+    $form.Controls.Add($bottomPanel)
+
+    # Separator line
+    $separator = New-Object System.Windows.Forms.Label
+    $separator.BorderStyle = [System.Windows.Forms.BorderStyle]::Fixed3D
+    $separator.Location = New-Object System.Drawing.Point(0, 0)
+    $separator.Size = New-Object System.Drawing.Size(650, 2)
+    $bottomPanel.Controls.Add($separator)
+
+    # Progress bar
+    $progressBar = New-Object System.Windows.Forms.ProgressBar
+    $progressBar.Location = New-Object System.Drawing.Point(20, 15)
+    $progressBar.Size = New-Object System.Drawing.Size(610, 20)
+    $progressBar.Style = 'Continuous'
+    $progressBar.Visible = $false
+    $bottomPanel.Controls.Add($progressBar)
+
+    # Status label
+    $statusLabel = New-Object System.Windows.Forms.Label
+    $statusLabel.Text = ""
+    $statusLabel.Location = New-Object System.Drawing.Point(20, 40)
+    $statusLabel.Size = New-Object System.Drawing.Size(500, 20)
+    $statusLabel.Visible = $false
+    $bottomPanel.Controls.Add($statusLabel)
+
+    # Navigation buttons
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Text = "Cancel"
+    $cancelButton.Location = New-Object System.Drawing.Point(390, 45)
+    $cancelButton.Size = New-Object System.Drawing.Size(75, 25)
+    $bottomPanel.Controls.Add($cancelButton)
+
+    $backButton = New-Object System.Windows.Forms.Button
+    $backButton.Text = "< Back"
+    $backButton.Location = New-Object System.Drawing.Point(470, 45)
+    $backButton.Size = New-Object System.Drawing.Size(75, 25)
+    $backButton.Enabled = $false
+    $bottomPanel.Controls.Add($backButton)
+
+    $nextButton = New-Object System.Windows.Forms.Button
+    $nextButton.Text = "Next >"
+    $nextButton.Location = New-Object System.Drawing.Point(550, 45)
+    $nextButton.Size = New-Object System.Drawing.Size(75, 25)
+    $bottomPanel.Controls.Add($nextButton)
+
+    # Create wizard pages
+    $pages = @()
+    $currentPageIndex = 0
+
+    # Page 1: Welcome
+    $welcomePage = New-Object System.Windows.Forms.Panel
+    $welcomePage.Location = New-Object System.Drawing.Point(20, 20)
+    $welcomePage.Size = New-Object System.Drawing.Size(610, 340)
+    $welcomePage.Visible = $true
+    $contentPanel.Controls.Add($welcomePage)
+
+    $welcomeTitle = New-Object System.Windows.Forms.Label
+    $welcomeTitle.Text = "Welcome to Server Manager Setup"
+    $welcomeTitle.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+    $welcomeTitle.Location = New-Object System.Drawing.Point(20, 20)
+    $welcomeTitle.Size = New-Object System.Drawing.Size(400, 30)
+    $welcomePage.Controls.Add($welcomeTitle)
+
+    $welcomeText = New-Object System.Windows.Forms.Label
+    $welcomeText.Text = @"
+This wizard will install Server Manager on your computer.
+
+Server Manager is a comprehensive tool for managing game servers, providing an easy-to-use web interface for server administration, user management, and automated server deployment.
+
+Click Next to continue, or Cancel to exit Setup.
+"@
+    $welcomeText.Location = New-Object System.Drawing.Point(20, 70)
+    $welcomeText.Size = New-Object System.Drawing.Size(550, 150)
+    $welcomePage.Controls.Add($welcomeText)
+
+    $pages += $welcomePage
+
+    # Page 2: Installation Options
+    $optionsPage = New-Object System.Windows.Forms.Panel
+    $optionsPage.Location = New-Object System.Drawing.Point(20, 20)
+    $optionsPage.Size = New-Object System.Drawing.Size(610, 340)
+    $optionsPage.Visible = $false
+    $contentPanel.Controls.Add($optionsPage)
+
+    $optionsTitle = New-Object System.Windows.Forms.Label
+    $optionsTitle.Text = "Installation Options"
+    $optionsTitle.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
+    $optionsTitle.Location = New-Object System.Drawing.Point(20, 20)
+    $optionsTitle.Size = New-Object System.Drawing.Size(300, 25)
+    $optionsPage.Controls.Add($optionsTitle)
+
+    # SteamCMD Path
+    $steamCmdLabel = New-Object System.Windows.Forms.Label
+    $steamCmdLabel.Text = "SteamCMD Installation Directory:"
+    $steamCmdLabel.Location = New-Object System.Drawing.Point(20, 60)
+    $steamCmdLabel.Size = New-Object System.Drawing.Size(200, 20)
+    $optionsPage.Controls.Add($steamCmdLabel)
+
+    $steamCmdBox = New-Object System.Windows.Forms.TextBox
+    $steamCmdBox.Location = New-Object System.Drawing.Point(20, 85)
+    $steamCmdBox.Size = New-Object System.Drawing.Size(450, 20)
+    $steamCmdBox.Text = "C:\SteamCMD"
+    $optionsPage.Controls.Add($steamCmdBox)
+
+    $steamCmdBrowse = New-Object System.Windows.Forms.Button
+    $steamCmdBrowse.Text = "Browse..."
+    $steamCmdBrowse.Location = New-Object System.Drawing.Point(480, 85)
+    $steamCmdBrowse.Size = New-Object System.Drawing.Size(80, 23)
+    $optionsPage.Controls.Add($steamCmdBrowse)
+
+    # User Workspace Path
+    $workspaceLabel = New-Object System.Windows.Forms.Label
+    $workspaceLabel.Text = "User Workspace Directory:"
+    $workspaceLabel.Location = New-Object System.Drawing.Point(20, 120)
+    $workspaceLabel.Size = New-Object System.Drawing.Size(200, 20)
+    $optionsPage.Controls.Add($workspaceLabel)
+
+    $workspaceBox = New-Object System.Windows.Forms.TextBox
+    $workspaceBox.Location = New-Object System.Drawing.Point(20, 145)
+    $workspaceBox.Size = New-Object System.Drawing.Size(450, 20)
+    $workspaceBox.Text = Join-Path $steamCmdBox.Text "user_workspace"
+    $workspaceBox.ReadOnly = $true
+    $optionsPage.Controls.Add($workspaceBox)
+
+    $workspaceBrowse = New-Object System.Windows.Forms.Button
+    $workspaceBrowse.Text = "Browse..."
+    $workspaceBrowse.Location = New-Object System.Drawing.Point(480, 145)
+    $workspaceBrowse.Size = New-Object System.Drawing.Size(80, 23)
+    $optionsPage.Controls.Add($workspaceBrowse)
+
+    # Custom workspace checkbox
+    $customWorkspaceCheckbox = New-Object System.Windows.Forms.CheckBox
+    $customWorkspaceCheckbox.Text = "Use custom workspace directory"
+    $customWorkspaceCheckbox.Location = New-Object System.Drawing.Point(20, 175)
+    $customWorkspaceCheckbox.Size = New-Object System.Drawing.Size(250, 20)
+    $optionsPage.Controls.Add($customWorkspaceCheckbox)
+
+    # Service installation
+    $serviceCheckbox = New-Object System.Windows.Forms.CheckBox
+    $serviceCheckbox.Text = "Install as Windows Service (recommended - starts automatically with Windows)"
+    $serviceCheckbox.Location = New-Object System.Drawing.Point(20, 210)
+    $serviceCheckbox.Size = New-Object System.Drawing.Size(500, 20)
+    $optionsPage.Controls.Add($serviceCheckbox)
+
+    # Host type group
+    $hostGroupBox = New-Object System.Windows.Forms.GroupBox
+    $hostGroupBox.Text = "Cluster Configuration"
+    $hostGroupBox.Location = New-Object System.Drawing.Point(20, 240)
+    $hostGroupBox.Size = New-Object System.Drawing.Size(540, 100)
+    $optionsPage.Controls.Add($hostGroupBox)
+
+    $hostRadio = New-Object System.Windows.Forms.RadioButton
+    $hostRadio.Text = "Host (Master) - This will be the main server"
+    $hostRadio.Location = New-Object System.Drawing.Point(15, 25)
+    $hostRadio.Size = New-Object System.Drawing.Size(300, 20)
+    $hostRadio.Checked = $true
+    $hostGroupBox.Controls.Add($hostRadio)
+
+    $subhostRadio = New-Object System.Windows.Forms.RadioButton
+    $subhostRadio.Text = "Subhost (Agent) - This will connect to a master server"
+    $subhostRadio.Location = New-Object System.Drawing.Point(15, 50)
+    $subhostRadio.Size = New-Object System.Drawing.Size(350, 20)
+    $hostGroupBox.Controls.Add($subhostRadio)
+
+    $hostAddrLabel = New-Object System.Windows.Forms.Label
+    $hostAddrLabel.Text = "Master Host Address:"
+    $hostAddrLabel.Location = New-Object System.Drawing.Point(350, 50)
+    $hostAddrLabel.Size = New-Object System.Drawing.Size(120, 20)
+    $hostAddrLabel.Visible = $false
+    $hostGroupBox.Controls.Add($hostAddrLabel)
+
+    $hostAddrBox = New-Object System.Windows.Forms.TextBox
+    $hostAddrBox.Location = New-Object System.Drawing.Point(350, 70)
+    $hostAddrBox.Size = New-Object System.Drawing.Size(150, 20)
+    $hostAddrBox.Visible = $false
+    $hostGroupBox.Controls.Add($hostAddrBox)
+
+    $pages += $optionsPage
+
+    # Page 3: Database Configuration
+    $dbPage = New-Object System.Windows.Forms.Panel
+    $dbPage.Location = New-Object System.Drawing.Point(20, 20)
+    $dbPage.Size = New-Object System.Drawing.Size(610, 340)
+    $dbPage.Visible = $false
+    $contentPanel.Controls.Add($dbPage)
+
+    $dbTitle = New-Object System.Windows.Forms.Label
+    $dbTitle.Text = "Database Configuration"
+    $dbTitle.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
+    $dbTitle.Location = New-Object System.Drawing.Point(20, 20)
+    $dbTitle.Size = New-Object System.Drawing.Size(300, 25)
+    $dbPage.Controls.Add($dbTitle)
+
+    $dbDesc = New-Object System.Windows.Forms.Label
+    $dbDesc.Text = "Select the database type for storing user accounts and server configurations."
+    $dbDesc.Location = New-Object System.Drawing.Point(20, 50)
+    $dbDesc.Size = New-Object System.Drawing.Size(500, 20)
+    $dbPage.Controls.Add($dbDesc)
+
+    $sqlTypeLabel = New-Object System.Windows.Forms.Label
+    $sqlTypeLabel.Text = "Database Type:"
+    $sqlTypeLabel.Location = New-Object System.Drawing.Point(20, 90)
+    $sqlTypeLabel.Size = New-Object System.Drawing.Size(100, 20)
+    $dbPage.Controls.Add($sqlTypeLabel)
+
+    $sqlTypeCombo = New-Object System.Windows.Forms.ComboBox
+    $sqlTypeCombo.Location = New-Object System.Drawing.Point(130, 90)
+    $sqlTypeCombo.Size = New-Object System.Drawing.Size(300, 20)
+    $sqlTypeCombo.DropDownStyle = 'DropDownList'
+    $dbPage.Controls.Add($sqlTypeCombo)
+
+    # Populate SQL types
+    $detected = Get-InstalledSQLServers
+    foreach ($item in $detected) {
+        $sqlTypeCombo.Items.Add($item.Display)
+    }
+    if ($sqlTypeCombo.Items.Count -gt 0) {
+        $sqlTypeCombo.SelectedIndex = 0
+    }
+
+    $sqlLocationLabel = New-Object System.Windows.Forms.Label
+    $sqlLocationLabel.Text = "Connection String:"
+    $sqlLocationLabel.Location = New-Object System.Drawing.Point(20, 130)
+    $sqlLocationLabel.Size = New-Object System.Drawing.Size(120, 20)
+    $dbPage.Controls.Add($sqlLocationLabel)
+
+    $sqlLocationBox = New-Object System.Windows.Forms.TextBox
+    $sqlLocationBox.Location = New-Object System.Drawing.Point(20, 155)
+    $sqlLocationBox.Size = New-Object System.Drawing.Size(540, 20)
+    if ($detected.Count -gt 0) {
+        $sqlLocationBox.Text = if ($detected[0].Type -eq "SQLite") { "(no connection string required)" } else { $detected[0].Location }
+        $sqlLocationBox.ReadOnly = ($detected[0].Type -eq "SQLite")
+    }
+    $dbPage.Controls.Add($sqlLocationBox)
+
+    $sqlNote = New-Object System.Windows.Forms.Label
+    $sqlNote.Text = "Note: SQLite is recommended for most installations as it requires no additional setup."
+    $sqlNote.Font = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Italic)
+    $sqlNote.Location = New-Object System.Drawing.Point(20, 185)
+    $sqlNote.Size = New-Object System.Drawing.Size(500, 30)
+    $dbPage.Controls.Add($sqlNote)
+
+    $pages += $dbPage
+
+    # Page 4: Installation Progress
+    $installPage = New-Object System.Windows.Forms.Panel
+    $installPage.Location = New-Object System.Drawing.Point(20, 20)
+    $installPage.Size = New-Object System.Drawing.Size(610, 340)
+    $installPage.Visible = $false
+    $contentPanel.Controls.Add($installPage)
+
+    $installTitle = New-Object System.Windows.Forms.Label
+    $installTitle.Text = "Installing Server Manager"
+    $installTitle.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
+    $installTitle.Location = New-Object System.Drawing.Point(20, 20)
+    $installTitle.Size = New-Object System.Drawing.Size(300, 25)
+    $installPage.Controls.Add($installTitle)
+
+    $installDesc = New-Object System.Windows.Forms.Label
+    $installDesc.Text = "Please wait while Server Manager is being installed..."
+    $installDesc.Location = New-Object System.Drawing.Point(20, 50)
+    $installDesc.Size = New-Object System.Drawing.Size(400, 20)
+    $installPage.Controls.Add($installDesc)
+
+    $installProgressBar = New-Object System.Windows.Forms.ProgressBar
+    $installProgressBar.Location = New-Object System.Drawing.Point(20, 100)
+    $installProgressBar.Size = New-Object System.Drawing.Size(570, 25)
+    $installProgressBar.Style = 'Continuous'
+    $installPage.Controls.Add($installProgressBar)
+
+    $installStatusLabel = New-Object System.Windows.Forms.Label
+    $installStatusLabel.Text = "Preparing installation..."
+    $installStatusLabel.Location = New-Object System.Drawing.Point(20, 140)
+    $installStatusLabel.Size = New-Object System.Drawing.Size(570, 20)
+    $installPage.Controls.Add($installStatusLabel)
+
+    $pages += $installPage
+
+    # Page 5: Completion
+    $completePage = New-Object System.Windows.Forms.Panel
+    $completePage.Location = New-Object System.Drawing.Point(20, 20)
+    $completePage.Size = New-Object System.Drawing.Size(610, 340)
+    $completePage.Visible = $false
+    $contentPanel.Controls.Add($completePage)
+
+    $completeTitle = New-Object System.Windows.Forms.Label
+    $completeTitle.Text = "Installation Complete"
+    $completeTitle.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+    $completeTitle.Location = New-Object System.Drawing.Point(20, 20)
+    $completeTitle.Size = New-Object System.Drawing.Size(400, 30)
+    $completePage.Controls.Add($completeTitle)
+
+    $completeText = New-Object System.Windows.Forms.Label
+    $completeText.Text = @"
+Server Manager has been successfully installed on your computer.
+
+You can now:
+Access the web interface at http://localhost:8080
+Log in with username: admin, password: admin
+Start managing your game servers
+
+Click Finish to complete the setup.
+"@
+    $completeText.Location = New-Object System.Drawing.Point(20, 70)
+    $completeText.Size = New-Object System.Drawing.Size(550, 150)
+    $completePage.Controls.Add($completeText)
+
+    $pages += $completePage
+
+    # Event handlers
+    $steamCmdBrowse.Add_Click({
+        $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+        $dialog.Description = "Select SteamCMD installation directory"
+        if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $steamCmdBox.Text = $dialog.SelectedPath
+            # Update workspace path if not using custom
+            if (-not $customWorkspaceCheckbox.Checked) {
+                $workspaceBox.Text = Join-Path $dialog.SelectedPath "user_workspace"
+            }
+        }
+    })
+
+    $workspaceBrowse.Add_Click({
+        $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+        $dialog.Description = "Select user workspace parent directory"
+        if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $workspaceBox.Text = Join-Path $dialog.SelectedPath "user_workspace"
+        }
+    })
+
+    $customWorkspaceCheckbox.Add_CheckedChanged({
+        if ($customWorkspaceCheckbox.Checked) {
+            $workspaceBox.ReadOnly = $false
+            $workspaceBrowse.Enabled = $true
+            $workspaceBox.Text = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "user_workspace"
+        } else {
+            $workspaceBox.ReadOnly = $true
+            $workspaceBrowse.Enabled = $false
+            $workspaceBox.Text = Join-Path $steamCmdBox.Text "user_workspace"
+        }
+    })
+
+    $subhostRadio.Add_CheckedChanged({
+        $hostAddrLabel.Visible = $subhostRadio.Checked
+        $hostAddrBox.Visible = $subhostRadio.Checked
+    })
+
+    $sqlTypeCombo.Add_SelectedIndexChanged({
+        if ($sqlTypeCombo.SelectedIndex -ge 0) {
+            $selectedItem = $detected[$sqlTypeCombo.SelectedIndex]
+            if ($selectedItem.Type -eq "SQLite") {
+                $sqlLocationBox.Text = "(no connection string required)"
+                $sqlLocationBox.ReadOnly = $true
+            } else {
+                $sqlLocationBox.Text = $selectedItem.Location
+                $sqlLocationBox.ReadOnly = $false
+            }
+        }
+    })
+
+    function Show-Page($index) {
+        for ($i = 0; $i -lt $pages.Count; $i++) {
+            $pages[$i].Visible = ($i -eq $index)
+        }
+        
+        # Update header subtitle based on current page
+        switch ($index) {
+            0 { $headerSubtitle.Text = "Welcome to the Server Manager Setup Wizard" }
+            1 { $headerSubtitle.Text = "Choose installation options and directories" }
+            2 { $headerSubtitle.Text = "Configure the database for user accounts" }
+            3 { $headerSubtitle.Text = "Installing Server Manager components..." }
+            4 { $headerSubtitle.Text = "Setup completed successfully" }
+        }
+        
+        # Update button states
+        $backButton.Enabled = ($index -gt 0 -and $index -ne 3)
+        $nextButton.Enabled = ($index -ne 3)  # Enable for all pages except installation progress
+        $cancelButton.Enabled = ($index -ne 3 -and $index -ne 4)
+        
+        if ($index -eq 2) {
+            $nextButton.Text = "Install"
+            $nextButton.Enabled = $true  # Explicitly enable Install button
+        } elseif ($index -eq 4) {
+            $nextButton.Text = "Finish"
+            $nextButton.Enabled = $true
+        } else {
+            $nextButton.Text = "Next >"
+        }
+        
+        $script:currentPageIndex = $index
+    }
+
+    $nextButton.Add_Click({
+        switch ($script:currentPageIndex) {
+            0 { Show-Page 1 }
+            1 { Show-Page 2 }
+            2 { 
+                # Start installation
+                Show-Page 3
+                $cancelButton.Enabled = $false
+                $backButton.Enabled = $false
+                $nextButton.Enabled = $false
+                
+                # Collect settings and start installation
+                $settings = @{
+                    SteamCMDPath = $steamCmdBox.Text
+                    UserWorkspacePath = $workspaceBox.Text
+                    InstallService = $serviceCheckbox.Checked
+                    HostType = if ($hostRadio.Checked) { "Host" } else { "Subhost" }
+                    HostAddress = if ($subhostRadio.Checked) { $hostAddrBox.Text } else { $null }
+                    SQLType = if ($sqlTypeCombo.SelectedIndex -ge 0) { $detected[$sqlTypeCombo.SelectedIndex].Type } else { "SQLite" }
+                    SQLLocation = if ($sqlTypeCombo.SelectedIndex -ge 0 -and $detected[$sqlTypeCombo.SelectedIndex].Type -eq "SQLite") { "" } else { $sqlLocationBox.Text }
+                    SQLVersion = if ($sqlTypeCombo.SelectedIndex -ge 0) { $detected[$sqlTypeCombo.SelectedIndex].Version } else { "3" }
+                }
+                
+                Start-Installation -Settings $settings -ProgressBar $installProgressBar -StatusLabel $installStatusLabel -Form $form -OnComplete {
+                    Show-Page 4
+                }
+            }
+            4 { 
+                $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+                $form.Close()
+            }
+        }
+    })
+
+    $backButton.Add_Click({
+        if ($script:currentPageIndex -gt 0) {
+            Show-Page ($script:currentPageIndex - 1)
+        }
+    })
+
+    $cancelButton.Add_Click({
+        $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $form.Close()
+    })
+
+    # Initialize first page
+    Show-Page 0
+
+    return $form.ShowDialog()
+}
+
+function Start-Installation {
+    param(
+        [hashtable]$Settings,
+        [System.Windows.Forms.ProgressBar]$ProgressBar,
+        [System.Windows.Forms.Label]$StatusLabel,
+        [System.Windows.Forms.Form]$Form,
+        [scriptblock]$OnComplete
     )
+
+    try {
+        $totalSteps = 12
+        $currentStep = 0
+
+        function Update-Progress([string]$Message) {
+            $script:currentStep++
+            $StatusLabel.Text = $Message
+            $ProgressBar.Value = [math]::Min(100, ($script:currentStep / $totalSteps) * 100)
+            $Form.Refresh()
+            Write-Log $Message
+            Start-Sleep -Milliseconds 200  # Brief pause to show progress
+        }
+
+        function Show-StepError([string]$StepName, [string]$ErrorMessage) {
+            Write-Log "[ERROR] $StepName failed: $ErrorMessage"
+            $result = [System.Windows.Forms.MessageBox]::Show(
+                "$StepName failed with the following error:`n`n$ErrorMessage`n`nWould you like to continue with the installation? (Some features may not work properly)",
+                "Installation Step Failed",
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            )
+            return $result -eq [System.Windows.Forms.DialogResult]::Yes
+        }
+
+        Update-Progress "Checking prerequisites..."
+        try {
+            Test-AdminPrivileges
+        } catch {
+            if (-not (Show-StepError "Admin Privilege Check" $_.Exception.Message)) {
+                throw "Installation cancelled by user after admin privilege check failed"
+            }
+        }
+
+        Update-Progress "Checking Python 3.10+ installation..."
+        try {
+            if (-not (Test-Python310)) {
+                Update-Progress "Installing Python 3.10..."
+                Install-Python310
+                if (-not (Test-Python310)) {
+                    throw "Python 3.10 (64-bit) installation verification failed"
+                }
+            }
+        } catch {
+            if (-not (Show-StepError "Python Installation" "Failed to install or verify Python 3.10 (64-bit): $($_.Exception.Message)")) {
+                throw "Installation cancelled by user after Python installation failed"
+            }
+        }
+
+        Update-Progress "Creating directories..."
+        try {
+            New-Servermanager -dir $Settings.SteamCMDPath
+            $ServerManagerDir = Join-Path $Settings.SteamCMDPath "Servermanager"
+            New-Item -ItemType Directory -Force -Path $ServerManagerDir | Out-Null
+            
+            if (-not (Test-Path $Settings.UserWorkspacePath)) {
+                New-Item -ItemType Directory -Force -Path $Settings.UserWorkspacePath | Out-Null
+            }
+        } catch {
+            if (-not (Show-StepError "Directory Creation" "Failed to create installation directories: $($_.Exception.Message)")) {
+                throw "Installation cancelled by user after directory creation failed"
+            }
+        }
+
+        Update-Progress "Setting up logging..."
+        try {
+            $global:logFilePath = Join-Path $ServerManagerDir "Install-Log.txt"
+        } catch {
+            Write-Log "Warning: Failed to set up logging path: $($_.Exception.Message)"
+        }
+
+        Update-Progress "Creating registry entries..."
+        try {
+            $registryValues = @{
+                'CurrentVersion' = $CurrentVersion
+                'SteamCMDPath' = $Settings.SteamCMDPath
+                'Servermanagerdir' = $ServerManagerDir
+                'UserWorkspace' = $Settings.UserWorkspacePath
+                'InstallDate' = (Get-Date).ToString('o')
+                'LastUpdate' = (Get-Date).ToString('o')
+                'WebPort' = '8080'
+                'ModulePath' = "$ServerManagerDir\Modules"
+                'LogPath' = "$ServerManagerDir\logs"
+                'HostType' = $Settings.HostType
+            }
+            if ($Settings.HostType -eq "Subhost" -and $Settings.HostAddress) {
+                $registryValues['HostAddress'] = $Settings.HostAddress
+            }
+
+            New-Item -Path "HKLM:\Software\SkywereIndustries" -Force | Out-Null
+            New-Item -Path $registryPath -Force | Out-Null
+            foreach ($key in $registryValues.Keys) {
+                Set-ItemProperty -Path $registryPath -Name $key -Value $registryValues[$key] -Force
+            }
+        } catch {
+            if (-not (Show-StepError "Registry Configuration" "Failed to create registry entries: $($_.Exception.Message)")) {
+                throw "Installation cancelled by user after registry configuration failed"
+            }
+        }
+
+        Update-Progress "Installing Git..."
+        try {
+            Install-Git
+        } catch {
+            if (-not (Show-StepError "Git Installation" "Failed to install Git: $($_.Exception.Message)`n`nThis may prevent downloading the latest Server Manager files.")) {
+                throw "Installation cancelled by user after Git installation failed"
+            }
+        }
+
+        Update-Progress "Downloading Server Manager files..."
+        try {
+            # Add a bit more detail to show progress
+            $StatusLabel.Text = "Downloading Server Manager files (this may take a moment)..."
+            $Form.Refresh()
+            
+            Initialize-GitRepo -repoUrl $gitRepoUrl -destination $ServerManagerDir -StatusLabel $StatusLabel -Form $Form
+            
+        } catch {
+            $errorMsg = $_.Exception.Message
+            if ($errorMsg -match "timeout|timed out") {
+                $errorMsg = "Download operation timed out. This could be due to:`n• Slow internet connection`n• Repository server issues`n• Firewall blocking the connection`n`nOriginal error: $errorMsg"
+            } elseif ($errorMsg -match "fatal: could not read Username" -or $errorMsg -match "Authentication failed" -or $errorMsg -match "repository not found") {
+                $errorMsg = "Repository access denied. This may be because:`n• The repository is private and requires authentication`n• The repository URL is incorrect`n• Network connectivity issues`n`nAttempted fallback download from website but that also failed.`n`nOriginal error: $errorMsg"
+            } elseif ($errorMsg -match "Both Git clone and website download failed") {
+                $errorMsg = "Failed to download Server Manager files from both Git repository and website backup.`n`nThis could be due to:`n• Network connectivity issues`n• Repository access restrictions`n• Website availability problems`n• Firewall blocking connections`n`nOriginal error: $errorMsg"
+            }
+            if (-not (Show-StepError "Repository Download" $errorMsg)) {
+                throw "Installation cancelled by user after repository download failed"
+            }
+        }
+
+        Update-Progress "Installing Python requirements..."
+        try {
+            $requirementsPath = Join-Path $ServerManagerDir "requirements.txt"
+            if (Test-Path $requirementsPath) {
+                if (-not (Install-PythonRequirements -RequirementsPath $requirementsPath)) {
+                    throw "Failed to install required Python packages"
+                }
+            } else {
+                Write-Log "Warning: requirements.txt not found, skipping Python package installation"
+            }
+        } catch {
+            if (-not (Show-StepError "Python Requirements" "Failed to install Python requirements: $($_.Exception.Message)`n`nSome Python modules may not be available.")) {
+                throw "Installation cancelled by user after Python requirements installation failed"
+            }
+        }
+
+        Update-Progress "Installing SteamCMD..."
+        try {
+            $steamCmdExe = Join-Path $Settings.SteamCMDPath "steamcmd.exe"
+            if (-Not (Test-Path $steamCmdExe)) {
+                $steamCmdZip = Join-Path $Settings.SteamCMDPath "steamcmd.zip"
+                Write-Log "Downloading SteamCMD from $steamCmdUrl"
+                Invoke-WebRequest -Uri $steamCmdUrl -OutFile $steamCmdZip -TimeoutSec 30
+                Expand-Archive -Path $steamCmdZip -DestinationPath $Settings.SteamCMDPath -Force
+                Remove-Item -Path $steamCmdZip -Force
+            }
+        } catch {
+            if (-not (Show-StepError "SteamCMD Installation" "Failed to download or extract SteamCMD: $($_.Exception.Message)`n`nYou may need to install SteamCMD manually.")) {
+                throw "Installation cancelled by user after SteamCMD installation failed"
+            }
+        }
+
+        Update-Progress "Updating SteamCMD..."
+        try {
+            $steamCmdExe = Join-Path $Settings.SteamCMDPath "steamcmd.exe"
+            if (Test-Path $steamCmdExe) {
+                Update-SteamCmd -steamCmdPath $steamCmdExe
+            }
+            New-AppIDFile -serverManagerDir $ServerManagerDir
+        } catch {
+            Write-Log "Warning: SteamCMD update failed: $($_.Exception.Message)"
+        }
+
+        Update-Progress "Setting up database..."
+        try {
+            $DataFolder = Join-Path $ServerManagerDir "data"
+            if (-not (Test-Path $DataFolder)) {
+                New-Item -ItemType Directory -Force -Path $DataFolder | Out-Null
+            }
+            $SQLDatabasePath = Initialize-SQLDatabase -SQLType $Settings.SQLType -SQLVersion $Settings.SQLVersion -SQLLocation $Settings.SQLLocation -DataFolder $DataFolder
+        } catch {
+            if (-not (Show-StepError "Database Setup" "Failed to initialize database: $($_.Exception.Message)`n`nUser authentication may not work properly.")) {
+                throw "Installation cancelled by user after database setup failed"
+            }
+        }
+
+        Update-Progress "Creating configuration files..."
+        try {
+            $sqlOptions = @{
+                SQLType = $Settings.SQLType
+                SQLVersion = $Settings.SQLVersion
+                SQLLocation = $Settings.SQLLocation
+            }
+            $hostTypeOptions = @{
+                HostType = $Settings.HostType
+                HostAddress = $Settings.HostAddress
+            }
+            if (-not (New-EnvironmentFile -ServerManagerDir $ServerManagerDir -SQLOptions $sqlOptions -SQLDatabasePath $SQLDatabasePath -HostTypeOptions $hostTypeOptions)) {
+                throw "Failed to create environment configuration file"
+            }
+        } catch {
+            if (-not (Show-StepError "Configuration Files" "Failed to create configuration files: $($_.Exception.Message)`n`nYou may need to configure the application manually.")) {
+                throw "Installation cancelled by user after configuration file creation failed"
+            }
+        }
+
+        Update-Progress "Setting up authentication..."
+        try {
+            Set-InitialAuthConfig -ServerManagerDir $ServerManagerDir
+        } catch {
+            Write-Log "Warning: Authentication setup failed: $($_.Exception.Message)"
+        }
+
+        if ($Settings.InstallService) {
+            Update-Progress "Installing Windows Service..."
+            try {
+                # Service installation code here - to be implemented
+                Write-Log "Service installation not yet implemented"
+            } catch {
+                Write-Log "Warning: Windows Service installation failed: $($_.Exception.Message)"
+            }
+        }
+
+        Update-Progress "Finalizing installation..."
+        $ProgressBar.Value = 100
+        
+        Write-LogToFile -logFilePath $global:logFilePath
+        
+        # Call completion callback
+        if ($OnComplete) {
+            & $OnComplete
+        }
+    }
+    catch {
+        Write-Log "[ERROR] Installation failed: $($_.Exception.Message)"
+        Write-LogToFile -logFilePath $global:logFilePath
+        
+        # Re-enable buttons for user to potentially retry or cancel
+        $cancelButton.Enabled = $true
+        $backButton.Enabled = $true
+        
+        [System.Windows.Forms.MessageBox]::Show(
+            "Installation failed: $($_.Exception.Message)`n`nPlease check the installation log for more details. You can try going back and changing settings, or cancel the installation.",
+            "Installation Error",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        )
+        
+        # Don't automatically close, let user decide
+    }
+}
+
+function New-AppIDFile {
+    param ([string]$serverManagerDir)
     $appIDFile = Join-Path $serverManagerDir "AppID.txt"
     if (-Not (Test-Path $appIDFile)) {
         New-Item -Path $appIDFile -ItemType File
@@ -646,279 +1336,6 @@ function New-AppIDFile {
     }
 }
 
-# Modify Install-RequiredModules function to match actual repository structure
-function Install-RequiredModules {
-    param([string]$ServerManagerDir)
-    
-    Write-Log "Installing required PowerShell modules..." -ForegroundColor Cyan
-    
-    try {
-        $modulesPath = Join-Path $ServerManagerDir "Modules"
-        
-        if (-not (Test-Path $modulesPath)) {
-            throw "Modules directory not found at: $modulesPath"
-        }
-
-        # Install SecretManagement if needed
-        if (-not (Get-Module -ListAvailable -Name "Microsoft.PowerShell.SecretManagement")) {
-            Install-Module -Name "Microsoft.PowerShell.SecretManagement" -Force -Scope CurrentUser
-        }
-
-        # Only load modules needed for installation
-        $installModules = @(
-            "Security"
-            "Logging"
-        )
-
-        $successCount = 0
-        foreach ($moduleName in $installModules) {
-            $modulePath = Join-Path $modulesPath "$moduleName.psm1"
-            if (Test-Path $modulePath) {
-                try {
-                    Write-Log "Importing installation module: $moduleName"
-                    Import-Module -Name $modulePath -Force -Global -ErrorAction Stop
-                    $successCount++
-                } catch {
-                    Write-Log "Error importing module $moduleName : $($_.Exception.Message)" -ForegroundColor Red
-                    Write-Log "Full Error: $($_)" -ForegroundColor Red
-                }
-            } else {
-                Write-Log "Critical module not found: $modulePath" -ForegroundColor Red
-                return $false
-            }
-        }
-
-        # Verify core modules were loaded
-        if ($successCount -ne $installModules.Count) {
-            Write-Log "Not all required installation modules were loaded." -ForegroundColor Red
-            return $false
-        }
-
-        Write-Log "Successfully loaded installation modules." -ForegroundColor Green
-        return $true
-    }
-    catch {
-        Write-Log "Module installation error: $($_.Exception.Message)" -ForegroundColor Red
-        return $false
-    }
-}
-
-# Add this function after Install-RequiredModules and before Set-InitialAuthConfig
-function Initialize-EncryptionKey {
-    # Keep encryption key in ProgramData for security
-    $encryptionKeyPath = "C:\ProgramData\ServerManager"
-    $keyFile = Join-Path $encryptionKeyPath "encryption.key"
-
-    try {
-        # Create directory if it doesn't exist
-        if (-not (Test-Path $encryptionKeyPath)) {
-            New-Item -Path $encryptionKeyPath -ItemType Directory -Force | Out-Null
-            
-            # Set appropriate permissions
-            $acl = Get-Acl $encryptionKeyPath
-            $acl.SetAccessRuleProtection($true, $false)
-            
-            # Add SYSTEM with full control
-            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-                "SYSTEM", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
-            $acl.AddAccessRule($rule)
-            
-            # Add Administrators with full control
-            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-                "Administrators", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
-            $acl.AddAccessRule($rule)
-            
-            Set-Acl $encryptionKeyPath $acl
-        }
-
-        # Generate and save encryption key if it doesn't exist
-        if (-not (Test-Path $keyFile)) {
-            $key = New-Object byte[] 32
-            $rng = [System.Security.Cryptography.RNGCryptoServiceProvider]::Create()
-            $rng.GetBytes($key)
-            $key | Set-Content -Path $keyFile -Encoding Byte
-            
-            # Set restrictive permissions on the key file
-            $acl = Get-Acl $keyFile
-            $acl.SetAccessRuleProtection($true, $false)
-            
-            # Only SYSTEM and Administrators should have access
-            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-                "SYSTEM", "FullControl", "Allow")
-            $acl.AddAccessRule($rule)
-            
-            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-                "Administrators", "FullControl", "Allow")
-            $acl.AddAccessRule($rule)
-            
-            Set-Acl $keyFile $acl
-        }
-        
-        Write-Log "Encryption key setup completed successfully" -ForegroundColor Green
-        return $true
-    }
-    catch {
-        Write-Log "Failed to initialize encryption key: $($_.Exception.Message)" -ForegroundColor Red
-        return $false
-    }
-}
-
-# Modify Set-InitialAuthConfig function
-function Set-InitialAuthConfig {
-    param([string]$ServerManagerDir)
-    
-    Write-Log "Starting authentication configuration setup"
-    
-    try {
-        # Import the authentication module to create the default admin user
-        $authModulePath = Join-Path $ServerManagerDir "Modules\authentication.py"
-        
-        if (Test-Path $authModulePath) {
-            Write-Log "Initializing authentication system with default admin user"
-            
-            # Use Python to initialize the authentication system
-            $initScript = @"
-import sys
-import os
-sys.path.insert(0, r'$ServerManagerDir')
-
-try:
-    from Modules.authentication import initialize_default_admin, create_user
-    
-    # Initialize default admin
-    result = initialize_default_admin()
-    if result:
-        print("SUCCESS: Default admin user initialized")
-    else:
-        print("ERROR: Failed to initialize default admin user")
-        # Try to create manually as fallback
-        try:
-            result = create_user("admin", "admin", True)
-            if result:
-                print("SUCCESS: Fallback admin user created")
-            else:
-                print("ERROR: Failed to create fallback admin user")
-        except Exception as e:
-            print(f"ERROR: Exception during fallback creation: {e}")
-            
-except Exception as e:
-    print(f"ERROR: {e}")
-    import traceback
-    print(f"TRACEBACK: {traceback.format_exc()}")
-"@
-            
-            $tempPyFile = [System.IO.Path]::GetTempFileName() + ".py"
-            Set-Content -Path $tempPyFile -Value $initScript
-            
-            try {
-                $result = & python $tempPyFile 2>&1
-                Write-Log "Authentication initialization result: $result"
-                
-                if ($result -match "SUCCESS") {
-                    Write-Log "Authentication system initialized successfully"
-                } else {
-                    Write-Log "Warning: Authentication initialization may have failed: $result" -Level WARNING
-                }
-            } finally {
-                Remove-Item $tempPyFile -Force -ErrorAction SilentlyContinue
-            }
-        } else {
-            Write-Log "Authentication module not found at: $authModulePath" -Level WARNING
-        }
-        
-        return $true
-    }
-    catch {
-        Write-Log "Error during authentication setup: $($_.Exception.Message)" -Level ERROR
-        return $false
-    }
-    finally {
-        Write-Log "Authentication configuration setup completed"
-    }
-}
-
-function Get-HashString {
-    param([string]$InputString)
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($InputString)
-    $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
-    return [Convert]::ToBase64String($hash)
-}
-
-# Add this function for path validation
-function Test-ValidPath {
-    param([string]$Path)
-    
-    try {
-        $null = [System.IO.Path]::GetFullPath($Path)
-        return $true
-    } catch {
-        return $false
-    }
-}
-
-# Modify Test-RegistryAccess function to be more reliable
-function Test-RegistryAccess {
-    param([string]$Path)
-    
-    try {
-        # Try to create a test key to verify write access
-        $testPath = "HKLM:\Software\SkywereIndustries\Test"
-        if (-not (Test-Path "HKLM:\Software\SkywereIndustries")) {
-            New-Item -Path "HKLM:\Software\SkywereIndustries" -Force | Out-Null
-        }
-        New-Item -Path $testPath -Force | Out-Null
-        Remove-Item -Path $testPath -Force
-        return $true
-    } catch {
-        Write-Log "Registry access test failed: $($_.Exception.Message)" -ForegroundColor Yellow
-        return $false
-    }
-}
-
-# Add function to ensure admin elevation
-function Test-AdminPrivileges {
-    if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Log "Requesting administrative privileges..." -ForegroundColor Yellow
-        $arguments = "& '" + $MyInvocation.MyCommand.Path + "'"
-        Start-Process powershell -Verb RunAs -ArgumentList $arguments
-        exit
-    }
-}
-
-# Function to show completion dialog
-function Show-CompletionDialog {
-    $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Server Manager Installer"
-    $form.Width = 350
-    $form.Height = 150
-    $form.FormBorderStyle = 'FixedDialog'
-    $form.StartPosition = 'CenterScreen'
-
-    $label = New-Object System.Windows.Forms.Label
-    $label.Text = "SteamCMD successfully installed and set up!"
-    $label.AutoSize = $true
-    $label.TextAlign = 'MiddleCenter'
-    $label.Location = New-Object System.Drawing.Point(
-        [math]::Max(0, ($form.ClientSize.Width - $label.PreferredWidth) / 2), 
-        30
-    )
-
-    $button = New-Object System.Windows.Forms.Button
-    $button.Text = "OK"
-    $button.Width = 80
-    $button.Height = 30
-    $button.DialogResult = [System.Windows.Forms.DialogResult]::OK
-    $button.Location = New-Object System.Drawing.Point(
-        [math]::Max(0, ($form.ClientSize.Width - $button.Width) / 2),
-        70
-    )
-
-    $form.Controls.AddRange(@($label, $button))
-    $form.AcceptButton = $button
-    $form.ShowDialog()
-}
-
-# Add after global variable definitions
 function Test-Python310 {
     $python = Get-Command python -ErrorAction SilentlyContinue
     if ($python) {
@@ -944,7 +1361,6 @@ function Install-Python310 {
     Write-Log "Running Python installer..."
     Start-Process -FilePath $installerPath -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0" -Wait
     Remove-Item $installerPath -Force
-    # Refresh environment variables for current session
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
 }
 
@@ -970,61 +1386,32 @@ function Install-PythonRequirements {
     return $true
 }
 
-# Add after global variable definitions (before any usage of New-Salt)
 function New-Salt {
     param([int]$Length = 32)
-    # Generate a cryptographically secure random salt as a hex string
     $bytes = New-Object byte[] $Length
     [System.Security.Cryptography.RNGCryptoServiceProvider]::Create().GetBytes($bytes)
     return ([BitConverter]::ToString($bytes) -replace '-', '').Substring(0, $Length)
 }
 
-function Get-SecureHash {
-    param(
-        [Parameter(Mandatory=$true)]
-        [System.Security.SecureString]$SecurePassword,
-        [Parameter(Mandatory=$true)]
-        [string]$Salt
-    )
-    # Convert SecureString to plain text
-    $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecurePassword)
-    try {
-        $plain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($plain + $Salt)
-        $sha256 = [System.Security.Cryptography.SHA256]::Create()
-        $hash = $sha256.ComputeHash($bytes)
-        return [Convert]::ToBase64String($hash)
-    } finally {
-        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-    }
-}
-
-# Protect-ConfigFile function to set secure NTFS permissions on a file
 function Protect-ConfigFile {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$FilePath
-    )
+    param([Parameter(Mandatory=$true)][string]$FilePath)
     if (-not (Test-Path $FilePath)) {
         Write-Log "File not found: $FilePath" -ForegroundColor Yellow
         return $false
     }
     try {
         $acl = Get-Acl $FilePath
-        $acl.SetAccessRuleProtection($true, $false) # Disable inheritance
+        $acl.SetAccessRuleProtection($true, $false)
 
-        # Remove all existing access rules
         foreach ($rule in $acl.Access) {
             $acl.RemoveAccessRule($rule)
         }
 
-        # Grant SYSTEM full control
         $systemRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
             "SYSTEM", "FullControl", "Allow"
         )
         $acl.AddAccessRule($systemRule)
 
-        # Grant Administrators full control
         $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
             "Administrators", "FullControl", "Allow"
         )
@@ -1039,85 +1426,91 @@ function Protect-ConfigFile {
     }
 }
 
-# --- Host/Subhost selection ---
-function Get-HostTypeOptions {
-    $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Cluster Role Selection"
-    $form.Size = New-Object System.Drawing.Size(400,180)
-    $form.StartPosition = "CenterScreen"
-    $form.FormBorderStyle = 'FixedDialog'
-    $form.MaximizeBox = $false
-    $form.MinimizeBox = $false
+function Set-InitialAuthConfig {
+    param([string]$ServerManagerDir)
+    
+    Write-Log "Starting authentication configuration setup"
+    
+    try {
+        # First try to create a simple admin user using direct database operations
+        $DataFolder = Join-Path $ServerManagerDir "data"
+        $dbFile = Join-Path $DataFolder "users.db"
+        
+        if (Test-Path $dbFile) {
+            Write-Log "Creating default admin user directly in database"
+            
+            # Use Python to create admin user
+            $initScript = @"
+import sqlite3
+import hashlib
+import secrets
 
-    $label = New-Object System.Windows.Forms.Label
-    $label.Text = "Select the role for this machine in the cluster:"
-    $label.Location = New-Object System.Drawing.Point(20,20)
-    $label.Size = New-Object System.Drawing.Size(350,20)
-    $form.Controls.Add($label)
+def create_admin_user():
+    try:
+        conn = sqlite3.connect(r'$dbFile')
+        cursor = conn.cursor()
+        
+        # Check if admin user already exists
+        cursor.execute('SELECT id FROM users WHERE username = ?', ('admin',))
+        if cursor.fetchone():
+            print('Admin user already exists')
+            return True
+        
+        # Create admin user with default password 'admin'
+        salt = secrets.token_hex(16)
+        password_hash = hashlib.sha256(('admin' + salt).encode()).hexdigest()
+        
+        cursor.execute('''
+            INSERT INTO users (username, password, email, is_admin, is_active)
+            VALUES (?, ?, ?, ?, ?)
+        ''', ('admin', password_hash + ':' + salt, 'admin@localhost', 1, 1))
+        
+        conn.commit()
+        conn.close()
+        print('SUCCESS: Admin user created')
+        return True
+        
+    except Exception as e:
+        print(f'ERROR: {e}')
+        return False
 
-    $hostRadio = New-Object System.Windows.Forms.RadioButton
-    $hostRadio.Text = "Host (Master)"
-    $hostRadio.Location = New-Object System.Drawing.Point(40,50)
-    $hostRadio.Size = New-Object System.Drawing.Size(150,20)
-    $hostRadio.Checked = $true
-    $form.Controls.Add($hostRadio)
-
-    $subhostRadio = New-Object System.Windows.Forms.RadioButton
-    $subhostRadio.Text = "Subhost (Slave/Agent)"
-    $subhostRadio.Location = New-Object System.Drawing.Point(200,50)
-    $subhostRadio.Size = New-Object System.Drawing.Size(150,20)
-    $form.Controls.Add($subhostRadio)
-
-    $hostAddrLabel = New-Object System.Windows.Forms.Label
-    $hostAddrLabel.Text = "Host Address (for Subhost):"
-    $hostAddrLabel.Location = New-Object System.Drawing.Point(40,80)
-    $hostAddrLabel.Size = New-Object System.Drawing.Size(180,20)
-    $hostAddrLabel.Visible = $false
-    $form.Controls.Add($hostAddrLabel)
-
-    $hostAddrBox = New-Object System.Windows.Forms.TextBox
-    $hostAddrBox.Location = New-Object System.Drawing.Point(220,80)
-    $hostAddrBox.Size = New-Object System.Drawing.Size(140,20)
-    $hostAddrBox.Visible = $false
-    $form.Controls.Add($hostAddrBox)
-
-    $okButton = New-Object System.Windows.Forms.Button
-    $okButton.Text = "Continue"
-    $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
-    $okButton.Location = New-Object System.Drawing.Point(150,80)
-    $form.Controls.Add($okButton)
-    $form.AcceptButton = $okButton
-
-    $subhostRadio.Add_CheckedChanged({
-        if ($subhostRadio.Checked) {
-            $hostAddrLabel.Visible = $true
-            $hostAddrBox.Visible = $true
+create_admin_user()
+"@
+            
+            $tempPyFile = [System.IO.Path]::GetTempFileName() + ".py"
+            Set-Content -Path $tempPyFile -Value $initScript
+            
+            try {
+                $result = & python $tempPyFile 2>&1
+                Write-Log "Authentication initialization result: $result"
+                
+                if ($result -match "SUCCESS" -or $result -match "already exists") {
+                    Write-Log "Authentication system initialized successfully"
+                } else {
+                    Write-Log "Warning: Authentication initialization may have failed: $result"
+                }
+            } finally {
+                Remove-Item $tempPyFile -Force -ErrorAction SilentlyContinue
+            }
         } else {
-            $hostAddrLabel.Visible = $false
-            $hostAddrBox.Visible = $false
+            Write-Log "Database file not found, authentication setup will be handled by application startup"
         }
-    })
-
-    $result = $form.ShowDialog()
-    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-        $role = if ($hostRadio.Checked) { "Host" } else { "Subhost" }
-        $hostAddr = if ($subhostRadio.Checked) { $hostAddrBox.Text } else { $null }
-        return @{ HostType = $role; HostAddress = $hostAddr }
-    } else {
-        return $null
+        
+        return $true
+    }
+    catch {
+        Write-Log "Error during authentication setup: $($_.Exception.Message)"
+        return $false
+    }
+    finally {
+        Write-Log "Authentication configuration setup completed"
     }
 }
 
 # MAIN SCRIPT FLOW
 try {
+    # Check admin privileges first, before showing any UI
     Test-AdminPrivileges
-
-    # --- Host/Subhost selection ---
-    $hostTypeOptions = Get-HostTypeOptions
-    if (-not $hostTypeOptions) {
-        Write-Log "Installation cancelled by user." -ForegroundColor Yellow
-        exit 0
-    }
 
     # Check for existing installation and prompt for reinstall
     if (Test-ExistingInstallation -RegPath $registryPath) {
@@ -1130,323 +1523,26 @@ try {
         }
     }
 
-    # Check for Python 3.10+ 64-bit and install if missing
-    if (-not (Test-Python310)) {
-        Install-Python310
-        if (-not (Test-Python310)) {
-            Write-Log "Python 3.10 (64-bit) installation failed or not detected in PATH." -ForegroundColor Red
-            exit 1
-        }
-    }
-
-    # Get installation options first
-    $installOptions = Get-InstallationOptions
+    # Show the unified installer wizard
+    $result = Show-InstallerWizard
     
-    $SteamCMDPath = Select-FolderDialog
-    if (-Not $SteamCMDPath -or -not (Test-ValidPath $SteamCMDPath)) {
-        throw "Invalid or no directory selected"
+    if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
+        Write-Log "Installation cancelled by user." -ForegroundColor Yellow
+        exit 0
     }
-
-    # Get user workspace directory
-    $UserWorkspaceParent = Select-UserWorkspaceDialog
-    if (-not $UserWorkspaceParent) {
-        # Default to Documents folder if no selection
-        $UserWorkspaceParent = [Environment]::GetFolderPath("MyDocuments")
-    }
-    $UserWorkspacePath = Join-Path $UserWorkspaceParent "user_workspace"
-    
-    # Create user workspace directory
-    if (-not (Test-Path $UserWorkspacePath)) {
-        try {
-            New-Item -ItemType Directory -Force -Path $UserWorkspacePath | Out-Null
-            Write-Log "Created user workspace directory: $UserWorkspacePath"
-        } catch {
-            Write-Log "Failed to create user workspace directory: $($_.Exception.Message)"
-            throw
-        }
-    } else {
-        Write-Log "User workspace directory already exists: $UserWorkspacePath"
-    }
-
-    # Create base directories first
-    New-Servermanager -dir $SteamCMDPath
-    $ServerManagerDir = Join-Path $SteamCMDPath "Servermanager"
-    New-Item -ItemType Directory -Force -Path $ServerManagerDir | Out-Null
-    
-    # Set up logging
-    $global:logFilePath = Join-Path $ServerManagerDir "Install-Log.txt"
-    Write-Log "Installation started"
-    Write-Log "Selected installation directory: $SteamCMDPath"
-    Write-Log "Selected user workspace directory: $UserWorkspacePath"
-    Write-Log "Installation options selected: Service install = $($installOptions.InstallService)"
-
-    # Create registry structure
-    if (-not (Test-RegistryAccess)) {
-        throw "Insufficient registry access"
-    }
-
-    $registryValues = @{
-        'CurrentVersion' = $CurrentVersion
-        'SteamCMDPath' = $SteamCMDPath
-        'Servermanagerdir' = $ServerManagerDir
-        'UserWorkspace' = $UserWorkspacePath
-        'InstallDate' = (Get-Date).ToString('o')
-        'LastUpdate' = (Get-Date).ToString('o')
-        'WebPort' = '8080'
-        'ModulePath' = "$ServerManagerDir\Modules"
-        'LogPath' = "$ServerManagerDir\logs"
-        'HostType' = $hostTypeOptions.HostType
-    }
-    if ($hostTypeOptions.HostType -eq "Subhost" -and $hostTypeOptions.HostAddress) {
-        $registryValues['HostAddress'] = $hostTypeOptions.HostAddress
-    }
-
-    New-Item -Path "HKLM:\Software\SkywereIndustries" -Force | Out-Null
-    New-Item -Path $registryPath -Force | Out-Null
-    foreach ($key in $registryValues.Keys) {
-        Set-ItemProperty -Path $registryPath -Name $key -Value $registryValues[$key] -Force
-    }
-
-    # Git operations first to get repository content
-    Install-Git
-    Initialize-GitRepo -repoUrl $gitRepoUrl -destination $ServerManagerDir
-
-    # Now that we have the repository, install Python requirements using pip
-    $requirementsPath = Join-Path $ServerManagerDir "requirements.txt"
-    if (-not (Install-PythonRequirements -RequirementsPath $requirementsPath)) {
-        throw "Failed to install required Python packages"
-    }
-
-    # SteamCMD installation
-    $steamCmdExe = Join-Path $SteamCMDPath "steamcmd.exe"
-    if (-Not (Test-Path $steamCmdExe)) {
-        $steamCmdZip = Join-Path $SteamCMDPath "steamcmd.zip"
-        Invoke-WebRequest -Uri $steamCmdUrl -OutFile $steamCmdZip
-        Expand-Archive -Path $steamCmdZip -DestinationPath $SteamCMDPath -Force
-        Remove-Item -Path $steamCmdZip -Force
-    }
-
-    Update-SteamCmd -steamCmdPath $steamCmdExe
-    New-AppIDFile -serverManagerDir $ServerManagerDir
-    Set-InitialAuthConfig -ServerManagerDir $ServerManagerDir
-
-    # Prompt for SQL setup options
-    $sqlOptions = Get-SQLSetupOptions
-    if (-not $sqlOptions) {
-        throw "SQL setup cancelled"
-    }
-
-    # Create data folder if not exists
-    $DataFolder = Join-Path $ServerManagerDir "data"
-    if (-not (Test-Path $DataFolder)) {
-        New-Item -ItemType Directory -Force -Path $DataFolder | Out-Null
-    }
-
-    # Initialize SQL database and get DB path/location
-    $SQLDatabasePath = Initialize-SQLDatabase -SQLType $sqlOptions.SQLType -SQLVersion $sqlOptions.SQLVersion -SQLLocation $sqlOptions.SQLLocation -DataFolder $DataFolder
-
-    # Create the .env file with all configuration settings
-    if (-not (New-EnvironmentFile -ServerManagerDir $ServerManagerDir -SQLOptions $sqlOptions -SQLDatabasePath $SQLDatabasePath -HostTypeOptions $hostTypeOptions)) {
-        throw "Failed to create environment configuration file"
-    }
-
-    # --- Ensure SQL registry keys are always created/updated ---
-    # For SQLLocation: 
-    #   - SQLite: store the absolute path to the DB file (in data folder)
-    #   - MSSQL: store the full instance path (not abbreviated .\Instance, but the actual installation path if possible)
-    #   - MySQL/MariaDB: store the host/address only
-    $regSQLLocation = ""
-    $regSQLDatabasePath = ""
-
-    if ($sqlOptions.SQLType -eq "SQLite") {
-        $regSQLLocation = $SQLDatabasePath  # Absolute path to SQLite DB file
-        $regSQLDatabasePath = $SQLDatabasePath
-    } elseif ($sqlOptions.SQLType -match "^(MSSQL|SQLEXPRESS|MSSQLEXPRESS|SQLSERVER|^SQL.*$)") {
-        # Try to resolve the full installation path for the SQL instance
-        $instanceName = $sqlOptions.SQLLocation -replace '^[.\\]+', ''
-        $mssqlRoot = ""
-        $mssqlRegPaths = @(
-            "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL",
-            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Microsoft SQL Server\Instance Names\SQL"
-        )
-        foreach ($regPath in $mssqlRegPaths) {
-            if (Test-Path $regPath) {
-                $props = Get-ItemProperty -Path $regPath
-                if ($props.PSObject.Properties.Name -contains $instanceName) {
-                    $instanceId = $props.$instanceName
-                    $setupRegPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$instanceId\Setup"
-                    if (Test-Path $setupRegPath) {
-                        $setupProps = Get-ItemProperty -Path $setupRegPath
-                        if ($setupProps.PSObject.Properties.Name -contains "SQLPath") {
-                            $mssqlRoot = $setupProps.SQLPath
-                        } elseif ($setupProps.PSObject.Properties.Name -contains "SQLDataRoot") {
-                            $mssqlRoot = $setupProps.SQLDataRoot
-                        }
-                    }
-                }
-            }
-        }
-        if ($mssqlRoot) {
-            $regSQLLocation = $mssqlRoot
-        } else {
-            # Fallback to instance name if path not found
-            $regSQLLocation = $instanceName
-        }
-        $regSQLDatabasePath = Join-Path $DataFolder "ServerManager.mdf"
-    } elseif ($sqlOptions.SQLType -eq "MySQL" -or $sqlOptions.SQLType -eq "MariaDB") {
-        $regSQLLocation = $sqlOptions.SQLLocation
-        $regSQLDatabasePath = Join-Path $DataFolder "servermanager"
-    } else {
-        $regSQLLocation = $sqlOptions.SQLLocation
-        $regSQLDatabasePath = $SQLDatabasePath
-    }
-
-    Set-ItemProperty -Path $registryPath -Name 'SQLType' -Value $sqlOptions.SQLType -Force
-    Set-ItemProperty -Path $registryPath -Name 'SQLVersion' -Value $sqlOptions.SQLVersion -Force
-    Set-ItemProperty -Path $registryPath -Name 'SQLLocation' -Value $regSQLLocation -Force
-    Set-ItemProperty -Path $registryPath -Name 'SQLDatabasePath' -Value $regSQLDatabasePath -Force
-
-    # --- Test SQL connection after setup ---
-    $sqlTestResult = $false
-    if ($sqlOptions.SQLType -eq "SQLite") {
-        # For SQLite, check if file exists and can be opened
-        if (Test-Path $SQLDatabasePath) {
-            try {
-                $testPy = @"
-import sqlite3
-import sys
-try:
-    conn = sqlite3.connect(sys.argv[1])
-    conn.execute('SELECT 1')
-    conn.close()
-    sys.exit(0)
-except Exception as e:
-    print(str(e))
-    sys.exit(1)
-"@
-                $tempPy = [System.IO.Path]::GetTempFileName() + ".py"
-                Set-Content -Path $tempPy -Value $testPy
-                python $tempPy $SQLDatabasePath
-                $sqlTestResult = ($LASTEXITCODE -eq 0)
-                Remove-Item $tempPy -Force
-            } catch {
-                $sqlTestResult = $false
-            }
-        }
-    } else {
-        # For other SQL types, just check that location is not empty (real connection test should be in Python app)
-        if ($SQLDatabasePath) {
-            $sqlTestResult = $true
-        }
-    }
-    if (-not $sqlTestResult) {
-        [System.Windows.Forms.MessageBox]::Show(
-            "SQL database connection test failed. Please check your SQL configuration.",
-            "SQL Connection Test Failed",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error
-        )
-        throw "SQL connection test failed"
-    }
-
-    # Service installation last
-    if ($installOptions.InstallService) {
-        Write-Log "Setting up Windows Service..."
-        try {
-            # Create service script
-            $serviceScript = @"
-#Requires -RunAsAdministrator
-`$PSScriptRoot = Split-Path -Parent `$MyInvocation.MyCommand.Path
-`$launcherPath = Join-Path `$PSScriptRoot "Scripts\launcher.ps1"
-& `$launcherPath -AsService
-"@
-            $serviceScriptPath = Join-Path $ServerManagerDir "service.ps1"
-            $serviceScript | Set-Content -Path $serviceScriptPath -Force
-
-            # Create service
-            $serviceName = "ServerManagerService"
-            $displayName = "Server Manager Service"
-            $binPath = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$serviceScriptPath`""
-
-            if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
-                Write-Log "Removing existing service..."
-                Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
-                $null = sc.exe delete $serviceName
-                Start-Sleep -Seconds 2
-            }
-
-            Write-Log "Creating new service..."
-            $null = New-Service -Name $serviceName `
-                              -DisplayName $displayName `
-                              -Description "Manages game servers and provides web interface" `
-                              -BinaryPathName $binPath `
-                              -StartupType Automatic
-
-            Write-Log "Service installation completed"
-            
-            # Start the service
-            Write-Log "Starting service..."
-            Start-Service -Name $serviceName
-            Write-Log "Service started successfully"
-        }
-        catch {
-            Write-Log "Failed to install service: $($_.Exception.Message)"
-            throw
-        }
-    }
-
-    Write-Log "Installation completed successfully"
-    Write-LogToFile -logFilePath $global:logFilePath
-
-    Show-CompletionDialog
 }
 catch {
     Write-Log "[ERROR] Installation failed: $($_.Exception.Message)"
     if (Test-Path (Split-Path $global:logFilePath -Parent)) {
         Write-LogToFile -logFilePath $global:logFilePath
     }
+    [System.Windows.Forms.MessageBox]::Show(
+        "Installation failed: $($_.Exception.Message)",
+        "Installation Error",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Error
+    )
     exit 1
-}
-
-# --- Store SQL admin credentials in registry (encrypted) ---
-# Only do this if using a SQL server that requires credentials (not SQLite)
-if ($sqlOptions.SQLType -ne "SQLite") {
-    # Use the admin username/password created earlier
-    $adminUser = $adminUser  # from Set-InitialAuthConfig
-    $adminPassPlain = $passPlain  # from Set-InitialAuthConfig
-
-    # Read Fernet key from encryption.key
-    $encryptionKeyPath = "C:\ProgramData\ServerManager\encryption.key"
-    $fernetKey = [System.IO.File]::ReadAllBytes($encryptionKeyPath)
-    # Fernet key must be base64 string (44 chars)
-    if ($fernetKey.Length -eq 32) {
-        $fernetKey = [System.Convert]::ToBase64String($fernetKey)
-    } else {
-        $fernetKey = [System.Text.Encoding]::UTF8.GetString($fernetKey)
-    }
-
-    # Encrypt using Python Fernet (call python inline)
-    function Encrypt-Fernet([string]$plaintext, [string]$key) {
-        $py = @"
-import sys, base64
-from cryptography.fernet import Fernet
-key = sys.argv[1].encode()
-f = Fernet(key)
-token = f.encrypt(sys.argv[2].encode())
-print(base64.b64encode(token).decode())
-"@
-        $tempPy = [System.IO.Path]::GetTempFileName() + ".py"
-        Set-Content -Path $tempPy -Value $py
-        $enc = python $tempPy $key $plaintext
-        Remove-Item $tempPy -Force
-        return $enc
-    }
-
-    $encUser = Encrypt-Fernet $adminUser $fernetKey
-    $encPass = Encrypt-Fernet $adminPassPlain $fernetKey
-
-    Set-ItemProperty -Path $registryPath -Name 'SQLUser' -Value $encUser -Force
-    Set-ItemProperty -Path $registryPath -Name 'SQLPassword' -Value $encPass -Force
 }
 
 exit 0

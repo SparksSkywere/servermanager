@@ -2,7 +2,6 @@ import os
 import sys
 import subprocess
 import threading
-import logging
 import winreg
 import json
 import time
@@ -11,29 +10,38 @@ import platform
 import datetime
 import socket
 import urllib.request
-import urllib.error
-import hashlib
-import argparse
 
 # GUI imports
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
-from PIL import Image, ImageTk
 
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import user management system
 from Scripts.user_management import UserManager
-from Modules.SQL_Connection import get_engine
+from Modules.SQL_Connection import get_engine, initialize_user_manager, sql_login
+from Modules.server_manager import ServerManager
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+# Import Minecraft server functions
+from Scripts.minecraft import (
+    fetch_minecraft_versions, get_minecraft_server_jar_url,
+    fetch_fabric_installer_url, fetch_forge_installer_url,
+    fetch_neoforge_installer_url, MinecraftServerManager
 )
-logger = logging.getLogger("Dashboard")
+
+# Import logging functions from the logging module
+from Modules.logging import (
+    get_dashboard_logger, configure_dashboard_logging, write_pid_file,
+    log_dashboard_event, log_server_action, log_installation_progress,
+    log_process_monitoring, log_security_event, log_user_action
+)
+
+# Import timer management
+from Modules.timer import TimerManager
+
+# Get dashboard logger
+logger = get_dashboard_logger()
 
 class ServerManagerDashboard:
     def __init__(self, debug_mode=False):
@@ -45,50 +53,75 @@ class ServerManagerDashboard:
         self.debug_mode = debug_mode
         self.user_manager = None
         self.current_user = None
+        self.config = {}
+        self.install_process = None  # Track installation process
+        
+        # Initialize configuration and registry first
+        if not self.initialize():
+            logger.error("Failed to initialize dashboard")
+            sys.exit(1)
+        
+        # Load dashboard configuration from JSON file
+        self.load_dashboard_config()
+        
+        # Initialize runtime variables from config
         self.variables = {
             "previousNetworkStats": {},
             "previousNetworkTime": datetime.datetime.now(),
             "lastServerListUpdate": datetime.datetime.min,
             "lastFullUpdate": datetime.datetime.min,
-            "debugLoggingEnabled": False,
-            "defaultSteamPath": "",
-            "offlineMode": False,
-            "formDisplayed": False,
-            "debugMode": True,
-            "verificationInProgress": False,
             "networkAdapters": [],
             "lastNetworkStats": {},
             "lastNetworkStatsTime": datetime.datetime.now(),
             "systemInfo": {},
             "diskInfo": [],
             "gpuInfo": None,
-            "systemRefreshInterval": 4,
             "lastProcessUpdate": datetime.datetime.min,
-            "processMonitoringInterval": 5,
             "processStatHistory": {},
-            "maxProcessHistoryPoints": 20,
             "failedProcessRestarts": {},
-            "webserverStatus": "Disconnected",
+            # Load configuration values
+            "debugMode": self.config.get("configuration", {}).get("debugMode", True),
+            "offlineMode": self.config.get("configuration", {}).get("offlineMode", False),
+            "systemRefreshInterval": self.config.get("configuration", {}).get("systemRefreshInterval", 4),
+            "processMonitoringInterval": self.config.get("configuration", {}).get("processMonitoringInterval", 5),
+            "maxProcessHistoryPoints": self.config.get("configuration", {}).get("maxProcessHistoryPoints", 20),
+            "networkUpdateInterval": self.config.get("configuration", {}).get("networkUpdateInterval", 5),
+            "serverListUpdateInterval": self.config.get("configuration", {}).get("serverListUpdateInterval", 30),
+            "systemInfoUpdateInterval": self.config.get("configuration", {}).get("systemInfoUpdateInterval", 5),
+            "processMonitorUpdateInterval": self.config.get("configuration", {}).get("processMonitorUpdateInterval", 10),
+            "webserverStatusUpdateInterval": self.config.get("configuration", {}).get("webserverStatusUpdateInterval", 15),
+            # Runtime variables from config
+            "formDisplayed": self.config.get("runtime", {}).get("formDisplayed", False),
+            "verificationInProgress": self.config.get("runtime", {}).get("verificationInProgress", False),
+            "webserverStatus": self.config.get("runtime", {}).get("webserverStatus", "Disconnected"),
+            # Registry-managed variables (will be set from registry)
+            "defaultSteamPath": "",
             "webserverPort": 8080
         }
         
         # Initialize paths from registry and setup the application
-        if not self.initialize():
-            logger.error("Failed to initialize dashboard")
+        if not self.initialize_registry_values():
+            logger.error("Failed to initialize registry values")
             sys.exit(1)
         
         # Initialize user management system
         try:
-            engine = get_engine()
-            self.user_manager = UserManager(engine)
-            logger.info("User management system initialized")
+            engine, self.user_manager = initialize_user_manager()
         except Exception as e:
             logger.error(f"Failed to initialize user management: {e}")
             messagebox.showerror("Database Error", f"Failed to connect to user database:\n{str(e)}")
             sys.exit(1)
             
-        # Configure file logging after paths are initialized
-        self.configure_file_logging()
+        # Initialize server manager
+        try:
+            self.server_manager = ServerManager()
+        except Exception as e:
+            logger.error(f"Failed to initialize server manager: {e}")
+            # Continue without server manager but log the error
+            self.server_manager = None
+            
+        # Configure dashboard logging after paths are initialized
+        configure_dashboard_logging(self.debug_mode, self.config)
         
         # Set up the UI
         self.root = tk.Tk()
@@ -99,61 +132,56 @@ class ServerManagerDashboard:
         self.setup_ui()
         
         # Write PID file
-        self.write_pid_file("dashboard", os.getpid())
+        write_pid_file("dashboard", os.getpid(), self.paths["temp"])
+        
+        # Initialize timer manager
+        self.timer_manager = TimerManager(self)
         
         # Initialize system info and timers
         self.update_system_info()
-        self.start_timers()
+        self.timer_manager.start_timers()
         
-        self.supported_server_types = ["Steam", "Minecraft", "Other"]
+        # Get supported server types from server manager
+        if self.server_manager:
+            self.supported_server_types = self.server_manager.get_supported_server_types()
+        else:
+            self.supported_server_types = ["Steam", "Minecraft", "Other"]
         
         # Prompt for login using SQL authentication
         # Exit if login is cancelled
-        if not self.sql_login():
+        success, user = sql_login(self.user_manager, self.root)
+        if not success:
             logger.info("Login cancelled, exiting application")
             self.root.destroy()
             sys.exit(0)
+        self.current_user = user
 
-    def configure_file_logging(self):
-        """Set up logging to file"""
+    def load_dashboard_config(self):
+        """Load dashboard configuration from JSON file"""
         try:
-            log_path = os.path.join(self.paths["logs"], "dashboard.log")
-            
-            # Add file handler to logger
-            file_handler = logging.FileHandler(log_path)
-            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-            logger.addHandler(file_handler)
-            
-            # Set log level based on debug mode
-            if self.debug_mode:
-                logger.setLevel(logging.DEBUG)
-            else:
-                logger.setLevel(logging.INFO)
+            if not self.server_manager_dir:
+                logger.warning("Server manager directory not initialized, using default config")
+                self.config = {}
+                return
                 
-            logger.info(f"File logging configured: {log_path}")
+            config_file = os.path.join(self.server_manager_dir, "data", "dashboard.json")
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    self.config = json.load(f)
+                logger.info(f"Loaded dashboard configuration from: {config_file}")
+            else:
+                logger.warning(f"Dashboard config file not found: {config_file}, using defaults")
+                self.config = {}
         except Exception as e:
-            logger.error(f"Failed to configure file logging: {str(e)}")
-    
+            logger.error(f"Failed to load dashboard configuration: {str(e)}")
+            self.config = {}
+
     def initialize(self):
-        """Initialize paths and configuration from registry"""
+        """Initialize basic paths from registry"""
         try:
-            # Read registry for paths
+            # Read registry for basic paths
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-            
-            # Try to get SteamCmd path
-            try:
-                self.steam_cmd_path = winreg.QueryValueEx(key, "SteamCmdPath")[0]
-            except:
-                self.steam_cmd_path = None
-                
-            # Try to get WebPort from registry
-            try:
-                self.variables["webserverPort"] = int(winreg.QueryValueEx(key, "WebPort")[0])
-            except:
-                self.variables["webserverPort"] = 8080
-                logger.warning(f"WebPort not found in registry, using default: 8080")
-                
             winreg.CloseKey(key)
             
             # Clean up path
@@ -166,49 +194,76 @@ class ServerManagerDashboard:
                 "config": os.path.join(self.server_manager_dir, "config"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
                 "servers": os.path.join(self.server_manager_dir, "servers"),
-                "modules": os.path.join(self.server_manager_dir, "modules")
+                "modules": os.path.join(self.server_manager_dir, "modules"),
+                "data": os.path.join(self.server_manager_dir, "data")
             }
             
             # Ensure directories exist
             for path in self.paths.values():
                 os.makedirs(path, exist_ok=True)
             
-            # Set default SteamCmd path if not found in registry
-            if not self.steam_cmd_path:
+            logger.info(f"Basic initialization complete. Server Manager directory: {self.server_manager_dir}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Basic initialization failed: {str(e)}")
+            return False
+
+    def initialize_registry_values(self):
+        """Initialize registry-managed values"""
+        try:
+            # Read registry for all installation-managed values
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
+            
+            # Try to get SteamCmd path
+            try:
+                self.steam_cmd_path = winreg.QueryValueEx(key, "SteamCmdPath")[0]
+                self.variables["defaultSteamPath"] = self.steam_cmd_path
+            except:
                 self.steam_cmd_path = os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), "SteamCMD")
+                self.variables["defaultSteamPath"] = self.steam_cmd_path
                 logger.warning(f"SteamCmd path not found in registry, using default: {self.steam_cmd_path}")
+                
+            # Try to get WebPort from registry
+            try:
+                self.variables["webserverPort"] = int(winreg.QueryValueEx(key, "WebPort")[0])
+            except:
+                self.variables["webserverPort"] = 8080
+                logger.warning(f"WebPort not found in registry, using default: 8080")
+            
+            # Read other registry values for reference (not stored in variables to avoid duplication)
+            try:
+                self.registry_values = {
+                    "CurrentVersion": winreg.QueryValueEx(key, "CurrentVersion")[0],
+                    "UserWorkspace": winreg.QueryValueEx(key, "UserWorkspace")[0],
+                    "InstallDate": winreg.QueryValueEx(key, "InstallDate")[0],
+                    "LastUpdate": winreg.QueryValueEx(key, "LastUpdate")[0],
+                    "ModulePath": winreg.QueryValueEx(key, "ModulePath")[0],
+                    "LogPath": winreg.QueryValueEx(key, "LogPath")[0],
+                    "HostType": winreg.QueryValueEx(key, "HostType")[0]
+                }
+                
+                # Try to get HostAddress if it exists (for subhost installations)
+                try:
+                    self.registry_values["HostAddress"] = winreg.QueryValueEx(key, "HostAddress")[0]
+                except:
+                    pass  # HostAddress only exists for subhost installations
+                    
+                logger.info("Registry values loaded successfully")
+            except Exception as e:
+                logger.warning(f"Some registry values could not be read: {str(e)}")
+                self.registry_values = {}
+                
+            winreg.CloseKey(key)
             
             # Set default install directory
-            self.variables["defaultSteamPath"] = self.steam_cmd_path
             self.variables["defaultInstallDir"] = os.path.join(self.steam_cmd_path, "steamapps", "common")
             
-            logger.info(f"Initialization complete. Server Manager directory: {self.server_manager_dir}")
+            logger.info(f"Registry initialization complete")
             return True
             
         except Exception as e:
-            logger.error(f"Initialization failed: {str(e)}")
-            return False
-    
-    def write_pid_file(self, process_type, pid):
-        """Write process ID to file"""
-        try:
-            pid_file = os.path.join(self.paths["temp"], f"{process_type}.pid")
-            
-            # Create PID info dictionary
-            pid_info = {
-                "ProcessId": pid,
-                "StartTime": datetime.datetime.now().isoformat(),
-                "ProcessType": process_type
-            }
-            
-            # Write PID info to file as JSON
-            with open(pid_file, 'w') as f:
-                json.dump(pid_info, f)
-                
-            logger.debug(f"PID file created for {process_type}: {pid}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to write PID file for {process_type}: {str(e)}")
+            logger.error(f"Registry initialization failed: {str(e)}")
             return False
     
     def setup_ui(self):
@@ -282,6 +337,14 @@ class ServerManagerDashboard:
         
         self.os_info = ttk.Label(self.system_header, text="Loading OS info...", foreground="gray")
         self.os_info.pack(anchor=tk.W)
+        
+        # Show installation info from registry
+        if hasattr(self, 'registry_values'):
+            install_info = ttk.Label(self.system_header, 
+                text=f"Version: {self.registry_values.get('CurrentVersion', 'Unknown')} | "
+                     f"Host Type: {self.registry_values.get('HostType', 'Unknown')}", 
+                foreground="gray")
+            install_info.pack(anchor=tk.W)
         
         # Web server status
         self.webserver_frame = ttk.Frame(self.system_header)
@@ -437,83 +500,61 @@ class ServerManagerDashboard:
         
         # Return credentials if successful, None otherwise
         return credentials if result["success"] else None
-    
-    def fetch_minecraft_versions(self):
-        """Fetch available Minecraft server versions from Mojang's manifest."""
-        try:
-            manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest.json"
-            with urllib.request.urlopen(manifest_url, timeout=10) as resp:
-                manifest = json.load(resp)
-            versions = []
-            for v in manifest["versions"]:
-                if v["type"] in ("release", "snapshot"):
-                    versions.append({
-                        "id": v["id"],
-                        "type": v["type"],
-                        "url": v["url"]
-                    })
-            return versions
-        except Exception as e:
-            logger.error(f"Failed to fetch Minecraft versions: {str(e)}")
-            return []
+        exe_row = install_dir_row + 2
+        if server_type in ("Minecraft", "Other"):
+            ttk.Label(dialog, text="Executable Path:").grid(row=exe_row, column=0, padx=10, pady=10, sticky=tk.W)
+            exe_var = tk.StringVar()
+            exe_entry = ttk.Entry(dialog, textvariable=exe_var, width=35)
+            exe_entry.grid(row=exe_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            def browse_exe():
+                fp = filedialog.askopenfilename(title="Select Executable",
+                    filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd"),("All","*.*")])
+                if fp:
+                    exe_var.set(fp)
+            ttk.Button(dialog, text="Browse", command=browse_exe, width=10).grid(row=exe_row, column=2, padx=5, pady=10)
+            args_row = exe_row + 1
+        else:
+            exe_var = tk.StringVar(value="")
+            args_row = exe_row
 
-    def get_minecraft_server_jar_url(self, version_id, versions_list):
-        """Get the download URL for the server jar for a given version."""
-        try:
-            for v in versions_list:
-                if v["id"] == version_id:
-                    with urllib.request.urlopen(v["url"], timeout=10) as resp:
-                        version_data = json.load(resp)
-                    return version_data["downloads"]["server"]["url"]
-        except Exception as e:
-            logger.error(f"Failed to get server jar URL for {version_id}: {str(e)}")
-        return None
+        # Startup Args (all)
+        ttk.Label(dialog, text="Startup Args:").grid(row=args_row, column=0, padx=10, pady=10, sticky=tk.W)
+        args_var = tk.StringVar()
+        args_entry = ttk.Entry(dialog, textvariable=args_var, width=35)
+        args_entry.grid(row=args_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
 
-    def fetch_fabric_installer_url(self, mc_version):
-        """Fetch Fabric installer URL for a given Minecraft version."""
-        try:
-            meta_url = "https://meta.fabricmc.net/v2/versions/installer"
-            with urllib.request.urlopen(meta_url, timeout=10) as resp:
-                installers = json.load(resp)
-            if installers:
-                return installers[0]["url"]
-        except Exception as e:
-            logger.error(f"Failed to fetch Fabric installer: {str(e)}")
-        return None
+        # Console output
+        console_row = args_row + 1
+        ttk.Label(dialog, text="Installation Progress:").grid(row=console_row, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
+        console_frame = ttk.Frame(dialog)
+        console_frame.grid(row=console_row+1, column=0, columnspan=3, padx=10, pady=5, sticky="nsew")
+        console_output = scrolledtext.ScrolledText(console_frame, width=70, height=10, background="black", foreground="white")
+        console_output.pack(fill=tk.BOTH, expand=True)
+        console_output.config(state=tk.DISABLED)
 
-    def fetch_forge_installer_url(self, mc_version):
-        """Fetch Forge installer URL for a given Minecraft version."""
-        try:
-            meta_url = f"https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json"
-            with urllib.request.urlopen(meta_url, timeout=10) as resp:
-                promotions = json.load(resp)
-            key = f"{mc_version}-recommended"
-            if key in promotions["promos"]:
-                forge_version = promotions["promos"][key]
-                url = f"https://maven.minecraftforge.net/net/minecraftforge/forge/{mc_version}-{forge_version}/forge-{mc_version}-{forge_version}-installer.jar"
-                return url
-        except Exception as e:
-            logger.error(f"Failed to fetch Forge installer: {str(e)}")
-        return None
+        status_var = tk.StringVar(value="")
+        status_label = ttk.Label(dialog, textvariable=status_var)
+        status_label.grid(row=console_row+2, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
+        progress = ttk.Progressbar(dialog, mode="indeterminate")
+        progress.grid(row=console_row+3, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
 
-    def fetch_neoforge_installer_url(self, mc_version):
-        """Fetch NeoForge installer URL for a given Minecraft version."""
-        try:
-            meta_url = f"https://api.neoforged.net/v1/projects/neoforge/versions?game_versions={mc_version}"
-            with urllib.request.urlopen(meta_url, timeout=10) as resp:
-                versions = json.load(resp)
-            if versions:
-                # Pick latest version for this MC version
-                version = versions[0]
-                url = version.get("installer_url")
-                if url:
-                    return url
-        except Exception as e:
-            logger.error(f"Failed to fetch NeoForge installer: {str(e)}")
-        return None
+        dialog.grid_rowconfigure(console_row+1, weight=1)
+        for i in range(3):
+            dialog.grid_columnconfigure(i, weight=1 if i == 1 else 0)
+
+        self.install_cancelled = False
+        def append_console(text):
+            console_output.config(state=tk.NORMAL)
+            console_output.insert(tk.END, text + "\n")
+            console_output.see(tk.END)
+            console_output.config(state=tk.DISABLED)
 
     def add_server(self):
         """Add a new game server (Steam, Minecraft, or Other)"""
+        if self.server_manager is None:
+            messagebox.showerror("Error", "Server manager not initialized.")
+            return
+            
         # Select server type dialog
         type_dialog = tk.Toplevel(self.root)
         type_dialog.title("Select Server Type")
@@ -558,73 +599,102 @@ class ServerManagerDashboard:
         # Minecraft version list (fetch only if needed)
         mc_versions = []
         if server_type == "Minecraft":
-            mc_versions = self.fetch_minecraft_versions()
-            if not mc_versions:
-                messagebox.showerror("Error", "Could not fetch Minecraft versions from Mojang.")
+            try:
+                mc_versions = self.server_manager.get_minecraft_versions()
+                if not mc_versions:
+                    messagebox.showerror("Error", "Could not fetch Minecraft versions from Mojang.")
+                    return
+            except Exception as e:
+                messagebox.showerror("Error", f"Minecraft support not available: {str(e)}")
                 return
+                
             # Default to latest release
             latest_release = next((v for v in mc_versions if v["id"] == mc_versions[0]["id"]), mc_versions[0])
             selected_version = tk.StringVar(value=latest_release["id"])
+            
+            # Minecraft version dropdown
+            ttk.Label(dialog, text="Minecraft Version:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
+            version_combo = ttk.Combobox(dialog, textvariable=selected_version, values=[v["id"] for v in mc_versions], state="readonly", width=32)
+            version_combo.grid(row=2, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            
+            # Modloader selection
+            ttk.Label(dialog, text="Modloader:").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
+            selected_modloader = tk.StringVar(value="Vanilla")
+            modloader_frame = ttk.Frame(dialog)
+            modloader_frame.grid(row=3, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            modloaders = ["Vanilla", "Fabric", "Forge", "NeoForge"]
+            for i, modloader in enumerate(modloaders):
+                ttk.Radiobutton(modloader_frame, text=modloader, variable=selected_modloader, value=modloader).grid(row=0, column=i, padx=5, sticky=tk.W)
+            
+            app_id_row = 4
         else:
             selected_version = tk.StringVar(value="")
+            selected_modloader = tk.StringVar(value="")
+            app_id_row = 2
 
         # App ID (Steam only)
         if server_type == "Steam":
-            ttk.Label(dialog, text="App ID:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
+            ttk.Label(dialog, text="App ID:").grid(row=app_id_row, column=0, padx=10, pady=10, sticky=tk.W)
             app_id_var = tk.StringVar()
             app_id_entry = ttk.Entry(dialog, textvariable=app_id_var, width=35)
-            app_id_entry.grid(row=2, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            app_id_entry.grid(row=app_id_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            install_dir_row = app_id_row + 1
         else:
             app_id_var = tk.StringVar(value="")
+            install_dir_row = app_id_row
 
         # Install directory
-        ttk.Label(dialog, text="Install Directory:").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
+        ttk.Label(dialog, text="Install Directory:").grid(row=install_dir_row, column=0, padx=10, pady=10, sticky=tk.W)
         install_dir_var = tk.StringVar()
         install_dir_entry = ttk.Entry(dialog, textvariable=install_dir_var, width=25)
-        install_dir_entry.grid(row=3, column=1, padx=10, pady=10, sticky=tk.W)
-        ttk.Label(dialog, text="(Leave blank for default location)", foreground="gray").grid(row=4, column=1, padx=10, sticky=tk.W)
+        install_dir_entry.grid(row=install_dir_row, column=1, padx=10, pady=10, sticky=tk.W)
+        ttk.Label(dialog, text="(Leave blank for default location)", foreground="gray").grid(row=install_dir_row+1, column=1, padx=10, sticky=tk.W)
         def browse_directory():
             directory = filedialog.askdirectory(title="Select Installation Directory")
             if directory:
                 install_dir_var.set(directory)
-        ttk.Button(dialog, text="Browse", command=browse_directory, width=10).grid(row=3, column=2, padx=5, pady=10)
+        ttk.Button(dialog, text="Browse", command=browse_directory, width=10).grid(row=install_dir_row, column=2, padx=5, pady=10)
 
         # Executable (Minecraft/Other)
+        exe_row = install_dir_row + 2
         if server_type in ("Minecraft", "Other"):
-            ttk.Label(dialog, text="Executable Path:").grid(row=5, column=0, padx=10, pady=10, sticky=tk.W)
+            ttk.Label(dialog, text="Executable Path:").grid(row=exe_row, column=0, padx=10, pady=10, sticky=tk.W)
             exe_var = tk.StringVar()
             exe_entry = ttk.Entry(dialog, textvariable=exe_var, width=35)
-            exe_entry.grid(row=5, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            exe_entry.grid(row=exe_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
             def browse_exe():
                 fp = filedialog.askopenfilename(title="Select Executable",
                     filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd"),("All","*.*")])
                 if fp:
                     exe_var.set(fp)
-            ttk.Button(dialog, text="Browse", command=browse_exe, width=10).grid(row=5, column=2, padx=5, pady=10)
+            ttk.Button(dialog, text="Browse", command=browse_exe, width=10).grid(row=exe_row, column=2, padx=5, pady=10)
+            args_row = exe_row + 1
         else:
             exe_var = tk.StringVar(value="")
+            args_row = exe_row
 
         # Startup Args (all)
-        ttk.Label(dialog, text="Startup Args:").grid(row=6, column=0, padx=10, pady=10, sticky=tk.W)
+        ttk.Label(dialog, text="Startup Args:").grid(row=args_row, column=0, padx=10, pady=10, sticky=tk.W)
         args_var = tk.StringVar()
         args_entry = ttk.Entry(dialog, textvariable=args_var, width=35)
-        args_entry.grid(row=6, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+        args_entry.grid(row=args_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
 
         # Console output
-        ttk.Label(dialog, text="Installation Progress:").grid(row=7, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
+        console_row = args_row + 1
+        ttk.Label(dialog, text="Installation Progress:").grid(row=console_row, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
         console_frame = ttk.Frame(dialog)
-        console_frame.grid(row=8, column=0, columnspan=3, padx=10, pady=5, sticky="nsew")
+        console_frame.grid(row=console_row+1, column=0, columnspan=3, padx=10, pady=5, sticky="nsew")
         console_output = scrolledtext.ScrolledText(console_frame, width=70, height=10, background="black", foreground="white")
         console_output.pack(fill=tk.BOTH, expand=True)
         console_output.config(state=tk.DISABLED)
 
         status_var = tk.StringVar(value="")
         status_label = ttk.Label(dialog, textvariable=status_var)
-        status_label.grid(row=9, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
+        status_label.grid(row=console_row+2, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
         progress = ttk.Progressbar(dialog, mode="indeterminate")
-        progress.grid(row=10, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
+        progress.grid(row=console_row+3, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
 
-        dialog.grid_rowconfigure(8, weight=1)
+        dialog.grid_rowconfigure(console_row+1, weight=1)
         for i in range(3):
             dialog.grid_columnconfigure(i, weight=1 if i == 1 else 0)
 
@@ -649,186 +719,66 @@ class ServerManagerDashboard:
                 if server_type == "Steam" and (not app_id or not app_id.isdigit()):
                     messagebox.showerror("Validation Error", "Steam App ID must be a number.")
                     return
-                if server_type in ("Minecraft", "Other") and not executable_path:
-                    messagebox.showerror("Validation Error", "Executable path is required.")
-                    return
-
-                server_config_path = os.path.join(self.paths["servers"], f"{server_name}.json")
-                if os.path.exists(server_config_path):
-                    messagebox.showerror("Validation Error", "A server with this name already exists.")
+                if server_type in ("Minecraft", "Other") and server_type == "Other" and not executable_path:
+                    messagebox.showerror("Validation Error", "Executable path is required for Other server types.")
                     return
 
                 # Set default install dir if blank
                 if not install_dir:
                     if server_type == "Steam":
-                        install_dir = os.path.join(self.steam_cmd_path, "steamapps", "common", server_name)
+                        if self.steam_cmd_path:
+                            install_dir = os.path.join(self.steam_cmd_path, "steamapps", "common", server_name)
+                        else:
+                            install_dir = os.path.join("C:\\steamcmd", "steamapps", "common", server_name)
                     elif server_type == "Minecraft":
-                        install_dir = os.path.join(self.server_manager_dir, "minecraft_servers", server_name)
+                        minecraft_path = self.config.get("defaults", {}).get("minecraftServersPath", "minecraft_servers")
+                        if self.server_manager_dir:
+                            install_dir = os.path.join(self.server_manager_dir, minecraft_path, server_name)
+                        else:
+                            install_dir = os.path.join(os.getcwd(), minecraft_path, server_name)
                     else:
-                        install_dir = os.path.join(self.server_manager_dir, "other_servers", server_name)
-                if not os.path.exists(install_dir):
-                    os.makedirs(install_dir, exist_ok=True)
-                    append_console(f"[INFO] Created installation directory: {install_dir}")
+                        other_path = self.config.get("defaults", {}).get("otherServersPath", "other_servers")
+                        if self.server_manager_dir:
+                            install_dir = os.path.join(self.server_manager_dir, other_path, server_name)
+                        else:
+                            install_dir = os.path.join(os.getcwd(), other_path, server_name)
 
                 create_button.config(state=tk.DISABLED)
                 cancel_button.config(state=tk.NORMAL)
                 progress.start(10)
                 status_var.set("Installing server...")
 
-                if server_type == "Steam":
-                    steam_cmd_exe = os.path.join(self.steam_cmd_path, "steamcmd.exe")
-                    if not os.path.exists(steam_cmd_exe):
-                        messagebox.showerror("Configuration Error", 
-                                            f"SteamCmd executable not found at: {steam_cmd_exe}\n"
-                                            "Please make sure SteamCmd is properly installed.")
-                        return
-                    append_console("Starting Steam server installation...")
-                    login_cmd = "+login anonymous" if credentials["anonymous"] else f"+login \"{credentials['username']}\" \"{credentials['password']}\""
-                    steam_cmd_args = [
-                        steam_cmd_exe,
-                        login_cmd,
-                        f"+force_install_dir \"{install_dir}\"",
-                        f"+app_update {app_id} validate",
-                        "+quit"
-                    ]
-                    append_console(f"[INFO] Running SteamCMD: {' '.join(steam_cmd_args)}")
-                    self.install_process = subprocess.Popen(
-                        " ".join(steam_cmd_args),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        shell=True,
-                        text=True,
-                        encoding='utf-8',
-                        errors='replace'
+                # Use server manager to install the server
+                if self.server_manager:
+                    success, message = self.server_manager.install_server_complete(
+                        server_name=server_name,
+                        server_type=server_type,
+                        install_dir=install_dir,
+                        executable_path=executable_path,
+                        startup_args=startup_args,
+                        app_id=app_id,
+                        version=selected_version.get() if server_type == "Minecraft" else "",
+                        modloader=selected_modloader.get() if server_type == "Minecraft" else "",
+                        steam_cmd_path=self.steam_cmd_path or "",
+                        credentials=credentials,
+                        progress_callback=append_console
                     )
-                    installation_success = False
-                    while True:
-                        if self.install_cancelled:
-                            append_console("[INFO] Installation cancelled by user")
-                            self.install_process.terminate()
-                            break
-                        line = self.install_process.stdout.readline()
-                        if not line and self.install_process.poll() is not None:
-                            break
-                        if line:
-                            line = line.strip()
-                            append_console(line)
-                            if "Success! App" in line and "fully installed" in line:
-                                installation_success = True
-                                status_var.set("Installation complete!")
-                    error_output = self.install_process.stderr.read()
-                    if error_output:
-                        append_console("[WARN] SteamCMD Errors:")
-                        append_console(error_output)
-                    exit_code = self.install_process.returncode
-                    append_console(f"[INFO] SteamCMD process completed with exit code: {exit_code}")
-                    if exit_code != 0 and not installation_success:
-                        raise Exception(f"SteamCMD failed with exit code: {exit_code}")
-                elif server_type == "Minecraft":
-                    mc_version = selected_version.get()
-                    modloader = selected_modloader.get()
-                    if modloader == "Vanilla":
-                        jar_url = self.get_minecraft_server_jar_url(mc_version, mc_versions)
-                        if not jar_url:
-                            raise Exception(f"Could not find server jar for version {mc_version}")
-                        append_console(f"[INFO] Downloading Minecraft Vanilla server {mc_version} ...")
-                        jar_path = os.path.join(install_dir, f"minecraft_server.{mc_version}.jar")
-                        urllib.request.urlretrieve(jar_url, jar_path)
-                        append_console("[INFO] Download complete.")
-                        executable_path = jar_path
-                        # Accept EULA
-                        with open(os.path.join(install_dir, "eula.txt"), "w") as f:
-                            f.write("eula=true\n")
-                        append_console("[INFO] EULA accepted.")
-                    elif modloader == "Fabric":
-                        append_console(f"[INFO] Downloading Fabric installer for {mc_version} ...")
-                        fabric_url = self.fetch_fabric_installer_url(mc_version)
-                        if not fabric_url:
-                            raise Exception("Could not fetch Fabric installer.")
-                        fabric_installer = os.path.join(install_dir, "fabric-installer.jar")
-                        urllib.request.urlretrieve(fabric_url, fabric_installer)
-                        append_console("[INFO] Fabric installer downloaded.")
-                        # Run Fabric installer
-                        cmd = [sys.executable, "-m", "subprocess", "java", "-jar", fabric_installer, "server", "-mcversion", mc_version, "-downloadMinecraft"]
-                        subprocess.run(["java", "-jar", fabric_installer, "server", "-mcversion", mc_version, "-downloadMinecraft"], cwd=install_dir)
-                        # Find fabric-server-launch.jar
-                        for fname in os.listdir(install_dir):
-                            if fname.startswith("fabric-server-launch") and fname.endswith(".jar"):
-                                executable_path = os.path.join(install_dir, fname)
-                                break
-                        else:
-                            raise Exception("Fabric server jar not found after install.")
-                        with open(os.path.join(install_dir, "eula.txt"), "w") as f:
-                            f.write("eula=true\n")
-                        append_console("[INFO] Fabric server installed and EULA accepted.")
-                    elif modloader == "Forge":
-                        append_console(f"[INFO] Downloading Forge installer for {mc_version} ...")
-                        forge_url = self.fetch_forge_installer_url(mc_version)
-                        if not forge_url:
-                            raise Exception("Could not fetch Forge installer.")
-                        forge_installer = os.path.join(install_dir, "forge-installer.jar")
-                        urllib.request.urlretrieve(forge_url, forge_installer)
-                        append_console("[INFO] Forge installer downloaded.")
-                        # Run Forge installer (server)
-                        subprocess.run(["java", "-jar", forge_installer, "--installServer"], cwd=install_dir)
-                        # Find forge jar
-                        forge_jar = None
-                        for fname in os.listdir(install_dir):
-                            if fname.startswith("forge-") and fname.endswith(".jar") and "installer" not in fname:
-                                forge_jar = os.path.join(install_dir, fname)
-                                break
-                        if not forge_jar:
-                            raise Exception("Forge server jar not found after install.")
-                        executable_path = forge_jar
-                        with open(os.path.join(install_dir, "eula.txt"), "w") as f:
-                            f.write("eula=true\n")
-                        append_console("[INFO] Forge server installed and EULA accepted.")
-                    elif modloader == "NeoForge":
-                        append_console(f"[INFO] Downloading NeoForge installer for {mc_version} ...")
-                        neoforge_url = self.fetch_neoforge_installer_url(mc_version)
-                        if not neoforge_url:
-                            raise Exception("Could not fetch NeoForge installer.")
-                        neoforge_installer = os.path.join(install_dir, "neoforge-installer.jar")
-                        urllib.request.urlretrieve(neoforge_url, neoforge_installer)
-                        append_console("[INFO] NeoForge installer downloaded.")
-                        subprocess.run(["java", "-jar", neoforge_installer, "--installServer"], cwd=install_dir)
-                        # Find neoforge jar
-                        neoforge_jar = None
-                        for fname in os.listdir(install_dir):
-                            if fname.startswith("neoforge-") and fname.endswith(".jar") and "installer" not in fname:
-                                neoforge_jar = os.path.join(install_dir, fname)
-                                break
-                        if not neoforge_jar:
-                            raise Exception("NeoForge server jar not found after install.")
-                        executable_path = neoforge_jar
-                        with open(os.path.join(install_dir, "eula.txt"), "w") as f:
-                            f.write("eula=true\n")
-                        append_console("[INFO] NeoForge server installed and EULA accepted.")
-                    else:
-                        raise Exception("Unknown mod loader selected.")
-                # Save server configuration
-                server_config = {
-                    "Name": server_name,
-                    "Type": server_type,
-                    "AppID": app_id,
-                    "InstallDir": install_dir,
-                    "ExecutablePath": executable_path,
-                    "StartupArgs": startup_args,
-                    "Created": datetime.datetime.now().isoformat(),
-                    "LastUpdate": datetime.datetime.now().isoformat()
-                }
-                if server_type == "Minecraft":
-                    server_config["Version"] = selected_version.get()
-                    server_config["ModLoader"] = selected_modloader.get()
-                os.makedirs(self.paths["servers"], exist_ok=True)
-                with open(server_config_path, 'w') as f:
-                    json.dump(server_config, f, indent=4)
-                append_console(f"[INFO] Server configuration saved to: {server_config_path}")
-                self.update_server_list(force_refresh=True)
-                messagebox.showinfo("Success", "Server created successfully!")
-                dialog.destroy()
+                else:
+                    success = False
+                    message = "Server manager not initialized"
+
+                if success:
+                    self.update_server_list(force_refresh=True)
+                    messagebox.showinfo("Success", message)
+                    dialog.destroy()
+                else:
+                    append_console(f"[ERROR] {message}")
+                    status_var.set("Installation failed!")
+                    create_button.config(state=tk.NORMAL)
+                    cancel_button.config(state=tk.DISABLED)
+                    
             except Exception as e:
-                logger.error(f"Error installing server: {str(e)}")
+                logger.error(f"Error during server installation: {str(e)}")
                 append_console(f"[ERROR] {str(e)}")
                 status_var.set("Installation failed!")
                 create_button.config(state=tk.NORMAL)
@@ -837,22 +787,26 @@ class ServerManagerDashboard:
                 progress.stop()
 
         button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=11, column=0, columnspan=3, padx=10, pady=10)
+        button_frame.grid(row=console_row+4, column=0, columnspan=3, padx=10, pady=10)
         create_button = ttk.Button(button_frame, text="Create", width=15)
         create_button.pack(side=tk.LEFT, padx=5)
         cancel_button = ttk.Button(button_frame, text="Cancel", width=15, state=tk.DISABLED)
         cancel_button.pack(side=tk.LEFT, padx=5)
+        
         def start_installation():
             installation_thread = threading.Thread(target=install_server)
             installation_thread.daemon = True
             installation_thread.start()
+            
         def cancel_installation():
             self.install_cancelled = True
             cancel_button.config(state=tk.DISABLED)
             status_var.set("Cancelling installation...")
             append_console("[INFO] Cancellation requested, stopping installation process...")
+            
         create_button.config(command=start_installation)
         cancel_button.config(command=cancel_installation)
+        
         def on_close():
             if cancel_button.instate(['!disabled']):
                 result = messagebox.askyesno("Confirm Exit", 
@@ -865,148 +819,24 @@ class ServerManagerDashboard:
                 else:
                     return
             dialog.destroy()
+            
         dialog.protocol("WM_DELETE_WINDOW", on_close)
         dialog.update_idletasks()
         x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
         y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
         dialog.geometry(f"+{x}+{y}")
 
-    def sql_login(self):
-        """Prompt for login using SQL database authentication. Returns True if successful, False if cancelled"""
-        max_attempts = 3
-        attempts = 0
-        
-        # Try default admin credentials first
-        try:
-            logger.info("Attempting automatic login with default admin credentials")
-            
-            # Try to authenticate with default admin credentials
-            user = self.user_manager.get_user("admin")
-            if user:
-                # Try common default passwords
-                default_passwords = ["admin", "password", "123456"]
-                
-                for password in default_passwords:
-                    hashed_password = hashlib.sha256(password.encode()).hexdigest()
-                    if user.password == hashed_password:
-                        self.current_user = user
-                        logger.info(f"Successfully logged in automatically as admin")
-                        return True
-                        
-        except Exception as e:
-            logger.debug(f"Automatic login failed: {e}")
-        
-        # If automatic login failed, prompt user
-        while attempts < max_attempts:
-            from tkinter.simpledialog import askstring
-            
-            username = askstring("Login", "Username (or Cancel for offline mode):")
-            if not username:
-                logger.info("User cancelled login, enabling offline mode")
-                # Return False to indicate login was cancelled
-                return False
-                
-            password = askstring("Login", "Password:", show="*")
-            if not password:
-                logger.info("User cancelled login, enabling offline mode")
-                # Return False to indicate login was cancelled
-                return False
-                
-            try:
-                # Get user from database
-                user = self.user_manager.get_user(username)
-                if not user:
-                    logger.warning(f"User not found: {username}")
-                    attempts += 1
-                    if attempts < max_attempts:
-                        messagebox.showerror("Login Failed", 
-                                           f"Invalid username or password. {max_attempts - attempts} attempts remaining.")
-                    else:
-                        messagebox.showerror("Login Failed", 
-                                           "Maximum login attempts exceeded. Running in offline mode.")
-                    continue
-                
-                # Check if user is active
-                if not getattr(user, 'is_active', True):
-                    logger.warning(f"Inactive user attempted login: {username}")
-                    attempts += 1
-                    if attempts < max_attempts:
-                        messagebox.showerror("Login Failed", 
-                                           f"Account is inactive. {max_attempts - attempts} attempts remaining.")
-                    else:
-                        messagebox.showerror("Login Failed", 
-                                           "Maximum login attempts exceeded. Running in offline mode.")
-                    continue
-                
-                # Verify password
-                hashed_password = hashlib.sha256(password.encode()).hexdigest()
-                if user.password != hashed_password:
-                    logger.warning(f"Invalid password for user: {username}")
-                    attempts += 1
-                    if attempts < max_attempts:
-                        messagebox.showerror("Login Failed", 
-                                           f"Invalid username or password. {max_attempts - attempts} attempts remaining.")
-                    else:
-                        messagebox.showerror("Login Failed", 
-                                           "Maximum login attempts exceeded. Running in offline mode.")
-                    continue
-                
-                # Check 2FA if enabled
-                if getattr(user, 'two_factor_enabled', False):
-                    token = askstring("2FA Authentication", "Enter your 2FA token:")
-                    if not token:
-                        logger.info("User cancelled 2FA, enabling offline mode")
-                        # Return False to indicate login was cancelled
-                        return False
-                    
-                    if not self.user_manager.verify_2fa(username, token):
-                        logger.warning(f"Invalid 2FA token for user: {username}")
-                        attempts += 1
-                        if attempts < max_attempts:
-                            messagebox.showerror("2FA Failed", 
-                                               f"Invalid 2FA token. {max_attempts - attempts} attempts remaining.")
-                        else:
-                            messagebox.showerror("2FA Failed", 
-                                               "Maximum login attempts exceeded. Running in offline mode.")
-                        continue
-                
-                # Successful login
-                self.current_user = user
-                logger.info(f"Successfully logged in as {username}")
-                
-                # Update last login time
-                try:
-                    self.user_manager.update_user(username, last_login=datetime.datetime.now())
-                except Exception as e:
-                    logger.warning(f"Failed to update last login time: {e}")
-                
-                return True
-                
-            except Exception as e:
-                logger.error(f"Login error: {str(e)}")
-                attempts += 1
-                if attempts < max_attempts:
-                    messagebox.showerror("Database Error", 
-                                       f"Database error during login. {max_attempts - attempts} attempts remaining.")
-                else:
-                    messagebox.showerror("Database Error", 
-                                       f"Cannot access user database. Running in offline mode.")
-        
-        # If we get here after max attempts, enable offline mode
-        self.variables["offlineMode"] = True
-        logger.info("Login failed after max attempts, running in offline mode")
-        return True  # Still return True to allow running in offline mode
-    
     def api_headers(self):
         # Remove API headers since we're using direct SQL access
         return {}
 
     def update_server_list(self, force_refresh=False):
-        # Skip update if it's been less than 5 seconds since the last update and force_refresh isn't specified
+        # Skip update if it's been less than configured interval since the last update and force_refresh isn't specified
+        update_interval = self.variables.get("serverListUpdateInterval", 30)
         if not force_refresh and \
            (self.variables["lastServerListUpdate"] != datetime.datetime.min) and \
-           (datetime.datetime.now() - self.variables["lastServerListUpdate"]).total_seconds() < 5:
-            logger.debug("Skipping server list update - last update was less than 5 seconds ago")
+           (datetime.datetime.now() - self.variables["lastServerListUpdate"]).total_seconds() < update_interval:
+            log_dashboard_event("SERVER_LIST_UPDATE", f"Skipping update - last update was less than {update_interval} seconds ago", "DEBUG")
             return
             
         # Clear current items
@@ -1276,99 +1106,6 @@ class ServerManagerDashboard:
         except Exception as e:
             logger.error(f"Error updating system info: {str(e)}")
     
-    def start_timers(self):
-        """Start update timers"""
-        # System info update timer - 5 seconds
-        self.root.after(5000, self.system_info_timer)
-        
-        # Server list update timer - 30 seconds
-        self.root.after(30000, self.server_list_timer)
-        
-        # Web server status update timer - 15 seconds
-        self.root.after(15000, self.webserver_status_timer)
-        
-        # Process monitoring timer - 10 seconds
-        self.root.after(10000, self.process_monitor_timer)
-    
-    def system_info_timer(self):
-        """Timer callback for system info updates"""
-        self.update_system_info()
-        self.root.after(5000, self.system_info_timer)
-    
-    def server_list_timer(self):
-        """Timer callback for server list updates"""
-        self.update_server_list()
-        self.root.after(30000, self.server_list_timer)
-    
-    def webserver_status_timer(self):
-        """Timer callback for web server status updates"""
-        self.update_webserver_status()
-        self.root.after(15000, self.webserver_status_timer)
-    
-    def process_monitor_timer(self):
-        """Timer callback for process monitoring"""
-        self.monitor_processes()
-        interval = self.variables["processMonitoringInterval"] * 1000  # Convert to milliseconds
-        self.root.after(interval, self.process_monitor_timer)
-    
-    def monitor_processes(self):
-        """Monitor running server processes"""
-        try:
-            # Skip if it's been less than processMonitoringInterval seconds since the last update
-            if (self.variables["lastProcessUpdate"] != datetime.datetime.min) and \
-               (datetime.datetime.now() - self.variables["lastProcessUpdate"]).total_seconds() < self.variables["processMonitoringInterval"]:
-                return
-                
-            # Check each server's process
-            servers_path = self.paths["servers"]
-            if os.path.exists(servers_path):
-                for file in os.listdir(servers_path):
-                    if file.endswith(".json"):
-                        try:
-                            with open(os.path.join(servers_path, file), 'r') as f:
-                                server_config = json.load(f)
-                                
-                            server_name = server_config.get("Name", "Unknown")
-                            
-                            # Check if server has a process ID registered
-                            if "ProcessId" in server_config:
-                                process_id = server_config["ProcessId"]
-                                
-                                # Check if process is still running
-                                if not self.is_process_running(process_id):
-                                    logger.warning(f"Server '{server_name}' process (PID {process_id}) is no longer running")
-                                    
-                                    # Clean up the process ID in the config
-                                    server_config.pop('ProcessId', None)
-                                    server_config.pop('StartTime', None)
-                                    server_config['LastUpdate'] = datetime.datetime.now().isoformat()
-                                    
-                                    # Clean up process history
-                                    if process_id in self.variables["processStatHistory"]:
-                                        del self.variables["processStatHistory"][process_id]
-                                    
-                                    # Save updated configuration
-                                    with open(os.path.join(servers_path, file), 'w') as f:
-                                        json.dump(server_config, f, indent=4)
-                                    
-                                    # Update the server list
-                                    self.update_server_list(force_refresh=True)
-                                else:
-                                    # Process is running, update statistics
-                                    try:
-                                        process = psutil.Process(process_id)
-                                        # Update process statistics here if needed
-                                    except Exception as e:
-                                        logger.error(f"Error updating process statistics for {server_name}: {str(e)}")
-                        except Exception as e:
-                            logger.error(f"Error monitoring server process in {file}: {str(e)}")
-                            
-            # Update the last process update time
-            self.variables["lastProcessUpdate"] = datetime.datetime.now()
-            
-        except Exception as e:
-            logger.error(f"Error in process monitoring: {str(e)}")
-    
     def run(self):
         """Run the dashboard application"""
         logger.info("Starting dashboard")
@@ -1422,137 +1159,32 @@ class ServerManagerDashboard:
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
-        server_name = self.server_list.item(selected_items[0])['values'][0]
-        config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-        if not os.path.exists(config_file):
-            messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
-            return
-        with open(config_file, 'r') as f:
-            server_config = json.load(f)
-        if 'ProcessId' in server_config and self.is_process_running(server_config['ProcessId']):
-            messagebox.showinfo("Already Running", f"Server '{server_name}' is already running with PID {server_config['ProcessId']}.")
-            return
-        server_type = server_config.get("Type", "Other")
-        install_dir = server_config.get('InstallDir', '')
-        executable_path = server_config.get('ExecutablePath', '')
-        startup_args = server_config.get('StartupArgs', '')
-        use_config_file = server_config.get('UseConfigFile', False)
-        config_file_path = server_config.get('ConfigFilePath', '')
-        config_argument = server_config.get('ConfigArgument', '--config')
-        additional_args = server_config.get('AdditionalArgs', '')
-        
-        if not executable_path:
-            messagebox.showinfo("Configuration Needed", "No executable specified. Please configure the server startup settings.")
-            self.configure_server()
-            return
-        # Resolve executable path
-        exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
-        if not os.path.exists(exe_full):
-            messagebox.showerror("Error", f"Executable not found: {exe_full}")
-            return
-        
-        # Build command with config file support
-        cmd_parts = [f'"{exe_full}"']
-        
-        if use_config_file:
-            # Config file mode
-            # Add additional arguments first (if any)
-            if additional_args:
-                cmd_parts.append(additional_args)
             
-            # Add config file argument
-            if config_file_path and config_argument:
-                config_full = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
-                if os.path.exists(config_full):
-                    cmd_parts.append(f'{config_argument} "{config_full}"')
-                    logger.info(f"Using config file: {config_full}")
-                else:
-                    logger.warning(f"Config file not found: {config_full}, starting without config file")
-        else:
-            # Manual arguments mode
-            if startup_args:
-                cmd_parts.append(startup_args)
+        server_name = self.server_list.item(selected_items[0])['values'][0]
         
-        # Build final command
-        if server_type == "Minecraft":
-            # For Minecraft servers, keep the Java-specific handling
-            cmd = f'java -Xmx1024M -Xms1024M -jar "{exe_full}" nogui'
-            if use_config_file:
-                if additional_args:
-                    cmd += f' {additional_args}'
-                if config_file_path and config_argument and os.path.exists(config_full):
-                    cmd += f' {config_argument} "{config_full}"'
-            else:
-                if startup_args:
-                    cmd += f' {startup_args}'
-            shell = True
-        elif exe_full.lower().endswith(('.bat', '.cmd')):
-            cmd = f'start "" /D "{install_dir}" cmd /c ' + ' '.join(cmd_parts)
-            shell = True
-        elif exe_full.lower().endswith('.sh') and sys.platform != 'win32':
-            cmd = ['/bin/sh', exe_full]
-            if use_config_file:
-                if additional_args:
-                    cmd.extend(additional_args.split())
-                if config_file_path and config_argument and os.path.exists(config_full):
-                    cmd.extend([config_argument, config_full])
-            else:
-                if startup_args:
-                    cmd.extend(startup_args.split())
-            shell = False
-        else:
-            cmd = ' '.join(cmd_parts)
-            shell = True
-        
-        server_logs_dir = os.path.join(install_dir, "logs")
-        os.makedirs(server_logs_dir, exist_ok=True)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        stdout_log = os.path.join(server_logs_dir, f"server_stdout_{timestamp}.log")
-        stderr_log = os.path.join(server_logs_dir, f"server_stderr_{timestamp}.log")
-        logger.info(f"Starting server: {server_name} with command: {cmd}")
-        self.update_server_status(server_name, "Starting...")
-        with open(stdout_log, 'a') as stdout_file, open(stderr_log, 'a') as stderr_file:
-            start_time = datetime.datetime.now()
-            time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
-            stdout_file.write(f"\n--- Server started at {time_str} ---\n")
-            stdout_file.write(f"Command: {cmd}\n\n")
-            if shell:
-                process = subprocess.Popen(
-                    cmd,
-                    shell=True,
-                    cwd=install_dir,
-                    stdout=stdout_file,
-                    stderr=stderr_file,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
-                )
-            else:
-                process = subprocess.Popen(
-                    cmd,
-                    cwd=install_dir,
-                    stdout=stdout_file,
-                    stderr=stderr_file,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
-                )
-        time.sleep(1)
-        if not psutil.pid_exists(process.pid):
-            messagebox.showerror("Start Failed", f"Server process terminated immediately after starting. Check logs at {stderr_log}")
+        if self.server_manager is None:
+            messagebox.showerror("Error", "Server manager not initialized.")
             return
-        self.variables["processStatHistory"][process.pid] = {
-            "cpu": [], "memory": [], "timestamps": []
-        }
-        server_config['ProcessId'] = process.pid
-        server_config['StartTime'] = start_time.isoformat()
-        server_config['LastUpdate'] = datetime.datetime.now().isoformat()
-        server_config['LogStdout'] = stdout_log
-        server_config['LogStderr'] = stderr_log
-        with open(config_file, 'w') as f:
-            json.dump(server_config, f, indent=4)
-        self.update_server_list(force_refresh=True)
-        messagebox.showinfo("Success", f"Server '{server_name}' started successfully with PID {process.pid}.")
+            
+        try:
+            # Use the server manager to start the server
+            success, message = self.server_manager.start_server_advanced(
+                server_name, 
+                callback=lambda status: self.update_server_status(server_name, status)
+            )
+            
+            if success:
+                messagebox.showinfo("Success", message)
+                self.update_server_list(force_refresh=True)
+            else:
+                messagebox.showerror("Error", message)
+                
+        except Exception as e:
+            logger.error(f"Error starting server: {str(e)}")
+            messagebox.showerror("Error", f"Failed to start server: {str(e)}")
 
     def stop_server(self):
         """Stop the selected game server"""
-
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -1560,165 +1192,31 @@ class ServerManagerDashboard:
             
         server_name = self.server_list.item(selected_items[0])['values'][0]
         
+        if self.server_manager is None:
+            messagebox.showerror("Error", "Server manager not initialized.")
+            return
+            
+        # Confirm server stop
+        confirm = messagebox.askyesno("Confirm Stop", 
+                                    f"Are you sure you want to stop the server '{server_name}'?",
+                                    icon=messagebox.WARNING)
+        
+        if not confirm:
+            return
+            
         try:
-            # Get server config file path
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            # Use the server manager to stop the server
+            success, message = self.server_manager.stop_server_advanced(
+                server_name,
+                callback=lambda status: self.update_server_status(server_name, status)
+            )
             
-            if not os.path.exists(config_file):
-                messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
-                return
-                
-            # Read server configuration
-            with open(config_file, 'r') as f:
-                server_config = json.load(f)
-                
-            # Check if server has a process ID registered
-            if 'ProcessId' not in server_config:
-                messagebox.showinfo("Not Running", f"Server '{server_name}' is not running.")
-                return
-                
-            process_id = server_config['ProcessId']
-            
-            # Check if process is still running
-            if not self.is_process_running(process_id):
-                messagebox.showinfo("Not Running", f"Server process (PID {process_id}) is not running.")
-                
-                # Clean up the process ID in the config
-                server_config.pop('ProcessId', None)
-                server_config.pop('StartTime', None)
-                server_config['LastUpdate'] = datetime.datetime.now().isoformat()
-                
-                # Save updated configuration
-                with open(config_file, 'w') as f:
-                    json.dump(server_config, f, indent=4)
-                    
-                # Update server list
+            if success:
+                messagebox.showinfo("Success", message)
                 self.update_server_list(force_refresh=True)
-                return
-                
-            # Confirm server stop
-            confirm = messagebox.askyesno("Confirm Stop", 
-                                        f"Are you sure you want to stop the server '{server_name}' (PID {process_id})?",
-                                        icon=messagebox.WARNING)
-            
-            if not confirm:
-                return
-                
-            # Update status in UI temporarily
-            self.update_server_status(server_name, "Stopping...")
-                
-            # Try to use custom stop command if available
-            if 'StopCommand' in server_config and server_config['StopCommand']:
-                try:
-                    stop_cmd = server_config['StopCommand']
-                    install_dir = server_config.get('InstallDir', '')
-                    
-                    logger.info(f"Executing custom stop command: {stop_cmd}")
-                    
-                    # Execute stop command with timeout
-                    stop_process = subprocess.Popen(
-                        stop_cmd, 
-                        shell=True, 
-                        cwd=install_dir,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    
-                    try:
-                        stdout, stderr = stop_process.communicate(timeout=30)
-                        if stderr:
-                            logger.warning(f"Stop command produced error output: {stderr.decode('utf-8', errors='replace')}")
-                    except subprocess.TimeoutExpired:
-                        stop_process.kill()
-                        logger.warning("Stop command timed out after 30 seconds")
-                    
-                    # Wait a bit to see if the process stops
-                    for _ in range(5):  # Try for 5 seconds
-                        if not self.is_process_running(process_id):
-                            # Process stopped successfully
-                            server_config.pop('ProcessId', None)
-                            server_config.pop('StartTime', None)
-                            server_config['LastUpdate'] = datetime.datetime.now().isoformat()
-                            
-                            # Clean up process history
-                            if process_id in self.variables["processStatHistory"]:
-                                del self.variables["processStatHistory"][process_id]
-                            
-                            # Save updated configuration
-                            with open(config_file, 'w') as f:
-                                json.dump(server_config, f, indent=4)
-                                
-                            # Update server list
-                            self.update_server_list(force_refresh=True)
-                            
-                            messagebox.showinfo("Success", f"Server '{server_name}' stopped successfully.")
-                            return
-                        time.sleep(1)
-                        
-                    logger.warning(f"Custom stop command did not stop the server, using force termination")
-                except Exception as e:
-                    logger.error(f"Error executing custom stop command: {str(e)}")
-            
-            # If we got here, either the custom stop command failed or wasn't available
-            # Try to terminate the process
-            try:
-                process = psutil.Process(process_id)
-                
-                # Get all child processes
-                children = []
-                try:
-                    children = process.children(recursive=True)
-                except:
-                    logger.warning(f"Could not get child processes for PID {process_id}")
-                
-                # First try graceful termination
-                try:
-                    process.terminate()
-                    logger.info(f"Sent termination signal to process {process_id}")
-                except:
-                    logger.warning(f"Failed to terminate process {process_id}")
-                
-                # Wait up to 5 seconds for the process to terminate
-                gone, alive = psutil.wait_procs([process], timeout=5)
-                
-                if process in alive:
-                    # If it doesn't terminate, kill it forcefully
-                    logger.warning(f"Process {process_id} did not terminate gracefully, using force kill")
-                    process.kill()
-                
-                # Terminate any remaining child processes
-                if children:
-                    for child in children:
-                        try:
-                            if child.is_running():
-                                child.kill()
-                                logger.info(f"Killed child process with PID {child.pid}")
-                        except:
-                            pass
-                
-                logger.info(f"Terminated server process with PID {process_id}")
-                
-                # Update server configuration
-                server_config.pop('ProcessId', None)
-                server_config.pop('StartTime', None)
-                server_config['LastUpdate'] = datetime.datetime.now().isoformat()
-                
-                # Clean up process history
-                if process_id in self.variables["processStatHistory"]:
-                    del self.variables["processStatHistory"][process_id]
-                
-                # Save updated configuration
-                with open(config_file, 'w') as f:
-                    json.dump(server_config, f, indent=4)
-                    
-                # Update server list
+            else:
+                messagebox.showinfo("Info", message)
                 self.update_server_list(force_refresh=True)
-                
-                messagebox.showinfo("Success", f"Server '{server_name}' stopped successfully.")
-                
-            except Exception as e:
-                logger.error(f"Failed to stop server process: {str(e)}")
-                messagebox.showerror("Error", f"Failed to stop server: {str(e)}")
                 
         except Exception as e:
             logger.error(f"Error stopping server: {str(e)}")
@@ -1733,6 +1231,10 @@ class ServerManagerDashboard:
             
         server_name = self.server_list.item(selected_items[0])['values'][0]
         
+        if self.server_manager is None:
+            messagebox.showerror("Error", "Server manager not initialized.")
+            return
+        
         # Confirm restart
         confirm = messagebox.askyesno("Confirm Restart", 
                                     f"Are you sure you want to restart the server '{server_name}'?",
@@ -1742,40 +1244,18 @@ class ServerManagerDashboard:
             return
             
         try:
-            # Get server config file path
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            # Use the server manager to restart the server
+            success, message = self.server_manager.restart_server_advanced(
+                server_name,
+                callback=lambda status: self.update_server_status(server_name, status)
+            )
             
-            if not os.path.exists(config_file):
-                messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
-                return
+            if success:
+                messagebox.showinfo("Success", message)
+                self.update_server_list(force_refresh=True)
+            else:
+                messagebox.showerror("Error", message)
                 
-            # Read server configuration
-            with open(config_file, 'r') as f:
-                server_config = json.load(f)
-            
-            # Check if server is running
-            is_running = False
-            if 'ProcessId' in server_config:
-                process_id = server_config['ProcessId']
-                is_running = self.is_process_running(process_id)
-            
-            # Update status in UI temporarily
-            self.update_server_status(server_name, "Restarting...")
-            
-            # If running, stop first
-            if is_running:
-                # Store a copy of the config before stopping
-                config_copy = server_config.copy()
-                
-                # Stop the server
-                self.stop_server()
-                
-                # Wait a moment for process to fully terminate
-                time.sleep(2)
-            
-            # Start the server
-            self.start_server()
-            
         except Exception as e:
             logger.error(f"Error restarting server: {str(e)}")
             messagebox.showerror("Error", f"Failed to restart server: {str(e)}")
@@ -2075,13 +1555,19 @@ class ServerManagerDashboard:
         if not selected:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
+            
         server_name = self.server_list.item(selected[0])['values'][0]
-        config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-        if not os.path.exists(config_file):
-            messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
+        
+        if self.server_manager is None:
+            messagebox.showerror("Error", "Server manager not initialized.")
             return
-        with open(config_file, 'r') as f:
-            server_config = json.load(f)
+            
+        # Get server configuration from server manager
+        server_config = self.server_manager.get_server_config(server_name)
+        if not server_config:
+            messagebox.showerror("Error", f"Server configuration not found for: {server_name}")
+            return
+            
         install_dir = server_config.get('InstallDir','')
         if not install_dir or not os.path.exists(install_dir):
             messagebox.showerror("Error", "Server installation directory not found.")
@@ -2275,14 +1761,15 @@ class ServerManagerDashboard:
             mode = startup_mode_var.get()
             
             if not ep:
-                messagebox.showerror("Validation Error","Executable path is required."); return
+                messagebox.showerror("Validation Error", "Executable path is required.")
+                return
             
             # resolve abs paths for validation
             ep_abs = ep if os.path.isabs(ep) else os.path.join(install_dir,ep)
             if not os.path.exists(ep_abs):
                 if not messagebox.askyesno("Warning",f"Executable not found: {ep_abs}\nSave anyway?"): return
             
-            # Validate based on mode
+            # Prepare configuration based on mode
             if mode == "manual":
                 startup_args = args_var.get().strip()
                 use_config = False
@@ -2306,18 +1793,27 @@ class ServerManagerDashboard:
                 else:
                     messagebox.showerror("Validation Error", "Config file path is required when using config file mode."); return
             
-            server_config.update({
-                'ExecutablePath': ep,
-                'StartupArgs': startup_args,
-                'StopCommand': sc,
-                'UseConfigFile': use_config,
-                'ConfigFilePath': config_file_path,
-                'ConfigArgument': config_arg,
-                'AdditionalArgs': additional_args,
-                'LastUpdate': datetime.datetime.now().isoformat()
-            })
-            with open(config_file,'w') as f: json.dump(server_config,f,indent=4)
-            messagebox.showinfo("Success","Configuration saved."); dialog.destroy()
+            # Use server manager to update configuration
+            try:
+                if self.server_manager:
+                    success, message = self.server_manager.update_server_config(
+                        server_name, ep, startup_args, sc, use_config, 
+                        config_file_path, config_arg, additional_args
+                    )
+                else:
+                    success = False
+                    message = "Server manager not initialized"
+                
+                if success:
+                    messagebox.showinfo("Success", "Configuration saved.")
+                    dialog.destroy()
+                else:
+                    messagebox.showerror("Error", message)
+                    
+            except Exception as e:
+                logger.error(f"Error saving configuration: {str(e)}")
+                messagebox.showerror("Error", f"Failed to save configuration: {str(e)}")
+                
         ttk.Button(btns, text="Save", command=save).pack(side=tk.RIGHT,padx=5)
         ttk.Button(btns, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
 
@@ -2382,7 +1878,7 @@ class ServerManagerDashboard:
             messagebox.showerror("Error", f"Failed to open server directory: {str(e)}")
 
     def remove_server(self):
-        """Remove the selected server configuration"""
+        """Remove the selected server configuration and optionally files"""
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -2390,53 +1886,79 @@ class ServerManagerDashboard:
             
         server_name = self.server_list.item(selected_items[0])['values'][0]
         
-        # Confirm removal
-        confirm = messagebox.askyesno("Confirm Removal", 
-                                    f"Are you sure you want to remove the server '{server_name}'?\n\n"
-                                    "This will only remove the configuration, not the server files.",
-                                    icon=messagebox.WARNING)
-        
-        if not confirm:
+        if self.server_manager is None:
+            messagebox.showerror("Error", "Server manager not initialized.")
             return
-            
-        try:
-            # Get server config file path
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-            
-            if not os.path.exists(config_file):
-                messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
-                return
+        
+        # Create removal options dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Remove Server")
+        dialog.geometry("400x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Server name
+        ttk.Label(main_frame, text=f"Remove server: {server_name}", font=("Segoe UI", 12, "bold")).pack(pady=10)
+        
+        # Options
+        remove_files_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(main_frame, text="Also remove server files from disk", 
+                       variable=remove_files_var).pack(pady=5)
+        
+        ttk.Label(main_frame, text="Warning: This action cannot be undone!", 
+                 foreground="red").pack(pady=5)
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=20)
+        
+        def confirm_removal():
+            try:
+                remove_files = remove_files_var.get()
                 
-            # Check if server is running
-            with open(config_file, 'r') as f:
-                server_config = json.load(f)
+                # Use server manager to remove/uninstall the server
+                if self.server_manager:
+                    success, message = self.server_manager.uninstall_server(
+                        server_name, remove_files=remove_files
+                    )
+                else:
+                    success = False
+                    message = "Server manager not initialized"
                 
-            if 'ProcessId' in server_config and self.is_process_running(server_config['ProcessId']):
-                messagebox.showerror("Error", 
-                                   f"Cannot remove server '{server_name}' while it is running. "
-                                   "Please stop the server first.")
-                return
-                
-            # Remove the configuration file
-            os.remove(config_file)
-            logger.info(f"Removed server configuration: {server_name}")
-            
-            # Clean up any process history
-            process_id = server_config.get('ProcessId')
-            if process_id and process_id in self.variables["processStatHistory"]:
-                del self.variables["processStatHistory"][process_id]
-            
-            # Update server list
-            self.update_server_list(force_refresh=True)
-            
-            messagebox.showinfo("Success", f"Server '{server_name}' configuration removed successfully.")
-            
-        except Exception as e:
-            logger.error(f"Error removing server: {str(e)}")
-            messagebox.showerror("Error", f"Failed to remove server: {str(e)}")
+                if success:
+                    # Update server list
+                    self.update_server_list(force_refresh=True)
+                    messagebox.showinfo("Success", message)
+                    dialog.destroy()
+                else:
+                    messagebox.showerror("Error", message)
+                    
+            except Exception as e:
+                logger.error(f"Error removing server: {str(e)}")
+                messagebox.showerror("Error", f"Failed to remove server: {str(e)}")
+        
+        def cancel_removal():
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="Remove", command=confirm_removal, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=cancel_removal, width=15).pack(side=tk.LEFT, padx=5)
+        
+        # Center dialog
+        dialog.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
 
     def import_server(self):
         """Import an existing server from a directory"""
+        if self.server_manager is None:
+            messagebox.showerror("Error", "Server manager not initialized.")
+            return
+            
         try:
             # Ask user to select a directory
             install_dir = filedialog.askdirectory(
@@ -2505,16 +2027,11 @@ class ServerManagerDashboard:
             # Auto-detect common server files
             def auto_detect():
                 try:
-                    found_files = []
-                    
-                    # Look for common server executables
-                    for file in os.listdir(install_dir):
-                        file_lower = file.lower()
-                        if any(pattern in file_lower for pattern in [
-                            'server.exe', 'dedicated', 'srcds', 'minecraft_server', 
-                            'server.jar', 'forge', 'fabric', 'spigot', 'paper'
-                        ]):
-                            found_files.append(file)
+                    if self.server_manager:
+                        found_files = self.server_manager.auto_detect_server_executable(install_dir)
+                    else:
+                        messagebox.showerror("Error", "Server manager not initialized.")
+                        return
                     
                     if found_files:
                         # Show selection dialog if multiple found
@@ -2571,37 +2088,22 @@ class ServerManagerDashboard:
                         messagebox.showerror("Validation Error", "Executable path is required.")
                         return
                     
-                    # Check if server name already exists
-                    config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-                    if os.path.exists(config_file):
-                        messagebox.showerror("Validation Error", "A server with this name already exists.")
-                        return
+                    # Use server manager to import the server
+                    if self.server_manager:
+                        success, message = self.server_manager.import_server_config(
+                            server_name, server_type, install_dir, executable_path, startup_args
+                        )
+                    else:
+                        success = False
+                        message = "Server manager not initialized"
                     
-                    # Create server configuration
-                    server_config = {
-                        "Name": server_name,
-                        "Type": server_type,
-                        "AppID": "",
-                        "InstallDir": install_dir,
-                        "ExecutablePath": executable_path,
-                        "StartupArgs": startup_args,
-                        "Created": datetime.datetime.now().isoformat(),
-                        "LastUpdate": datetime.datetime.now().isoformat(),
-                        "Imported": True
-                    }
-                    
-                    # Save configuration
-                    os.makedirs(self.paths["servers"], exist_ok=True)
-                    with open(config_file, 'w') as f:
-                        json.dump(server_config, f, indent=4)
-                    
-                    logger.info(f"Imported server: {server_name} from {install_dir}")
-                    
-                    # Update server list
-                    self.update_server_list(force_refresh=True)
-                    
-                    messagebox.showinfo("Success", f"Server '{server_name}' imported successfully!")
-                    dialog.destroy()
+                    if success:
+                        # Update server list
+                        self.update_server_list(force_refresh=True)
+                        messagebox.showinfo("Success", message)
+                        dialog.destroy()
+                    else:
+                        messagebox.showerror("Error", message)
                     
                 except Exception as e:
                     logger.error(f"Error importing server: {str(e)}")
@@ -2617,6 +2119,8 @@ class ServerManagerDashboard:
             dialog.geometry(f"+{x}+{y}")
             
         except Exception as e:
+            logger.error(f"Error during import: {str(e)}")
+            messagebox.showerror("Error", f"Failed to import server: {str(e)}")
             logger.error(f"Error in import server: {str(e)}")
             messagebox.showerror("Error", f"Failed to import server: {str(e)}")
 
@@ -2635,7 +2139,7 @@ class ServerManagerDashboard:
             self.update_webserver_status()
             
             # Monitor processes
-            self.monitor_processes()
+            self.timer_manager.monitor_processes()
             
             messagebox.showinfo("Refresh Complete", "All dashboard data has been refreshed.")
             
@@ -2688,7 +2192,10 @@ class ServerManagerDashboard:
                                     
                                     # Update local configuration timestamp
                                     server_config['LastSync'] = datetime.datetime.now().isoformat()
-                                    server_config['SyncedBy'] = self.current_user.username
+                                    if self.current_user and hasattr(self.current_user, 'username'):
+                                        server_config['SyncedBy'] = self.current_user.username
+                                    else:
+                                        server_config['SyncedBy'] = "Unknown"
                                     
                                     # Save updated configuration
                                     with open(os.path.join(servers_path, file), 'w') as f:

@@ -29,6 +29,7 @@ class LogManager:
         self.formatters = {}
         self.handlers = {}
         self.loggers = {}
+        self._dashboard_logger = None
         self._setup_formatters()
         self._maintenance_thread = None
         self._log_stats = {
@@ -241,6 +242,112 @@ class LogManager:
             logger = self.get_logger("errors", log_file, formatter_name="detailed", level=logging.ERROR)
             return logger
         return self.loggers["errors"]
+
+    def get_dashboard_logger(self):
+        """Get the dashboard logger"""
+        if self._dashboard_logger is None:
+            log_file = os.path.join(self.paths["logs"], "dashboard.log")
+            self._dashboard_logger = self.get_logger("dashboard", log_file, formatter_name="detailed")
+        return self._dashboard_logger
+
+    def configure_dashboard_logging(self, debug_mode=False, config=None):
+        """Configure logging specifically for the dashboard"""
+        try:
+            # Get dashboard logger
+            dashboard_logger = self.get_dashboard_logger()
+            
+            # Set log level based on debug mode and config
+            if debug_mode:
+                self.set_log_level("DEBUG")
+                dashboard_logger.setLevel(logging.DEBUG)
+            else:
+                log_level = "INFO"
+                if config and "logging" in config and "logLevel" in config["logging"]:
+                    log_level = config["logging"]["logLevel"]
+                self.set_log_level(log_level)
+                dashboard_logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+            
+            dashboard_logger.info("Dashboard logging configured successfully")
+            return True
+            
+        except Exception as e:
+            print(f"Failed to configure dashboard logging: {str(e)}")
+            return False
+
+    def write_pid_file(self, process_type, pid, temp_path):
+        """Write process ID to file"""
+        try:
+            pid_file = os.path.join(temp_path, f"{process_type}.pid")
+            
+            # Create PID info dictionary
+            pid_info = {
+                "ProcessId": pid,
+                "StartTime": datetime.datetime.now().isoformat(),
+                "ProcessType": process_type
+            }
+            
+            # Write PID info to file as JSON
+            with open(pid_file, 'w') as f:
+                json.dump(pid_info, f)
+                
+            dashboard_logger = self.get_dashboard_logger()
+            dashboard_logger.debug(f"PID file created for {process_type}: {pid}")
+            return True
+            
+        except Exception as e:
+            dashboard_logger = self.get_dashboard_logger()
+            dashboard_logger.error(f"Failed to write PID file for {process_type}: {str(e)}")
+            return False
+
+    def log_server_action(self, server_name, action, result="SUCCESS", details=None):
+        """Log server-related actions"""
+        dashboard_logger = self.get_dashboard_logger()
+        
+        msg = f"Server: {server_name} | Action: {action} | Result: {result}"
+        if details:
+            msg += f" | Details: {details}"
+        
+        if result == "SUCCESS":
+            dashboard_logger.info(msg)
+        elif result == "WARNING":
+            dashboard_logger.warning(msg)
+        else:
+            dashboard_logger.error(msg)
+
+    def log_installation_progress(self, server_name, stage, message):
+        """Log server installation progress"""
+        dashboard_logger = self.get_dashboard_logger()
+        dashboard_logger.info(f"Installation [{server_name}] {stage}: {message}")
+
+    def log_process_monitoring(self, message, level="INFO"):
+        """Log process monitoring events"""
+        dashboard_logger = self.get_dashboard_logger()
+        
+        if level.upper() == "DEBUG":
+            dashboard_logger.debug(f"Process Monitor: {message}")
+        elif level.upper() == "WARNING":
+            dashboard_logger.warning(f"Process Monitor: {message}")
+        elif level.upper() == "ERROR":
+            dashboard_logger.error(f"Process Monitor: {message}")
+        else:
+            dashboard_logger.info(f"Process Monitor: {message}")
+
+    def log_dashboard_event(self, event_type, message, level="INFO"):
+        """Log general dashboard events"""
+        dashboard_logger = self.get_dashboard_logger()
+        
+        formatted_msg = f"[{event_type}] {message}"
+        
+        if level.upper() == "DEBUG":
+            dashboard_logger.debug(formatted_msg)
+        elif level.upper() == "WARNING":
+            dashboard_logger.warning(formatted_msg)
+        elif level.upper() == "ERROR":
+            dashboard_logger.error(formatted_msg)
+        elif level.upper() == "CRITICAL":
+            dashboard_logger.critical(formatted_msg)
+        else:
+            dashboard_logger.info(formatted_msg)
 
     def log_security_event(self, event_type, message, user=None, severity="INFO"):
         """Log security-related events"""
@@ -514,6 +621,9 @@ def get_performance_logger():
 def get_error_logger():
     return log_manager.get_error_logger()
 
+def get_dashboard_logger():
+    return log_manager.get_dashboard_logger()
+
 def log_exception(logger, message="An exception occurred", exc_info=None):
     log_manager.log_exception(logger, message, exc_info)
 
@@ -534,3 +644,21 @@ def start_log_maintenance():
 
 def get_log_statistics():
     return log_manager.get_log_statistics()
+
+def configure_dashboard_logging(debug_mode=False, config=None):
+    return log_manager.configure_dashboard_logging(debug_mode, config)
+
+def write_pid_file(process_type, pid, temp_path):
+    return log_manager.write_pid_file(process_type, pid, temp_path)
+
+def log_server_action(server_name, action, result="SUCCESS", details=None):
+    log_manager.log_server_action(server_name, action, result, details)
+
+def log_installation_progress(server_name, stage, message):
+    log_manager.log_installation_progress(server_name, stage, message)
+
+def log_process_monitoring(message, level="INFO"):
+    log_manager.log_process_monitoring(message, level)
+
+def log_dashboard_event(event_type, message, level="INFO"):
+    log_manager.log_dashboard_event(event_type, message, level)

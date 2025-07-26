@@ -4,6 +4,10 @@ import json
 import logging
 import subprocess
 import winreg
+import time
+import psutil
+import urllib.request
+import threading
 from datetime import datetime
 
 # Configure logging
@@ -13,6 +17,40 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger("ServerManager")
+
+# Import Minecraft-specific functions
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Scripts'))
+
+# Define fallback functions with correct types
+def _fallback_fetch_minecraft_versions():
+    return []
+
+def _fallback_get_minecraft_server_jar_url(version_id, versions_list):
+    return None
+
+def _fallback_fetch_fabric_installer_url(mc_version):
+    return None
+
+def _fallback_fetch_forge_installer_url(mc_version):
+    return None
+
+def _fallback_fetch_neoforge_installer_url(mc_version):
+    return None
+
+try:
+    from Scripts.minecraft import (
+        fetch_minecraft_versions, get_minecraft_server_jar_url,
+        fetch_fabric_installer_url, fetch_forge_installer_url,
+        fetch_neoforge_installer_url
+    )
+except ImportError:
+    logger.warning("Minecraft helper functions not available")
+    # Use fallback functions
+    fetch_minecraft_versions = _fallback_fetch_minecraft_versions
+    get_minecraft_server_jar_url = _fallback_get_minecraft_server_jar_url
+    fetch_fabric_installer_url = _fallback_fetch_fabric_installer_url
+    fetch_forge_installer_url = _fallback_fetch_forge_installer_url
+    fetch_neoforge_installer_url = _fallback_fetch_neoforge_installer_url
 
 class ServerManager:
     """Main class for server management"""
@@ -218,6 +256,1003 @@ class ServerManager:
         except Exception as e:
             logger.error(f"Error stopping server {server_name}: {str(e)}")
             return False
+
+    def is_process_running(self, pid):
+        """Check if a process with the given PID is running"""
+        try:
+            return psutil.pid_exists(pid)
+        except:
+            return False
+    
+    def start_server_advanced(self, server_name, callback=None):
+        """Start the selected game server (Steam/Minecraft/Other) - Advanced version with proper process management"""
+        try:
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            if not os.path.exists(config_file):
+                logger.error(f"Server configuration file not found: {config_file}")
+                return False, f"Server configuration file not found: {config_file}"
+                
+            with open(config_file, 'r') as f:
+                server_config = json.load(f)
+                
+            if 'ProcessId' in server_config and self.is_process_running(server_config['ProcessId']):
+                logger.info(f"Server '{server_name}' is already running with PID {server_config['ProcessId']}.")
+                return False, f"Server '{server_name}' is already running with PID {server_config['ProcessId']}."
+                
+            server_type = server_config.get("Type", "Other")
+            install_dir = server_config.get('InstallDir', '')
+            executable_path = server_config.get('ExecutablePath', '')
+            startup_args = server_config.get('StartupArgs', '')
+            use_config_file = server_config.get('UseConfigFile', False)
+            config_file_path = server_config.get('ConfigFilePath', '')
+            config_argument = server_config.get('ConfigArgument', '--config')
+            additional_args = server_config.get('AdditionalArgs', '')
+            
+            if not executable_path:
+                logger.error("No executable specified. Please configure the server startup settings.")
+                return False, "No executable specified. Please configure the server startup settings."
+                
+            # Resolve executable path
+            exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
+            if not os.path.exists(exe_full):
+                logger.error(f"Executable not found: {exe_full}")
+                return False, f"Executable not found: {exe_full}"
+            
+            # Build command with config file support
+            cmd_parts = [f'"{exe_full}"']
+            
+            if use_config_file:
+                # Config file mode
+                # Add additional arguments first (if any)
+                if additional_args:
+                    cmd_parts.append(additional_args)
+                
+                # Add config file argument
+                if config_file_path and config_argument:
+                    config_full = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
+                    if os.path.exists(config_full):
+                        cmd_parts.append(f'{config_argument} "{config_full}"')
+                        logger.info(f"Using config file: {config_full}")
+                    else:
+                        logger.warning(f"Config file not found: {config_full}, starting without config file")
+            else:
+                # Manual arguments mode
+                if startup_args:
+                    cmd_parts.append(startup_args)
+            
+            # Build final command
+            if server_type == "Minecraft":
+                # For Minecraft servers, keep the Java-specific handling
+                cmd = f'java -Xmx1024M -Xms1024M -jar "{exe_full}" nogui'
+                if use_config_file:
+                    if additional_args:
+                        cmd += f' {additional_args}'
+                    if config_file_path and config_argument and os.path.exists(config_full):
+                        cmd += f' {config_argument} "{config_full}"'
+                else:
+                    if startup_args:
+                        cmd += f' {startup_args}'
+                shell = True
+            elif exe_full.lower().endswith(('.bat', '.cmd')):
+                cmd = f'start "" /D "{install_dir}" cmd /c ' + ' '.join(cmd_parts)
+                shell = True
+            elif exe_full.lower().endswith('.sh') and sys.platform != 'win32':
+                cmd = ['/bin/sh', exe_full]
+                if use_config_file:
+                    if additional_args:
+                        cmd.extend(additional_args.split())
+                    if config_file_path and config_argument and os.path.exists(config_full):
+                        cmd.extend([config_argument, config_full])
+                else:
+                    if startup_args:
+                        cmd.extend(startup_args.split())
+                shell = False
+            else:
+                cmd = ' '.join(cmd_parts)
+                shell = True
+            
+            server_logs_dir = os.path.join(install_dir, "logs")
+            os.makedirs(server_logs_dir, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            stdout_log = os.path.join(server_logs_dir, f"server_stdout_{timestamp}.log")
+            stderr_log = os.path.join(server_logs_dir, f"server_stderr_{timestamp}.log")
+            
+            logger.info(f"Starting server '{server_name}' with command: {cmd}")
+            
+            if callback:
+                callback(f"Starting server '{server_name}'...")
+                
+            with open(stdout_log, 'a') as stdout_file, open(stderr_log, 'a') as stderr_file:
+                start_time = datetime.now()
+                time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+                stdout_file.write(f"\n--- Server started at {time_str} ---\n")
+                stdout_file.write(f"Command: {cmd}\n\n")
+                
+                if shell:
+                    process = subprocess.Popen(
+                        cmd,
+                        shell=True,
+                        cwd=install_dir,
+                        stdout=stdout_file,
+                        stderr=stderr_file,
+                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
+                    )
+                else:
+                    process = subprocess.Popen(
+                        cmd,
+                        cwd=install_dir,
+                        stdout=stdout_file,
+                        stderr=stderr_file,
+                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
+                    )
+            
+            time.sleep(1)
+            if not psutil.pid_exists(process.pid):
+                logger.error(f"Server process terminated immediately after starting. Check logs at {stderr_log}")
+                return False, f"Server process terminated immediately after starting. Check logs at {stderr_log}"
+            
+            # Update server configuration
+            server_config['ProcessId'] = process.pid
+            server_config['StartTime'] = start_time.isoformat()
+            server_config['LastUpdate'] = datetime.now().isoformat()
+            server_config['LogStdout'] = stdout_log
+            server_config['LogStderr'] = stderr_log
+            
+            # Save updated configuration
+            self.save_server_config(server_name, server_config)
+            
+            logger.info(f"Server '{server_name}' started successfully with PID {process.pid}.")
+            return True, f"Server '{server_name}' started successfully with PID {process.pid}."
+            
+        except Exception as e:
+            logger.error(f"Error starting server '{server_name}': {str(e)}")
+            return False, f"Error starting server '{server_name}': {str(e)}"
+
+    def stop_server_advanced(self, server_name, callback=None):
+        """Stop the selected game server - Advanced version with proper process management"""
+        try:
+            # Get server config file path
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            
+            if not os.path.exists(config_file):
+                logger.error(f"Server configuration file not found: {config_file}")
+                return False, f"Server configuration file not found: {config_file}"
+                
+            # Read server configuration
+            with open(config_file, 'r') as f:
+                server_config = json.load(f)
+                
+            # Check if server has a process ID registered
+            if 'ProcessId' not in server_config:
+                logger.info(f"Server '{server_name}' is not running.")
+                return False, f"Server '{server_name}' is not running."
+                
+            process_id = server_config['ProcessId']
+            
+            # Check if process is still running
+            if not self.is_process_running(process_id):
+                logger.info(f"Server process (PID {process_id}) is not running.")
+                
+                # Clean up the process ID in the config
+                server_config.pop('ProcessId', None)
+                server_config.pop('StartTime', None)
+                server_config['LastUpdate'] = datetime.now().isoformat()
+                
+                # Save updated configuration
+                self.save_server_config(server_name, server_config)
+                return False, f"Server process (PID {process_id}) is not running."
+                
+            if callback:
+                callback(f"Stopping server '{server_name}'...")
+                
+            # Try to use custom stop command if available
+            if 'StopCommand' in server_config and server_config['StopCommand']:
+                try:
+                    stop_cmd = server_config['StopCommand']
+                    install_dir = server_config.get('InstallDir', '')
+                    
+                    logger.info(f"Executing custom stop command: {stop_cmd}")
+                    
+                    # Execute stop command with timeout
+                    stop_process = subprocess.Popen(
+                        stop_cmd, 
+                        shell=True, 
+                        cwd=install_dir,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
+                    )
+                    
+                    try:
+                        stdout, stderr = stop_process.communicate(timeout=30)
+                        if stderr:
+                            logger.warning(f"Stop command produced error output: {stderr.decode('utf-8', errors='replace')}")
+                    except subprocess.TimeoutExpired:
+                        stop_process.kill()
+                        logger.warning("Stop command timed out after 30 seconds")
+                    
+                    # Wait a bit to see if the process stops
+                    for _ in range(5):  # Try for 5 seconds
+                        if not self.is_process_running(process_id):
+                            # Process stopped successfully
+                            server_config.pop('ProcessId', None)
+                            server_config.pop('StartTime', None)
+                            server_config['LastUpdate'] = datetime.now().isoformat()
+                            
+                            # Save updated configuration
+                            self.save_server_config(server_name, server_config)
+                            
+                            logger.info(f"Server '{server_name}' stopped successfully.")
+                            return True, f"Server '{server_name}' stopped successfully."
+                        time.sleep(1)
+                        
+                    logger.warning(f"Custom stop command did not stop the server, using force termination")
+                except Exception as e:
+                    logger.error(f"Error executing custom stop command: {str(e)}")
+            
+            # If we got here, either the custom stop command failed or wasn't available
+            # Try to terminate the process
+            try:
+                process = psutil.Process(process_id)
+                
+                # Get all child processes
+                children = []
+                try:
+                    children = process.children(recursive=True)
+                except:
+                    logger.warning(f"Could not get child processes for PID {process_id}")
+                
+                # First try graceful termination
+                try:
+                    process.terminate()
+                    logger.info(f"Sent termination signal to process {process_id}")
+                except:
+                    logger.warning(f"Failed to terminate process {process_id}")
+                
+                # Wait up to 5 seconds for the process to terminate
+                gone, alive = psutil.wait_procs([process], timeout=5)
+                
+                if process in alive:
+                    # If it doesn't terminate, kill it forcefully
+                    logger.warning(f"Process {process_id} did not terminate gracefully, using force kill")
+                    process.kill()
+                
+                # Terminate any remaining child processes
+                if children:
+                    for child in children:
+                        try:
+                            if child.is_running():
+                                child.kill()
+                                logger.info(f"Killed child process with PID {child.pid}")
+                        except:
+                            pass
+                
+                logger.info(f"Terminated process PID {process_id}")
+                
+                # Update server configuration
+                server_config.pop('ProcessId', None)
+                server_config.pop('StartTime', None)
+                server_config['LastUpdate'] = datetime.now().isoformat()
+                
+                # Save updated configuration
+                self.save_server_config(server_name, server_config)
+                
+                logger.info(f"Server '{server_name}' stopped successfully.")
+                return True, f"Server '{server_name}' stopped successfully."
+                
+            except Exception as e:
+                logger.error(f"Failed to stop server process: {str(e)}")
+                return False, f"Failed to stop server: {str(e)}"
+                
+        except Exception as e:
+            logger.error(f"Error stopping server: {str(e)}")
+            return False, f"Failed to stop server: {str(e)}"
+
+    def restart_server_advanced(self, server_name, callback=None):
+        """Restart the selected game server - Advanced version with proper process management"""
+        try:
+            # Get server config file path
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            
+            if not os.path.exists(config_file):
+                logger.error(f"Server configuration file not found: {config_file}")
+                return False, f"Server configuration file not found: {config_file}"
+                
+            # Read server configuration
+            with open(config_file, 'r') as f:
+                server_config = json.load(f)
+            
+            # Check if server is running
+            is_running = False
+            if 'ProcessId' in server_config:
+                process_id = server_config['ProcessId']
+                is_running = self.is_process_running(process_id)
+            
+            if callback:
+                callback(f"Restarting server '{server_name}'...")
+            
+            # If running, stop first (without confirmation dialog)
+            if is_running:
+                try:
+                    # Try to use custom stop command if available
+                    if 'StopCommand' in server_config and server_config['StopCommand']:
+                        try:
+                            stop_cmd = server_config['StopCommand']
+                            install_dir = server_config.get('InstallDir', '')
+                            
+                            logger.info(f"Executing custom stop command for restart: {stop_cmd}")
+                            
+                            # Execute stop command with timeout
+                            stop_process = subprocess.Popen(
+                                stop_cmd, 
+                                shell=True, 
+                                cwd=install_dir,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE
+                            )
+                            
+                            try:
+                                stdout, stderr = stop_process.communicate(timeout=30)
+                                if stderr:
+                                    logger.warning(f"Stop command produced error output: {stderr.decode('utf-8', errors='replace')}")
+                            except subprocess.TimeoutExpired:
+                                stop_process.kill()
+                                logger.warning("Stop command timed out after 30 seconds")
+                        
+                            # Wait a bit to see if the process stops
+                            for _ in range(5):  # Try for 5 seconds
+                                if not self.is_process_running(process_id):
+                                    # Process stopped successfully
+                                    break
+                                time.sleep(1)
+                            else:
+                                logger.warning(f"Custom stop command did not stop the server, using force termination")
+                                raise Exception("Custom stop command failed")
+                        
+                        except Exception as e:
+                            logger.error(f"Error executing custom stop command: {str(e)}")
+                            # Fall through to force termination
+                    
+                    # If we got here, either the custom stop command failed or wasn't available
+                    # Try to terminate the process
+                    if self.is_process_running(process_id):
+                        process = psutil.Process(process_id)
+                        
+                        # Get all child processes
+                        children = []
+                        try:
+                            children = process.children(recursive=True)
+                        except:
+                            logger.warning(f"Could not get child processes for PID {process_id}")
+                        
+                        # First try graceful termination
+                        try:
+                            process.terminate()
+                            logger.info(f"Sent termination signal to process {process_id} for restart")
+                        except:
+                            logger.warning(f"Failed to terminate process {process_id}")
+                        
+                        # Wait up to 5 seconds for the process to terminate
+                        gone, alive = psutil.wait_procs([process], timeout=5)
+                        
+                        if process in alive:
+                            # If it doesn't terminate, kill it forcefully
+                            logger.warning(f"Process {process_id} did not terminate gracefully, using force kill")
+                            process.kill()
+                        
+                        # Terminate any remaining child processes
+                        if children:
+                            for child in children:
+                                try:
+                                    if child.is_running():
+                                        child.kill()
+                                        logger.info(f"Killed child process with PID {child.pid}")
+                                except:
+                                    pass
+                
+                except Exception as e:
+                    logger.error(f"Failed to stop server process during restart: {str(e)}")
+                    return False, f"Failed to stop server for restart: {str(e)}"
+                
+                # Wait a moment for process to fully terminate
+                time.sleep(2)
+            
+            # Start the server
+            success, message = self.start_server_advanced(server_name, callback)
+            if success:
+                logger.info(f"Server '{server_name}' restarted successfully.")
+                return True, f"Server '{server_name}' restarted successfully."
+            else:
+                return False, f"Failed to start server after stopping: {message}"
+            
+        except Exception as e:
+            logger.error(f"Error restarting server: {str(e)}")
+            return False, f"Failed to restart server: {str(e)}"
+
+    def remove_server_config(self, server_name):
+        """Remove a server configuration"""
+        try:
+            # Get server config file path
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            
+            if not os.path.exists(config_file):
+                logger.error(f"Server configuration file not found: {config_file}")
+                return False, f"Server configuration file not found: {config_file}"
+                
+            # Check if server is running
+            with open(config_file, 'r') as f:
+                server_config = json.load(f)
+                
+            if 'ProcessId' in server_config and self.is_process_running(server_config['ProcessId']):
+                logger.error(f"Cannot remove server '{server_name}' while it is running.")
+                return False, f"Cannot remove server '{server_name}' while it is running. Please stop the server first."
+                
+            # Remove the configuration file
+            os.remove(config_file)
+            logger.info(f"Removed server configuration: {server_name}")
+            
+            # Remove from cache
+            if server_name in self.servers:
+                del self.servers[server_name]
+            
+            return True, f"Server '{server_name}' configuration removed successfully."
+            
+        except Exception as e:
+            logger.error(f"Error removing server: {str(e)}")
+            return False, f"Failed to remove server: {str(e)}"
+
+    def update_server_config(self, server_name, executable_path, startup_args="", stop_command="", 
+                           use_config_file=False, config_file_path="", config_argument="--config", 
+                           additional_args=""):
+        """Update server configuration with new settings"""
+        try:
+            # Get server config file path
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            
+            if not os.path.exists(config_file):
+                logger.error(f"Server configuration file not found: {config_file}")
+                return False, f"Server configuration file not found: {config_file}"
+                
+            # Read current configuration
+            with open(config_file, 'r') as f:
+                server_config = json.load(f)
+            
+            # Update configuration
+            server_config.update({
+                'ExecutablePath': executable_path,
+                'StartupArgs': startup_args,
+                'StopCommand': stop_command,
+                'UseConfigFile': use_config_file,
+                'ConfigFilePath': config_file_path,
+                'ConfigArgument': config_argument,
+                'AdditionalArgs': additional_args,
+                'LastUpdate': datetime.now().isoformat()
+            })
+            
+            # Save updated configuration
+            self.save_server_config(server_name, server_config)
+            
+            logger.info(f"Updated configuration for server: {server_name}")
+            return True, f"Configuration for '{server_name}' updated successfully."
+            
+        except Exception as e:
+            logger.error(f"Error updating server configuration: {str(e)}")
+            return False, f"Failed to update server configuration: {str(e)}"
+
+    def import_server_config(self, server_name, server_type, install_dir, executable_path, startup_args=""):
+        """Import an existing server from a directory"""
+        try:
+            # Check if server name already exists
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            if os.path.exists(config_file):
+                logger.error(f"A server with name '{server_name}' already exists")
+                return False, f"A server with name '{server_name}' already exists."
+            
+            # Validate install directory
+            if not os.path.exists(install_dir):
+                logger.error(f"Installation directory not found: {install_dir}")
+                return False, f"Installation directory not found: {install_dir}"
+            
+            # Validate executable path
+            exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
+            if not os.path.exists(exe_full):
+                logger.warning(f"Executable not found: {exe_full}")
+                # Don't fail import, just warn
+            
+            # Create server configuration
+            server_config = {
+                "Name": server_name,
+                "Type": server_type,
+                "AppID": "",
+                "InstallDir": install_dir,
+                "ExecutablePath": executable_path,
+                "StartupArgs": startup_args,
+                "Created": datetime.now().isoformat(),
+                "LastUpdate": datetime.now().isoformat(),
+                "Imported": True
+            }
+            
+            # Save configuration
+            self.save_server_config(server_name, server_config)
+            
+            logger.info(f"Imported server: {server_name} from {install_dir}")
+            return True, f"Server '{server_name}' imported successfully!"
+            
+        except Exception as e:
+            logger.error(f"Error importing server: {str(e)}")
+            return False, f"Failed to import server: {str(e)}"
+
+    def auto_detect_server_executable(self, install_dir):
+        """Auto-detect server executable in a directory"""
+        try:
+            if not os.path.exists(install_dir):
+                return []
+            
+            found_files = []
+            
+            # Look for common server executables
+            for file in os.listdir(install_dir):
+                file_lower = file.lower()
+                if any(pattern in file_lower for pattern in [
+                    'server.exe', 'dedicated', 'srcds', 'minecraft_server', 
+                    'server.jar', 'forge', 'fabric', 'spigot', 'paper'
+                ]):
+                    found_files.append(file)
+            
+            return found_files
+            
+        except Exception as e:
+            logger.error(f"Error during auto-detect: {str(e)}")
+            return []
+
+    def get_server_status(self, server_name):
+        """Get the current status of a server"""
+        try:
+            server_config = self.get_server_config(server_name)
+            if not server_config:
+                return "Unknown", None
+            
+            if 'ProcessId' in server_config:
+                pid = server_config['ProcessId']
+                if self.is_process_running(pid):
+                    return "Running", pid
+                else:
+                    return "Stopped", None
+            else:
+                return "Stopped", None
+                
+        except Exception as e:
+            logger.error(f"Error getting server status: {str(e)}")
+            return "Error", None
+
+    def validate_server_config(self, server_config, install_dir):
+        """Validate a server configuration"""
+        errors = []
+        warnings = []
+        
+        try:
+            # Check executable path
+            executable_path = server_config.get('ExecutablePath', '')
+            if not executable_path:
+                errors.append("Executable path is required")
+            else:
+                exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
+                if not os.path.exists(exe_full):
+                    warnings.append(f"Executable not found: {exe_full}")
+            
+            # Check install directory
+            if not install_dir or not os.path.exists(install_dir):
+                errors.append(f"Installation directory not found: {install_dir}")
+            
+            # Check config file settings if enabled
+            if server_config.get('UseConfigFile', False):
+                config_file_path = server_config.get('ConfigFilePath', '')
+                config_arg = server_config.get('ConfigArgument', '')
+                
+                if not config_file_path:
+                    errors.append("Config file path is required when using config file mode")
+                elif install_dir:
+                    config_full = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
+                    if not os.path.exists(config_full):
+                        warnings.append(f"Config file not found: {config_full}")
+                
+                if not config_arg:
+                    errors.append("Config argument is required when using config file mode")
+            
+            return errors, warnings
+            
+        except Exception as e:
+            logger.error(f"Error validating server config: {str(e)}")
+            return [f"Validation error: {str(e)}"], []
+
+    def install_steam_server(self, server_name, app_id, install_dir, steam_cmd_path, credentials, progress_callback=None):
+        """Install a Steam server using SteamCMD"""
+        try:
+            if progress_callback:
+                progress_callback(f"[INFO] Starting Steam server installation for {server_name}")
+            
+            steam_cmd_exe = os.path.join(steam_cmd_path, "steamcmd.exe")
+            if not os.path.exists(steam_cmd_exe):
+                raise Exception(f"SteamCmd executable not found at: {steam_cmd_exe}")
+            
+            # Create install directory
+            os.makedirs(install_dir, exist_ok=True)
+            if progress_callback:
+                progress_callback(f"[INFO] Created installation directory: {install_dir}")
+            
+            # Build SteamCMD command
+            login_cmd = "+login anonymous" if credentials.get("anonymous", True) else f"+login \"{credentials['username']}\" \"{credentials['password']}\""
+            steam_cmd_args = [
+                steam_cmd_exe,
+                login_cmd,
+                f"+force_install_dir \"{install_dir}\"",
+                f"+app_update {app_id} validate",
+                "+quit"
+            ]
+            
+            if progress_callback:
+                progress_callback(f"[INFO] Running SteamCMD: {' '.join(steam_cmd_args)}")
+            
+            # Execute SteamCMD
+            process = subprocess.Popen(
+                " ".join(steam_cmd_args),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace'
+            )
+            
+            installation_success = False
+            # Read output in real-time
+            while True:
+                if process.stdout is not None:
+                    line = process.stdout.readline()
+                    if not line and process.poll() is not None:
+                        break
+                    if line:
+                        line = line.strip()
+                        if progress_callback:
+                            progress_callback(line)
+                        if "Success! App" in line and "fully installed" in line:
+                            installation_success = True
+                else:
+                    if process.poll() is not None:
+                        break
+            
+            # Check for errors
+            if process.stderr is not None:
+                error_output = process.stderr.read()
+                if error_output and progress_callback:
+                    progress_callback(f"[WARN] SteamCMD Errors: {error_output}")
+            
+            exit_code = process.returncode
+            if progress_callback:
+                progress_callback(f"[INFO] SteamCMD process completed with exit code: {exit_code}")
+            
+            if exit_code != 0 and not installation_success:
+                raise Exception(f"SteamCMD failed with exit code: {exit_code}")
+            
+            return True, "Steam server installed successfully"
+            
+        except Exception as e:
+            logger.error(f"Steam server installation failed: {str(e)}")
+            return False, f"Installation failed: {str(e)}"
+
+    def install_minecraft_server(self, server_name, install_dir, version, modloader="Vanilla", progress_callback=None):
+        """Install a Minecraft server"""
+        try:
+            if progress_callback:
+                progress_callback(f"[INFO] Starting Minecraft server installation for {server_name}")
+            
+            # Create install directory
+            os.makedirs(install_dir, exist_ok=True)
+            if progress_callback:
+                progress_callback(f"[INFO] Created installation directory: {install_dir}")
+            
+            executable_path = None
+            
+            # Get Minecraft versions if needed
+            mc_versions = fetch_minecraft_versions()
+            if not mc_versions:
+                raise Exception("Could not fetch Minecraft versions from Mojang")
+            
+            if modloader == "Vanilla":
+                jar_url = get_minecraft_server_jar_url(version, mc_versions)
+                if not jar_url:
+                    raise Exception(f"Could not find server jar for version {version}")
+                
+                if progress_callback:
+                    progress_callback(f"[INFO] Downloading Minecraft Vanilla server {version}...")
+                
+                jar_path = os.path.join(install_dir, f"minecraft_server.{version}.jar")
+                urllib.request.urlretrieve(jar_url, jar_path)
+                executable_path = jar_path
+                
+                if progress_callback:
+                    progress_callback("[INFO] Download complete.")
+                
+            elif modloader == "Fabric":
+                if progress_callback:
+                    progress_callback(f"[INFO] Downloading Fabric installer for {version}...")
+                
+                fabric_url = fetch_fabric_installer_url(version)
+                if not fabric_url:
+                    raise Exception("Could not fetch Fabric installer")
+                
+                fabric_installer = os.path.join(install_dir, "fabric-installer.jar")
+                urllib.request.urlretrieve(fabric_url, fabric_installer)
+                
+                if progress_callback:
+                    progress_callback("[INFO] Fabric installer downloaded. Running installer...")
+                
+                # Run Fabric installer
+                subprocess.run([
+                    "java", "-jar", fabric_installer, "server", 
+                    "-mcversion", version, "-downloadMinecraft"
+                ], cwd=install_dir, check=True)
+                
+                # Find fabric-server-launch.jar
+                for fname in os.listdir(install_dir):
+                    if fname.startswith("fabric-server-launch") and fname.endswith(".jar"):
+                        executable_path = os.path.join(install_dir, fname)
+                        break
+                else:
+                    raise Exception("Fabric server jar not found after install")
+                
+                if progress_callback:
+                    progress_callback("[INFO] Fabric server installed successfully.")
+                
+            elif modloader == "Forge":
+                if progress_callback:
+                    progress_callback(f"[INFO] Downloading Forge installer for {version}...")
+                
+                forge_url = fetch_forge_installer_url(version)
+                if not forge_url:
+                    raise Exception("Could not fetch Forge installer")
+                
+                forge_installer = os.path.join(install_dir, "forge-installer.jar")
+                urllib.request.urlretrieve(forge_url, forge_installer)
+                
+                if progress_callback:
+                    progress_callback("[INFO] Forge installer downloaded. Running installer...")
+                
+                # Run Forge installer
+                subprocess.run([
+                    "java", "-jar", forge_installer, "--installServer"
+                ], cwd=install_dir, check=True)
+                
+                # Find forge jar
+                for fname in os.listdir(install_dir):
+                    if fname.startswith("forge-") and fname.endswith(".jar") and "installer" not in fname:
+                        executable_path = os.path.join(install_dir, fname)
+                        break
+                else:
+                    raise Exception("Forge server jar not found after install")
+                
+                if progress_callback:
+                    progress_callback("[INFO] Forge server installed successfully.")
+                
+            elif modloader == "NeoForge":
+                if progress_callback:
+                    progress_callback(f"[INFO] Downloading NeoForge installer for {version}...")
+                
+                neoforge_url = fetch_neoforge_installer_url(version)
+                if not neoforge_url:
+                    raise Exception("Could not fetch NeoForge installer")
+                
+                neoforge_installer = os.path.join(install_dir, "neoforge-installer.jar")
+                urllib.request.urlretrieve(neoforge_url, neoforge_installer)
+                
+                if progress_callback:
+                    progress_callback("[INFO] NeoForge installer downloaded. Running installer...")
+                
+                # Run NeoForge installer
+                subprocess.run([
+                    "java", "-jar", neoforge_installer, "--installServer"
+                ], cwd=install_dir, check=True)
+                
+                # Find neoforge jar
+                for fname in os.listdir(install_dir):
+                    if fname.startswith("neoforge-") and fname.endswith(".jar") and "installer" not in fname:
+                        executable_path = os.path.join(install_dir, fname)
+                        break
+                else:
+                    raise Exception("NeoForge server jar not found after install")
+                
+                if progress_callback:
+                    progress_callback("[INFO] NeoForge server installed successfully.")
+            else:
+                raise Exception(f"Unknown mod loader: {modloader}")
+            
+            # Accept EULA
+            eula_path = os.path.join(install_dir, "eula.txt")
+            with open(eula_path, "w") as f:
+                f.write("eula=true\n")
+            
+            if progress_callback:
+                progress_callback("[INFO] EULA accepted.")
+            
+            return True, executable_path
+            
+        except Exception as e:
+            logger.error(f"Minecraft server installation failed: {str(e)}")
+            return False, f"Installation failed: {str(e)}"
+
+    def create_server_config(self, server_name, server_type, install_dir, executable_path, startup_args="", 
+                           app_id="", version="", modloader="", additional_config=None):
+        """Create and save a server configuration"""
+        try:
+            # Check if server name already exists
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            if os.path.exists(config_file):
+                return False, "A server with this name already exists"
+            
+            # Create server configuration
+            server_config = {
+                "Name": server_name,
+                "Type": server_type,
+                "AppID": app_id,
+                "InstallDir": install_dir,
+                "ExecutablePath": executable_path,
+                "StartupArgs": startup_args,
+                "Created": datetime.now().isoformat(),
+                "LastUpdate": datetime.now().isoformat()
+            }
+            
+            # Add type-specific configuration
+            if server_type == "Minecraft":
+                server_config["Version"] = version
+                server_config["ModLoader"] = modloader
+            
+            # Add any additional configuration
+            if additional_config:
+                server_config.update(additional_config)
+            
+            # Save configuration
+            os.makedirs(self.paths["servers"], exist_ok=True)
+            with open(config_file, 'w') as f:
+                json.dump(server_config, f, indent=4)
+            
+            logger.info(f"Server configuration saved: {server_name}")
+            return True, "Server configuration created successfully"
+            
+        except Exception as e:
+            logger.error(f"Error creating server config: {str(e)}")
+            return False, f"Failed to create server configuration: {str(e)}"
+
+    def install_server_complete(self, server_name, server_type, install_dir, executable_path="", 
+                               startup_args="", app_id="", version="", modloader="", steam_cmd_path="", 
+                               credentials=None, progress_callback=None):
+        """Complete server installation process"""
+        try:
+            installation_success = False
+            actual_executable = executable_path
+            
+            if server_type == "Steam":
+                if not app_id:
+                    return False, "Steam App ID is required"
+                if not steam_cmd_path:
+                    return False, "SteamCMD path is required"
+                
+                success, message = self.install_steam_server(
+                    server_name, app_id, install_dir, steam_cmd_path, 
+                    credentials or {"anonymous": True}, progress_callback
+                )
+                if not success:
+                    return False, message
+                installation_success = True
+                
+            elif server_type == "Minecraft":
+                if not version:
+                    return False, "Minecraft version is required"
+                
+                success, result = self.install_minecraft_server(
+                    server_name, install_dir, version, modloader or "Vanilla", progress_callback
+                )
+                if not success:
+                    return False, result
+                actual_executable = result  # Minecraft returns the actual executable path
+                installation_success = True
+                
+            elif server_type == "Other":
+                # For "Other" servers, just create the directory and use provided executable
+                os.makedirs(install_dir, exist_ok=True)
+                if progress_callback:
+                    progress_callback(f"[INFO] Created directory for {server_type} server: {install_dir}")
+                installation_success = True
+                
+            else:
+                return False, f"Unsupported server type: {server_type}"
+            
+            # Create server configuration
+            if installation_success:
+                success, message = self.create_server_config(
+                    server_name, server_type, install_dir, actual_executable, 
+                    startup_args, app_id, version, modloader
+                )
+                if not success:
+                    return False, message
+                
+                if progress_callback:
+                    progress_callback(f"[SUCCESS] Server '{server_name}' installed and configured successfully!")
+                
+                return True, f"Server '{server_name}' installed successfully"
+            
+            return False, "Installation failed"
+            
+        except Exception as e:
+            logger.error(f"Complete server installation failed: {str(e)}")
+            return False, f"Installation failed: {str(e)}"
+
+    def get_minecraft_versions(self):
+        """Get available Minecraft versions"""
+        try:
+            return fetch_minecraft_versions()
+        except Exception as e:
+            logger.error(f"Error fetching Minecraft versions: {str(e)}")
+            return []
+
+    def get_supported_server_types(self):
+        """Get list of supported server types"""
+        return ["Steam", "Minecraft", "Other"]
+
+    def uninstall_server(self, server_name, remove_files=False, progress_callback=None):
+        """Uninstall a server (remove config and optionally files)"""
+        try:
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            
+            if not os.path.exists(config_file):
+                return False, "Server configuration not found"
+            
+            # Load server config to get install directory
+            install_dir = None
+            if remove_files:
+                try:
+                    with open(config_file, 'r') as f:
+                        server_config = json.load(f)
+                    install_dir = server_config.get('InstallDir')
+                except Exception as e:
+                    logger.warning(f"Could not read server config for file removal: {str(e)}")
+            
+            # Stop server if running
+            if progress_callback:
+                progress_callback(f"[INFO] Stopping server {server_name} if running...")
+            
+            success, message = self.stop_server_advanced(server_name)
+            if not success and "not running" not in message.lower():
+                logger.warning(f"Could not stop server before removal: {message}")
+            
+            # Remove configuration file
+            if progress_callback:
+                progress_callback(f"[INFO] Removing server configuration...")
+            
+            os.remove(config_file)
+            
+            # Remove files if requested
+            if remove_files and install_dir and os.path.exists(install_dir):
+                if progress_callback:
+                    progress_callback(f"[INFO] Removing server files from {install_dir}...")
+                
+                import shutil
+                try:
+                    shutil.rmtree(install_dir)
+                    if progress_callback:
+                        progress_callback(f"[INFO] Server files removed successfully")
+                except Exception as e:
+                    logger.warning(f"Could not remove server files: {str(e)}")
+                    if progress_callback:
+                        progress_callback(f"[WARN] Could not remove all server files: {str(e)}")
+            
+            if progress_callback:
+                progress_callback(f"[SUCCESS] Server '{server_name}' uninstalled successfully!")
+            
+            logger.info(f"Server uninstalled: {server_name} (files removed: {remove_files})")
+            return True, f"Server '{server_name}' uninstalled successfully"
+            
+        except Exception as e:
+            logger.error(f"Error uninstalling server: {str(e)}")
+            return False, f"Failed to uninstall server: {str(e)}"
 
 # Create singleton instance
 server_manager = ServerManager()
