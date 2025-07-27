@@ -1,3 +1,9 @@
+"""
+Authentication Module for Server Manager (XML-based fallback system)
+
+This module provides XML-based authentication as a fallback when SQL is not available.
+It can work alongside the SQL-based user management system.
+"""
 import os
 import sys
 import json

@@ -7,6 +7,14 @@ from tkinter import messagebox, simpledialog
 from Scripts.user_management import UserManager
 from Modules.SQL_Connection import get_engine, ensure_root_admin
 
+# Import pyotp at module level for 2FA functionality
+try:
+    import pyotp
+    PYOTP_AVAILABLE = True
+except ImportError:
+    PYOTP_AVAILABLE = False
+    print("Warning: pyotp not available. 2FA functionality will be disabled.")
+
 def main():
     try:
         engine = get_engine()
@@ -189,10 +197,12 @@ class AdminDashboard(tk.Tk):
 
     def get_user_display_data(self, user):
         """Extract display data from user object"""
+        # Get user profile fields (now supported in the updated User model)
         first_name = getattr(user, "first_name", "") or ""
         last_name = getattr(user, "last_name", "") or ""
         display_name = getattr(user, "display_name", "") or ""
-        account_number = getattr(user, "account_number", "") or "N/A"
+        # Generate a simple account number based on user ID
+        account_number = f"USR{getattr(user, 'id', 0):05d}" if hasattr(user, 'id') else "N/A"
         
         full_name = f"{first_name} {last_name}".strip()
         name_display = display_name if display_name else full_name if full_name else user.username
@@ -389,9 +399,9 @@ class AdminDashboard(tk.Tk):
             info_frame = tk.Frame(edit_window)
             info_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
             
-            # Account number (read-only)
+            # Account number (read-only) - generated from user ID
             tk.Label(info_frame, text="Account Number:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="w", pady=5)
-            account_number = getattr(user, "account_number", "N/A")
+            account_number = f"USR{getattr(user, 'id', 0):05d}" if hasattr(user, 'id') else "N/A"
             tk.Label(info_frame, text=account_number, bg="lightgray", relief="sunken", width=30).grid(row=0, column=1, pady=5, padx=(10, 0))
             
             # Email
@@ -400,19 +410,19 @@ class AdminDashboard(tk.Tk):
             email_entry = tk.Entry(info_frame, textvariable=email_var, width=30)
             email_entry.grid(row=1, column=1, pady=5, padx=(10, 0))
             
-            # First Name
+            # First Name (now supported)
             tk.Label(info_frame, text="First Name:", font=("Arial", 10, "bold")).grid(row=2, column=0, sticky="w", pady=5)
             first_name_var = tk.StringVar(value=getattr(user, "first_name", "") or "")
             first_name_entry = tk.Entry(info_frame, textvariable=first_name_var, width=30)
             first_name_entry.grid(row=2, column=1, pady=5, padx=(10, 0))
             
-            # Last Name
+            # Last Name (now supported)
             tk.Label(info_frame, text="Last Name:", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky="w", pady=5)
             last_name_var = tk.StringVar(value=getattr(user, "last_name", "") or "")
             last_name_entry = tk.Entry(info_frame, textvariable=last_name_var, width=30)
             last_name_entry.grid(row=3, column=1, pady=5, padx=(10, 0))
             
-            # Display Name
+            # Display Name (now supported)
             tk.Label(info_frame, text="Display Name:", font=("Arial", 10, "bold")).grid(row=4, column=0, sticky="w", pady=5)
             display_name_var = tk.StringVar(value=getattr(user, "display_name", "") or "")
             display_name_entry = tk.Entry(info_frame, textvariable=display_name_var, width=30)
@@ -441,13 +451,12 @@ class AdminDashboard(tk.Tk):
                     enable_2fa = twofa_var.get()
                     
                     if enable_2fa and not current_2fa:
-                        try:
-                            import pyotp
+                        if PYOTP_AVAILABLE:
                             two_factor_secret = pyotp.random_base32()
                             messagebox.showinfo("2FA Secret", 
                                               f"New 2FA Secret for {username}:\n{two_factor_secret}\n\n"
                                               "Save this secret - it won't be shown again!")
-                        except ImportError:
+                        else:
                             messagebox.showwarning("Warning", "pyotp not installed. 2FA will be disabled.")
                             enable_2fa = False
                             two_factor_secret = None
@@ -456,10 +465,10 @@ class AdminDashboard(tk.Tk):
                     
                     self.user_manager.update_user(
                         username,
-                        email=email_var.get(),
-                        first_name=first_name_var.get(),
-                        last_name=last_name_var.get(),
-                        display_name=display_name_var.get(),
+                        email=email_var.get() if email_var.get().strip() else None,
+                        first_name=first_name_var.get() if first_name_var.get().strip() else None,
+                        last_name=last_name_var.get() if last_name_var.get().strip() else None,
+                        display_name=display_name_var.get() if display_name_var.get().strip() else None,
                         is_admin=admin_var.get(),
                         two_factor_enabled=enable_2fa,
                         two_factor_secret=two_factor_secret
@@ -593,19 +602,19 @@ class AdminDashboard(tk.Tk):
             email_entry = tk.Entry(info_frame, textvariable=email_var, width=30)
             email_entry.grid(row=2, column=1, pady=5, padx=(10, 0))
             
-            # First Name
+            # First Name (now supported)
             tk.Label(info_frame, text="First Name:", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky="w", pady=5)
             first_name_var = tk.StringVar()
             first_name_entry = tk.Entry(info_frame, textvariable=first_name_var, width=30)
             first_name_entry.grid(row=3, column=1, pady=5, padx=(10, 0))
             
-            # Last Name
+            # Last Name (now supported)
             tk.Label(info_frame, text="Last Name:", font=("Arial", 10, "bold")).grid(row=4, column=0, sticky="w", pady=5)
             last_name_var = tk.StringVar()
             last_name_entry = tk.Entry(info_frame, textvariable=last_name_var, width=30)
             last_name_entry.grid(row=4, column=1, pady=5, padx=(10, 0))
             
-            # Display Name
+            # Display Name (now supported)
             tk.Label(info_frame, text="Display Name:", font=("Arial", 10, "bold")).grid(row=5, column=0, sticky="w", pady=5)
             display_name_var = tk.StringVar()
             display_name_entry = tk.Entry(info_frame, textvariable=display_name_var, width=30)
@@ -650,37 +659,56 @@ class AdminDashboard(tk.Tk):
                     enable_2fa = twofa_var.get()
                     
                     if enable_2fa:
-                        try:
-                            import pyotp
+                        if PYOTP_AVAILABLE:
                             two_factor_secret = pyotp.random_base32()
                             messagebox.showinfo("2FA Secret", 
                                               f"2FA Secret for {username}:\n{two_factor_secret}\n\n"
                                               "Save this secret - it won't be shown again!")
-                        except ImportError:
+                        else:
                             messagebox.showwarning("Warning", "pyotp not installed. 2FA will be disabled.")
                             enable_2fa = False
                     
-                    # Create the user
-                    success = self.user_manager.create_user(
+                    # Create the user with basic parameters first
+                    success = self.user_manager.add_user(
                         username=username,
                         password=password,
                         email=email if email else None,
-                        first_name=first_name_var.get().strip() if first_name_var.get().strip() else None,
-                        last_name=last_name_var.get().strip() if last_name_var.get().strip() else None,
-                        display_name=display_name_var.get().strip() if display_name_var.get().strip() else None,
-                        is_admin=admin_var.get(),
-                        two_factor_enabled=enable_2fa,
-                        two_factor_secret=two_factor_secret
+                        is_admin=admin_var.get()
                     )
                     
                     if success:
-                        add_window.destroy()
-                        self.refresh_user_list()
-                        self.status_label.config(text=f"User '{username}' created successfully")
-                        messagebox.showinfo("Success", f"User '{username}' has been created.", parent=self)
+                        # If user creation succeeded, try to update with additional fields
+                        try:
+                            additional_fields = {}
+                            # Add profile fields (now supported in the User model)
+                            if first_name_var.get().strip():
+                                additional_fields['first_name'] = first_name_var.get().strip()
+                            if last_name_var.get().strip():
+                                additional_fields['last_name'] = last_name_var.get().strip()
+                            if display_name_var.get().strip():
+                                additional_fields['display_name'] = display_name_var.get().strip()
+                            if enable_2fa:
+                                additional_fields['two_factor_enabled'] = True
+                                additional_fields['two_factor_secret'] = two_factor_secret
+                                
+                            # Update user with additional fields if needed
+                            if additional_fields:
+                                self.user_manager.update_user(username, **additional_fields)
+                                
+                            add_window.destroy()
+                            self.refresh_user_list()
+                            self.status_label.config(text=f"User '{username}' created successfully")
+                            messagebox.showinfo("User Created", f"User '{username}' has been created successfully.", parent=self)
+                            
+                        except Exception as e:
+                            # If updating additional fields fails, warn but don't fail completely
+                            messagebox.showwarning("Warning", f"User created but some settings may not have been applied: {str(e)}")
+                            add_window.destroy()
+                            self.refresh_user_list()
+                            self.status_label.config(text=f"User '{username}' created with warnings")
                     else:
                         messagebox.showerror("Error", f"Failed to create user '{username}'.")
-                    
+                        
                 except Exception as e:
                     messagebox.showerror("Error", f"Failed to create user: {str(e)}")
             
@@ -690,5 +718,7 @@ class AdminDashboard(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open add user dialog: {str(e)}")
 
+
 if __name__ == "__main__":
     main()
+                            

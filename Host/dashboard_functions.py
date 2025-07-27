@@ -7,7 +7,9 @@ import socket
 import winreg
 import psutil
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
+import shutil
+import zipfile
 
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -353,6 +355,340 @@ def update_system_info(metric_labels, system_name, os_info, variables):
         
     except Exception as e:
         logger.error(f"Error updating system info: {str(e)}")
+
+
+def export_server_configuration(server_name, paths, include_files=False):
+    """Export server configuration to a portable format
+    
+    Args:
+        server_name (str): Name of the server to export
+        paths (dict): Application paths dictionary
+        include_files (bool): Whether to include server files in export
+        
+    Returns:
+        dict: Export data containing server configuration and metadata
+    """
+    try:
+        # Find server configuration file
+        servers_path = os.path.join(paths["root"], "servers")
+        server_config_file = None
+        
+        if os.path.exists(servers_path):
+            for file in os.listdir(servers_path):
+                if file.endswith('.json'):
+                    try:
+                        with open(os.path.join(servers_path, file), 'r') as f:
+                            config = json.load(f)
+                        if config.get("Name") == server_name:
+                            server_config_file = os.path.join(servers_path, file)
+                            break
+                    except:
+                        continue
+        
+        if not server_config_file:
+            raise ValueError(f"Server configuration not found for: {server_name}")
+        
+        # Load server configuration
+        with open(server_config_file, 'r') as f:
+            server_config = json.load(f)
+        
+        # Create export data structure
+        export_data = {
+            "export_metadata": {
+                "version": "1.0",
+                "exported_at": datetime.datetime.now().isoformat(),
+                "exported_by": os.environ.get('USERNAME', 'Unknown'),
+                "source_host": platform.node(),
+                "export_type": "server_configuration",
+                "includes_files": include_files
+            },
+            "server_configuration": server_config,
+            "dependencies": {}
+        }
+        
+        # Add Steam App ID information if it's a Steam server
+        if server_config.get("Type") == "Steam" and server_config.get("AppId"):
+            try:
+                # Try to get app information from AppIDList
+                appid_file = os.path.join(paths["data"], "AppIDList.json")
+                if os.path.exists(appid_file):
+                    with open(appid_file, 'r') as f:
+                        app_data = json.load(f)
+                    
+                    # Find app info by ID
+                    app_info = None
+                    for app in app_data.get("dedicated_servers", []):
+                        if str(app.get("appid")) == str(server_config["AppId"]):
+                            app_info = app
+                            break
+                    
+                    if app_info:
+                        export_data["dependencies"]["steam_app_info"] = app_info
+                        export_data["dependencies"]["requires_steam_install"] = True
+                        
+            except Exception as e:
+                logger.warning(f"Could not load Steam app information: {str(e)}")
+        
+        # Add file information if requested
+        if include_files and server_config.get("InstallDir"):
+            install_dir = server_config["InstallDir"]
+            if os.path.exists(install_dir):
+                export_data["dependencies"]["install_directory_size"] = get_directory_size(install_dir)
+                export_data["dependencies"]["file_count"] = count_files_in_directory(install_dir)
+        
+        return export_data
+        
+    except Exception as e:
+        logger.error(f"Error exporting server configuration: {str(e)}")
+        raise
+
+
+def import_server_configuration(export_data, paths, install_directory=None, auto_install=False):
+    """Import server configuration from export data
+    
+    Args:
+        export_data (dict): Exported server configuration data
+        paths (dict): Application paths dictionary
+        install_directory (str): Target installation directory (optional)
+        auto_install (bool): Whether to automatically install Steam servers
+        
+    Returns:
+        tuple: (success, message, server_config)
+    """
+    try:
+        # Validate export data
+        if not export_data.get("server_configuration"):
+            return False, "Invalid export data: Missing server configuration", None
+        
+        server_config = export_data["server_configuration"].copy()
+        export_metadata = export_data.get("export_metadata", {})
+        dependencies = export_data.get("dependencies", {})
+        
+        # Generate unique server name if conflicts exist
+        original_name = server_config.get("Name", "Imported Server")
+        server_config["Name"] = generate_unique_server_name(original_name, paths)
+        
+        # Update installation directory if specified
+        if install_directory:
+            server_config["InstallDir"] = install_directory
+        
+        # Handle Steam server dependencies
+        if server_config.get("Type") == "Steam" and auto_install:
+            app_id = server_config.get("AppId")
+            if app_id and dependencies.get("requires_steam_install"):
+                # This would trigger Steam installation process
+                server_config["RequiresInstallation"] = True
+                server_config["InstallationPending"] = True
+        
+        # Clean up runtime-specific data
+        server_config.pop("ProcessId", None)
+        server_config.pop("StartTime", None)
+        server_config.pop("LastUpdate", None)
+        server_config["ImportedAt"] = datetime.datetime.now().isoformat()
+        server_config["ImportedFrom"] = export_metadata.get("source_host", "Unknown")
+        server_config["OriginalExportDate"] = export_metadata.get("exported_at", "Unknown")
+        
+        # Save server configuration
+        servers_path = os.path.join(paths["root"], "servers")
+        os.makedirs(servers_path, exist_ok=True)
+        
+        # Generate unique filename
+        safe_name = "".join(c for c in server_config["Name"] if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        config_filename = f"{safe_name.replace(' ', '_')}.json"
+        config_path = os.path.join(servers_path, config_filename)
+        
+        # Ensure unique filename
+        counter = 1
+        while os.path.exists(config_path):
+            config_path = os.path.join(servers_path, f"{safe_name.replace(' ', '_')}_{counter}.json")
+            counter += 1
+        
+        # Save configuration
+        with open(config_path, 'w') as f:
+            json.dump(server_config, f, indent=4)
+        
+        logger.info(f"Successfully imported server configuration: {server_config['Name']}")
+        
+        return True, f"Server '{server_config['Name']}' imported successfully", server_config
+        
+    except Exception as e:
+        logger.error(f"Error importing server configuration: {str(e)}")
+        return False, f"Import failed: {str(e)}", None
+
+
+def generate_unique_server_name(name, paths):
+    """Generate a unique server name by checking existing configurations"""
+    try:
+        servers_path = os.path.join(paths["root"], "servers")
+        existing_names = set()
+        
+        if os.path.exists(servers_path):
+            for file in os.listdir(servers_path):
+                if file.endswith('.json'):
+                    try:
+                        with open(os.path.join(servers_path, file), 'r') as f:
+                            config = json.load(f)
+                        existing_names.add(config.get("Name", ""))
+                    except:
+                        continue
+        
+        # If name is unique, return as is
+        if name not in existing_names:
+            return name
+        
+        # Generate unique name with counter
+        counter = 1
+        while f"{name} ({counter})" in existing_names:
+            counter += 1
+        
+        return f"{name} ({counter})"
+        
+    except Exception as e:
+        logger.error(f"Error generating unique server name: {str(e)}")
+        return f"{name} (imported)"
+
+
+def get_directory_size(directory):
+    """Get total size of directory in bytes"""
+    try:
+        total_size = 0
+        for dirpath, dirnames, filenames in os.walk(directory):
+            for filename in filenames:
+                filepath = os.path.join(dirpath, filename)
+                try:
+                    total_size += os.path.getsize(filepath)
+                except (OSError, IOError):
+                    continue
+        return total_size
+    except Exception:
+        return 0
+
+
+def count_files_in_directory(directory):
+    """Count total number of files in directory"""
+    try:
+        file_count = 0
+        for dirpath, dirnames, filenames in os.walk(directory):
+            file_count += len(filenames)
+        return file_count
+    except Exception:
+        return 0
+
+
+def export_server_to_file(export_data, export_path, include_files=False):
+    """Export server configuration to file
+    
+    Args:
+        export_data (dict): Server export data
+        export_path (str): Target file path
+        include_files (bool): Whether to include server files
+        
+    Returns:
+        tuple: (success, message)
+    """
+    try:
+        if include_files:
+            # Create zip archive with configuration and files
+            with zipfile.ZipFile(export_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # Add configuration file
+                config_json = json.dumps(export_data, indent=4)
+                zipf.writestr('server_config.json', config_json)
+                
+                # Add server files if they exist
+                server_config = export_data.get("server_configuration", {})
+                install_dir = server_config.get("InstallDir")
+                
+                if install_dir and os.path.exists(install_dir):
+                    for root, dirs, files in os.walk(install_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            arcname = os.path.relpath(file_path, install_dir)
+                            arcname = os.path.join('server_files', arcname)
+                            try:
+                                zipf.write(file_path, arcname)
+                            except Exception as e:
+                                logger.warning(f"Could not add file to archive: {file_path} - {str(e)}")
+                
+            return True, f"Server exported with files to: {export_path}"
+        else:
+            # Export configuration only as JSON
+            with open(export_path, 'w') as f:
+                json.dump(export_data, f, indent=4)
+            
+            return True, f"Server configuration exported to: {export_path}"
+        
+    except Exception as e:
+        logger.error(f"Error exporting server to file: {str(e)}")
+        return False, f"Export failed: {str(e)}"
+
+
+def import_server_from_file(file_path):
+    """Import server configuration from file
+    
+    Args:
+        file_path (str): Path to import file
+        
+    Returns:
+        tuple: (success, export_data, has_files)
+    """
+    try:
+        if file_path.endswith('.zip'):
+            # Import from zip archive
+            with zipfile.ZipFile(file_path, 'r') as zipf:
+                # Read configuration
+                config_data = zipf.read('server_config.json').decode('utf-8')
+                export_data = json.loads(config_data)
+                
+                # Check if server files are included
+                has_files = any(name.startswith('server_files/') for name in zipf.namelist())
+                
+                return True, export_data, has_files
+        else:
+            # Import from JSON file
+            with open(file_path, 'r') as f:
+                export_data = json.load(f)
+            
+            return True, export_data, False
+        
+    except Exception as e:
+        logger.error(f"Error importing server from file: {str(e)}")
+        return False, None, False
+
+
+def extract_server_files_from_archive(zip_path, extract_to):
+    """Extract server files from zip archive
+    
+    Args:
+        zip_path (str): Path to zip file
+        extract_to (str): Target extraction directory
+        
+    Returns:
+        tuple: (success, message)
+    """
+    try:
+        os.makedirs(extract_to, exist_ok=True)
+        
+        with zipfile.ZipFile(zip_path, 'r') as zipf:
+            # Extract only server files
+            for member in zipf.namelist():
+                if member.startswith('server_files/'):
+                    # Remove server_files/ prefix
+                    target_path = member[len('server_files/'):]
+                    if target_path:  # Skip empty paths
+                        target_full_path = os.path.join(extract_to, target_path)
+                        
+                        # Ensure target directory exists
+                        os.makedirs(os.path.dirname(target_full_path), exist_ok=True)
+                        
+                        # Extract file
+                        with zipf.open(member) as source, open(target_full_path, 'wb') as target:
+                            shutil.copyfileobj(source, target)
+        
+        return True, f"Server files extracted to: {extract_to}"
+        
+    except Exception as e:
+        logger.error(f"Error extracting server files: {str(e)}")
+        return False, f"Extraction failed: {str(e)}"
 
 
 def format_uptime_from_start_time(start_time_str):

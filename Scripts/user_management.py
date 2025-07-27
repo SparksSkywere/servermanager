@@ -32,6 +32,10 @@ class User(Base):
     # Add 2FA fields
     two_factor_enabled = Column(Boolean, default=False)
     two_factor_secret = Column(String(64), nullable=True)
+    # Add additional profile fields
+    first_name = Column(String(50), nullable=True)
+    last_name = Column(String(50), nullable=True)
+    display_name = Column(String(100), nullable=True)
 
 class UserManager:
     def __init__(self, engine=None):
@@ -124,11 +128,12 @@ class UserManager:
             
             if user:
                 if password is not None:
-                    user.password = hashlib.sha256(password.encode()).hexdigest()
+                    hashed_password = hashlib.sha256(password.encode()).hexdigest()
+                    setattr(user, 'password', hashed_password)
                 if email is not None:
-                    user.email = email
+                    setattr(user, 'email', email)
                 if is_admin is not None:
-                    user.is_admin = is_admin
+                    setattr(user, 'is_admin', is_admin)
                 
                 # Handle additional kwargs
                 for key, value in kwargs.items():
@@ -156,14 +161,23 @@ class UserManager:
             user = session.query(User).filter_by(username=username).first()
             session.close()
             
-            if not user or not user.two_factor_enabled:
+            if not user:
+                return False
+            
+            # Check if 2FA is enabled - explicitly check the boolean value
+            two_factor_enabled = getattr(user, 'two_factor_enabled', False)
+            if not two_factor_enabled:
                 return True  # 2FA not enabled
+            
             if admin_override:
                 return True  # Admin override
-            if not user.two_factor_secret:
+                
+            # Check if user has 2FA secret - explicitly get the string value
+            two_factor_secret = getattr(user, 'two_factor_secret', None)
+            if not two_factor_secret:
                 return False
                 
-            totp = pyotp.TOTP(user.two_factor_secret)
+            totp = pyotp.TOTP(str(two_factor_secret))
             return totp.verify(token)
         except Exception as e:
             logger.error(f"Error verifying 2FA for {username}: {e}")
@@ -190,7 +204,10 @@ class UserManager:
                     'created_at': 'DATETIME',
                     'last_login': 'DATETIME',
                     'two_factor_enabled': 'BOOLEAN DEFAULT 0',
-                    'two_factor_secret': 'TEXT'
+                    'two_factor_secret': 'TEXT',
+                    'first_name': 'TEXT',
+                    'last_name': 'TEXT',
+                    'display_name': 'TEXT'
                 }
                 
                 # Add missing columns

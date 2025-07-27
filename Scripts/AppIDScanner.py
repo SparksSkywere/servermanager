@@ -8,7 +8,7 @@ import json
 import time
 import re
 import sqlite3
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 import argparse
 
 # Add project root to sys.path for module resolution
@@ -51,7 +51,7 @@ if SQLALCHEMY_AVAILABLE:
         tags = Column(Text)  # JSON string of tags
         price = Column(String(20))
         platforms = Column(String(100))  # JSON string of supported platforms
-        last_updated = Column(DateTime, default=datetime.utcnow)
+        last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))
         source = Column(String(50), default='steamdb')
 
 class AppIDScanner:
@@ -179,7 +179,7 @@ class AppIDScanner:
             os.makedirs(os.path.dirname(self.json_file_path), exist_ok=True)
             
             # Update metadata
-            appid_data["metadata"]["last_updated"] = datetime.now().isoformat()
+            appid_data["metadata"]["last_updated"] = datetime.now(timezone.utc).isoformat()
             appid_data["metadata"]["total_dedicated_servers"] = len(appid_data["dedicated_servers"])
             
             # Write to file with proper formatting
@@ -378,7 +378,7 @@ class AppIDScanner:
                     for key, value in app_data.items():
                         if key != 'appid':
                             setattr(existing_app, key, value)
-                    setattr(existing_app, 'last_updated', datetime.now(UTC))
+                    setattr(existing_app, 'last_updated', datetime.now(timezone.utc))
                 else:
                     # Create new record
                     new_app = SteamApp(**app_data)
@@ -419,6 +419,9 @@ class AppIDScanner:
             logger.error(f"Failed to save app {app_data.get('appid', 'unknown')} to database: {e}")
             if self.use_database:
                 self.db_session.rollback()
+            else:
+                # For SQLite, we need to rollback the transaction as well
+                self.sqlite_conn.rollback()
 
     def is_server_application(self, app_name, app_details=None):
         """Determine if an application is a server/dedicated server with enhanced detection"""

@@ -9,20 +9,27 @@ import datetime
 import winreg
 from pathlib import Path
 
+# Import psutil at the top level for better performance
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 # Add modules directory to path if needed
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(script_dir)
-modules_dir = os.path.join(parent_dir, "modules")
+modules_dir = os.path.join(parent_dir, "Modules")  # Fixed case sensitivity
 if modules_dir not in sys.path:
     sys.path.append(modules_dir)
 
 # Try to import debug module
 try:
-    from debug import enable_debug, log_exception
+    from Modules.debug import enable_debug, log_exception
 except ImportError:
     # Create a simple fallback if debug module not available
     def enable_debug():
         logging.getLogger().setLevel(logging.DEBUG)
+        return True  # Fixed return type to match imported function
     
     def log_exception(e, message="An exception occurred"):
         logging.error(f"{message}: {str(e)}")
@@ -63,13 +70,19 @@ class AutoUpdater:
             logger.setLevel(logging.DEBUG)
         
         # Initialize paths and set up logging
-        self.initialize()
+        if not self.initialize():
+            logger.error("Failed to initialize. Exiting.")
+            sys.exit(1)
         
         # Configure file logging
-        log_file = args.log if args.log else os.path.join(self.paths["logs"], "auto-app-update.log")
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-        logger.addHandler(file_handler)
+        try:
+            log_file = args.log if args.log else os.path.join(self.paths["logs"], "auto-app-update.log")
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            logger.addHandler(file_handler)
+            logger.info(f"File logging enabled: {log_file}")
+        except Exception as e:
+            logger.warning(f"Could not set up file logging: {str(e)}")
         
     def initialize(self):
         """Initialize paths and configuration from registry"""
@@ -161,7 +174,7 @@ class AutoUpdater:
                 self.steam_cmd_path,
                 "+login", "anonymous",
                 "+app_info_update", "1",
-                "+app_info_print", app_id,
+                "+app_info_print", str(app_id),  # Ensure app_id is a string
                 "+quit"
             ]
             
@@ -203,8 +216,11 @@ class AutoUpdater:
             
             logger.info(f"Updating server: {server_name} (AppID: {app_id})")
             
+            # Check if server is running before update
+            was_running = self.is_server_running(server)
+            
             # First check if server is running
-            if self.is_server_running(server):
+            if was_running:
                 if not self.force_update:
                     logger.warning(f"Server {server_name} is running. Use --force to update anyway.")
                     return False
@@ -223,7 +239,7 @@ class AutoUpdater:
                 self.steam_cmd_path,
                 "+login", "anonymous",
                 "+force_install_dir", install_path,
-                "+app_update", app_id, "validate",
+                "+app_update", str(app_id), "validate",  # Ensure app_id is a string
                 "+quit"
             ]
             
@@ -240,12 +256,13 @@ class AutoUpdater:
                 )
                 
                 # Capture and log output in real-time
-                for line in iter(process.stdout.readline, ''):
-                    f.write(line)
-                    f.flush()
-                    line = line.strip()
-                    if line:
-                        logger.debug(line)
+                if process.stdout is not None:  # Fixed potential None attribute error
+                    for line in iter(process.stdout.readline, ''):
+                        f.write(line)
+                        f.flush()
+                        line = line.strip()
+                        if line:
+                            logger.debug(line)
                 
                 # Wait for process to complete
                 return_code = process.wait()
@@ -260,8 +277,8 @@ class AutoUpdater:
             server["LastUpdateTime"] = datetime.datetime.now().isoformat()
             self.save_server_config(server)
             
-            # Restart the server if it was running before
-            if self.is_server_running(server) or "PID" in server:
+            # Restart the server if it was running before the update
+            if was_running:
                 logger.info(f"Restarting server: {server_name}")
                 self.start_server(server)
             
@@ -273,11 +290,14 @@ class AutoUpdater:
     
     def is_server_running(self, server):
         """Check if a server is currently running"""
+        if psutil is None:
+            logger.warning("psutil not available, cannot check server process status")
+            return False
+            
         if "PID" in server and server["PID"]:
             try:
                 # Check if process is running
                 pid = int(server["PID"])
-                import psutil
                 if psutil.pid_exists(pid):
                     process = psutil.Process(pid)
                     if not process.is_running() or process.status() == psutil.STATUS_ZOMBIE:

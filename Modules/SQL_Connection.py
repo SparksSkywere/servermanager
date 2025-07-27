@@ -173,7 +173,7 @@ def sql_login(user_manager, parent_window=None):
         if parent_window:
             login_dialog.transient(parent_window)
         login_dialog.title("Server Manager Login")
-        login_dialog.geometry("350x200")
+        login_dialog.geometry("420x320")
         login_dialog.resizable(False, False)
         login_dialog.grab_set()
         
@@ -183,25 +183,25 @@ def sql_login(user_manager, parent_window=None):
         y = (login_dialog.winfo_screenheight() // 2) - (login_dialog.winfo_height() // 2)
         login_dialog.geometry(f"+{x}+{y}")
         
-        # Main frame
-        main_frame = ttk.Frame(login_dialog, padding=20)
+        # Main frame with better padding
+        main_frame = ttk.Frame(login_dialog, padding=25)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Title
-        title_label = ttk.Label(main_frame, text="Server Manager Login", font=("Segoe UI", 14, "bold"))
-        title_label.pack(pady=(0, 20))
+        # Title with better spacing
+        title_label = ttk.Label(main_frame, text="Server Manager Login", font=("Segoe UI", 16, "bold"))
+        title_label.pack(pady=(0, 25))
         
-        # Username field
-        ttk.Label(main_frame, text="Username:").pack(anchor=tk.W)
+        # Username field with improved spacing
+        ttk.Label(main_frame, text="Username:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
         username_var = tk.StringVar()
-        username_entry = ttk.Entry(main_frame, textvariable=username_var, width=30)
-        username_entry.pack(fill=tk.X, pady=(5, 10))
+        username_entry = ttk.Entry(main_frame, textvariable=username_var, width=35, font=("Segoe UI", 11))
+        username_entry.pack(fill=tk.X, pady=(0, 15))
         
-        # Password field
-        ttk.Label(main_frame, text="Password:").pack(anchor=tk.W)
+        # Password field with improved spacing
+        ttk.Label(main_frame, text="Password:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
         password_var = tk.StringVar()
-        password_entry = ttk.Entry(main_frame, textvariable=password_var, width=30, show="*")
-        password_entry.pack(fill=tk.X, pady=(5, 20))
+        password_entry = ttk.Entry(main_frame, textvariable=password_var, width=35, show="*", font=("Segoe UI", 11))
+        password_entry.pack(fill=tk.X, pady=(0, 25))
         
         # Result variables
         login_result = {"success": False, "username": "", "password": "", "cancelled": False}
@@ -217,19 +217,23 @@ def sql_login(user_manager, parent_window=None):
             login_result["cancelled"] = True
             login_dialog.destroy()
         
-        # Button frame
+        # Button frame with better spacing
         button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
         
-        # Buttons
-        login_button = ttk.Button(button_frame, text="Login", command=on_login, width=12)
-        login_button.pack(side=tk.RIGHT, padx=(5, 0))
-        
-        cancel_button = ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12)
-        cancel_button.pack(side=tk.RIGHT, padx=(5, 0))
-        
-        offline_button = ttk.Button(button_frame, text="Offline Mode", command=on_cancel, width=12)
+        # Buttons with improved layout
+        offline_button = ttk.Button(button_frame, text="Offline Mode", command=on_cancel, width=15)
         offline_button.pack(side=tk.LEFT)
+        
+        # Right side buttons
+        button_right_frame = ttk.Frame(button_frame)
+        button_right_frame.pack(side=tk.RIGHT)
+        
+        cancel_button = ttk.Button(button_right_frame, text="Cancel", command=on_cancel, width=12)
+        cancel_button.pack(side=tk.LEFT, padx=(0, 10))
+        
+        login_button = ttk.Button(button_right_frame, text="Login", command=on_login, width=12)
+        login_button.pack(side=tk.LEFT)
         
         # Bind Enter key to login
         def on_enter(event):

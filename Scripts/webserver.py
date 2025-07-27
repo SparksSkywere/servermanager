@@ -105,6 +105,10 @@ try:
     
     from Modules.SQL_Connection import get_engine, ensure_root_admin, build_db_url, get_sql_config_from_registry
     from Scripts.user_management import User, UserManager
+    # Import authentication modules
+    from Modules.authentication import authenticate_user, is_admin_user
+    # Import server manager
+    from Modules.server_manager import ServerManager as CoreServerManager
     logger.info("SQL modules imported successfully")
 except ImportError as e:
     logger.error(f"Failed to import SQL modules: {e}")
@@ -113,8 +117,11 @@ except ImportError as e:
     ensure_root_admin = None
     User = None
     UserManager = None
+    authenticate_user = None
+    is_admin_user = None
+    CoreServerManager = None
 
-# Authentication system
+# Legacy Authentication system (kept for fallback compatibility)
 class Authentication:
     def __init__(self, config_path):
         self.config_path = config_path
@@ -318,6 +325,8 @@ class SQLAuthentication:
     def _validate_password(self, password):
         return len(password) >= 8
 
+# Legacy ServerManager class (kept for web API compatibility)
+# Note: This could be replaced with imports from Modules.server_manager in the future
 class ServerManager:
     def __init__(self, servers_path):
         self.servers_path = servers_path

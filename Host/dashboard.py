@@ -40,16 +40,27 @@ from Modules.logging import (
 # Import timer management
 from Modules.timer import TimerManager
 
+# Import documentation module
+from Modules.documentation import show_help_dialog, show_about_dialog
+
 # Import dashboard functions
 from Host.dashboard_functions import (
     load_dashboard_config, initialize_paths_from_registry, initialize_registry_values,
     is_process_running, is_port_open, check_webserver_status, update_webserver_status,
     api_headers, get_steam_credentials, update_system_info, format_uptime_from_start_time,
-    get_process_info
+    get_process_info, export_server_configuration, import_server_configuration,
+    export_server_to_file, import_server_from_file, extract_server_files_from_archive,
+    generate_unique_server_name
 )
 
 # Import agent management
 from Modules.agents import AgentManager, show_agent_management_dialog
+
+# Import debug functions
+from Modules.debug import (
+    get_detailed_process_info, get_server_process_details, check_port_status,
+    is_debug_enabled, log_exception, monitor_process_resources
+)
 
 # Get dashboard logger
 logger = get_dashboard_logger()
@@ -137,8 +148,8 @@ class ServerManagerDashboard:
         # Set up the UI
         self.root = tk.Tk()
         self.root.title("Server Manager Dashboard")
-        self.root.geometry("1200x700")
-        self.root.minsize(800, 600)
+        self.root.geometry("1400x900")
+        self.root.minsize(1000, 700)
         
         self.setup_ui()
         
@@ -194,16 +205,27 @@ class ServerManagerDashboard:
     
     def setup_ui(self):
         """Setup the main UI components"""
-        # Create main container
-        self.container_frame = ttk.Frame(self.root, padding=10)
+        # Create top frame for help and about buttons
+        self.top_frame = ttk.Frame(self.root)
+        self.top_frame.pack(fill=tk.X, padx=15, pady=(15, 0))
+        
+        # Add About and Help buttons to top right
+        self.help_button = ttk.Button(self.top_frame, text="Help", command=self.show_help, width=10)
+        self.help_button.pack(side=tk.RIGHT)
+        
+        self.about_button = ttk.Button(self.top_frame, text="About", command=self.show_about, width=10)
+        self.about_button.pack(side=tk.RIGHT, padx=(0, 5))
+        
+        # Create main container with more padding
+        self.container_frame = ttk.Frame(self.root, padding=(15, 10, 15, 15))
         self.container_frame.pack(fill=tk.BOTH, expand=True)
         
         # Create main layout - servers list and system info
         self.main_pane = ttk.PanedWindow(self.container_frame, orient=tk.HORIZONTAL)
-        self.main_pane.pack(fill=tk.BOTH, expand=True, pady=5)
+        self.main_pane.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
         # Create frame for server list (left side)
-        self.servers_frame = ttk.LabelFrame(self.main_pane, text="Game Servers")
+        self.servers_frame = ttk.LabelFrame(self.main_pane, text="Game Servers", padding=10)
         self.main_pane.add(self.servers_frame, weight=70)
         
         # Create server list with columns
@@ -218,20 +240,20 @@ class ServerManagerDashboard:
         self.server_list.heading("memory", text="Memory Usage")
         self.server_list.heading("uptime", text="Uptime")
         
-        # Define column widths
-        self.server_list.column("name", width=150)
-        self.server_list.column("status", width=80)
-        self.server_list.column("pid", width=60)
-        self.server_list.column("cpu", width=80)
-        self.server_list.column("memory", width=100)
-        self.server_list.column("uptime", width=150)
+        # Define column widths with better proportions
+        self.server_list.column("name", width=180, minwidth=120)
+        self.server_list.column("status", width=100, minwidth=80)
+        self.server_list.column("pid", width=80, minwidth=60)
+        self.server_list.column("cpu", width=100, minwidth=80)
+        self.server_list.column("memory", width=120, minwidth=100)
+        self.server_list.column("uptime", width=160, minwidth=120)
         
         # Add scrollbar to server list
         server_scroll = ttk.Scrollbar(self.servers_frame, orient=tk.VERTICAL, command=self.server_list.yview)
         self.server_list.configure(yscrollcommand=server_scroll.set)
         
-        # Pack server list components
-        server_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        # Pack server list components with better spacing
+        server_scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         self.server_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # Setup right-click context menu for server list
@@ -244,6 +266,7 @@ class ServerManagerDashboard:
         self.server_context_menu.add_command(label="View Process Details", command=self.view_process_details)
         self.server_context_menu.add_command(label="Configure Server", command=self.configure_server)
         self.server_context_menu.add_separator()
+        self.server_context_menu.add_command(label="Export Server", command=self.export_server)
         self.server_context_menu.add_command(label="Open Folder Directory", command=self.open_server_directory)
         self.server_context_menu.add_command(label="Remove Server", command=self.remove_server)
         
@@ -251,18 +274,18 @@ class ServerManagerDashboard:
         self.server_list.bind("<Button-3>", self.show_server_context_menu)
         
         # Create system info frame (right side)
-        self.system_frame = ttk.LabelFrame(self.main_pane, text="System Information")
+        self.system_frame = ttk.LabelFrame(self.main_pane, text="System Information", padding=10)
         self.main_pane.add(self.system_frame, weight=30)
         
         # System info header
         self.system_header = ttk.Frame(self.system_frame)
-        self.system_header.pack(fill=tk.X, padx=10, pady=10)
+        self.system_header.pack(fill=tk.X, pady=(0, 15))
         
         self.system_name = ttk.Label(self.system_header, text="Loading system info...", font=("Segoe UI", 14, "bold"))
-        self.system_name.pack(anchor=tk.W)
+        self.system_name.pack(anchor=tk.W, pady=(0, 5))
         
         self.os_info = ttk.Label(self.system_header, text="Loading OS info...", foreground="gray")
-        self.os_info.pack(anchor=tk.W)
+        self.os_info.pack(anchor=tk.W, pady=(0, 5))
         
         # Show installation info from registry
         if hasattr(self, 'registry_values'):
@@ -270,11 +293,11 @@ class ServerManagerDashboard:
                 text=f"Version: {self.registry_values.get('CurrentVersion', 'Unknown')} | "
                      f"Host Type: {self.registry_values.get('HostType', 'Unknown')}", 
                 foreground="gray")
-            install_info.pack(anchor=tk.W)
+            install_info.pack(anchor=tk.W, pady=(0, 8))
         
         # Web server status
         self.webserver_frame = ttk.Frame(self.system_header)
-        self.webserver_frame.pack(anchor=tk.W, pady=5)
+        self.webserver_frame.pack(anchor=tk.W, pady=(0, 10))
         
         ttk.Label(self.webserver_frame, text="Web Server: ").pack(side=tk.LEFT)
         self.webserver_status = ttk.Label(self.webserver_frame, text="Checking...", foreground="gray")
@@ -288,55 +311,69 @@ class ServerManagerDashboard:
             variable=self.offline_var,
             command=self.toggle_offline_mode
         )
-        self.offline_check.pack(side=tk.LEFT, padx=10)
+        self.offline_check.pack(side=tk.LEFT, padx=(15, 0))
         
         # System metrics grid
-        self.metrics_frame = ttk.Frame(self.system_frame, padding=(10, 5))
-        self.metrics_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.metrics_frame = ttk.Frame(self.system_frame, padding=(5, 10))
+        self.metrics_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Configure grid columns and rows
+        # Configure grid columns and rows with better weight distribution
         for i in range(2):
-            self.metrics_frame.columnconfigure(i, weight=1)
+            self.metrics_frame.columnconfigure(i, weight=1, minsize=150)
         for i in range(3):
-            self.metrics_frame.rowconfigure(i, weight=1)
+            self.metrics_frame.rowconfigure(i, weight=1, minsize=50)
         
         # Create metric panels
         self.metric_labels = {}
         
         metrics = [
-            {"row": 0, "col": 0, "title": "CPU", "name": "cpu", "icon": "(CPU)"},
-            {"row": 0, "col": 1, "title": "Memory", "name": "memory", "icon": "(MEM)"},
-            {"row": 1, "col": 0, "title": "Disk Space", "name": "disk", "icon": "(DSK)"},
-            {"row": 1, "col": 1, "title": "Network", "name": "network", "icon": "(NET)"},
-            {"row": 2, "col": 0, "title": "GPU", "name": "gpu", "icon": "(GPU)"},
-            {"row": 2, "col": 1, "title": "System Uptime", "name": "uptime", "icon": "(UP)"}
+            {"row": 0, "col": 0, "title": "CPU", "name": "cpu", "icon": "🖥️"},
+            {"row": 0, "col": 1, "title": "Memory", "name": "memory", "icon": "💾"},
+            {"row": 1, "col": 0, "title": "Disk Space", "name": "disk", "icon": "💿"},
+            {"row": 1, "col": 1, "title": "Network", "name": "network", "icon": "🌐"},
+            {"row": 2, "col": 0, "title": "GPU", "name": "gpu", "icon": "🎮"},
+            {"row": 2, "col": 1, "title": "System Uptime", "name": "uptime", "icon": "⏱️"}
         ]
         
         for metric in metrics:
-            frame = ttk.LabelFrame(self.metrics_frame, text=f"{metric['icon']} {metric['title']}")
-            frame.grid(row=metric["row"], column=metric["col"], padx=5, pady=5, sticky="nsew")
+            frame = ttk.LabelFrame(self.metrics_frame, text=f"{metric['icon']} {metric['title']}", padding=8)
+            frame.grid(row=metric["row"], column=metric["col"], padx=8, pady=8, sticky="nsew")
             
-            value = ttk.Label(frame, text="Loading...", font=("Segoe UI", 11))
-            value.pack(anchor=tk.W, padx=5, pady=5)
+            value = ttk.Label(frame, text="Loading...", font=("Segoe UI", 10))
+            value.pack(anchor=tk.W, fill=tk.X)
             
             self.metric_labels[metric["name"]] = value
         
-        # Create button bar at bottom
+        # Create button bar at bottom with better spacing
         self.button_frame = ttk.Frame(self.container_frame)
-        self.button_frame.pack(fill=tk.X, pady=10)
+        self.button_frame.pack(fill=tk.X, pady=(15, 0))
         
-        # Add buttons
-        buttons = [
+        # Create two rows of buttons for better organization
+        self.button_row1 = ttk.Frame(self.button_frame)
+        self.button_row1.pack(fill=tk.X, pady=(0, 8))
+        
+        self.button_row2 = ttk.Frame(self.button_frame)
+        self.button_row2.pack(fill=tk.X)
+        
+        # Add buttons with better organization
+        row1_buttons = [
             {"text": "Add Server", "command": self.add_server},
             {"text": "Remove Server", "command": self.remove_server},
             {"text": "Import Server", "command": self.import_server},
+            {"text": "Export Server", "command": self.export_server}
+        ]
+        
+        row2_buttons = [
             {"text": "Refresh", "command": self.refresh_all},
             {"text": "Sync All", "command": self.sync_all},
             {"text": "Add Agent", "command": self.add_agent}
         ]
         
-        for btn in buttons:
-            ttk.Button(self.button_frame, text=btn["text"], command=btn["command"], width=15).pack(side=tk.LEFT, padx=5)
+        for btn in row1_buttons:
+            ttk.Button(self.button_row1, text=btn["text"], command=btn["command"], width=18).pack(side=tk.LEFT, padx=(0, 10))
+            
+        for btn in row2_buttons:
+            ttk.Button(self.button_row2, text=btn["text"], command=btn["command"], width=18).pack(side=tk.LEFT, padx=(0, 10))
     
     def show_server_context_menu(self, event):
         """Show context menu on right-click in server list"""
@@ -354,6 +391,7 @@ class ServerManagerDashboard:
             self.server_context_menu.entryconfigure("Restart Server", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("View Process Details", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("Configure Server", state=tk.NORMAL)
+            self.server_context_menu.entryconfigure("Export Server", state=tk.NORMAL)
         else:
             # Disable server-specific options
             self.server_context_menu.entryconfigure("Open Folder Directory", state=tk.DISABLED)
@@ -363,6 +401,7 @@ class ServerManagerDashboard:
             self.server_context_menu.entryconfigure("Restart Server", state=tk.DISABLED)
             self.server_context_menu.entryconfigure("View Process Details", state=tk.DISABLED)
             self.server_context_menu.entryconfigure("Configure Server", state=tk.DISABLED)
+            self.server_context_menu.entryconfigure("Export Server", state=tk.DISABLED)
             
         # Show context menu
         self.server_context_menu.tk_popup(event.x_root, event.y_root)
@@ -376,18 +415,52 @@ class ServerManagerDashboard:
         # Select server type dialog
         type_dialog = tk.Toplevel(self.root)
         type_dialog.title("Select Server Type")
-        type_dialog.geometry("300x200")
+        type_dialog.geometry("380x280")
         type_dialog.transient(self.root)
         type_dialog.grab_set()
-        ttk.Label(type_dialog, text="Select Server Type:").pack(pady=10)
+        
+        # Create main frame with padding
+        main_frame = ttk.Frame(type_dialog, padding=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title label
+        title_label = ttk.Label(main_frame, text="Select Server Type:", font=("Segoe UI", 12, "bold"))
+        title_label.pack(pady=(0, 20))
+        
         type_var = tk.StringVar(value="Steam")
+        
+        # Radio buttons with better spacing
         for stype in self.supported_server_types:
-            ttk.Radiobutton(type_dialog, text=stype, variable=type_var, value=stype).pack(anchor=tk.W, padx=30)
+            rb = ttk.Radiobutton(main_frame, text=stype, variable=type_var, value=stype, style="Large.TRadiobutton")
+            rb.pack(anchor=tk.W, padx=20, pady=8)
+        
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(20, 0))
+        
         def proceed():
             type_dialog.destroy()
-        ttk.Button(type_dialog, text="Next", command=proceed).pack(pady=20)
+            
+        def cancel():
+            type_var.set("")  # Clear selection to indicate cancellation
+            type_dialog.destroy()
+        
+        # Buttons with better spacing
+        ttk.Button(button_frame, text="Cancel", command=cancel, width=12).pack(side=tk.LEFT)
+        ttk.Button(button_frame, text="Next", command=proceed, width=12).pack(side=tk.RIGHT)
+        
+        # Center dialog
+        type_dialog.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - type_dialog.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - type_dialog.winfo_height()) // 2
+        type_dialog.geometry(f"+{x}+{y}")
+        
         self.root.wait_window(type_dialog)
         server_type = type_var.get()
+        
+        # Check if user cancelled
+        if not server_type:
+            return
 
         if server_type == "Steam":
             credentials = get_steam_credentials(self.root)
@@ -400,19 +473,44 @@ class ServerManagerDashboard:
         # Create dialog for server details
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Create {server_type} Server")
-        dialog.geometry("600x500")
+        dialog.geometry("700x650")
         dialog.transient(self.root)
         dialog.grab_set()
+        
+        # Create main frame with padding
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create scrollable frame for the form
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack the canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Configure grid weights for scrollable frame
+        for i in range(3):
+            scrollable_frame.columnconfigure(i, weight=1 if i == 1 else 0)
 
         # Server name
-        ttk.Label(dialog, text="Server Name:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
+        ttk.Label(scrollable_frame, text="Server Name:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, padx=15, pady=15, sticky=tk.W)
         name_var = tk.StringVar()
-        name_entry = ttk.Entry(dialog, textvariable=name_var, width=35)
-        name_entry.grid(row=0, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+        name_entry = ttk.Entry(scrollable_frame, textvariable=name_var, width=40, font=("Segoe UI", 10))
+        name_entry.grid(row=0, column=1, columnspan=2, padx=15, pady=15, sticky=tk.EW)
 
         # Server type (readonly)
-        ttk.Label(dialog, text="Server Type:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
-        ttk.Label(dialog, text=server_type).grid(row=1, column=1, sticky=tk.W)
+        ttk.Label(scrollable_frame, text="Server Type:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, padx=15, pady=10, sticky=tk.W)
+        ttk.Label(scrollable_frame, text=server_type, font=("Segoe UI", 10)).grid(row=1, column=1, padx=15, pady=10, sticky=tk.W)
 
         # Minecraft version list (fetch only if needed)
         mc_versions = []
@@ -431,18 +529,18 @@ class ServerManagerDashboard:
             selected_version = tk.StringVar(value=latest_release["id"])
             
             # Minecraft version dropdown
-            ttk.Label(dialog, text="Minecraft Version:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
-            version_combo = ttk.Combobox(dialog, textvariable=selected_version, values=[v["id"] for v in mc_versions], state="readonly", width=32)
-            version_combo.grid(row=2, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            ttk.Label(scrollable_frame, text="Minecraft Version:", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, padx=15, pady=10, sticky=tk.W)
+            version_combo = ttk.Combobox(scrollable_frame, textvariable=selected_version, values=[v["id"] for v in mc_versions], state="readonly", width=37, font=("Segoe UI", 10))
+            version_combo.grid(row=2, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
             
             # Modloader selection
-            ttk.Label(dialog, text="Modloader:").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
+            ttk.Label(scrollable_frame, text="Modloader:", font=("Segoe UI", 10, "bold")).grid(row=3, column=0, padx=15, pady=10, sticky=tk.W)
             selected_modloader = tk.StringVar(value="Vanilla")
-            modloader_frame = ttk.Frame(dialog)
-            modloader_frame.grid(row=3, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            modloader_frame = ttk.Frame(scrollable_frame)
+            modloader_frame.grid(row=3, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
             modloaders = ["Vanilla", "Fabric", "Forge", "NeoForge"]
             for i, modloader in enumerate(modloaders):
-                ttk.Radiobutton(modloader_frame, text=modloader, variable=selected_modloader, value=modloader).grid(row=0, column=i, padx=5, sticky=tk.W)
+                ttk.Radiobutton(modloader_frame, text=modloader, variable=selected_modloader, value=modloader).grid(row=0, column=i, padx=10, pady=5, sticky=tk.W)
             
             app_id_row = 4
         else:
@@ -452,69 +550,84 @@ class ServerManagerDashboard:
 
         # App ID (Steam only)
         if server_type == "Steam":
-            ttk.Label(dialog, text="App ID:").grid(row=app_id_row, column=0, padx=10, pady=10, sticky=tk.W)
+            ttk.Label(scrollable_frame, text="App ID:", font=("Segoe UI", 10, "bold")).grid(row=app_id_row, column=0, padx=15, pady=10, sticky=tk.W)
             app_id_var = tk.StringVar()
-            app_id_entry = ttk.Entry(dialog, textvariable=app_id_var, width=35)
-            app_id_entry.grid(row=app_id_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            app_id_entry = ttk.Entry(scrollable_frame, textvariable=app_id_var, width=40, font=("Segoe UI", 10))
+            app_id_entry.grid(row=app_id_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
             install_dir_row = app_id_row + 1
         else:
             app_id_var = tk.StringVar(value="")
             install_dir_row = app_id_row
 
         # Install directory
-        ttk.Label(dialog, text="Install Directory:").grid(row=install_dir_row, column=0, padx=10, pady=10, sticky=tk.W)
+        ttk.Label(scrollable_frame, text="Install Directory:", font=("Segoe UI", 10, "bold")).grid(row=install_dir_row, column=0, padx=15, pady=10, sticky=tk.W)
         install_dir_var = tk.StringVar()
-        install_dir_entry = ttk.Entry(dialog, textvariable=install_dir_var, width=25)
-        install_dir_entry.grid(row=install_dir_row, column=1, padx=10, pady=10, sticky=tk.W)
-        ttk.Label(dialog, text="(Leave blank for default location)", foreground="gray").grid(row=install_dir_row+1, column=1, padx=10, sticky=tk.W)
+        install_dir_entry = ttk.Entry(scrollable_frame, textvariable=install_dir_var, width=30, font=("Segoe UI", 10))
+        install_dir_entry.grid(row=install_dir_row, column=1, padx=15, pady=10, sticky=tk.EW)
+        
         def browse_directory():
             directory = filedialog.askdirectory(title="Select Installation Directory")
             if directory:
                 install_dir_var.set(directory)
-        ttk.Button(dialog, text="Browse", command=browse_directory, width=10).grid(row=install_dir_row, column=2, padx=5, pady=10)
+        ttk.Button(scrollable_frame, text="Browse", command=browse_directory, width=12).grid(row=install_dir_row, column=2, padx=15, pady=10)
+        
+        # Help text for install directory
+        ttk.Label(scrollable_frame, text="(Leave blank for default location)", foreground="gray", font=("Segoe UI", 9)).grid(row=install_dir_row+1, column=1, columnspan=2, padx=15, sticky=tk.W)
 
         # Executable (Minecraft/Other)
         exe_row = install_dir_row + 2
         if server_type in ("Minecraft", "Other"):
-            ttk.Label(dialog, text="Executable Path:").grid(row=exe_row, column=0, padx=10, pady=10, sticky=tk.W)
+            ttk.Label(scrollable_frame, text="Executable Path:", font=("Segoe UI", 10, "bold")).grid(row=exe_row, column=0, padx=15, pady=10, sticky=tk.W)
             exe_var = tk.StringVar()
-            exe_entry = ttk.Entry(dialog, textvariable=exe_var, width=35)
-            exe_entry.grid(row=exe_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+            exe_entry = ttk.Entry(scrollable_frame, textvariable=exe_var, width=30, font=("Segoe UI", 10))
+            exe_entry.grid(row=exe_row, column=1, padx=15, pady=10, sticky=tk.EW)
+            
             def browse_exe():
                 fp = filedialog.askopenfilename(title="Select Executable",
                     filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd"),("All","*.*")])
                 if fp:
                     exe_var.set(fp)
-            ttk.Button(dialog, text="Browse", command=browse_exe, width=10).grid(row=exe_row, column=2, padx=5, pady=10)
+            ttk.Button(scrollable_frame, text="Browse", command=browse_exe, width=12).grid(row=exe_row, column=2, padx=15, pady=10)
             args_row = exe_row + 1
         else:
             exe_var = tk.StringVar(value="")
             args_row = exe_row
 
         # Startup Args (all)
-        ttk.Label(dialog, text="Startup Args:").grid(row=args_row, column=0, padx=10, pady=10, sticky=tk.W)
+        ttk.Label(scrollable_frame, text="Startup Args:", font=("Segoe UI", 10, "bold")).grid(row=args_row, column=0, padx=15, pady=10, sticky=tk.W)
         args_var = tk.StringVar()
-        args_entry = ttk.Entry(dialog, textvariable=args_var, width=35)
-        args_entry.grid(row=args_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+        args_entry = ttk.Entry(scrollable_frame, textvariable=args_var, width=40, font=("Segoe UI", 10))
+        args_entry.grid(row=args_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
 
-        # Console output
+        # Console output section
         console_row = args_row + 1
-        ttk.Label(dialog, text="Installation Progress:").grid(row=console_row, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
-        console_frame = ttk.Frame(dialog)
-        console_frame.grid(row=console_row+1, column=0, columnspan=3, padx=10, pady=5, sticky="nsew")
-        console_output = scrolledtext.ScrolledText(console_frame, width=70, height=10, background="black", foreground="white")
+        
+        # Add separator
+        separator = ttk.Separator(scrollable_frame, orient='horizontal')
+        separator.grid(row=console_row, column=0, columnspan=3, padx=15, pady=20, sticky="ew")
+        
+        ttk.Label(scrollable_frame, text="Installation Progress:", font=("Segoe UI", 10, "bold")).grid(row=console_row+1, column=0, columnspan=3, padx=15, pady=(10, 5), sticky=tk.W)
+        
+        # Create a fixed-height frame for console output
+        console_container = ttk.Frame(main_frame)
+        console_container.pack(fill=tk.X, padx=15, pady=10)
+        
+        console_output = scrolledtext.ScrolledText(console_container, width=70, height=8, 
+                                                 background="black", foreground="white", 
+                                                 font=("Consolas", 9))
         console_output.pack(fill=tk.BOTH, expand=True)
         console_output.config(state=tk.DISABLED)
 
+        # Status and progress bar
+        status_container = ttk.Frame(main_frame)
+        status_container.pack(fill=tk.X, padx=15, pady=(0, 10))
+        
         status_var = tk.StringVar(value="")
-        status_label = ttk.Label(dialog, textvariable=status_var)
-        status_label.grid(row=console_row+2, column=0, columnspan=3, padx=10, pady=5, sticky=tk.W)
-        progress = ttk.Progressbar(dialog, mode="indeterminate")
-        progress.grid(row=console_row+3, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
-
-        dialog.grid_rowconfigure(console_row+1, weight=1)
-        for i in range(3):
-            dialog.grid_columnconfigure(i, weight=1 if i == 1 else 0)
+        status_label = ttk.Label(status_container, textvariable=status_var, font=("Segoe UI", 10))
+        status_label.pack(anchor=tk.W, pady=(0, 5))
+        
+        progress = ttk.Progressbar(status_container, mode="indeterminate")
+        progress.pack(fill=tk.X)
 
         self.install_cancelled = False
         def append_console(text):
@@ -604,12 +717,19 @@ class ServerManagerDashboard:
             finally:
                 progress.stop()
 
-        button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=console_row+4, column=0, columnspan=3, padx=10, pady=10)
-        create_button = ttk.Button(button_frame, text="Create", width=15)
-        create_button.pack(side=tk.LEFT, padx=5)
-        cancel_button = ttk.Button(button_frame, text="Cancel", width=15, state=tk.DISABLED)
-        cancel_button.pack(side=tk.LEFT, padx=5)
+        # Button frame at the bottom
+        button_container = ttk.Frame(main_frame)
+        button_container.pack(fill=tk.X, padx=15, pady=15)
+        
+        # Create and Cancel buttons
+        create_button = ttk.Button(button_container, text="Create Server", width=18)
+        create_button.pack(side=tk.RIGHT, padx=(10, 0))
+        
+        cancel_button = ttk.Button(button_container, text="Cancel Installation", width=18, state=tk.DISABLED)
+        cancel_button.pack(side=tk.RIGHT, padx=(10, 0))
+        
+        close_button = ttk.Button(button_container, text="Close", width=12)
+        close_button.pack(side=tk.LEFT)
         
         def start_installation():
             installation_thread = threading.Thread(target=install_server)
@@ -622,8 +742,13 @@ class ServerManagerDashboard:
             status_var.set("Cancelling installation...")
             append_console("[INFO] Cancellation requested, stopping installation process...")
             
+        def close_dialog():
+            dialog.destroy()
+            
+        # Assign button commands
         create_button.config(command=start_installation)
         cancel_button.config(command=cancel_installation)
+        close_button.config(command=close_dialog)
         
         def on_close():
             if cancel_button.instate(['!disabled']):
@@ -639,6 +764,8 @@ class ServerManagerDashboard:
             dialog.destroy()
             
         dialog.protocol("WM_DELETE_WINDOW", on_close)
+        
+        # Center dialog on parent window
         dialog.update_idletasks()
         x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
         y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
@@ -750,7 +877,7 @@ class ServerManagerDashboard:
     
     def is_port_open(self, host, port, timeout=1):
         """Check if a port is open on the specified host"""
-        return is_port_open(host, port, timeout)
+        return check_port_status(host, port, timeout)
     
     def toggle_offline_mode(self):
         """Toggle offline mode"""
@@ -934,7 +1061,7 @@ class ServerManagerDashboard:
             messagebox.showerror("Error", f"Failed to restart server: {str(e)}")
     
     def view_process_details(self):
-        """View detailed process information for a server"""
+        """View detailed process information for a server using debug module"""
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -943,33 +1070,17 @@ class ServerManagerDashboard:
         server_name = self.server_list.item(selected_items[0])['values'][0]
         
         try:
-            # Get server config file path
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            # Get server process details from debug module
+            process_details = get_server_process_details(server_name)
             
-            if not os.path.exists(config_file):
-                messagebox.showerror("Error", f"Server configuration file not found: {config_file}")
+            if "error" in process_details:
+                messagebox.showerror("Error", process_details["error"])
                 return
-                
-            # Read server configuration
-            with open(config_file, 'r') as f:
-                server_config = json.load(f)
-                
-            # Check if server has a process ID registered
-            if 'ProcessId' not in server_config:
-                messagebox.showinfo("Not Running", f"Server '{server_name}' is not running.")
-                return
-                
-            process_id = server_config['ProcessId']
             
-            # Check if process is still running
-            if not self.is_process_running(process_id):
-                messagebox.showinfo("Not Running", f"Server process (PID {process_id}) is not running.")
-                return
-                
             # Create detail dialog
             dialog = tk.Toplevel(self.root)
-            dialog.title(f"Process Details: {server_name} (PID: {process_id})")
-            dialog.geometry("600x500")
+            dialog.title(f"Process Details: {server_name} (PID: {process_details['pid']})")
+            dialog.geometry("700x600")
             dialog.transient(self.root)
             dialog.grab_set()
             
@@ -977,221 +1088,209 @@ class ServerManagerDashboard:
             main_frame = ttk.Frame(dialog, padding=10)
             main_frame.pack(fill=tk.BOTH, expand=True)
             
-            # Get process information
-            try:
-                process = psutil.Process(process_id)
+            # Create notebook for organized tabs
+            notebook = ttk.Notebook(main_frame)
+            notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+            
+            # Basic Info Tab
+            basic_frame = ttk.Frame(notebook)
+            notebook.add(basic_frame, text="Basic Info")
+            
+            # Basic information grid
+            info_grid = ttk.Frame(basic_frame)
+            info_grid.pack(fill=tk.X, padx=10, pady=10)
+            
+            # Display basic process information
+            info_items = [
+                ("PID:", str(process_details["pid"])),
+                ("Status:", process_details["status"]),
+                ("Name:", process_details["name"]),
+                ("Server Uptime:", process_details.get("server_uptime", "Unknown")),
+                ("CPU Usage:", f"{process_details['cpu_percent']:.1f}%"),
+                ("Memory Usage:", f"{process_details['memory_info']['rss'] / (1024 * 1024):.1f} MB"),
+                ("Memory %:", f"{process_details['memory_percent']:.1f}%"),
+                ("Threads:", str(process_details["num_threads"]))
+            ]
+            
+            for i, (label, value) in enumerate(info_items):
+                row = i // 2
+                col = (i % 2) * 2
+                ttk.Label(info_grid, text=label, width=15).grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
+                ttk.Label(info_grid, text=value).grid(row=row, column=col+1, sticky=tk.W, padx=5, pady=2)
+            
+            # Executable path (full width)
+            if "exe" in process_details and process_details["exe"] != "Access Denied":
+                ttk.Label(info_grid, text="Executable:").grid(row=len(info_items)//2 + 1, column=0, sticky=tk.W, padx=5, pady=2)
+                exe_label = ttk.Label(info_grid, text=process_details["exe"])
+                exe_label.grid(row=len(info_items)//2 + 1, column=1, columnspan=3, sticky=tk.W, padx=5, pady=2)
+            
+            # Resources Tab
+            resources_frame = ttk.Frame(notebook)
+            notebook.add(resources_frame, text="Resources")
+            
+            # Resource details
+            resource_text = scrolledtext.ScrolledText(resources_frame, width=80, height=20)
+            resource_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            resource_info = f"""Memory Information:
+RSS (Resident Set Size): {process_details['memory_info']['rss'] / (1024 * 1024):.2f} MB
+VMS (Virtual Memory Size): {process_details['memory_info']['vms'] / (1024 * 1024):.2f} MB
+Memory Percentage: {process_details['memory_percent']:.2f}%
+
+Open Files: {process_details.get('open_files_count', 'N/A')}
+Network Connections: {process_details.get('connections_count', 'N/A')}
+
+Command Line: {' '.join(process_details.get('cmdline', ['N/A']))}
+
+Working Directory: {process_details.get('cwd', 'N/A')}
+"""
+            resource_text.insert(tk.END, resource_info)
+            resource_text.config(state=tk.DISABLED)
+            
+            # Children Tab
+            if process_details.get("children"):
+                children_frame = ttk.Frame(notebook)
+                notebook.add(children_frame, text="Child Processes")
                 
-                # Basic info
-                info_frame = ttk.LabelFrame(main_frame, text="Basic Information")
-                info_frame.pack(fill=tk.X, pady=(0, 10))
-                
-                # Get create time
-                try:
-                    create_time = datetime.datetime.fromtimestamp(process.create_time())
-                    create_time_str = create_time.strftime("%Y-%m-%d %H:%M:%S")
-                except:
-                    create_time_str = "Unknown"
-                
-                # Calculate uptime
-                if 'StartTime' in server_config:
-                    try:
-                        start_time = datetime.datetime.fromisoformat(server_config['StartTime'])
-                        uptime = datetime.datetime.now() - start_time
-                        days = uptime.days
-                        hours, remainder = divmod(uptime.seconds, 3600)
-                        minutes, seconds = divmod(remainder, 60)
-                        
-                        if days > 0:
-                            uptime_str = f"{days}d {hours}h {minutes}m"
-                        else:
-                            uptime_str = f"{hours}h {minutes}m {seconds}s"
-                    except:
-                        uptime_str = "Unknown"
-                else:
-                    uptime_str = "Unknown"
-                
-                # Create info grid
-                info_grid = ttk.Frame(info_frame)
-                info_grid.pack(fill=tk.X, padx=10, pady=10)
-                
-                # Row 1
-                ttk.Label(info_grid, text="PID:", width=15).grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
-                ttk.Label(info_grid, text=str(process_id)).grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
-                
-                ttk.Label(info_grid, text="Status:", width=15).grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
-                ttk.Label(info_grid, text=process.status()).grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
-                
-                
-                # Row 2
-                ttk.Label(info_grid, text="Started:", width=15).grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
-                ttk.Label(info_grid, text=create_time_str).grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
-                
-                ttk.Label(info_grid, text="Uptime:", width=15).grid(row=1, column=2, sticky=tk.W, padx=5, pady=2)
-                ttk.Label(info_grid, text=uptime_str).grid(row=1, column=3, sticky=tk.W, padx=5, pady=2)
-                
-                # Row 3
-                ttk.Label(info_grid, text="Executable:", width=15).grid(row=2, column=0, sticky=tk.W, padx=5, pady=2)
-                exe_label = ttk.Label(info_grid, text=process.exe())
-                exe_label.grid(row=2, column=1, columnspan=3, sticky=tk.W, padx=5, pady=2)
-                
-                # System resource usage
-                resource_frame = ttk.LabelFrame(main_frame, text="Resource Usage")
-                resource_frame.pack(fill=tk.X, pady=(0, 10))
-                
-                # Get current CPU and memory usage
-                cpu_percent = process.cpu_percent(interval=0.1)
-                memory_info = process.memory_info()
-                memory_mb = memory_info.rss / (1024 * 1024)
-                
-                # Create resource grid
-                resource_grid = ttk.Frame(resource_frame)
-                resource_grid.pack(fill=tk.X, padx=10, pady=10)
-                
-                # Row 1
-                ttk.Label(resource_grid, text="CPU Usage:", width=15).grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
-                ttk.Label(resource_grid, text=f"{cpu_percent:.1f}%").grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
-                
-                ttk.Label(resource_grid, text="Memory Usage:", width=15).grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
-                ttk.Label(resource_grid, text=f"{memory_mb:.1f} MB").grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
-                
-                # Row 2
-                ttk.Label(resource_grid, text="Threads:", width=15).grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
-                ttk.Label(resource_grid, text=str(process.num_threads())).grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
-                
-                ttk.Label(resource_grid, text="Open Files:", width=15).grid(row=1, column=2, sticky=tk.W, padx=5, pady=2)
-                try:
-                    open_files = len(process.open_files())
-                    ttk.Label(resource_grid, text=str(open_files)).grid(row=1, column=3, sticky=tk.W, padx=5, pady=2)
-                except:
-                    ttk.Label(resource_grid, text="N/A").grid(row=1, column=3, sticky=tk.W, padx=5, pady=2)
-                
-                # Child processes
-                child_frame = ttk.LabelFrame(main_frame, text="Child Processes")
-                child_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-                
-                # Create a list for child processes
-                child_list = ttk.Treeview(child_frame, columns=("pid", "name", "status", "cpu", "memory"), show="headings")
+                # Create child processes list
+                child_list = ttk.Treeview(children_frame, columns=("pid", "name", "status", "cpu", "memory"), show="headings")
                 child_list.heading("pid", text="PID")
                 child_list.heading("name", text="Name")
                 child_list.heading("status", text="Status")
                 child_list.heading("cpu", text="CPU %")
-                child_list.heading("memory", text="Memory")
+                child_list.heading("memory", text="Memory MB")
                 
                 child_list.column("pid", width=60)
                 child_list.column("name", width=200)
                 child_list.column("status", width=80)
-                child_list.column("cpu", width=60)
-                child_list.column("memory", width=80)
+                child_list.column("cpu", width=80)
+                child_list.column("memory", width=100)
                 
-                # Add scrollbar to child list
-                child_scroll = ttk.Scrollbar(child_frame, orient=tk.VERTICAL, command=child_list.yview)
+                # Add scrollbar
+                child_scroll = ttk.Scrollbar(children_frame, orient=tk.VERTICAL, command=child_list.yview)
                 child_list.configure(yscrollcommand=child_scroll.set)
                 
-                # Pack child list components
+                # Pack components
                 child_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-                child_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                child_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
                 
                 # Populate child list
-                try:
-                    children = process.children(recursive=False)
-                    for child in children:
-                        try:
-                            child_cpu = child.cpu_percent(interval=0.1)
-                            child_mem = child.memory_info().rss / (1024 * 1024)
-                            child_list.insert("", tk.END, values=(
-                                child.pid,
-                                child.name(),
-                                child.status(),
-                                f"{child_cpu:.1f}",
-                                f"{child_mem:.1f} MB"
-                            ))
-                        except:
-                            # Process might have terminated
-                            pass
-                except:
-                    ttk.Label(child_frame, text="Could not retrieve child processes").pack(padx=10, pady=10)
+                for child in process_details["children"]:
+                    child_list.insert("", tk.END, values=(
+                        child["pid"],
+                        child["name"],
+                        child["status"],
+                        f"{child['cpu_percent']:.1f}",
+                        f"{child['memory_mb']:.1f}"
+                    ))
+            
+            # Network Tab
+            if process_details.get("connections"):
+                network_frame = ttk.Frame(notebook)
+                notebook.add(network_frame, text="Network")
                 
-                # Log files
-                log_frame = ttk.LabelFrame(main_frame, text="Log Files")
-                log_frame.pack(fill=tk.X, pady=(0, 10))
+                # Create network connections list
+                conn_list = ttk.Treeview(network_frame, columns=("family", "type", "local", "remote", "status"), show="headings")
+                conn_list.heading("family", text="Family")
+                conn_list.heading("type", text="Type")
+                conn_list.heading("local", text="Local Address")
+                conn_list.heading("remote", text="Remote Address")
+                conn_list.heading("status", text="Status")
                 
-                # Show log file paths
-                log_grid = ttk.Frame(log_frame)
+                # Add scrollbar
+                conn_scroll = ttk.Scrollbar(network_frame, orient=tk.VERTICAL, command=conn_list.yview)
+                conn_list.configure(yscrollcommand=conn_scroll.set)
+                
+                # Pack components
+                conn_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+                conn_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+                
+                # Populate connections list
+                for conn in process_details["connections"]:
+                    conn_list.insert("", tk.END, values=(
+                        conn["family"],
+                        conn["type"],
+                        conn["local_address"],
+                        conn["remote_address"],
+                        conn["status"]
+                    ))
+            
+            # Log Files Tab
+            server_config = process_details.get("server_config", {})
+            if server_config.get("LogStdout") or server_config.get("LogStderr"):
+                logs_frame = ttk.Frame(notebook)
+                notebook.add(logs_frame, text="Log Files")
+                
+                log_grid = ttk.Frame(logs_frame)
                 log_grid.pack(fill=tk.X, padx=10, pady=10)
                 
-                # Stdout log
-                if 'LogStdout' in server_config and server_config['LogStdout']:
-                    ttk.Label(log_grid, text="Stdout Log:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
-                    stdout_path = server_config['LogStdout']
-                    path_label = ttk.Label(log_grid, text=stdout_path)
-                    path_label.grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+                row = 0
+                if server_config.get("LogStdout"):
+                    ttk.Label(log_grid, text="Stdout Log:").grid(row=row, column=0, sticky=tk.W, padx=5, pady=2)
+                    ttk.Label(log_grid, text=server_config["LogStdout"]).grid(row=row, column=1, sticky=tk.W, padx=5, pady=2)
                     
-                    # Add open button
                     def open_stdout_log():
                         try:
-                            if os.path.exists(stdout_path):
-                                if sys.platform == 'win32':
-                                    os.startfile(stdout_path)
-                                elif sys.platform == 'darwin':
-                                    subprocess.call(['open', stdout_path])
-                                else:
-                                    subprocess.call(['xdg-open', stdout_path])
+                            if os.path.exists(server_config["LogStdout"]):
+                                os.startfile(server_config["LogStdout"])
                             else:
                                 messagebox.showinfo("Not Found", "Log file not found.")
                         except Exception as e:
                             messagebox.showerror("Error", f"Could not open log file: {str(e)}")
                     
-                    ttk.Button(log_grid, text="Open", command=open_stdout_log, width=10).grid(row=0, column=2, padx=5, pady=2)
+                    ttk.Button(log_grid, text="Open", command=open_stdout_log, width=10).grid(row=row, column=2, padx=5, pady=2)
+                    row += 1
                 
-                # Stderr log
-                if 'LogStderr' in server_config and server_config['LogStderr']:
-                    ttk.Label(log_grid, text="Stderr Log:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
-                    stderr_path = server_config['LogStderr']
-                    path_label = ttk.Label(log_grid, text=stderr_path)
-                    path_label.grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
+                if server_config.get("LogStderr"):
+                    ttk.Label(log_grid, text="Stderr Log:").grid(row=row, column=0, sticky=tk.W, padx=5, pady=2)
+                    ttk.Label(log_grid, text=server_config["LogStderr"]).grid(row=row, column=1, sticky=tk.W, padx=5, pady=2)
                     
-                    # Add open button
                     def open_stderr_log():
                         try:
-                            if os.path.exists(stderr_path):
-                                if sys.platform == 'win32':
-                                    os.startfile(stderr_path)
-                                elif sys.platform == 'darwin':
-                                    subprocess.call(['open', stderr_path])
-                                else:
-                                    subprocess.call(['xdg-open', stderr_path])
+                            if os.path.exists(server_config["LogStderr"]):
+                                os.startfile(server_config["LogStderr"])
                             else:
                                 messagebox.showinfo("Not Found", "Log file not found.")
                         except Exception as e:
                             messagebox.showerror("Error", f"Could not open log file: {str(e)}")
                     
-                    ttk.Button(log_grid, text="Open", command=open_stderr_log, width=10).grid(row=1, column=2, padx=5, pady=2)
-                
-                # Action buttons
-                button_frame = ttk.Frame(main_frame)
-                button_frame.pack(fill=tk.X, pady=10)
-                
-                # Refresh button
-                def refresh_process_info():
-                    dialog.destroy()
-                    self.view_process_details()
-                
-                ttk.Button(button_frame, text="Refresh", command=refresh_process_info, width=15).pack(side=tk.LEFT, padx=5)
-                
-                # Stop process button
-                def stop_from_details():
-                    dialog.destroy()
-                    self.stop_server()
-                
-                ttk.Button(button_frame, text="Stop Process", command=stop_from_details, width=15).pack(side=tk.RIGHT, padx=5)
-                
-                # Close button
-                ttk.Button(button_frame, text="Close", command=dialog.destroy, width=15).pack(side=tk.RIGHT, padx=5)
-                
-            except Exception as e:
-                logger.error(f"Error getting process details: {str(e)}")
-                ttk.Label(main_frame, text=f"Error retrieving process information: {str(e)}").pack(padx=10, pady=10)
-                ttk.Button(main_frame, text="Close", command=dialog.destroy).pack(pady=10)
+                    ttk.Button(log_grid, text="Open", command=open_stderr_log, width=10).grid(row=row, column=2, padx=5, pady=2)
+            
+            # Action buttons
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=10)
+            
+            # Refresh button
+            def refresh_process_info():
+                dialog.destroy()
+                self.view_process_details()
+            
+            ttk.Button(button_frame, text="Refresh", command=refresh_process_info, width=15).pack(side=tk.LEFT, padx=5)
+            
+            # Monitor button - shows resource monitoring
+            def monitor_process():
+                try:
+                    monitor_data = monitor_process_resources(process_details["pid"], 10)
+                    if "error" not in monitor_data:
+                        messagebox.showinfo("Monitoring Complete", 
+                                          f"Monitored process for {monitor_data['duration']} seconds.\n"
+                                          f"Collected {monitor_data['sample_count']} samples.")
+                    else:
+                        messagebox.showerror("Error", monitor_data["error"])
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to monitor process: {str(e)}")
+            
+            ttk.Button(button_frame, text="Monitor (10s)", command=monitor_process, width=15).pack(side=tk.LEFT, padx=5)
+            
+            # Stop process button
+            def stop_from_details():
+                dialog.destroy()
+                self.stop_server()
+            
+            ttk.Button(button_frame, text="Stop Process", command=stop_from_details, width=15).pack(side=tk.RIGHT, padx=5)
+            
+            # Close button
+            ttk.Button(button_frame, text="Close", command=dialog.destroy, width=15).pack(side=tk.RIGHT, padx=5)
             
             # Center dialog on parent window
             dialog.update_idletasks()
@@ -1200,8 +1299,8 @@ class ServerManagerDashboard:
             dialog.geometry(f"+{x}+{y}")
             
         except Exception as e:
-            logger.error(f"Error viewing process details: {str(e)}")
-            messagebox.showerror("Error", f"Failed to view process details: {str(e)}")
+            log_exception(e, f"Error viewing process details for {server_name}")
+            messagebox.showerror("Error", f"Failed to get process details: {str(e)}")
     
     def update_server_status(self, server_name, status):
         """Update the status of a server in the UI"""
@@ -1627,7 +1726,57 @@ class ServerManagerDashboard:
         dialog.geometry(f"+{x}+{y}")
 
     def import_server(self):
-        """Import an existing server from a directory"""
+        """Enhanced import server functionality with support for exported configurations"""
+        try:
+            # Choose import type
+            import_dialog = tk.Toplevel(self.root)
+            import_dialog.title("Import Server")
+            import_dialog.geometry("400x300")
+            import_dialog.transient(self.root)
+            import_dialog.grab_set()
+            
+            main_frame = ttk.Frame(import_dialog, padding=20)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            ttk.Label(main_frame, text="Select Import Method:", font=("Segoe UI", 12, "bold")).pack(pady=10)
+            
+            import_type = tk.StringVar(value="directory")
+            
+            ttk.Radiobutton(main_frame, text="Import from existing directory", 
+                          variable=import_type, value="directory").pack(anchor=tk.W, pady=5)
+            
+            ttk.Radiobutton(main_frame, text="Import from exported configuration file", 
+                          variable=import_type, value="exported").pack(anchor=tk.W, pady=5)
+            
+            # Button frame
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(pady=20)
+            
+            def proceed_import():
+                import_dialog.destroy()
+                if import_type.get() == "directory":
+                    self.import_server_from_directory()
+                else:
+                    self.import_server_from_export()
+            
+            def cancel_import():
+                import_dialog.destroy()
+            
+            ttk.Button(button_frame, text="Continue", command=proceed_import, width=15).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Cancel", command=cancel_import, width=15).pack(side=tk.LEFT, padx=5)
+            
+            # Center dialog
+            import_dialog.update_idletasks()
+            x = self.root.winfo_rootx() + (self.root.winfo_width() - import_dialog.winfo_width()) // 2
+            y = self.root.winfo_rooty() + (self.root.winfo_height() - import_dialog.winfo_height()) // 2
+            import_dialog.geometry(f"+{x}+{y}")
+            
+        except Exception as e:
+            logger.error(f"Error in import server: {str(e)}")
+            messagebox.showerror("Error", f"Failed to open import dialog: {str(e)}")
+
+    def import_server_from_directory(self):
+        """Import an existing server from a directory (legacy method)"""
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
             return
@@ -1644,7 +1793,7 @@ class ServerManagerDashboard:
                 
             # Create import dialog
             dialog = tk.Toplevel(self.root)
-            dialog.title("Import Server")
+            dialog.title("Import Server from Directory")
             dialog.geometry("500x400")
             dialog.transient(self.root)
             dialog.grab_set()
@@ -1792,10 +1941,377 @@ class ServerManagerDashboard:
             dialog.geometry(f"+{x}+{y}")
             
         except Exception as e:
-            logger.error(f"Error during import: {str(e)}")
-            messagebox.showerror("Error", f"Failed to import server: {str(e)}")
-            logger.error(f"Error in import server: {str(e)}")
-            messagebox.showerror("Error", f"Failed to import server: {str(e)}")
+            logger.error(f"Error during directory import: {str(e)}")
+            messagebox.showerror("Error", f"Failed to import server from directory: {str(e)}")
+
+    def import_server_from_export(self):
+        """Import server from exported configuration file"""
+        try:
+            # Ask user to select export file
+            file_path = filedialog.askopenfilename(
+                title="Select Server Export File",
+                filetypes=[
+                    ("Server Export Files", "*.json;*.zip"),
+                    ("JSON Files", "*.json"),
+                    ("ZIP Files", "*.zip"),
+                    ("All Files", "*.*")
+                ]
+            )
+            
+            if not file_path:
+                return
+            
+            # Import server data from file
+            success, export_data, has_files = import_server_from_file(file_path)
+            
+            if not success or not export_data:
+                messagebox.showerror("Import Error", "Failed to read export file. File may be corrupted or invalid.")
+                return
+            
+            # Create import configuration dialog
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Import Server Configuration")
+            dialog.geometry("600x550")
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            main_frame = ttk.Frame(dialog, padding=15)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Display export information
+            export_info_frame = ttk.LabelFrame(main_frame, text="Export Information", padding=10)
+            export_info_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            export_metadata = export_data.get("export_metadata", {})
+            server_config = export_data.get("server_configuration", {})
+            dependencies = export_data.get("dependencies", {})
+            
+            info_text = f"""Exported: {export_metadata.get('exported_at', 'Unknown')}
+From Host: {export_metadata.get('source_host', 'Unknown')}
+Server Type: {server_config.get('Type', 'Unknown')}
+Original Name: {server_config.get('Name', 'Unknown')}
+Includes Files: {'Yes' if has_files else 'No'}"""
+            
+            if server_config.get('Type') == 'Steam' and server_config.get('AppId'):
+                info_text += f"\nSteam App ID: {server_config['AppId']}"
+                
+            ttk.Label(export_info_frame, text=info_text, justify=tk.LEFT).pack(anchor=tk.W)
+            
+            # Import configuration frame
+            config_frame = ttk.LabelFrame(main_frame, text="Import Configuration", padding=10)
+            config_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            # Server name (with unique name generation)
+            ttk.Label(config_frame, text="Server Name:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+            original_name = server_config.get("Name", "Imported Server")
+            unique_name = generate_unique_server_name(original_name, self.paths)
+            name_var = tk.StringVar(value=unique_name)
+            name_entry = ttk.Entry(config_frame, textvariable=name_var, width=40)
+            name_entry.grid(row=0, column=1, columnspan=2, padx=5, pady=5, sticky=tk.W)
+            
+            # Installation directory
+            ttk.Label(config_frame, text="Install Directory:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+            default_install_dir = ""
+            if has_files and self.server_manager_dir:
+                default_install_dir = os.path.join(self.server_manager_dir, "servers", unique_name.replace(" ", "_"))
+            
+            install_dir_var = tk.StringVar(value=default_install_dir)
+            install_dir_entry = ttk.Entry(config_frame, textvariable=install_dir_var, width=30)
+            install_dir_entry.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+            
+            def browse_install_dir():
+                dir_path = filedialog.askdirectory(title="Select Installation Directory")
+                if dir_path:
+                    install_dir_var.set(dir_path)
+            
+            ttk.Button(config_frame, text="Browse", command=browse_install_dir, width=10).grid(row=1, column=2, padx=5, pady=5)
+            
+            # Steam installation option (if Steam server)
+            auto_install_var = tk.BooleanVar(value=False)
+            if server_config.get('Type') == 'Steam' and server_config.get('AppId'):
+                install_check = ttk.Checkbutton(
+                    config_frame,
+                    text=f"Automatically install Steam App ID {server_config['AppId']} (requires SteamCMD)",
+                    variable=auto_install_var
+                )
+                install_check.grid(row=2, column=0, columnspan=3, padx=5, pady=10, sticky=tk.W)
+            
+            # File extraction option (if files are included)
+            extract_files_var = tk.BooleanVar(value=has_files)
+            if has_files:
+                extract_check = ttk.Checkbutton(
+                    config_frame,
+                    text="Extract server files from archive",
+                    variable=extract_files_var
+                )
+                extract_check.grid(row=3, column=0, columnspan=3, padx=5, pady=5, sticky=tk.W)
+            
+            # Progress frame
+            progress_frame = ttk.Frame(main_frame)
+            progress_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            status_var = tk.StringVar(value="Ready to import")
+            status_label = ttk.Label(progress_frame, textvariable=status_var)
+            status_label.pack(anchor=tk.W, pady=2)
+            
+            progress_bar = ttk.Progressbar(progress_frame, mode="determinate")
+            progress_bar.pack(fill=tk.X, pady=2)
+            
+            # Buttons
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            def perform_import():
+                try:
+                    server_name = name_var.get().strip()
+                    install_dir = install_dir_var.get().strip()
+                    
+                    if not server_name:
+                        messagebox.showerror("Validation Error", "Server name is required.")
+                        return
+                    
+                    # Start import process
+                    status_var.set("Importing server configuration...")
+                    progress_bar.config(value=10)
+                    dialog.update()
+                    
+                    # Import server configuration
+                    success, message, imported_config = import_server_configuration(
+                        export_data, self.paths, install_dir, auto_install_var.get()
+                    )
+                    
+                    if not success:
+                        messagebox.showerror("Import Error", message)
+                        return
+                    
+                    progress_bar.config(value=50)
+                    status_var.set("Server configuration imported successfully")
+                    dialog.update()
+                    
+                    # Extract files if requested
+                    if has_files and extract_files_var.get() and install_dir:
+                        status_var.set("Extracting server files...")
+                        progress_bar.config(value=70)
+                        dialog.update()
+                        
+                        extract_success, extract_message = extract_server_files_from_archive(file_path, install_dir)
+                        
+                        if not extract_success:
+                            logger.warning(f"File extraction failed: {extract_message}")
+                            messagebox.showwarning("Extraction Warning", 
+                                                 f"Server imported but file extraction failed:\n{extract_message}")
+                        else:
+                            status_var.set("Files extracted successfully")
+                    
+                    progress_bar.config(value=100)
+                    status_var.set("Import completed successfully")
+                    dialog.update()
+                    
+                    # Update server list
+                    self.update_server_list(force_refresh=True)
+                    
+                    # Show completion message
+                    completion_msg = f"Server '{server_name}' imported successfully!"
+                    if auto_install_var.get():
+                        completion_msg += "\n\nNote: Steam installation will be performed when the server is first started."
+                    
+                    messagebox.showinfo("Import Complete", completion_msg)
+                    dialog.destroy()
+                    
+                except Exception as e:
+                    logger.error(f"Error during import: {str(e)}")
+                    status_var.set(f"Import failed: {str(e)}")
+                    messagebox.showerror("Import Error", f"Failed to import server: {str(e)}")
+            
+            def cancel_import():
+                dialog.destroy()
+            
+            ttk.Button(button_frame, text="Import", command=perform_import, width=15).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Cancel", command=cancel_import, width=15).pack(side=tk.RIGHT, padx=5)
+            
+            # Center dialog
+            dialog.update_idletasks()
+            x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+            y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+            dialog.geometry(f"+{x}+{y}")
+            
+        except Exception as e:
+            logger.error(f"Error importing from export: {str(e)}")
+            messagebox.showerror("Error", f"Failed to import server from export: {str(e)}")
+
+    def export_server(self):
+        """Export server configuration for use on other hosts or clusters"""
+        selected_items = self.server_list.selection()
+        if not selected_items:
+            messagebox.showinfo("No Selection", "Please select a server to export first.")
+            return
+        
+        try:
+            server_name = self.server_list.item(selected_items[0])['values'][0]
+            
+            # Create export options dialog
+            dialog = tk.Toplevel(self.root)
+            dialog.title(f"Export Server: {server_name}")
+            dialog.geometry("500x400")
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            main_frame = ttk.Frame(dialog, padding=15)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Export options frame
+            options_frame = ttk.LabelFrame(main_frame, text="Export Options", padding=10)
+            options_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            # Include files option
+            include_files_var = tk.BooleanVar(value=False)
+            include_files_check = ttk.Checkbutton(
+                options_frame,
+                text="Include server files in export (creates larger archive)",
+                variable=include_files_var
+            )
+            include_files_check.pack(anchor=tk.W, pady=5)
+            
+            # Warning about file inclusion
+            warning_label = ttk.Label(
+                options_frame,
+                text="⚠️ Including files will create a zip archive. Large server installations may take time to export.",
+                foreground="orange",
+                wraplength=450
+            )
+            warning_label.pack(anchor=tk.W, pady=5)
+            
+            # Export location frame
+            location_frame = ttk.LabelFrame(main_frame, text="Export Location", padding=10)
+            location_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            ttk.Label(location_frame, text="Export to:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+            
+            # Default filename
+            safe_name = "".join(c for c in server_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            default_filename = f"{safe_name.replace(' ', '_')}_export.json"
+            
+            export_path_var = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Desktop", default_filename))
+            export_path_entry = ttk.Entry(location_frame, textvariable=export_path_var, width=40)
+            export_path_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+            
+            def browse_export_location():
+                if include_files_var.get():
+                    file_path = filedialog.asksaveasfilename(
+                        title="Save Server Export",
+                        defaultextension=".zip",
+                        filetypes=[("ZIP Archives", "*.zip"), ("All Files", "*.*")]
+                    )
+                else:
+                    file_path = filedialog.asksaveasfilename(
+                        title="Save Server Export",
+                        defaultextension=".json",
+                        filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
+                    )
+                
+                if file_path:
+                    export_path_var.set(file_path)
+            
+            def update_filename():
+                # Update file extension based on include files option
+                current_path = export_path_var.get()
+                if include_files_var.get():
+                    if current_path.endswith('.json'):
+                        export_path_var.set(current_path[:-5] + '.zip')
+                else:
+                    if current_path.endswith('.zip'):
+                        export_path_var.set(current_path[:-4] + '.json')
+            
+            include_files_check.configure(command=update_filename)
+            
+            ttk.Button(location_frame, text="Browse", command=browse_export_location, width=10).grid(row=0, column=2, padx=5, pady=5)
+            
+            # Progress frame
+            progress_frame = ttk.Frame(main_frame)
+            progress_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            status_var = tk.StringVar(value="Ready to export")
+            status_label = ttk.Label(progress_frame, textvariable=status_var)
+            status_label.pack(anchor=tk.W, pady=2)
+            
+            progress_bar = ttk.Progressbar(progress_frame, mode="indeterminate")
+            progress_bar.pack(fill=tk.X, pady=2)
+            
+            # Buttons
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            def perform_export():
+                try:
+                    export_path = export_path_var.get().strip()
+                    include_files = include_files_var.get()
+                    
+                    if not export_path:
+                        messagebox.showerror("Validation Error", "Export path is required.")
+                        return
+                    
+                    # Start export process
+                    status_var.set("Generating export configuration...")
+                    progress_bar.start()
+                    dialog.update()
+                    
+                    # Export server configuration
+                    export_data = export_server_configuration(server_name, self.paths, include_files)
+                    
+                    status_var.set("Saving export file...")
+                    dialog.update()
+                    
+                    # Save to file
+                    success, message = export_server_to_file(export_data, export_path, include_files)
+                    
+                    progress_bar.stop()
+                    
+                    if success:
+                        status_var.set("Export completed successfully")
+                        
+                        # Show completion dialog
+                        completion_msg = f"Server '{server_name}' exported successfully!\n\n{message}"
+                        
+                        # Add usage instructions
+                        completion_msg += "\n\nUsage Instructions:"
+                        completion_msg += "\n• Use 'Import Server' > 'Import from exported configuration file' on target host"
+                        completion_msg += "\n• Configuration includes all startup parameters and settings"
+                        
+                        if include_files:
+                            completion_msg += "\n• Archive includes server files for complete migration"
+                        else:
+                            completion_msg += "\n• Only configuration exported - server files must be installed separately"
+                        
+                        if export_data.get("server_configuration", {}).get("Type") == "Steam":
+                            completion_msg += "\n• Steam servers can be auto-installed on import if SteamCMD is available"
+                        
+                        messagebox.showinfo("Export Complete", completion_msg)
+                        dialog.destroy()
+                    else:
+                        status_var.set(f"Export failed: {message}")
+                        messagebox.showerror("Export Error", message)
+                    
+                except Exception as e:
+                    logger.error(f"Error during export: {str(e)}")
+                    progress_bar.stop()
+                    status_var.set(f"Export failed: {str(e)}")
+                    messagebox.showerror("Export Error", f"Failed to export server: {str(e)}")
+            
+            def cancel_export():
+                dialog.destroy()
+            
+            ttk.Button(button_frame, text="Export", command=perform_export, width=15).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Cancel", command=cancel_export, width=15).pack(side=tk.RIGHT, padx=5)
+            
+            # Center dialog
+            dialog.update_idletasks()
+            x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+            y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+            dialog.geometry(f"+{x}+{y}")
+            
+        except Exception as e:
+            logger.error(f"Error in export server: {str(e)}")
+            messagebox.showerror("Error", f"Failed to export server: {str(e)}")
 
     def refresh_all(self):
         """Refresh all dashboard data"""
@@ -1923,6 +2439,14 @@ class ServerManagerDashboard:
         except Exception as e:
             logger.error(f"Error in add agent: {str(e)}")
             messagebox.showerror("Error", f"Failed to add agent: {str(e)}")
+
+    def show_help(self):
+        """Show help dialog using the documentation module"""
+        show_help_dialog(self.root, logger)
+
+    def show_about(self):
+        """Show about dialog using the documentation module"""
+        show_about_dialog(self.root, logger)
 
 def main():
     # Parse command line arguments

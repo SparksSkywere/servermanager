@@ -1,4 +1,12 @@
 # TODO List (Status-tracked)
+# 
+# This file contains the development roadmap and task tracking for Server Manager.
+# Keep this file for reference and project planning purposes.
+#
+# Status Legend:
+# [TODO] - Not started
+# [WIP]  - Work in progress  
+# [DONE] - Completed
 
 1. [WIP] Finalise the dashboard's primary functions (executable starts and stops, process tracking PID)
 2. [WIP] Split all files into appropriate folders for hosts and subhosts (master and slave)
@@ -26,8 +34,3 @@
 24. [TODO] Add a list function to the online dashboard to setup server states faster, could have a way of running multiple instances on one process? To limit downloading
 25. [WIP] Binding to outbound and inbound ports (add firewall functions)
 26. [WIP] Make sure some services are handled correctly like java version hunting, each of the versions are to be listed
-
-# Legend:
-# [TODO] - Not started
-# [WIP]  - Work in progress / partially implemented
-# [DONE] - Fully implemented (remove from list or move to completed section)
