@@ -6,6 +6,7 @@ import platform
 import socket
 import winreg
 import psutil
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import shutil
@@ -748,3 +749,661 @@ def get_process_info(process_id):
             "cpu_usage": "N/A",
             "memory_usage": "N/A"
         }
+
+
+def center_window(window, width=None, height=None, parent=None):
+    """Center a window on the screen or relative to a parent window"""
+    window.update_idletasks()
+    
+    # Get window dimensions
+    if width and height:
+        window_width = width
+        window_height = height
+    else:
+        window_width = window.winfo_width()
+        window_height = window.winfo_height()
+    
+    if parent:
+        # Center relative to parent window
+        parent_x = parent.winfo_rootx()
+        parent_y = parent.winfo_rooty()
+        parent_width = parent.winfo_width()
+        parent_height = parent.winfo_height()
+        
+        x = parent_x + (parent_width - window_width) // 2
+        y = parent_y + (parent_height - window_height) // 2
+    else:
+        # Center on screen
+        screen_width = window.winfo_screenwidth()
+        screen_height = window.winfo_screenheight()
+        
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+    
+    window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+
+def create_server_type_selection_dialog(root, supported_server_types):
+    """Create and show server type selection dialog"""
+    type_dialog = tk.Toplevel(root)
+    type_dialog.title("Select Server Type")
+    type_dialog.transient(root)
+    type_dialog.grab_set()
+    
+    # Create main frame with padding
+    main_frame = ttk.Frame(type_dialog, padding=20)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Title label
+    title_label = ttk.Label(main_frame, text="Select Server Type:", font=("Segoe UI", 12, "bold"))
+    title_label.pack(pady=(0, 20))
+    
+    type_var = tk.StringVar(value="")  # Start with no selection
+    
+    # Radio buttons with better spacing
+    for stype in supported_server_types:
+        rb = ttk.Radiobutton(main_frame, text=stype, variable=type_var, value=stype, style="Large.TRadiobutton")
+        rb.pack(anchor=tk.W, padx=20, pady=8)
+    
+    # Button frame
+    button_frame = ttk.Frame(main_frame)
+    button_frame.pack(fill=tk.X, pady=(20, 0))
+    
+    def proceed():
+        # Only proceed if a type is actually selected
+        if type_var.get():
+            type_dialog.destroy()
+        else:
+            messagebox.showwarning("No Selection", "Please select a server type.")
+        
+    def cancel():
+        type_var.set("")  # Clear selection to indicate cancellation
+        type_dialog.destroy()
+    
+    # Handle window close event (X button)
+    def on_dialog_close():
+        type_var.set("")  # Clear selection when closing via X button
+        type_dialog.destroy()
+    
+    type_dialog.protocol("WM_DELETE_WINDOW", on_dialog_close)
+    
+    # Buttons with better spacing
+    ttk.Button(button_frame, text="Cancel", command=cancel, width=12).pack(side=tk.LEFT)
+    ttk.Button(button_frame, text="Next", command=proceed, width=12).pack(side=tk.RIGHT)
+    
+    # Center dialog relative to parent
+    center_window(type_dialog, 380, 280, root)
+    
+    root.wait_window(type_dialog)
+    return type_var.get()
+
+
+def update_server_status_in_treeview(server_list, server_name, status):
+    """Update the status of a server in the UI treeview"""
+    try:
+        # Find the server in the treeview
+        for item in server_list.get_children():
+            if server_list.item(item)['values'][0] == server_name:
+                # Get current values
+                values = list(server_list.item(item)['values'])
+                # Update status (index 1)
+                values[1] = status
+                # Update the item
+                server_list.item(item, values=values)
+                break
+        
+        # Force UI update
+        server_list.update_idletasks()
+    except Exception as e:
+        logger.error(f"Error updating server status in UI: {str(e)}")
+
+
+def validate_server_creation_inputs(server_type, server_name, app_id=None, executable_path=None):
+    """Validate inputs for server creation"""
+    errors = []
+    
+    if not server_name.strip():
+        errors.append("Server name is required.")
+    
+    if server_type == "Steam":
+        if not app_id or not app_id.strip():
+            errors.append("App ID is required for Steam servers.")
+        elif not app_id.strip().isdigit():
+            errors.append("App ID must be a valid number.")
+    
+    if server_type == "Other":
+        if not executable_path or not executable_path.strip():
+            errors.append("Executable path is required for Other server types.")
+    
+    return errors
+
+
+def open_directory_in_explorer(directory_path):
+    """Open a directory in the system file explorer"""
+    import subprocess
+    try:
+        if not os.path.exists(directory_path):
+            return False, f"Directory not found: {directory_path}"
+        
+        # Open directory in file explorer
+        if sys.platform == 'win32':
+            os.startfile(directory_path)
+        elif sys.platform == 'darwin':
+            subprocess.call(['open', directory_path])
+        else:
+            subprocess.call(['xdg-open', directory_path])
+        
+        return True, "Directory opened successfully"
+        
+    except Exception as e:
+        logger.error(f"Error opening directory: {str(e)}")
+        return False, f"Failed to open directory: {str(e)}"
+
+
+def create_confirmation_dialog(parent, title, message, confirm_text="Confirm", cancel_text="Cancel"):
+    """Create a confirmation dialog and return the result"""
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    dialog.transient(parent)
+    dialog.grab_set()
+    
+    # Configure dialog
+    dialog.resizable(False, False)
+    
+    # Create main frame
+    main_frame = ttk.Frame(dialog, padding=20)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Message label with wrapping
+    message_label = ttk.Label(main_frame, text=message, wraplength=350, justify=tk.CENTER)
+    message_label.pack(pady=(0, 20))
+    
+    # Button frame
+    button_frame = ttk.Frame(main_frame)
+    button_frame.pack(fill=tk.X)
+    
+    result = {"confirmed": False}
+    
+    def on_confirm():
+        result["confirmed"] = True
+        dialog.destroy()
+    
+    def on_cancel():
+        result["confirmed"] = False
+        dialog.destroy()
+    
+    # Buttons
+    ttk.Button(button_frame, text=cancel_text, command=on_cancel, width=12).pack(side=tk.LEFT)
+    ttk.Button(button_frame, text=confirm_text, command=on_confirm, width=12).pack(side=tk.RIGHT)
+    
+    # Center dialog
+    center_window(dialog, 400, 150, parent)
+    
+    # Wait for dialog to close
+    parent.wait_window(dialog)
+    
+    return result["confirmed"]
+
+
+def show_progress_dialog(parent, title, task_function, *args, **kwargs):
+    """Show a progress dialog while executing a task in a separate thread"""
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    dialog.transient(parent)
+    dialog.grab_set()
+    dialog.resizable(False, False)
+    
+    # Main frame
+    main_frame = ttk.Frame(dialog, padding=20)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Status label
+    status_var = tk.StringVar(value="Initializing...")
+    status_label = ttk.Label(main_frame, textvariable=status_var)
+    status_label.pack(pady=(0, 10))
+    
+    # Progress bar
+    progress_bar = ttk.Progressbar(main_frame, mode="indeterminate", length=300)
+    progress_bar.pack(pady=(0, 10))
+    progress_bar.start(10)
+    
+    # Result storage
+    task_result = {"success": False, "result": None, "error": None}
+    
+    def run_task():
+        try:
+            result = task_function(*args, **kwargs)
+            task_result["success"] = True
+            task_result["result"] = result
+        except Exception as e:
+            task_result["success"] = False
+            task_result["error"] = str(e)
+        finally:
+            # Schedule UI update on main thread
+            dialog.after(100, lambda: finish_task())
+    
+    def finish_task():
+        progress_bar.stop()
+        if task_result["success"]:
+            status_var.set("Completed successfully!")
+            dialog.after(1000, dialog.destroy)
+        else:
+            status_var.set(f"Error: {task_result['error']}")
+            dialog.after(3000, dialog.destroy)
+    
+    # Start task in background thread
+    import threading
+    task_thread = threading.Thread(target=run_task, daemon=True)
+    task_thread.start()
+    
+    # Center dialog
+    center_window(dialog, 350, 120, parent)
+    
+    # Wait for dialog to close
+    parent.wait_window(dialog)
+    
+    return task_result
+
+
+def create_server_installation_dialog(root, server_type, supported_server_types, server_manager, paths):
+    """Create server installation dialog with all necessary components"""
+    # Get credentials if needed
+    credentials = None
+    if server_type == "Steam":
+        credentials = get_steam_credentials(root)
+        if not credentials:
+            return None
+
+    # Create dialog for server details
+    dialog = tk.Toplevel(root)
+    dialog.title(f"Create {server_type} Server")
+    dialog.transient(root)
+    dialog.grab_set()
+    
+    # Create main frame with padding
+    main_frame = ttk.Frame(dialog, padding=15)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Create scrollable frame for the form
+    canvas = tk.Canvas(main_frame)
+    scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+    scrollable_frame = ttk.Frame(canvas)
+    
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+    )
+    
+    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+    
+    # Pack the canvas and scrollbar
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+    
+    # Configure grid weights for scrollable frame
+    for i in range(3):
+        scrollable_frame.columnconfigure(i, weight=1 if i == 1 else 0)
+
+    # Create form variables
+    form_vars = {
+        'name': tk.StringVar(),
+        'app_id': tk.StringVar(),
+        'install_dir': tk.StringVar(),
+        'exe_path': tk.StringVar(),
+        'startup_args': tk.StringVar(),
+        'minecraft_version': tk.StringVar(),
+        'modloader': tk.StringVar(value="Vanilla")
+    }
+
+    # Server name
+    ttk.Label(scrollable_frame, text="Server Name:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, padx=15, pady=15, sticky=tk.W)
+    name_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['name'], width=40, font=("Segoe UI", 10))
+    name_entry.grid(row=0, column=1, columnspan=2, padx=15, pady=15, sticky=tk.EW)
+
+    # Server type (readonly)
+    ttk.Label(scrollable_frame, text="Server Type:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, padx=15, pady=10, sticky=tk.W)
+    ttk.Label(scrollable_frame, text=server_type, font=("Segoe UI", 10)).grid(row=1, column=1, padx=15, pady=10, sticky=tk.W)
+
+    current_row = 2
+
+    # Minecraft-specific fields
+    if server_type == "Minecraft":
+        try:
+            mc_versions = server_manager.get_minecraft_versions() if server_manager else []
+            if not mc_versions:
+                messagebox.showerror("Error", "Failed to fetch Minecraft versions.")
+                dialog.destroy()
+                return None
+        except Exception as e:
+            messagebox.showerror("Error", f"Minecraft support not available: {str(e)}")
+            dialog.destroy()
+            return None
+            
+        # Default to latest release
+        latest_release = next((v for v in mc_versions if v["id"] == mc_versions[0]["id"]), mc_versions[0])
+        form_vars['minecraft_version'].set(latest_release["id"])
+        
+        # Minecraft version dropdown
+        ttk.Label(scrollable_frame, text="Minecraft Version:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
+        version_combo = ttk.Combobox(scrollable_frame, textvariable=form_vars['minecraft_version'], values=[v["id"] for v in mc_versions], state="readonly", width=37, font=("Segoe UI", 10))
+        version_combo.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
+        current_row += 1
+        
+        # Modloader selection
+        ttk.Label(scrollable_frame, text="Modloader:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
+        modloader_frame = ttk.Frame(scrollable_frame)
+        modloader_frame.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
+        modloaders = ["Vanilla", "Fabric", "Forge", "NeoForge"]
+        for i, modloader in enumerate(modloaders):
+            ttk.Radiobutton(modloader_frame, text=modloader, variable=form_vars['modloader'], value=modloader).grid(row=0, column=i, padx=10, pady=5, sticky=tk.W)
+        current_row += 1
+
+    # App ID (Steam only)
+    if server_type == "Steam":
+        ttk.Label(scrollable_frame, text="App ID:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
+        app_id_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['app_id'], width=40, font=("Segoe UI", 10))
+        app_id_entry.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
+        current_row += 1
+
+    # Install directory
+    ttk.Label(scrollable_frame, text="Install Directory:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
+    install_dir_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['install_dir'], width=30, font=("Segoe UI", 10))
+    install_dir_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
+    
+    def browse_directory():
+        directory = filedialog.askdirectory(title="Select Installation Directory")
+        if directory:
+            form_vars['install_dir'].set(directory)
+    ttk.Button(scrollable_frame, text="Browse", command=browse_directory, width=12).grid(row=current_row, column=2, padx=15, pady=10)
+    current_row += 1
+    
+    # Help text for install directory
+    ttk.Label(scrollable_frame, text="(Leave blank for default location)", foreground="gray", font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
+    current_row += 1
+
+    # Executable (Minecraft/Other)
+    if server_type in ("Minecraft", "Other"):
+        ttk.Label(scrollable_frame, text="Executable Path:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
+        exe_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['exe_path'], width=30, font=("Segoe UI", 10))
+        exe_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
+        
+        def browse_exe():
+            fp = filedialog.askopenfilename(title="Select Executable",
+                filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd"),("All","*.*")])
+            if fp:
+                form_vars['exe_path'].set(fp)
+        ttk.Button(scrollable_frame, text="Browse", command=browse_exe, width=12).grid(row=current_row, column=2, padx=15, pady=10)
+        current_row += 1
+
+    # Startup Args (all)
+    ttk.Label(scrollable_frame, text="Startup Args:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
+    args_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['startup_args'], width=40, font=("Segoe UI", 10))
+    args_entry.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
+
+    # Return the dialog components for further setup
+    return {
+        'dialog': dialog,
+        'main_frame': main_frame,
+        'form_vars': form_vars,
+        'credentials': credentials,
+        'server_type': server_type
+    }
+
+
+def create_server_removal_dialog(root, server_name, server_manager):
+    """Create server removal confirmation dialog"""
+    dialog = tk.Toplevel(root)
+    dialog.title("Remove Server")
+    dialog.transient(root)
+    dialog.grab_set()
+    
+    # Main frame
+    main_frame = ttk.Frame(dialog, padding=10)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Server name
+    ttk.Label(main_frame, text=f"Remove server: {server_name}", font=("Segoe UI", 12, "bold")).pack(pady=10)
+    
+    # Options
+    remove_files_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(main_frame, text="Also remove server files from disk", 
+                   variable=remove_files_var).pack(pady=5)
+    
+    ttk.Label(main_frame, text="Warning: This action cannot be undone!", 
+             foreground="red").pack(pady=5)
+    
+    # Result storage
+    result = {"confirmed": False, "remove_files": False}
+    
+    def confirm_removal():
+        result["confirmed"] = True
+        result["remove_files"] = remove_files_var.get()
+        dialog.destroy()
+        
+    def cancel_removal():
+        result["confirmed"] = False
+        dialog.destroy()
+    
+    # Buttons
+    button_frame = ttk.Frame(main_frame)
+    button_frame.pack(pady=20)
+    
+    ttk.Button(button_frame, text="Cancel", command=cancel_removal, width=12).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame, text="Remove", command=confirm_removal, width=12).pack(side=tk.RIGHT, padx=5)
+    
+    # Center dialog
+    center_window(dialog, 400, 200, root)
+    
+    # Wait for dialog to close
+    root.wait_window(dialog)
+    
+    return result
+
+
+def perform_server_installation(server_manager, server_type, form_vars, credentials, paths, 
+                               status_callback=None, console_callback=None, cancel_flag=None, steam_cmd_path=None):
+    """Perform server installation with callbacks for progress updates"""
+    try:
+        server_name = form_vars['name'].get().strip()
+        app_id = form_vars['app_id'].get().strip() if server_type == "Steam" else ""
+        install_dir = form_vars['install_dir'].get().strip()
+        executable_path = form_vars['exe_path'].get().strip() if server_type in ("Minecraft", "Other") else ""
+        startup_args = form_vars['startup_args'].get().strip()
+
+        # Validate inputs
+        validation_errors = validate_server_creation_inputs(server_type, server_name, app_id, executable_path)
+        if validation_errors:
+            raise ValueError("\n".join(validation_errors))
+
+        # Set default install dir if blank
+        if not install_dir:
+            if server_type == "Steam":
+                install_dir = os.path.join(paths.get("root", ""), "servers", server_name)
+            else:
+                install_dir = os.path.join(paths.get("root", ""), "servers", server_name)
+
+        if status_callback:
+            status_callback("Installing server...")
+        if console_callback:
+            console_callback(f"[INFO] Starting installation of {server_type} server: {server_name}")
+
+        # Check for cancellation
+        if cancel_flag and cancel_flag.get():
+            if console_callback:
+                console_callback("[INFO] Installation cancelled by user")
+            return False, "Installation cancelled"
+
+        # Use server manager to install the server
+        if server_manager:
+            # Use provided steam_cmd_path or get from server manager config or use default
+            if not steam_cmd_path:
+                steam_cmd_path = server_manager.config.get('steam_cmd_path')
+            if not steam_cmd_path:
+                steam_cmd_path = os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), "SteamCMD")
+            
+            if console_callback:
+                console_callback(f"[INFO] Using SteamCMD path: {steam_cmd_path}")
+            
+            if server_type == "Steam":
+                success, message = server_manager.install_server_complete(
+                    server_name, server_type, install_dir, executable_path, startup_args,
+                    app_id, "", "", steam_cmd_path, credentials, console_callback
+                )
+            elif server_type == "Minecraft":
+                minecraft_version = form_vars['minecraft_version'].get()
+                modloader = form_vars['modloader'].get()
+                success, message = server_manager.install_server_complete(
+                    server_name, server_type, install_dir, executable_path, startup_args,
+                    "", minecraft_version, modloader, "", None, console_callback
+                )
+            else:  # Other
+                success, message = server_manager.install_server_complete(
+                    server_name, server_type, install_dir, executable_path, startup_args,
+                    "", "", "", "", None, console_callback
+                )
+        else:
+            success = False
+            message = "Server manager not initialized"
+
+        if console_callback:
+            if success:
+                console_callback(f"[SUCCESS] {message}")
+            else:
+                console_callback(f"[ERROR] {message}")
+
+        return success, message
+
+    except Exception as e:
+        error_msg = f"Error during server installation: {str(e)}"
+        if console_callback:
+            console_callback(f"[ERROR] {error_msg}")
+        return False, error_msg
+
+
+def update_server_list_from_files(server_list, paths, variables, log_dashboard_event, format_uptime_from_start_time):
+    """Update server list treeview from configuration files"""
+    try:
+        # Clear current items
+        for item in server_list.get_children():
+            server_list.delete(item)
+            
+        # Get server configurations
+        servers_path = paths["servers"]
+        if os.path.exists(servers_path):
+            for file in os.listdir(servers_path):
+                if file.endswith(".json"):
+                    try:
+                        config_file = os.path.join(servers_path, file)
+                        with open(config_file, 'r') as f:
+                            server_config = json.load(f)
+                        
+                        server_name = server_config.get("Name", "Unknown")
+                        server_type = server_config.get("Type", "Unknown")
+                        process_id = server_config.get("ProcessId", 0)
+                        
+                        # Get process information
+                        if process_id and is_process_running(process_id):
+                            status = "Running"
+                            process_info = get_process_info(process_id)
+                            cpu_usage = process_info.get("cpu_usage", "N/A")
+                            memory_usage = process_info.get("memory_usage", "N/A")
+                            
+                            # Calculate uptime
+                            start_time = server_config.get("StartTime")
+                            if start_time:
+                                uptime = format_uptime_from_start_time(start_time)
+                            else:
+                                uptime = "Unknown"
+                        else:
+                            status = "Offline"
+                            cpu_usage = "N/A"
+                            memory_usage = "N/A"
+                            uptime = "N/A"
+                            process_id = "N/A"
+                        
+                        # Insert into treeview
+                        server_list.insert("", "end", values=(
+                            server_name, status, str(process_id), cpu_usage, memory_usage, uptime
+                        ))
+                        
+                    except Exception as e:
+                        logger.error(f"Error loading server config {file}: {str(e)}")
+                        # Insert error entry
+                        server_list.insert("", "end", values=(
+                            file.replace(".json", ""), "Error", "N/A", "N/A", "N/A", "N/A"
+                        ))
+        
+        # Update last refresh time
+        variables["lastServerListUpdate"] = datetime.datetime.now()
+        variables["lastProcessUpdate"] = datetime.datetime.now()
+        
+        log_dashboard_event("SERVER_LIST_UPDATE", "Server list updated successfully", "DEBUG")
+        
+    except Exception as e:
+        logger.error(f"Error updating server list: {str(e)}")
+        log_dashboard_event("SERVER_LIST_UPDATE", f"Error updating server list: {str(e)}", "ERROR")
+
+
+def create_progress_dialog_with_console(parent, title, width=700, height=650):
+    """Create a progress dialog with console output for long-running operations"""
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    dialog.transient(parent)
+    dialog.grab_set()
+    dialog.resizable(True, True)
+    
+    # Main frame with padding
+    main_frame = ttk.Frame(dialog, padding=15)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Console output section
+    console_container = ttk.Frame(main_frame)
+    console_container.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+    
+    from tkinter import scrolledtext
+    console_output = scrolledtext.ScrolledText(console_container, width=70, height=8, 
+                                             background="black", foreground="white", 
+                                             font=("Consolas", 9))
+    console_output.pack(fill=tk.BOTH, expand=True)
+    console_output.config(state=tk.DISABLED)
+
+    # Status and progress bar
+    status_container = ttk.Frame(main_frame)
+    status_container.pack(fill=tk.X, pady=(0, 10))
+    
+    status_var = tk.StringVar(value="")
+    status_label = ttk.Label(status_container, textvariable=status_var, font=("Segoe UI", 10))
+    status_label.pack(anchor=tk.W, pady=(0, 5))
+    
+    progress = ttk.Progressbar(status_container, mode="indeterminate")
+    progress.pack(fill=tk.X)
+
+    # Callback functions
+    def append_console(text):
+        console_output.config(state=tk.NORMAL)
+        console_output.insert(tk.END, text + "\n")
+        console_output.see(tk.END)
+        console_output.config(state=tk.DISABLED)
+    
+    def set_status(text):
+        status_var.set(text)
+        dialog.update_idletasks()
+    
+    def start_progress():
+        progress.start(10)
+    
+    def stop_progress():
+        progress.stop()
+
+    # Center dialog relative to parent
+    center_window(dialog, width, height, parent)
+    
+    return {
+        'dialog': dialog,
+        'console_callback': append_console,
+        'status_callback': set_status,
+        'progress_start': start_progress,
+        'progress_stop': stop_progress,
+        'status_var': status_var
+    }

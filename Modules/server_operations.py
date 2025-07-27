@@ -18,6 +18,20 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+def get_subprocess_creation_flags(hide_window=True):
+    """Get appropriate creation flags for subprocess calls on Windows to prevent console windows.
+    
+    Args:
+        hide_window (bool): If True, prevents console window from opening (saves DWM resources)
+    
+    Returns:
+        int: Creation flags for Windows, 0 for other platforms
+    """
+    if sys.platform != 'win32':
+        return 0
+    
+    return subprocess.CREATE_NO_WINDOW if hide_window else 0
 logger = logging.getLogger("ServerOperations")
 
 class ServerOperations:
@@ -160,7 +174,8 @@ def start_server(server_name):
             logger.error(f"Start server script not found: {script_path}")
             return False
         
-        subprocess.run([sys.executable, script_path, server_name], check=True)
+        subprocess.run([sys.executable, script_path, server_name], check=True,
+                       creationflags=get_subprocess_creation_flags())
         logger.info(f"Server {server_name} started")
         return True
     except Exception as e:
@@ -185,7 +200,8 @@ def stop_server(server_name, force=False):
         if force:
             cmd.append("--force")
         
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True,
+                       creationflags=get_subprocess_creation_flags())
         logger.info(f"Server {server_name} stopped")
         return True
     except Exception as e:

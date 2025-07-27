@@ -18,6 +18,40 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ServerManager")
 
+def get_subprocess_creation_flags(hide_window=True, new_process_group=False):
+    """Get appropriate creation flags for subprocess calls on Windows to prevent console windows.
+    
+    Args:
+        hide_window (bool): If True, prevents console window from opening (saves DWM resources)
+        new_process_group (bool): If True, creates a new process group for better process control
+    
+    Returns:
+        int: Creation flags for Windows, 0 for other platforms
+    """
+    if sys.platform != 'win32':
+        return 0
+    
+    flags = 0
+    if hide_window:
+        flags |= subprocess.CREATE_NO_WINDOW
+    if new_process_group:
+        flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+    
+    return flags
+
+def should_hide_server_consoles(config=None):
+    """Check if server consoles should be hidden based on configuration.
+    
+    Args:
+        config (dict): Configuration dictionary (optional)
+        
+    Returns:
+        bool: True if consoles should be hidden, False otherwise
+    """
+    if config and 'configuration' in config:
+        return config['configuration'].get('hideServerConsoles', True)
+    return True  # Default to hiding consoles
+
 # Import Minecraft-specific functions
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Scripts'))
 
@@ -219,8 +253,11 @@ class ServerManager:
                 logger.error(f"Start server script not found: {script_path}")
                 return False
                 
+            # Use CREATE_NO_WINDOW to prevent console window from opening (configurable)
+            hide_consoles = should_hide_server_consoles(self.config)
             result = subprocess.run([sys.executable, script_path, server_name], 
-                                   capture_output=True, text=True)
+                                   capture_output=True, text=True, 
+                                   creationflags=get_subprocess_creation_flags(hide_window=hide_consoles))
                                    
             if result.returncode != 0:
                 logger.error(f"Error starting server {server_name}: {result.stderr}")
@@ -245,7 +282,10 @@ class ServerManager:
             if force:
                 cmd.append("--force")
                 
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Use CREATE_NO_WINDOW to prevent console window from opening (configurable)
+            hide_consoles = should_hide_server_consoles(self.config)
+            result = subprocess.run(cmd, capture_output=True, text=True, 
+                                   creationflags=get_subprocess_creation_flags(hide_window=hide_consoles))
                                    
             if result.returncode != 0:
                 logger.error(f"Error stopping server {server_name}: {result.stderr}")
@@ -368,6 +408,7 @@ class ServerManager:
                 stdout_file.write(f"\n--- Server started at {time_str} ---\n")
                 stdout_file.write(f"Command: {cmd}\n\n")
                 
+                hide_consoles = should_hide_server_consoles(self.config)
                 if shell:
                     process = subprocess.Popen(
                         cmd,
@@ -375,7 +416,7 @@ class ServerManager:
                         cwd=install_dir,
                         stdout=stdout_file,
                         stderr=stderr_file,
-                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
+                        creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
                     )
                 else:
                     process = subprocess.Popen(
@@ -383,7 +424,7 @@ class ServerManager:
                         cwd=install_dir,
                         stdout=stdout_file,
                         stderr=stderr_file,
-                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
+                        creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
                     )
             
             time.sleep(1)
@@ -459,7 +500,8 @@ class ServerManager:
                         shell=True, 
                         cwd=install_dir,
                         stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
+                        stderr=subprocess.PIPE,
+                        creationflags=get_subprocess_creation_flags(hide_window=True)  # Always hide for stop commands
                     )
                     
                     try:
@@ -587,7 +629,8 @@ class ServerManager:
                                 shell=True, 
                                 cwd=install_dir,
                                 stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE
+                                stderr=subprocess.PIPE,
+                                creationflags=get_subprocess_creation_flags(hide_window=True)  # Always hide for stop commands
                             )
                             
                             try:
@@ -892,7 +935,7 @@ class ServerManager:
             if progress_callback:
                 progress_callback(f"[INFO] Running SteamCMD: {' '.join(steam_cmd_args)}")
             
-            # Execute SteamCMD
+            # Execute SteamCMD (always hide console for installation processes)
             process = subprocess.Popen(
                 " ".join(steam_cmd_args),
                 stdout=subprocess.PIPE,
@@ -900,7 +943,8 @@ class ServerManager:
                 shell=True,
                 text=True,
                 encoding='utf-8',
-                errors='replace'
+                errors='replace',
+                creationflags=get_subprocess_creation_flags(hide_window=True)
             )
             
             installation_success = False
@@ -986,11 +1030,12 @@ class ServerManager:
                 if progress_callback:
                     progress_callback("[INFO] Fabric installer downloaded. Running installer...")
                 
-                # Run Fabric installer
+                # Run Fabric installer (always hide console for installation processes)
                 subprocess.run([
                     "java", "-jar", fabric_installer, "server", 
                     "-mcversion", version, "-downloadMinecraft"
-                ], cwd=install_dir, check=True)
+                ], cwd=install_dir, check=True, 
+                creationflags=get_subprocess_creation_flags(hide_window=True))
                 
                 # Find fabric-server-launch.jar
                 for fname in os.listdir(install_dir):
@@ -1017,10 +1062,11 @@ class ServerManager:
                 if progress_callback:
                     progress_callback("[INFO] Forge installer downloaded. Running installer...")
                 
-                # Run Forge installer
+                # Run Forge installer (always hide console for installation processes)
                 subprocess.run([
                     "java", "-jar", forge_installer, "--installServer"
-                ], cwd=install_dir, check=True)
+                ], cwd=install_dir, check=True,
+                creationflags=get_subprocess_creation_flags(hide_window=True))
                 
                 # Find forge jar
                 for fname in os.listdir(install_dir):
@@ -1047,10 +1093,11 @@ class ServerManager:
                 if progress_callback:
                     progress_callback("[INFO] NeoForge installer downloaded. Running installer...")
                 
-                # Run NeoForge installer
+                # Run NeoForge installer (always hide console for installation processes)
                 subprocess.run([
                     "java", "-jar", neoforge_installer, "--installServer"
-                ], cwd=install_dir, check=True)
+                ], cwd=install_dir, check=True,
+                creationflags=get_subprocess_creation_flags(hide_window=True))
                 
                 # Find neoforge jar
                 for fname in os.listdir(install_dir):

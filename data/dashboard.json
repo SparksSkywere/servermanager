@@ -1,7 +1,8 @@
 {
   "configuration": {
-    "debugMode": true,
+    "debugMode": false,
     "offlineMode": false,
+    "hideServerConsoles": true,
     "systemRefreshInterval": 4,
     "processMonitoringInterval": 5,
     "maxProcessHistoryPoints": 20,

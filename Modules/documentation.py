@@ -1,14 +1,31 @@
-"""
-Documentation Module for Server Manager Dashboard
-
-This module provides comprehensive help and documentation functionality
-for the Server Manager Dashboard application.
-"""
-
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import winreg
 import os
+
+
+def center_window(window, width, height, parent=None):
+    """Center a window on the screen or relative to a parent window"""
+    window.update_idletasks()
+    
+    if parent:
+        # Center relative to parent window
+        parent_x = parent.winfo_rootx()
+        parent_y = parent.winfo_rooty()
+        parent_width = parent.winfo_width()
+        parent_height = parent.winfo_height()
+        
+        x = parent_x + (parent_width - width) // 2
+        y = parent_y + (parent_height - height) // 2
+    else:
+        # Center on screen
+        screen_width = window.winfo_screenwidth()
+        screen_height = window.winfo_screenheight()
+        
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+    
+    window.geometry(f"{width}x{height}+{x}+{y}")
 
 
 def show_help_dialog(parent_window, logger=None):
@@ -23,7 +40,6 @@ def show_help_dialog(parent_window, logger=None):
         # Create help dialog
         help_dialog = tk.Toplevel(parent_window)
         help_dialog.title("Server Manager Dashboard - Help")
-        help_dialog.geometry("800x700")
         help_dialog.transient(parent_window)
         help_dialog.grab_set()
         
@@ -52,11 +68,8 @@ def show_help_dialog(parent_window, logger=None):
         
         ttk.Button(button_frame, text="Close", command=help_dialog.destroy, width=15).pack(side=tk.RIGHT)
         
-        # Center dialog on parent window
-        help_dialog.update_idletasks()
-        x = parent_window.winfo_rootx() + (parent_window.winfo_width() - help_dialog.winfo_width()) // 2
-        y = parent_window.winfo_rooty() + (parent_window.winfo_height() - help_dialog.winfo_height()) // 2
-        help_dialog.geometry(f"+{x}+{y}")
+        # Center dialog relative to parent
+        center_window(help_dialog, 800, 700, parent_window)
         
     except Exception as e:
         error_msg = f"Error showing help dialog: {str(e)}"
@@ -339,7 +352,6 @@ def show_about_dialog(parent_window, logger=None):
         
         about_dialog = tk.Toplevel(parent_window)
         about_dialog.title("About Server Manager Dashboard")
-        about_dialog.geometry("400x300")
         about_dialog.transient(parent_window)
         about_dialog.grab_set()
         about_dialog.resizable(False, False)
@@ -368,11 +380,8 @@ def show_about_dialog(parent_window, logger=None):
         ttk.Button(main_frame, text="Close", command=about_dialog.destroy, 
                   width=15).pack()
         
-        # Center dialog
-        about_dialog.update_idletasks()
-        x = parent_window.winfo_rootx() + (parent_window.winfo_width() - about_dialog.winfo_width()) // 2
-        y = parent_window.winfo_rooty() + (parent_window.winfo_height() - about_dialog.winfo_height()) // 2
-        about_dialog.geometry(f"+{x}+{y}")
+        # Center dialog relative to parent
+        center_window(about_dialog, 400, 300, parent_window)
         
     except Exception as e:
         error_msg = f"Error showing about dialog: {str(e)}"
@@ -386,7 +395,6 @@ def test_documentation():
     """Test function to run the documentation dialogs standalone"""
     root = tk.Tk()
     root.title("Documentation Test")
-    root.geometry("400x200")
     
     frame = ttk.Frame(root, padding=20)
     frame.pack(fill=tk.BOTH, expand=True)
@@ -401,6 +409,9 @@ def test_documentation():
               command=lambda: show_about_dialog(root)).pack(pady=5)
     
     ttk.Button(frame, text="Exit", command=root.destroy).pack(pady=10)
+    
+    # Center the test window
+    center_window(root, 400, 200)
     
     root.mainloop()
 
