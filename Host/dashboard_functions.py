@@ -22,6 +22,31 @@ from Modules.logging import get_dashboard_logger
 logger = get_dashboard_logger()
 
 
+def load_appid_scanner_list(server_manager_dir):
+    """Load the AppID list created by the scanner"""
+    try:
+        json_file_path = os.path.join(server_manager_dir, 'data', 'AppIDList.json')
+        
+        if os.path.exists(json_file_path):
+            with open(json_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            dedicated_servers = data.get('dedicated_servers', [])
+            metadata = data.get('metadata', {})
+            
+            logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner AppID list")
+            logger.info(f"Last updated: {metadata.get('last_updated', 'Unknown')}")
+            
+            return dedicated_servers, metadata
+        else:
+            logger.warning(f"AppID scanner list not found at: {json_file_path}")
+            return [], {}
+            
+    except Exception as e:
+        logger.error(f"Error loading AppID scanner list: {e}")
+        return [], {}
+
+
 def load_dashboard_config(server_manager_dir):
     """Load dashboard configuration from JSON file"""
     try:
@@ -284,8 +309,8 @@ def update_system_info(metric_labels, system_name, os_info, variables):
         system_name.config(text=computer_name)
         os_info.config(text=os_info_text)
         
-        # CPU usage
-        cpu_percent = psutil.cpu_percent(interval=0.1)
+        # CPU usage - use non-blocking call (interval=None uses cached value)
+        cpu_percent = psutil.cpu_percent(interval=None)
         metric_labels["cpu"].config(text=f"{cpu_percent:.1f}%")
         
         # Memory usage
@@ -1005,7 +1030,7 @@ def show_progress_dialog(parent, title, task_function, *args, **kwargs):
     return task_result
 
 
-def create_server_installation_dialog(root, server_type, supported_server_types, server_manager, paths):
+def create_server_installation_dialog(root, server_type, supported_server_types, server_manager, paths, steam_cmd_path=None):
     """Create server installation dialog with all necessary components"""
     # Get credentials if needed
     credentials = None
@@ -1118,8 +1143,17 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
     ttk.Button(scrollable_frame, text="Browse", command=browse_directory, width=12).grid(row=current_row, column=2, padx=15, pady=10)
     current_row += 1
     
-    # Help text for install directory
-    ttk.Label(scrollable_frame, text="(Leave blank for default location)", foreground="gray", font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
+    # Set default installation directory help text based on server type
+    if server_type == "Steam":
+        if steam_cmd_path:
+            help_text = f"(Leave blank for SteamCMD default location)"
+        else:
+            help_text = "(Leave blank for SteamCMD default location)"
+    else:  # Minecraft or Other
+        default_location = os.path.join(paths.get("root", ""), "servers")
+        help_text = f"(Leave blank for default: {default_location}\\[ServerName])"
+    
+    ttk.Label(scrollable_frame, text=help_text, foreground="gray", font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
     current_row += 1
 
     # Executable (Minecraft/Other)
@@ -1216,12 +1250,21 @@ def perform_server_installation(server_manager, server_type, form_vars, credenti
         if validation_errors:
             raise ValueError("\n".join(validation_errors))
 
-        # Set default install dir if blank
+        # Set default install dir if blank based on server type
         if not install_dir:
             if server_type == "Steam":
-                install_dir = os.path.join(paths.get("root", ""), "servers", server_name)
+                # For Steam servers, let SteamCMD choose the default location by not specifying install_dir
+                install_dir = ""  # Empty string tells SteamCMD to use its default
+                if console_callback:
+                    console_callback(f"[INFO] Using SteamCMD default installation directory")
             else:
+                # Minecraft and Other servers go to servermanager location
                 install_dir = os.path.join(paths.get("root", ""), "servers", server_name)
+                if console_callback:
+                    console_callback(f"[INFO] Using default ServerManager installation directory: {install_dir}")
+        else:
+            if console_callback:
+                console_callback(f"[INFO] Using custom installation directory: {install_dir}")
 
         if status_callback:
             status_callback("Installing server...")
@@ -1248,19 +1291,19 @@ def perform_server_installation(server_manager, server_type, form_vars, credenti
             if server_type == "Steam":
                 success, message = server_manager.install_server_complete(
                     server_name, server_type, install_dir, executable_path, startup_args,
-                    app_id, "", "", steam_cmd_path, credentials, console_callback
+                    app_id, "", "", steam_cmd_path, credentials, console_callback, cancel_flag
                 )
             elif server_type == "Minecraft":
                 minecraft_version = form_vars['minecraft_version'].get()
                 modloader = form_vars['modloader'].get()
                 success, message = server_manager.install_server_complete(
                     server_name, server_type, install_dir, executable_path, startup_args,
-                    "", minecraft_version, modloader, "", None, console_callback
+                    "", minecraft_version, modloader, "", None, console_callback, cancel_flag
                 )
             else:  # Other
                 success, message = server_manager.install_server_complete(
                     server_name, server_type, install_dir, executable_path, startup_args,
-                    "", "", "", "", None, console_callback
+                    "", "", "", "", None, console_callback, cancel_flag
                 )
         else:
             success = False

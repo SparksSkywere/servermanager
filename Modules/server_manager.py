@@ -907,9 +907,15 @@ class ServerManager:
             logger.error(f"Error validating server config: {str(e)}")
             return [f"Validation error: {str(e)}"], []
 
-    def install_steam_server(self, server_name, app_id, install_dir, steam_cmd_path, credentials, progress_callback=None):
+    def install_steam_server(self, server_name, app_id, install_dir, steam_cmd_path, credentials, progress_callback=None, cancel_flag=None):
         """Install a Steam server using SteamCMD"""
         try:
+            # Check for cancellation before starting
+            if cancel_flag and cancel_flag.get():
+                if progress_callback:
+                    progress_callback("[INFO] Installation cancelled before starting")
+                return False, "Installation cancelled by user"
+                
             if progress_callback:
                 progress_callback(f"[INFO] Starting Steam server installation for {server_name}")
             
@@ -917,20 +923,30 @@ class ServerManager:
             if not os.path.exists(steam_cmd_exe):
                 raise Exception(f"SteamCmd executable not found at: {steam_cmd_exe}")
             
-            # Create install directory
-            os.makedirs(install_dir, exist_ok=True)
-            if progress_callback:
-                progress_callback(f"[INFO] Created installation directory: {install_dir}")
+            # Create install directory only if specified
+            if install_dir:
+                os.makedirs(install_dir, exist_ok=True)
+                if progress_callback:
+                    progress_callback(f"[INFO] Created installation directory: {install_dir}")
+            else:
+                if progress_callback:
+                    progress_callback(f"[INFO] Using SteamCMD default installation location")
             
             # Build SteamCMD command
             login_cmd = "+login anonymous" if credentials.get("anonymous", True) else f"+login \"{credentials['username']}\" \"{credentials['password']}\""
             steam_cmd_args = [
                 steam_cmd_exe,
                 login_cmd,
-                f"+force_install_dir \"{install_dir}\"",
+            ]
+            
+            # Only add force_install_dir if install_dir is specified
+            if install_dir:
+                steam_cmd_args.append(f"+force_install_dir \"{install_dir}\"")
+            
+            steam_cmd_args.extend([
                 f"+app_update {app_id} validate",
                 "+quit"
-            ]
+            ])
             
             if progress_callback:
                 progress_callback(f"[INFO] Running SteamCMD: {' '.join(steam_cmd_args)}")
@@ -950,6 +966,62 @@ class ServerManager:
             installation_success = False
             # Read output in real-time
             while True:
+                # Check for cancellation
+                if cancel_flag and cancel_flag.get():
+                    if progress_callback:
+                        progress_callback("[INFO] Installation cancelled by user, terminating SteamCMD...")
+                    
+                    # Terminate the SteamCMD process
+                    try:
+                        if progress_callback:
+                            progress_callback("[INFO] Attempting to terminate SteamCMD gracefully...")
+                        
+                        # First try to terminate gracefully
+                        process.terminate()
+                        try:
+                            # Wait for process to terminate gracefully
+                            process.wait(timeout=5)
+                            if progress_callback:
+                                progress_callback("[INFO] SteamCMD terminated gracefully")
+                        except subprocess.TimeoutExpired:
+                            # If it doesn't terminate gracefully, force kill it
+                            if progress_callback:
+                                progress_callback("[WARN] SteamCMD did not terminate gracefully, killing forcefully...")
+                            
+                            # Kill the main process
+                            process.kill()
+                            
+                            # Also kill any child processes on Windows
+                            try:
+                                import psutil
+                                parent = psutil.Process(process.pid)
+                                children = parent.children(recursive=True)
+                                for child in children:
+                                    try:
+                                        child.kill()
+                                        if progress_callback:
+                                            progress_callback(f"[INFO] Killed child process {child.pid}")
+                                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                        pass
+                                parent.kill()
+                            except (ImportError, psutil.NoSuchProcess, psutil.AccessDenied):
+                                # Fallback to Windows taskkill if psutil fails
+                                try:
+                                    subprocess.call(['taskkill', '/F', '/T', '/PID', str(process.pid)], 
+                                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                except:
+                                    pass
+                            
+                            process.wait()
+                            
+                        if progress_callback:
+                            progress_callback("[INFO] SteamCMD process terminated successfully")
+                        return False, "Installation cancelled by user"
+                    except Exception as e:
+                        if progress_callback:
+                            progress_callback(f"[ERROR] Failed to terminate SteamCMD process: {str(e)}")
+                        return False, f"Installation cancelled, but failed to terminate process: {str(e)}"
+                
                 if process.stdout is not None:
                     line = process.stdout.readline()
                     if not line and process.poll() is not None:
@@ -960,9 +1032,14 @@ class ServerManager:
                             progress_callback(line)
                         if "Success! App" in line and "fully installed" in line:
                             installation_success = True
+                    else:
+                        # Small delay to make cancellation more responsive when no output
+                        time.sleep(0.1)
                 else:
                     if process.poll() is not None:
                         break
+                    # Small delay when no stdout available
+                    time.sleep(0.1)
             
             # Check for errors
             if process.stderr is not None:
@@ -983,9 +1060,15 @@ class ServerManager:
             logger.error(f"Steam server installation failed: {str(e)}")
             return False, f"Installation failed: {str(e)}"
 
-    def install_minecraft_server(self, server_name, install_dir, version, modloader="Vanilla", progress_callback=None):
+    def install_minecraft_server(self, server_name, install_dir, version, modloader="Vanilla", progress_callback=None, cancel_flag=None):
         """Install a Minecraft server"""
         try:
+            # Check for cancellation before starting
+            if cancel_flag and cancel_flag.get():
+                if progress_callback:
+                    progress_callback("[INFO] Installation cancelled before starting")
+                return False, "Installation cancelled by user"
+                
             if progress_callback:
                 progress_callback(f"[INFO] Starting Minecraft server installation for {server_name}")
             
@@ -1170,7 +1253,7 @@ class ServerManager:
 
     def install_server_complete(self, server_name, server_type, install_dir, executable_path="", 
                                startup_args="", app_id="", version="", modloader="", steam_cmd_path="", 
-                               credentials=None, progress_callback=None):
+                               credentials=None, progress_callback=None, cancel_flag=None):
         """Complete server installation process"""
         try:
             installation_success = False
@@ -1184,7 +1267,7 @@ class ServerManager:
                 
                 success, message = self.install_steam_server(
                     server_name, app_id, install_dir, steam_cmd_path, 
-                    credentials or {"anonymous": True}, progress_callback
+                    credentials or {"anonymous": True}, progress_callback, cancel_flag
                 )
                 if not success:
                     return False, message
@@ -1195,7 +1278,7 @@ class ServerManager:
                     return False, "Minecraft version is required"
                 
                 success, result = self.install_minecraft_server(
-                    server_name, install_dir, version, modloader or "Vanilla", progress_callback
+                    server_name, install_dir, version, modloader or "Vanilla", progress_callback, cancel_flag
                 )
                 if not success:
                     return False, result

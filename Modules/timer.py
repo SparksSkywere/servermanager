@@ -2,6 +2,7 @@ import os
 import json
 import datetime
 import psutil
+import threading
 from Modules.logging import log_process_monitoring
 
 
@@ -19,6 +20,9 @@ class TimerManager:
     
     def start_timers(self):
         """Start update timers using configuration values"""
+        # Start background CPU monitoring
+        self._start_cpu_monitoring()
+        
         # System info update timer
         system_interval = self.dashboard.variables["systemInfoUpdateInterval"] * 1000
         self.dashboard.root.after(system_interval, self.system_info_timer)
@@ -35,27 +39,78 @@ class TimerManager:
         process_interval = self.dashboard.variables["processMonitorUpdateInterval"] * 1000
         self.dashboard.root.after(process_interval, self.process_monitor_timer)
 
+    def _start_cpu_monitoring(self):
+        """Start background CPU monitoring to prevent UI blocking"""
+        def cpu_monitor():
+            try:
+                while hasattr(self.dashboard, 'root') and self.dashboard.root.winfo_exists():
+                    # Update CPU stats in background - this will be cached for non-blocking UI updates
+                    psutil.cpu_percent(interval=1)
+                    # Sleep for a bit to avoid excessive CPU usage
+                    threading.Event().wait(2)
+            except Exception as e:
+                log_process_monitoring(f"CPU monitoring thread error: {str(e)}", "ERROR")
+        
+        cpu_thread = threading.Thread(target=cpu_monitor, daemon=True)
+        cpu_thread.start()
+
     def system_info_timer(self):
         """Timer callback for system info updates"""
-        self.dashboard.update_system_info()
+        def update_in_background():
+            try:
+                self.dashboard.update_system_info()
+            except Exception as e:
+                log_process_monitoring(f"System info update error: {str(e)}", "ERROR")
+        
+        # Run system info update in background thread to prevent UI blocking
+        update_thread = threading.Thread(target=update_in_background, daemon=True)
+        update_thread.start()
+        
         interval = self.dashboard.variables["systemInfoUpdateInterval"] * 1000
         self.dashboard.root.after(interval, self.system_info_timer)
     
     def server_list_timer(self):
         """Timer callback for server list updates"""
-        self.dashboard.update_server_list()
+        def update_in_background():
+            try:
+                self.dashboard.update_server_list()
+            except Exception as e:
+                log_process_monitoring(f"Server list update error: {str(e)}", "ERROR")
+        
+        # Run server list update in background thread to prevent UI blocking
+        update_thread = threading.Thread(target=update_in_background, daemon=True)
+        update_thread.start()
+        
         interval = self.dashboard.variables["serverListUpdateInterval"] * 1000
         self.dashboard.root.after(interval, self.server_list_timer)
     
     def webserver_status_timer(self):
         """Timer callback for web server status updates"""
-        self.dashboard.update_webserver_status()
+        def update_in_background():
+            try:
+                self.dashboard.update_webserver_status()
+            except Exception as e:
+                log_process_monitoring(f"Webserver status update error: {str(e)}", "ERROR")
+        
+        # Run webserver status update in background thread to prevent UI blocking
+        update_thread = threading.Thread(target=update_in_background, daemon=True)
+        update_thread.start()
+        
         interval = self.dashboard.variables["webserverStatusUpdateInterval"] * 1000
         self.dashboard.root.after(interval, self.webserver_status_timer)
     
     def process_monitor_timer(self):
         """Timer callback for process monitoring"""
-        self.monitor_processes()
+        def monitor_in_background():
+            try:
+                self.monitor_processes()
+            except Exception as e:
+                log_process_monitoring(f"Process monitoring error: {str(e)}", "ERROR")
+        
+        # Run process monitoring in background thread to prevent UI blocking
+        monitor_thread = threading.Thread(target=monitor_in_background, daemon=True)
+        monitor_thread.start()
+        
         interval = self.dashboard.variables["processMonitorUpdateInterval"] * 1000
         self.dashboard.root.after(interval, self.process_monitor_timer)
     
@@ -99,8 +154,15 @@ class TimerManager:
                                     with open(os.path.join(servers_path, file), 'w') as f:
                                         json.dump(server_config, f, indent=4)
                                     
-                                    # Update the server list
-                                    self.dashboard.update_server_list(force_refresh=True)
+                                    # Update the server list using thread-safe UI update
+                                    def update_ui():
+                                        try:
+                                            self.dashboard.update_server_list(force_refresh=True)
+                                        except Exception as e:
+                                            log_process_monitoring(f"Error updating UI from process monitor: {str(e)}", "ERROR")
+                                    
+                                    # Schedule UI update on main thread
+                                    self.dashboard.root.after(0, update_ui)
                                 else:
                                     # Process is running, update statistics
                                     try:

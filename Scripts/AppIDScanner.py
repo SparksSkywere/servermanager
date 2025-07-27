@@ -139,8 +139,59 @@ class AppIDScanner:
             logger.error(f"Failed to initialize SQLite database: {e}")
             raise
     
+    def add_server_to_json(self, server_data):
+        """Add a single dedicated server to the JSON file (live update)"""
+        try:
+            # Load existing data
+            appid_data = self.load_appid_json()
+            
+            # Check if server already exists
+            existing_appids = {server['appid'] for server in appid_data['dedicated_servers']}
+            
+            if server_data['appid'] not in existing_appids:
+                # Add new server
+                appid_data['dedicated_servers'].append(server_data)
+                
+                # Sort by name
+                appid_data['dedicated_servers'].sort(key=lambda x: x['name'])
+                
+                # Save with pre-check (but force since we know there's a change)
+                if self.save_appid_json(appid_data, force_update=True):
+                    logger.info(f"Added new dedicated server to JSON: {server_data['name']} (AppID: {server_data['appid']})")
+                    return True
+            else:
+                # Update existing server if data differs
+                for i, existing_server in enumerate(appid_data['dedicated_servers']):
+                    if existing_server['appid'] == server_data['appid']:
+                        if existing_server != server_data:
+                            appid_data['dedicated_servers'][i] = server_data
+                            
+                            # Sort by name
+                            appid_data['dedicated_servers'].sort(key=lambda x: x['name'])
+                            
+                            if self.save_appid_json(appid_data, force_update=True):
+                                logger.info(f"Updated dedicated server in JSON: {server_data['name']} (AppID: {server_data['appid']})")
+                                return True
+                        else:
+                            logger.debug(f"Server data unchanged: {server_data['name']} (AppID: {server_data['appid']})")
+                        break
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error adding server to JSON: {e}")
+            return False
+    
+    def get_json_appid_list(self):
+        """Get the current list of AppIDs from the JSON file for external use"""
+        try:
+            appid_data = self.load_appid_json()
+            return appid_data.get('dedicated_servers', [])
+        except Exception as e:
+            logger.error(f"Error loading AppID list: {e}")
+            return []
+
     def load_appid_json(self):
-        """Load existing AppID list from JSON file"""
         try:
             if os.path.exists(self.json_file_path):
                 with open(self.json_file_path, 'r', encoding='utf-8') as f:
@@ -172,24 +223,71 @@ class AppIDScanner:
                 "dedicated_servers": []
             }
     
-    def save_appid_json(self, appid_data):
-        """Save AppID list to JSON file"""
+    def save_appid_json(self, appid_data, force_update=False):
+        """Save AppID list to JSON file with pre-check to prevent unnecessary overwrites"""
         try:
             # Ensure data directory exists
             os.makedirs(os.path.dirname(self.json_file_path), exist_ok=True)
+            
+            # Load existing data for comparison if not forcing update
+            if not force_update and os.path.exists(self.json_file_path):
+                try:
+                    with open(self.json_file_path, 'r', encoding='utf-8') as f:
+                        existing_data = json.load(f)
+                    
+                    # Compare dedicated servers lists (ignoring metadata timestamps)
+                    existing_servers = {server['appid']: server for server in existing_data.get('dedicated_servers', [])}
+                    new_servers = {server['appid']: server for server in appid_data.get('dedicated_servers', [])}
+                    
+                    # Check if there are actual changes
+                    if existing_servers == new_servers:
+                        logger.info("No changes detected in dedicated servers list, skipping file update")
+                        return False  # No update needed
+                    else:
+                        added = set(new_servers.keys()) - set(existing_servers.keys())
+                        removed = set(existing_servers.keys()) - set(new_servers.keys())
+                        modified = set()
+                        
+                        for appid in set(existing_servers.keys()) & set(new_servers.keys()):
+                            if existing_servers[appid] != new_servers[appid]:
+                                modified.add(appid)
+                        
+                        logger.info(f"Changes detected: {len(added)} added, {len(removed)} removed, {len(modified)} modified")
+                        if added:
+                            logger.info(f"Added AppIDs: {sorted(added)}")
+                        if removed:
+                            logger.info(f"Removed AppIDs: {sorted(removed)}")
+                        if modified:
+                            logger.info(f"Modified AppIDs: {sorted(modified)}")
+                        
+                except Exception as e:
+                    logger.warning(f"Could not compare existing data: {e}, proceeding with update")
             
             # Update metadata
             appid_data["metadata"]["last_updated"] = datetime.now(timezone.utc).isoformat()
             appid_data["metadata"]["total_dedicated_servers"] = len(appid_data["dedicated_servers"])
             
+            # Create backup before overwriting
+            if os.path.exists(self.json_file_path):
+                backup_path = f"{self.json_file_path}.backup"
+                try:
+                    import shutil
+                    shutil.copy2(self.json_file_path, backup_path)
+                    logger.debug(f"Created backup: {backup_path}")
+                except Exception as e:
+                    logger.warning(f"Could not create backup: {e}")
+            
             # Write to file with proper formatting
             with open(self.json_file_path, 'w', encoding='utf-8') as f:
                 json.dump(appid_data, f, indent=2, ensure_ascii=False)
             
-            logger.info(f"Saved AppID list to {self.json_file_path}")
+            logger.info(f"Updated AppID list: {self.json_file_path}")
             logger.info(f"Total dedicated servers: {appid_data['metadata']['total_dedicated_servers']}")
+            return True  # Update successful
+            
         except Exception as e:
             logger.error(f"Error saving AppID JSON file: {e}")
+            return False
     
     def export_database_to_json(self):
         """Export existing database data to JSON file (dedicated servers only)"""
@@ -574,8 +672,8 @@ class AppIDScanner:
                 self.save_app_to_database(app_data)
                 saved_count += 1
                 
-                # Only add DEDICATED servers to JSON file
-                if is_dedicated and appid not in existing_appids:
+                # Only add DEDICATED servers to JSON file (live update)
+                if is_dedicated:
                     json_server_entry = {
                         "appid": appid,
                         "name": name,
@@ -589,9 +687,11 @@ class AppIDScanner:
                         "tags": app_data.get('tags', '[]')
                     }
                     
-                    appid_data["dedicated_servers"].append(json_server_entry)
-                    existing_appids.add(appid)
-                    json_updates += 1
+                    # Add to JSON file immediately (live update)
+                    if appid not in existing_appids:
+                        if self.add_server_to_json(json_server_entry):
+                            json_updates += 1
+                            existing_appids.add(appid)  # Update our tracking set
                 
                 if is_dedicated:
                     dedicated_count += 1
@@ -603,11 +703,8 @@ class AppIDScanner:
                 logger.error(f"Error processing app {app.get('appid', 'unknown')}: {e}")
                 continue
         
-        # Sort and save JSON data
-        appid_data["dedicated_servers"].sort(key=lambda x: x["name"])
-        
-        self.save_appid_json(appid_data)
-        
+        # Live updates are handled individually, no need for bulk save
+        # Final logging and summary
         logger.info(f"Scan complete! Processed {processed} apps, saved {saved_count} to database, updated {json_updates} dedicated servers in JSON, found {dedicated_count} total dedicated servers")
     
     def search_apps(self, query, server_only=False):
