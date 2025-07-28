@@ -8,6 +8,19 @@ import winreg
 import psutil
 import threading
 import tkinter as tk
+import os
+import sys
+import json
+import datetime
+import psutil
+import subprocess
+import winreg
+import time
+import threading
+import socket
+import zipfile
+import shutil
+import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import shutil
 import zipfile
@@ -22,9 +35,235 @@ from Modules.logging import get_dashboard_logger
 logger = get_dashboard_logger()
 
 
-def load_appid_scanner_list(server_manager_dir):
-    """Load the AppID list created by the scanner"""
+def create_java_selection_dialog(root, minecraft_version=None):
+    """Create a dialog to select Java installation for a server.
+    
+    Args:
+        root: Parent window
+        minecraft_version (str): Minecraft version to check compatibility (optional)
+        
+    Returns:
+        dict: Selected Java installation info, or None if cancelled
+    """
     try:
+        # Import here to avoid circular imports
+        from Scripts.minecraft import detect_java_installations, get_minecraft_java_requirement, check_java_compatibility
+        
+        dialog = tk.Toplevel(root)
+        dialog.title("Select Java Installation")
+        dialog.geometry("600x400")
+        dialog.resizable(True, True)
+        dialog.transient(root)
+        dialog.grab_set()
+        
+        # Create main frame
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title and info
+        title_label = ttk.Label(main_frame, text="Select Java Installation", font=("Segoe UI", 12, "bold"))
+        title_label.pack(pady=(0, 10))
+        
+        if minecraft_version:
+            required_java = get_minecraft_java_requirement(minecraft_version)
+            info_label = ttk.Label(main_frame, 
+                                 text=f"Minecraft {minecraft_version} requires Java {required_java} or later",
+                                 font=("Segoe UI", 9))
+            info_label.pack(pady=(0, 15))
+        
+        # Create frame for java list
+        list_frame = ttk.LabelFrame(main_frame, text="Available Java Installations", padding=10)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        
+        # Create treeview for Java installations
+        columns = ("version", "path", "compatibility")
+        java_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=10)
+        
+        # Define headings
+        java_tree.heading("version", text="Java Version")
+        java_tree.heading("path", text="Installation Path")
+        java_tree.heading("compatibility", text="Compatibility")
+        
+        # Configure column widths
+        java_tree.column("version", width=150, minwidth=100)
+        java_tree.column("path", width=300, minwidth=200)
+        java_tree.column("compatibility", width=120, minwidth=100)
+        
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=java_tree.yview)
+        java_tree.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack treeview and scrollbar
+        java_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Populate with detected Java installations
+        java_installations = detect_java_installations()
+        selected_java = None
+        
+        for installation in java_installations:
+            if minecraft_version:
+                is_compatible, _, _, _ = check_java_compatibility(minecraft_version, installation["path"])
+                compatibility_text = "✓ Compatible" if is_compatible else "✗ Incompatible"
+                
+                # Color code the entries
+                if is_compatible:
+                    tags = ("compatible",)
+                else:
+                    tags = ("incompatible",)
+            else:
+                compatibility_text = "N/A"
+                tags = ()
+            
+            item_id = java_tree.insert("", tk.END, 
+                                     values=(installation["display_name"], 
+                                           installation["path"], 
+                                           compatibility_text),
+                                     tags=tags)
+            
+            # Store the installation data in the item
+            java_tree.set(item_id, "data", installation)
+        
+        # Configure tags for coloring
+        java_tree.tag_configure("compatible", foreground="green")
+        java_tree.tag_configure("incompatible", foreground="red")
+        
+        # Add refresh button
+        refresh_frame = ttk.Frame(main_frame)
+        refresh_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        def refresh_java_list():
+            # Clear existing items
+            for item in java_tree.get_children():
+                java_tree.delete(item)
+            
+            # Repopulate
+            java_installations = detect_java_installations()
+            for installation in java_installations:
+                if minecraft_version:
+                    is_compatible, _, _, _ = check_java_compatibility(minecraft_version, installation["path"])
+                    compatibility_text = "✓ Compatible" if is_compatible else "✗ Incompatible"
+                    tags = ("compatible",) if is_compatible else ("incompatible",)
+                else:
+                    compatibility_text = "N/A"
+                    tags = ()
+                
+                item_id = java_tree.insert("", tk.END, 
+                                         values=(installation["display_name"], 
+                                               installation["path"], 
+                                               compatibility_text),
+                                         tags=tags)
+                java_tree.set(item_id, "data", installation)
+        
+        ttk.Button(refresh_frame, text="Refresh List", command=refresh_java_list).pack(side=tk.LEFT)
+        
+        # Add custom Java path entry
+        custom_frame = ttk.LabelFrame(main_frame, text="Custom Java Path", padding=10)
+        custom_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        custom_path_var = tk.StringVar()
+        custom_entry = ttk.Entry(custom_frame, textvariable=custom_path_var, width=50)
+        custom_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        def browse_java():
+            if os.name == 'nt':
+                file_types = [("Java Executable", "java.exe"), ("All Files", "*.*")]
+            else:
+                file_types = [("All Files", "*")]
+            
+            java_path = filedialog.askopenfilename(
+                title="Select Java Executable",
+                filetypes=file_types
+            )
+            if java_path:
+                custom_path_var.set(java_path)
+        
+        ttk.Button(custom_frame, text="Browse", command=browse_java).pack(side=tk.RIGHT)
+        
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)
+        
+        result = {}  # Will store the selected Java installation
+        
+        def on_select():
+            # Check if custom path is provided
+            custom_path = custom_path_var.get().strip()
+            if custom_path:
+                # Validate custom path
+                from Scripts.minecraft import get_java_version
+                major, version = get_java_version(custom_path)
+                if major is not None:
+                    result["java"] = {
+                        "path": custom_path,
+                        "version": version,
+                        "major": major,
+                        "display_name": f"Custom Java {major}"
+                    }
+                    dialog.destroy()
+                    return
+                else:
+                    messagebox.showerror("Error", f"Invalid Java executable: {custom_path}")
+                    return
+            
+            # Check if an item is selected from the list
+            selection = java_tree.selection()
+            if selection:
+                item = selection[0]
+                # Get the stored installation data
+                for installation in java_installations:
+                    if (java_tree.item(item)["values"][0] == installation["display_name"] and 
+                        java_tree.item(item)["values"][1] == installation["path"]):
+                        result["java"] = installation
+                        break
+                dialog.destroy()
+            else:
+                messagebox.showwarning("Warning", "Please select a Java installation or provide a custom path.")
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
+        ttk.Button(button_frame, text="Select", command=on_select, width=12).pack(side=tk.RIGHT)
+        
+        # Auto-select the first compatible Java if available
+        if minecraft_version and java_installations:
+            for i, installation in enumerate(java_installations):
+                is_compatible, _, _, _ = check_java_compatibility(minecraft_version, installation["path"])
+                if is_compatible:
+                    # Select the first compatible Java
+                    items = java_tree.get_children()
+                    if i < len(items):
+                        java_tree.selection_set(items[i])
+                        java_tree.focus(items[i])
+                    break
+        
+        # Center dialog
+        center_window(dialog, 600, 400, root)
+        
+        # Wait for dialog to close
+        root.wait_window(dialog)
+        
+        return result.get("java")
+        
+    except Exception as e:
+        logger.error(f"Error creating Java selection dialog: {str(e)}")
+        messagebox.showerror("Error", f"Failed to create Java selection dialog: {str(e)}")
+        return None
+
+
+def load_appid_scanner_list(server_manager_dir):
+    """Load the AppID list from database or fallback to JSON"""
+    try:
+        # First try to load from database
+        dedicated_servers, metadata = load_appid_list_from_database()
+        
+        if dedicated_servers:
+            logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from database")
+            return dedicated_servers, metadata
+        
+        # Fallback to JSON file if database is empty or unavailable
+        logger.info("Database empty or unavailable, falling back to JSON file")
         json_file_path = os.path.join(server_manager_dir, 'data', 'AppIDList.json')
         
         if os.path.exists(json_file_path):
@@ -34,16 +273,100 @@ def load_appid_scanner_list(server_manager_dir):
             dedicated_servers = data.get('dedicated_servers', [])
             metadata = data.get('metadata', {})
             
-            logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner AppID list")
+            logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from JSON fallback")
             logger.info(f"Last updated: {metadata.get('last_updated', 'Unknown')}")
             
             return dedicated_servers, metadata
         else:
-            logger.warning(f"AppID scanner list not found at: {json_file_path}")
+            logger.warning(f"Neither database nor JSON file available for AppID list")
             return [], {}
             
     except Exception as e:
         logger.error(f"Error loading AppID scanner list: {e}")
+        return [], {}
+
+
+def load_appid_list_from_database():
+    """Load AppID list directly from database"""
+    try:
+        # Import database components
+        from Modules.SQL_Connection import get_engine
+        from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
+        from sqlalchemy.orm import declarative_base, sessionmaker
+        
+        # Define the SteamApp model (matching AppIDScanner.py)
+        Base = declarative_base()
+        
+        class SteamApp(Base):
+            __tablename__ = 'steam_apps'
+            
+            appid = Column(Integer, primary_key=True)
+            name = Column(String(255), nullable=False)
+            type = Column(String(50))
+            is_server = Column(Boolean, default=False)
+            is_dedicated_server = Column(Boolean, default=False)
+            developer = Column(String(255))
+            publisher = Column(String(255))
+            release_date = Column(String(50))
+            description = Column(Text)
+            tags = Column(Text)  # JSON string of tags
+            price = Column(String(20))
+            platforms = Column(String(100))  # JSON string of supported platforms
+            last_updated = Column(DateTime)
+            source = Column(String(50), default='steamdb')
+        
+        # Connect to database
+        engine = get_engine()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
+        # Query dedicated servers only
+        apps = session.query(SteamApp).filter(SteamApp.is_dedicated_server == True).all()
+        
+        dedicated_servers = []
+        latest_update = None
+        
+        for app in apps:
+            server_entry = {
+                "appid": app.appid,
+                "name": app.name,
+                "type": app.type or "Dedicated Server",
+                "developer": app.developer or "",
+                "publisher": app.publisher or "",
+                "release_date": app.release_date or "",
+                "description": app.description or "",
+                "platforms": app.platforms or "",
+                "source": app.source or "steam_api",
+                "tags": app.tags or "[]"
+            }
+            dedicated_servers.append(server_entry)
+            
+            # Track latest update time - get the actual datetime value
+            app_last_updated = getattr(app, 'last_updated', None)
+            if app_last_updated is not None:
+                if latest_update is None or app_last_updated > latest_update:
+                    latest_update = app_last_updated
+        
+        # Close session
+        session.close()
+        
+        # Create metadata
+        metadata = {
+            "last_updated": latest_update.isoformat() if latest_update is not None else "",
+            "total_dedicated_servers": len(dedicated_servers),
+            "source": "database",
+            "version": "3.0",
+            "filter_mode": "dedicated_only",
+            "description": "Steam dedicated server applications from database"
+        }
+        
+        return dedicated_servers, metadata
+        
+    except ImportError as e:
+        logger.warning(f"Database modules not available: {e}")
+        return [], {}
+    except Exception as e:
+        logger.warning(f"Error loading AppID list from database: {e}")
         return [], {}
 
 
@@ -1031,6 +1354,190 @@ def show_progress_dialog(parent, title, task_function, *args, **kwargs):
 
 
 def create_server_installation_dialog(root, server_type, supported_server_types, server_manager, paths, steam_cmd_path=None):
+    """Create server installation dialog with Java selection for Minecraft servers"""
+    try:
+        # Import here to avoid circular imports
+        if server_type == "Minecraft":
+            from Scripts.minecraft import detect_java_installations
+            
+        installation_dialog = tk.Toplevel(root)
+        installation_dialog.title(f"Install {server_type} Server")
+        installation_dialog.geometry("700x600")
+        installation_dialog.transient(root)
+        installation_dialog.grab_set()
+        
+        # Create main frame
+        main_frame = ttk.Frame(installation_dialog, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = ttk.Label(main_frame, text=f"Install {server_type} Server", 
+                               font=("Segoe UI", 14, "bold"))
+        title_label.pack(pady=(0, 20))
+        
+        # Form variables
+        form_vars = {}
+        
+        # Server name
+        name_frame = ttk.Frame(main_frame)
+        name_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(name_frame, text="Server Name:", width=15).pack(side=tk.LEFT)
+        form_vars['server_name'] = tk.StringVar()
+        ttk.Entry(name_frame, textvariable=form_vars['server_name'], width=40).pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Installation directory
+        dir_frame = ttk.Frame(main_frame)
+        dir_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(dir_frame, text="Install Directory:", width=15).pack(side=tk.LEFT)
+        form_vars['install_dir'] = tk.StringVar()
+        install_entry = ttk.Entry(dir_frame, textvariable=form_vars['install_dir'], width=35)
+        install_entry.pack(side=tk.LEFT, padx=(10, 5))
+        
+        def browse_install_dir():
+            directory = filedialog.askdirectory(title="Select Installation Directory")
+            if directory:
+                form_vars['install_dir'].set(directory)
+        
+        ttk.Button(dir_frame, text="Browse", command=browse_install_dir).pack(side=tk.LEFT)
+        
+        # Server-type specific fields
+        if server_type == "Minecraft":
+            # Minecraft version
+            version_frame = ttk.Frame(main_frame)
+            version_frame.pack(fill=tk.X, pady=5)
+            ttk.Label(version_frame, text="Minecraft Version:", width=15).pack(side=tk.LEFT)
+            form_vars['version'] = tk.StringVar(value="1.21.0")
+            version_combo = ttk.Combobox(version_frame, textvariable=form_vars['version'], width=37)
+            version_combo.pack(side=tk.LEFT, padx=(10, 0))
+            
+            # Try to populate with actual versions
+            try:
+                from Scripts.minecraft import fetch_minecraft_versions
+                versions = fetch_minecraft_versions()
+                if versions:
+                    version_list = [v['id'] for v in versions[:20]]  # Latest 20 versions
+                    version_combo['values'] = version_list
+                else:
+                    version_combo['values'] = ["1.21.0", "1.20.1", "1.19.4", "1.18.2", "1.17.1", "1.16.5"]
+            except:
+                version_combo['values'] = ["1.21.0", "1.20.1", "1.19.4", "1.18.2", "1.17.1", "1.16.5"]
+            
+            # Modloader
+            modloader_frame = ttk.Frame(main_frame)
+            modloader_frame.pack(fill=tk.X, pady=5)
+            ttk.Label(modloader_frame, text="Modloader:", width=15).pack(side=tk.LEFT)
+            form_vars['modloader'] = tk.StringVar(value="Vanilla")
+            modloader_combo = ttk.Combobox(modloader_frame, textvariable=form_vars['modloader'], width=37)
+            modloader_combo['values'] = ["Vanilla", "Forge", "Fabric", "NeoForge"]
+            modloader_combo.pack(side=tk.LEFT, padx=(10, 0))
+            
+            # Java selection frame
+            java_frame = ttk.LabelFrame(main_frame, text="Java Configuration", padding=10)
+            java_frame.pack(fill=tk.X, pady=15)
+            
+            form_vars['selected_java'] = None
+            java_info_var = tk.StringVar(value="No Java selected")
+            
+            # Java info display
+            java_info_label = ttk.Label(java_frame, textvariable=java_info_var, foreground="blue")
+            java_info_label.pack(pady=(0, 10))
+            
+            def select_java():
+                # Get selected version for compatibility check
+                selected_version = form_vars['version'].get()
+                java = create_java_selection_dialog(installation_dialog, selected_version)
+                if java:
+                    form_vars['selected_java'] = java
+                    java_info_var.set(f"Selected: {java['display_name']}")
+                    
+                    # Check compatibility and show warning if needed
+                    if selected_version:
+                        from Scripts.minecraft import check_java_compatibility
+                        is_compatible, _, _, message = check_java_compatibility(selected_version, java['path'])
+                        if not is_compatible:
+                            messagebox.showwarning("Compatibility Warning", 
+                                                 f"Selected Java may not be compatible:\n{message}")
+            
+            def auto_select_java():
+                selected_version = form_vars['version'].get()
+                if selected_version:
+                    from Scripts.minecraft import get_recommended_java_for_minecraft
+                    recommended = get_recommended_java_for_minecraft(selected_version)
+                    if recommended:
+                        form_vars['selected_java'] = recommended
+                        java_info_var.set(f"Auto-selected: {recommended['display_name']}")
+                    else:
+                        messagebox.showwarning("No Suitable Java", 
+                                             "No suitable Java installation found for this Minecraft version.")
+                else:
+                    messagebox.showwarning("Select Version", "Please select a Minecraft version first.")
+            
+            # Java selection buttons
+            java_button_frame = ttk.Frame(java_frame)
+            java_button_frame.pack(fill=tk.X)
+            ttk.Button(java_button_frame, text="Select Java", command=select_java).pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(java_button_frame, text="Auto-Select", command=auto_select_java).pack(side=tk.LEFT)
+            
+            # Auto-select Java when version changes
+            def on_version_change(*args):
+                if form_vars['selected_java'] is None:
+                    auto_select_java()
+            
+            form_vars['version'].trace('w', on_version_change)
+            
+        elif server_type == "Steam":
+            # App ID
+            appid_frame = ttk.Frame(main_frame)
+            appid_frame.pack(fill=tk.X, pady=5)
+            ttk.Label(appid_frame, text="Steam App ID:", width=15).pack(side=tk.LEFT)
+            form_vars['app_id'] = tk.StringVar()
+            ttk.Entry(appid_frame, textvariable=form_vars['app_id'], width=40).pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(20, 0))
+        
+        result = {"success": False, "vars": form_vars}
+        
+        def on_install():
+            # Validate inputs
+            if not form_vars['server_name'].get().strip():
+                messagebox.showerror("Error", "Please enter a server name.")
+                return
+            
+            if not form_vars['install_dir'].get().strip():
+                messagebox.showerror("Error", "Please select an installation directory.")
+                return
+            
+            if server_type == "Minecraft" and form_vars['selected_java'] is None:
+                messagebox.showerror("Error", "Please select a Java installation.")
+                return
+            
+            if server_type == "Steam" and not form_vars['app_id'].get().strip():
+                messagebox.showerror("Error", "Please enter a Steam App ID.")
+                return
+            
+            result["success"] = True
+            installation_dialog.destroy()
+        
+        def on_cancel():
+            installation_dialog.destroy()
+        
+        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
+        ttk.Button(button_frame, text="Install", command=on_install, width=12).pack(side=tk.RIGHT)
+        
+        # Center dialog
+        center_window(installation_dialog, 700, 600, root)
+        
+        # Wait for dialog to close
+        root.wait_window(installation_dialog)
+        
+        return result if result["success"] else None
+        
+    except Exception as e:
+        logger.error(f"Error creating server installation dialog: {str(e)}")
+        messagebox.showerror("Error", f"Failed to create installation dialog: {str(e)}")
+        return None
     """Create server installation dialog with all necessary components"""
     # Get credentials if needed
     credentials = None

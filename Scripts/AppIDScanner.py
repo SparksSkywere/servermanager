@@ -55,9 +55,10 @@ if SQLALCHEMY_AVAILABLE:
         source = Column(String(50), default='steamdb')
 
 class AppIDScanner:
-    def __init__(self, use_database=True, debug_mode=False):
+    def __init__(self, use_database=True, debug_mode=False, migrate_json=True):
         self.use_database = use_database and SQLALCHEMY_AVAILABLE
         self.debug_mode = debug_mode
+        self.migrate_json = migrate_json  # Whether to migrate existing JSON data to database
         self.session_requests = requests.Session()
         self.session_requests.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -83,7 +84,7 @@ class AppIDScanner:
             'server tool', 'ds', 'server files', 'server software'
         ]
         
-        # JSON file path for AppID list
+        # JSON file path for AppID list (kept for backward compatibility and migration)
         self.json_file_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'AppIDList.json')
         
         # Initialize database
@@ -91,6 +92,10 @@ class AppIDScanner:
             self.init_database()
         else:
             self.init_sqlite_fallback()
+            
+        # Migrate JSON data to database if requested and JSON file exists
+        if self.migrate_json and os.path.exists(self.json_file_path):
+            self.migrate_json_to_database()
     
     def init_database(self):
         """Initialize SQLAlchemy database connection"""
@@ -138,6 +143,131 @@ class AppIDScanner:
         except Exception as e:
             logger.error(f"Failed to initialize SQLite database: {e}")
             raise
+    
+    def migrate_json_to_database(self):
+        """Migrate existing JSON data to database if it doesn't exist in DB yet"""
+        try:
+            logger.info("Checking for JSON data to migrate to database...")
+            
+            # Load JSON data
+            json_data = self.load_appid_json()
+            dedicated_servers = json_data.get('dedicated_servers', [])
+            
+            if not dedicated_servers:
+                logger.info("No JSON data found to migrate")
+                return
+            
+            migrated_count = 0
+            skipped_count = 0
+            
+            for server in dedicated_servers:
+                appid = server.get('appid')
+                if not appid:
+                    continue
+                
+                # Check if this app already exists in database
+                exists = False
+                if self.use_database:
+                    exists = self.db_session.query(SteamApp).filter(SteamApp.appid == appid).first() is not None
+                else:
+                    cursor = self.sqlite_conn.execute("SELECT 1 FROM steam_apps WHERE appid = ?", (appid,))
+                    exists = cursor.fetchone() is not None
+                
+                if not exists:
+                    # Convert JSON entry to database format
+                    app_data = {
+                        'appid': appid,
+                        'name': server.get('name', ''),
+                        'type': server.get('type', 'Dedicated Server'),
+                        'is_server': True,
+                        'is_dedicated_server': True,
+                        'developer': server.get('developer', ''),
+                        'publisher': server.get('publisher', ''),
+                        'release_date': server.get('release_date', ''),
+                        'description': server.get('description', ''),
+                        'tags': server.get('tags', '[]'),
+                        'price': '',
+                        'platforms': server.get('platforms', ''),
+                        'source': server.get('source', 'json_migration')
+                    }
+                    
+                    # Save to database
+                    self.save_app_to_database(app_data)
+                    migrated_count += 1
+                else:
+                    skipped_count += 1
+            
+            logger.info(f"Migration complete: {migrated_count} apps migrated, {skipped_count} already existed")
+            
+            # Optionally create a backup of the JSON file
+            if migrated_count > 0:
+                backup_path = f"{self.json_file_path}.migrated_backup"
+                try:
+                    import shutil
+                    shutil.copy2(self.json_file_path, backup_path)
+                    logger.info(f"Created backup of JSON file: {backup_path}")
+                except Exception as e:
+                    logger.warning(f"Could not create JSON backup: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error during JSON to database migration: {e}")
+    
+    def get_dedicated_servers_from_database(self):
+        """Get all dedicated servers from database (replaces JSON functionality)"""
+        try:
+            if self.use_database:
+                # Use SQLAlchemy
+                apps = self.db_session.query(SteamApp).filter(SteamApp.is_dedicated_server == True).all()
+                
+                servers = []
+                for app in apps:
+                    server_entry = {
+                        "appid": app.appid,
+                        "name": app.name,
+                        "type": app.type or "Dedicated Server",
+                        "developer": app.developer or "",
+                        "publisher": app.publisher or "",
+                        "release_date": app.release_date or "",
+                        "description": app.description or "",
+                        "platforms": app.platforms or "",
+                        "source": app.source or "steam_api",
+                        "tags": app.tags or "[]"
+                    }
+                    servers.append(server_entry)
+                    
+                return sorted(servers, key=lambda x: x['name'])
+                
+            else:
+                # Use SQLite
+                cursor = self.sqlite_conn.execute("""
+                    SELECT appid, name, type, developer, publisher, release_date, 
+                           description, platforms, source, tags
+                    FROM steam_apps 
+                    WHERE is_dedicated_server = 1
+                    ORDER BY name
+                """)
+                
+                servers = []
+                for row in cursor.fetchall():
+                    server_entry = {
+                        "appid": row[0],
+                        "name": row[1],
+                        "type": row[2] or "Dedicated Server",
+                        "developer": row[3] or "",
+                        "publisher": row[4] or "",
+                        "release_date": row[5] or "",
+                        "description": row[6] or "",
+                        "platforms": row[7] or "",
+                        "source": row[8] or "steam_api",
+                        "tags": row[9] or "[]"
+                    }
+                    servers.append(server_entry)
+                    
+                return servers
+                
+        except Exception as e:
+            logger.error(f"Error getting dedicated servers from database: {e}")
+            return []
     
     def add_server_to_json(self, server_data):
         """Add a single dedicated server to the JSON file (live update)"""
@@ -594,15 +724,9 @@ class AppIDScanner:
         return is_server, is_dedicated
     
     def scan_steam_apps(self, limit=None, server_only=True):
-        """Scan Steam applications and save dedicated servers to JSON file"""
-        logger.info("Starting Steam app scan (dedicated servers only for JSON)...")
+        """Scan Steam applications and save server apps to database only"""
+        logger.info("Starting Steam app scan (saving to database only)...")
         logger.info(f"Rate limiting: {self.request_delay}s general, {self.api_request_delay}s API calls")
-        
-        # Load existing JSON data
-        appid_data = self.load_appid_json()
-        
-        # Create lookup sets for existing data to avoid duplicates
-        existing_appids = {server["appid"] for server in appid_data["dedicated_servers"]}
         
         # Get app list from Steam API
         apps = self.get_steam_api_applist()
@@ -618,7 +742,6 @@ class AppIDScanner:
         processed = 0
         saved_count = 0
         dedicated_count = 0
-        json_updates = 0
         
         for app in apps:
             try:
@@ -633,8 +756,7 @@ class AppIDScanner:
                 # Add a progress indicator with timing estimates
                 if processed % 50 == 0:
                     logger.info(f"Processed {processed}/{len(apps)} apps ({processed/len(apps)*100:.1f}%), "
-                              f"saved {saved_count} to DB, {json_updates} dedicated servers in JSON, "
-                              f"found {dedicated_count} dedicated servers")
+                              f"saved {saved_count} to database, found {dedicated_count} dedicated servers")
                 
                 # Get detailed information with improved error handling
                 app_details = self.get_app_details_steam_api(appid)
@@ -672,40 +794,19 @@ class AppIDScanner:
                 self.save_app_to_database(app_data)
                 saved_count += 1
                 
-                # Only add DEDICATED servers to JSON file (live update)
-                if is_dedicated:
-                    json_server_entry = {
-                        "appid": appid,
-                        "name": name,
-                        "type": app_data.get('type', 'Dedicated Server'),
-                        "developer": app_data.get('developer', ''),
-                        "publisher": app_data.get('publisher', ''),
-                        "release_date": app_data.get('release_date', ''),
-                        "description": app_data.get('description', ''),
-                        "platforms": app_data.get('platforms', ''),
-                        "source": app_data.get('source', 'steam_api'),
-                        "tags": app_data.get('tags', '[]')
-                    }
-                    
-                    # Add to JSON file immediately (live update)
-                    if appid not in existing_appids:
-                        if self.add_server_to_json(json_server_entry):
-                            json_updates += 1
-                            existing_appids.add(appid)  # Update our tracking set
-                
                 if is_dedicated:
                     dedicated_count += 1
                 
                 if processed % 100 == 0:
-                    logger.info(f"Processed {processed} apps, saved {saved_count} to DB, updated {json_updates} dedicated servers in JSON, found {dedicated_count} dedicated servers")
+                    logger.info(f"Processed {processed} apps, saved {saved_count} to database, found {dedicated_count} dedicated servers")
                 
             except Exception as e:
                 logger.error(f"Error processing app {app.get('appid', 'unknown')}: {e}")
                 continue
         
-        # Live updates are handled individually, no need for bulk save
         # Final logging and summary
-        logger.info(f"Scan complete! Processed {processed} apps, saved {saved_count} to database, updated {json_updates} dedicated servers in JSON, found {dedicated_count} total dedicated servers")
+        logger.info(f"Scan complete! Processed {processed} apps, saved {saved_count} to database, found {dedicated_count} total dedicated servers")
+        logger.info("All server application data is now stored in the database")
     
     def search_apps(self, query, server_only=False):
         """Search for apps in the database"""

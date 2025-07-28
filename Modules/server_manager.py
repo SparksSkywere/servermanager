@@ -362,17 +362,43 @@ class ServerManager:
             
             # Build final command
             if server_type == "Minecraft":
-                # For Minecraft servers, keep the Java-specific handling
-                cmd = f'java -Xmx1024M -Xms1024M -jar "{exe_full}" nogui'
-                if use_config_file:
-                    if additional_args:
-                        cmd += f' {additional_args}'
-                    if config_file_path and config_argument and os.path.exists(config_full):
-                        cmd += f' {config_argument} "{config_full}"'
+                # For Minecraft servers, handle different executable types
+                if exe_full.lower().endswith(('.bat', '.cmd')):
+                    # For batch files, execute them directly
+                    cmd = f'"{exe_full}"'
+                    if use_config_file:
+                        if additional_args:
+                            cmd += f' {additional_args}'
+                        if config_file_path and config_argument and os.path.exists(config_full):
+                            cmd += f' {config_argument} "{config_full}"'
+                    else:
+                        if startup_args:
+                            cmd += f' {startup_args}'
+                    shell = True
+                elif exe_full.lower().endswith('.jar'):
+                    # For JAR files, use Java command
+                    cmd = f'java -Xmx1024M -Xms1024M -jar "{exe_full}" nogui'
+                    if use_config_file:
+                        if additional_args:
+                            cmd += f' {additional_args}'
+                        if config_file_path and config_argument and os.path.exists(config_full):
+                            cmd += f' {config_argument} "{config_full}"'
+                    else:
+                        if startup_args:
+                            cmd += f' {startup_args}'
+                    shell = True
                 else:
-                    if startup_args:
-                        cmd += f' {startup_args}'
-                shell = True
+                    # For other executables, run them directly
+                    cmd = f'"{exe_full}"'
+                    if use_config_file:
+                        if additional_args:
+                            cmd += f' {additional_args}'
+                        if config_file_path and config_argument and os.path.exists(config_full):
+                            cmd += f' {config_argument} "{config_full}"'
+                    else:
+                        if startup_args:
+                            cmd += f' {startup_args}'
+                    shell = True
             elif exe_full.lower().endswith(('.bat', '.cmd')):
                 cmd = f'start "" /D "{install_dir}" cmd /c ' + ' '.join(cmd_parts)
                 shell = True
@@ -795,11 +821,34 @@ class ServerManager:
                 logger.error(f"Installation directory not found: {install_dir}")
                 return False, f"Installation directory not found: {install_dir}"
             
+            # For Minecraft servers, try to auto-detect a better executable if none provided
+            if server_type == "Minecraft" and not executable_path:
+                # Try to import minecraft module for detection
+                try:
+                    from Scripts.minecraft import MinecraftServerManager
+                    mc_manager = MinecraftServerManager(self.server_manager_dir, self.config)
+                    exec_type, detected_path = mc_manager.detect_server_executable(install_dir)
+                    if detected_path:
+                        executable_path = os.path.basename(detected_path)
+                        logger.info(f"Auto-detected Minecraft executable: {executable_path}")
+                except ImportError:
+                    logger.warning("Minecraft module not available for auto-detection")
+            
+            # If still no executable, try auto-detect with general method
+            if not executable_path:
+                detected_files = self.auto_detect_server_executable(install_dir)
+                if detected_files:
+                    executable_path = detected_files[0]
+                    logger.info(f"Auto-detected executable: {executable_path}")
+            
             # Validate executable path
-            exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
-            if not os.path.exists(exe_full):
-                logger.warning(f"Executable not found: {exe_full}")
-                # Don't fail import, just warn
+            if executable_path:
+                exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
+                if not os.path.exists(exe_full):
+                    logger.warning(f"Executable not found: {exe_full}")
+                    # Don't fail import, just warn
+            else:
+                logger.warning(f"No executable found for server '{server_name}' in {install_dir}")
             
             # Create server configuration
             server_config = {
@@ -807,7 +856,7 @@ class ServerManager:
                 "Type": server_type,
                 "AppID": "",
                 "InstallDir": install_dir,
-                "ExecutablePath": executable_path,
+                "ExecutablePath": executable_path or "",
                 "StartupArgs": startup_args,
                 "Created": datetime.now().isoformat(),
                 "LastUpdate": datetime.now().isoformat(),
@@ -832,14 +881,35 @@ class ServerManager:
             
             found_files = []
             
-            # Look for common server executables
+            # Look for common server executables (prioritize by type)
             for file in os.listdir(install_dir):
                 file_lower = file.lower()
+                
+                # Minecraft-specific executables
                 if any(pattern in file_lower for pattern in [
-                    'server.exe', 'dedicated', 'srcds', 'minecraft_server', 
-                    'server.jar', 'forge', 'fabric', 'spigot', 'paper'
-                ]):
+                    'server.jar', 'minecraft_server', 'forge', 'fabric', 'spigot', 'paper',
+                    'neoforge', 'bukkit', 'folia'
+                ]) and file_lower.endswith('.jar'):
                     found_files.append(file)
+                
+                # Batch files for Minecraft servers
+                elif any(pattern in file_lower for pattern in [
+                    'run.bat', 'start.bat', 'server.bat', 'launch.bat'
+                ]) and file_lower.endswith(('.bat', '.cmd')):
+                    found_files.append(file)
+                
+                # General server executables
+                elif any(pattern in file_lower for pattern in [
+                    'server.exe', 'dedicated', 'srcds'
+                ]) and file_lower.endswith('.exe'):
+                    found_files.append(file)
+            
+            # Sort to prioritize JAR files over batch files for Minecraft
+            found_files.sort(key=lambda x: (
+                0 if x.lower().endswith('.jar') else
+                1 if x.lower().endswith(('.bat', '.cmd')) else
+                2
+            ))
             
             return found_files
             
