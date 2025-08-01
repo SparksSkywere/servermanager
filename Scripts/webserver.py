@@ -394,43 +394,118 @@ class ServerManager:
             return True
         return False
 
-class ServerManagerWebServer:
+# Import common module
+from Modules.common import ServerManagerModule
+
+class ServerManagerWebServer(ServerManagerModule):
     def __init__(self):
-        self.registry_path = r"Software\SkywereIndustries\Servermanager"
-        # Read from environment first, fall back to registry
-        self.server_manager_dir = os.getenv("SERVERMANAGER_DIR") or get_server_manager_dir()
-        self.web_port = int(os.getenv("WEB_PORT", "8080"))
-        self.paths = {}
+        logger.info("Initializing ServerManagerWebServer...")
+        try:
+            super().__init__("ServerManagerWebServer")
+            logger.info("Base ServerManagerModule initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize base ServerManagerModule: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Initialize minimal attributes to prevent AttributeError
+            self.module_name = "ServerManagerWebServer"
+            self.logger = logging.getLogger("ServerManagerWebServer")
+        
+        # Initialize all attributes to ensure they exist
+        self.auth = None
+        self.sql_auth = None  
+        self.engine = None
+        self.server_manager = None
+        self.app = None
+        self.limiter = None
+        self.tracker = None
+        self.subhost_thread = None
+        self.auth_tokens = {}  # Initialize auth_tokens attribute
+        
+        # Read from environment first, fall back to inherited web_port property or default
+        try:
+            base_port = self.web_port if hasattr(self, 'web_port') else 8080
+            logger.info(f"Base port from property: {base_port}")
+        except Exception as e:
+            logger.warning(f"Could not get web_port property, using default: {e}")
+            base_port = 8080
+            
+        self._web_port = int(os.getenv("WEB_PORT", str(base_port)))
+        logger.info(f"Web port set to: {self._web_port}")
         # Read host type and address from environment
         self.host_type = os.getenv("HOST_TYPE", "Unknown")
         self.host_address = os.getenv("HOST_ADDRESS", None)
         self.sql_available = False
-        self.sql_auth = None
-        self.engine = None
-        self.auth_tokens = {}  # Initialize auth_tokens attribute
 
         parser = argparse.ArgumentParser(description='Server Manager Web Server')
         parser.add_argument('--port', type=int, help='Web server port')
         args = parser.parse_args()
 
         if args.port:
-            self.web_port = args.port
+            self._web_port = args.port
 
-        self.initialize_from_registry()
+        # Override host type and address from environment if available
+        if os.getenv("SERVERMANAGER_DIR"):
+            logger.info("Using configuration from environment variables")
+        else:
+            # Try to read host type from registry for additional info
+            try:
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
+                try:
+                    self.host_type = winreg.QueryValueEx(key, "HostType")[0]
+                except:
+                    pass
+                try:
+                    self.host_address = winreg.QueryValueEx(key, "HostAddress")[0]
+                except:
+                    pass
+                winreg.CloseKey(key)
+                logger.info("Using configuration from registry")
+            except:
+                logger.info("Using default configuration")
+
+        logger.info(f"Initialized webserver. Server Manager directory: {self.server_manager_dir}")
+        logger.info(f"Web server port: {self.web_port}")
+        logger.info(f"Cluster role: {self.host_type}" + (f", HostAddress: {self.host_address}" if self.host_address else ""))
+
+        # Initialize Flask app first
+        self.app = Flask(
+            __name__,
+            static_folder=os.path.join(self.server_manager_dir or "", "www")
+        )
+        CORS(self.app)
+        self.app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(24))
+        
+        # Initialize rate limiter
+        try:
+            self.limiter = Limiter(
+                app=self.app, 
+                key_func=get_remote_address, 
+                default_limits=["200 per day", "50 per hour"]
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize rate limiter: {e}")
+            self.limiter = None
+
         self.check_sql_availability()
 
+        # Initialize authentication
         try:
             if self.sql_available and get_engine and UserManager:
                 self.engine = get_engine()
                 self.sql_auth = SQLAuthentication(self.engine)
+                self.auth = self.sql_auth  # Set auth to point to sql_auth for consistent interface
                 logger.info("SQL authentication system initialized successfully")
             else:
                 self.auth = Authentication(self.paths["config"])
+                self.sql_auth = None
                 logger.warning("SQL not available, using file-based authentication")
         except Exception as e:
             logger.error(f"Failed to initialize authentication: {e}")
             self.auth = self.create_fallback_auth()
+            self.sql_auth = None
 
+        # Initialize server manager
         try:
             self.server_manager = ServerManager(self.paths["servers"])
             logger.info("Server manager initialized successfully")
@@ -438,16 +513,11 @@ class ServerManagerWebServer:
             logger.error(f"Failed to initialize server manager: {e}")
             self.server_manager = None
 
-        self.app = Flask(
-            __name__,
-            static_folder=os.path.join(self.server_manager_dir, "www")
-        )
-        CORS(self.app)
-        self.app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(24))
-        self.limiter = Limiter(app=self.app, key_func=get_remote_address, default_limits=["200 per day", "50 per hour"])
+        # Setup routes after all components are initialized
         self.setup_routes()
-        self.write_pid_file()
+        self.write_pid_file("webserver", os.getpid())
 
+        # Initialize tracker
         self.tracker = tracker
         if self.tracker:
             try:
@@ -457,9 +527,15 @@ class ServerManagerWebServer:
                 logger.warning(f"Failed to start dashboard tracker: {e}")
                 self.tracker = DummyDashboardTracker()
 
+        # Start subhost communication thread
         self.subhost_thread = threading.Thread(target=self.subhost_communication_loop, daemon=True)
         self.subhost_thread.start()
         logger.info("Subhost communication thread started")
+
+    @property
+    def web_port(self):
+        """Get the web server port"""
+        return self._web_port
 
     def check_sql_availability(self):
         try:
@@ -537,106 +613,35 @@ class ServerManagerWebServer:
                 logger.error(f"Error in subhost communication loop: {e}")
                 time.sleep(30)
 
-    def initialize_from_registry(self):
-        try:
-            # Prefer environment variables over registry
-            if os.getenv("SERVERMANAGER_DIR"):
-                self.server_manager_dir = os.getenv("SERVERMANAGER_DIR")
-                self.host_type = os.getenv("HOST_TYPE", "Unknown")
-                self.host_address = os.getenv("HOST_ADDRESS", None)
-                logger.info("Using configuration from environment variables")
-            else:
-                # Fallback to registry
-                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
-                self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-                try:
-                    self.host_type = winreg.QueryValueEx(key, "HostType")[0]
-                except:
-                    self.host_type = "Unknown"
-                try:
-                    self.host_address = winreg.QueryValueEx(key, "HostAddress")[0]
-                except:
-                    self.host_address = None
-                winreg.CloseKey(key)
-                logger.info("Using configuration from registry")
 
-            # Ensure server_manager_dir is not None
-            if not self.server_manager_dir:
-                raise ValueError("Server manager directory is not set")
 
-            self.paths = {
-                "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config"),
-                "servers": os.path.join(self.server_manager_dir, "servers"),
-                "temp": os.path.join(self.server_manager_dir, "temp"),
-                "scripts": os.path.join(self.server_manager_dir, "scripts"),
-                "www": os.path.join(self.server_manager_dir, "www")
-            }
 
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
-
-            # Use log file path from environment if specified
-            log_file_path = os.getenv("LOG_FILE_PATH")
-            if log_file_path:
-                log_file = log_file_path
-            else:
-                log_file = os.path.join(self.paths["logs"], "webserver.log")
-            
-            if os.getenv("LOG_FILE_ENABLED", "true").lower() == "true":
-                file_handler = logging.FileHandler(log_file)
-                file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-                logger.addHandler(file_handler)
-
-            logger.info(f"Initialized from environment/registry. Server Manager directory: {self.server_manager_dir}")
-            logger.info(f"Web server port: {self.web_port}")
-            logger.info(f"Cluster role: {self.host_type}" + (f", HostAddress: {self.host_address}" if self.host_address else ""))
-            return True
-        except Exception as e:
-            logger.error(f"Failed to initialize from environment/registry: {e}")
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            self.server_manager_dir = os.path.dirname(script_dir)
-            self.paths = {
-                "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config"),
-                "servers": os.path.join(self.server_manager_dir, "servers"),
-                "temp": os.path.join(self.server_manager_dir, "temp"),
-                "scripts": script_dir,
-                "www": os.path.join(self.server_manager_dir, "www")
-            }
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
-            log_file = os.path.join(self.paths["logs"], "webserver.log")
-            file_handler = logging.FileHandler(log_file)
-            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-            logger.addHandler(file_handler)
-            logger.warning(f"Using fallback paths. Server Manager directory: {self.server_manager_dir}")
-            return False
-
-    def write_pid_file(self):
-        try:
-            pid_file = os.path.join(self.paths["temp"], "webserver.pid")
-            pid_info = {
-                "ProcessId": os.getpid(),
-                "StartTime": datetime.datetime.now().isoformat(),
-                "ProcessType": "webserver",
-                "Port": self.web_port,
-                "Status": "Running"
-            }
-            with open(pid_file, 'w') as f:
-                json.dump(pid_info, f, indent=4)
-            logger.debug(f"PID file created: {pid_file}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to write PID file: {e}")
-            return False
 
     def setup_routes(self):
+        if not self.app:
+            logger.error("Flask app not initialized")
+            return
+            
         app = self.app
 
-        @self.limiter.limit("5 per minute")
+        # Helper function to handle rate limiting
+        def limit_decorator(rate_limit):
+            if self.limiter:
+                return self.limiter.limit(rate_limit)
+            else:
+                # Return a no-op decorator if limiter is not available
+                def no_op_decorator(func):
+                    return func
+                return no_op_decorator
+
+        # Helper function to safely call auth methods
+        def safe_auth_call(method_name, *args, **kwargs):
+            if self.auth and hasattr(self.auth, method_name):
+                method = getattr(self.auth, method_name)
+                return method(*args, **kwargs)
+            return None
+
+        @limit_decorator("5 per minute")
         @app.route('/api/auth/login', methods=['POST'])
         def api_login():
             try:
@@ -692,7 +697,7 @@ class ServerManagerWebServer:
                     import traceback
                     logger.error(f"XML authentication traceback: {traceback.format_exc()}")
 
-                auth_result = self.auth.authenticate(username, password)
+                auth_result = safe_auth_call('authenticate', username, password)
                 if auth_result:
                     logger.info(f"Successful file-based authentication for user: {username}")
                     return jsonify({
@@ -782,11 +787,11 @@ class ServerManagerWebServer:
                     return jsonify({"isAdmin": False}), 401
 
                 token = auth_header.split(' ')[1]
-                token_data = self.auth.verify_token(token)
+                token_data = safe_auth_call('verify_token', token)
 
                 if token_data:
-                    is_admin = self.auth.is_admin(token_data["username"])
-                    return jsonify({"isAdmin": is_admin})
+                    is_admin = safe_auth_call('is_admin', token_data["username"])
+                    return jsonify({"isAdmin": is_admin if is_admin is not None else False})
                 return jsonify({"isAdmin": False}), 401
             except Exception as e:
                 logger.error(f"Admin verification error: {e}")
@@ -800,7 +805,7 @@ class ServerManagerWebServer:
                     return jsonify({"error": "Authentication required"}), 401
 
                 token = auth_header.split(' ')[1]
-                token_data = self.auth.verify_token(token)
+                token_data = safe_auth_call('verify_token', token)
 
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
@@ -822,7 +827,7 @@ class ServerManagerWebServer:
                     return jsonify({"error": "Authentication required"}), 401
 
                 token = auth_header.split(' ')[1]
-                token_data = self.auth.verify_token(token)
+                token_data = safe_auth_call('verify_token', token)
 
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
@@ -846,7 +851,7 @@ class ServerManagerWebServer:
                     return jsonify({"error": "Authentication required"}), 401
 
                 token = auth_header.split(' ')[1]
-                token_data = self.auth.verify_token(token)
+                token_data = safe_auth_call('verify_token', token)
 
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
@@ -870,7 +875,7 @@ class ServerManagerWebServer:
                     return jsonify({"error": "Authentication required"}), 401
 
                 token = auth_header.split(' ')[1]
-                token_data = self.auth.verify_token(token)
+                token_data = safe_auth_call('verify_token', token)
 
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
@@ -894,15 +899,15 @@ class ServerManagerWebServer:
                     return jsonify({"error": "Authentication required"}), 401
 
                 token = auth_header.split(' ')[1]
-                token_data = self.auth.verify_token(token)
+                token_data = safe_auth_call('verify_token', token)
 
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
 
-                if not self.auth.is_admin(token_data["username"]):
+                if not safe_auth_call('is_admin', token_data["username"]):
                     return jsonify({"error": "Admin privileges required"}), 403
 
-                users = self.auth.get_all_users()
+                users = safe_auth_call('get_all_users')
                 return jsonify(users)
             except Exception as e:
                 logger.error(f"Get users error: {e}")
@@ -916,7 +921,7 @@ class ServerManagerWebServer:
                     return jsonify({"error": "Authentication required"}), 401
 
                 token = auth_header.split(' ')[1]
-                token_data = self.auth.verify_token(token)
+                token_data = safe_auth_call('verify_token', token)
 
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
@@ -954,7 +959,7 @@ class ServerManagerWebServer:
                 if not auth_header or not auth_header.startswith('Bearer '):
                     return jsonify({"error": "Authentication required"}), 401
                 token = auth_header.split(' ')[1]
-                token_data = self.auth.verify_token(token)
+                token_data = safe_auth_call('verify_token', token)
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
 
@@ -1075,6 +1080,10 @@ class ServerManagerWebServer:
             else:
                 logger.info(f"SSL disabled - running HTTP only on {host}:{self.web_port}")
             
+            if not self.app:
+                logger.error("Flask app not initialized - cannot start server")
+                return False
+                
             serve(self.app, **server_args)
             return True
         except KeyboardInterrupt:
@@ -1124,6 +1133,13 @@ def is_admin():
 
 def main():
     try:
+        # Ensure proper path setup for subprocess execution
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        server_manager_dir = os.path.dirname(script_dir)
+        if server_manager_dir not in sys.path:
+            sys.path.insert(0, server_manager_dir)
+            logger.info(f"Added to Python path: {server_manager_dir}")
+        
         if not is_admin():
             logger.warning("Not running with administrator privileges. Some features may be limited.")
         if get_engine and ensure_root_admin:
@@ -1137,11 +1153,16 @@ def main():
         return web_server.run()
     except Exception as e:
         logger.error(f"Unhandled exception: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return False
 
 if __name__ == "__main__":
     try:
         print("Starting ServerManager webserver...", file=sys.stderr)
+        print(f"Working directory: {os.getcwd()}", file=sys.stderr)
+        print(f"Script path: {__file__}", file=sys.stderr)
+        print(f"Python path: {sys.path[:3]}", file=sys.stderr)  # First 3 entries
         sys.stderr.flush()
         sys.stdout.flush()
         main()

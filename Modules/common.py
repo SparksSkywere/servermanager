@@ -3,6 +3,7 @@ import sys
 import json
 import logging
 import winreg
+import time
 import datetime
 import psutil
 
@@ -13,6 +14,95 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger("Common")
+
+# Registry utility functions
+def initialize_paths_from_registry(registry_path):
+    """Initialize basic paths from registry"""
+    try:
+        # Read registry for basic paths
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
+        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
+        winreg.CloseKey(key)
+        
+        # Clean up path
+        server_manager_dir = server_manager_dir.strip('"').strip()
+        
+        # Define paths structure
+        paths = {
+            "root": server_manager_dir,
+            "logs": os.path.join(server_manager_dir, "logs"),
+            "config": os.path.join(server_manager_dir, "config"),
+            "temp": os.path.join(server_manager_dir, "temp"),
+            "servers": os.path.join(server_manager_dir, "servers"),
+            "modules": os.path.join(server_manager_dir, "modules"),
+            "data": os.path.join(server_manager_dir, "data")
+        }
+        
+        # Ensure directories exist
+        for path in paths.values():
+            os.makedirs(path, exist_ok=True)
+        
+        logger.info(f"Basic initialization complete. Server Manager directory: {server_manager_dir}")
+        return True, server_manager_dir, paths
+        
+    except Exception as e:
+        logger.error(f"Basic initialization failed: {str(e)}")
+        return False, None, {}
+
+
+def initialize_registry_values(registry_path):
+    """Initialize registry-managed values"""
+    try:
+        # Read registry for all installation-managed values
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
+        
+        registry_values = {}
+        steam_cmd_path = None
+        webserver_port = 8080
+        
+        # Try to get SteamCmd path
+        try:
+            steam_cmd_path = winreg.QueryValueEx(key, "SteamCmdPath")[0]
+        except:
+            steam_cmd_path = os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), "SteamCMD")
+            logger.warning(f"SteamCmd path not found in registry, using default: {steam_cmd_path}")
+            
+        # Try to get WebPort from registry
+        try:
+            webserver_port = int(winreg.QueryValueEx(key, "WebPort")[0])
+        except:
+            webserver_port = 8080
+            logger.warning(f"WebPort not found in registry, using default: 8080")
+        
+        # Read other registry values for reference
+        try:
+            registry_values = {
+                "CurrentVersion": winreg.QueryValueEx(key, "CurrentVersion")[0],
+                "UserWorkspace": winreg.QueryValueEx(key, "UserWorkspace")[0],
+                "InstallDate": winreg.QueryValueEx(key, "InstallDate")[0],
+                "LastUpdate": winreg.QueryValueEx(key, "LastUpdate")[0],
+                "ModulePath": winreg.QueryValueEx(key, "ModulePath")[0],
+                "LogPath": winreg.QueryValueEx(key, "LogPath")[0],
+                "HostType": winreg.QueryValueEx(key, "HostType")[0]
+            }
+            
+            # Try to get HostAddress if it exists (for subhost installations)
+            try:
+                registry_values["HostAddress"] = winreg.QueryValueEx(key, "HostAddress")[0]
+            except:
+                pass  # HostAddress only exists for subhost installations
+                
+        except Exception as e:
+            logger.warning(f"Some registry values could not be read: {str(e)}")
+        
+        winreg.CloseKey(key)
+        
+        logger.info("Registry values initialized successfully")
+        return True, steam_cmd_path, webserver_port, registry_values
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize registry values: {str(e)}")
+        return False, None, 8080, {}
 
 class ServerManagerPaths:
     """Class to handle paths for the server manager"""
@@ -249,6 +339,19 @@ class ConfigManager:
                 logger.warning(f"Configuration file not found: {self.config_file}")
                 self.create_default_config()
                 
+            # Always try to merge current registry values
+            try:
+                success, steam_cmd, webserver_port, registry_values = initialize_registry_values(
+                    r"Software\SkywereIndustries\Servermanager"
+                )
+                if success:
+                    # Override with current registry values
+                    self.config["web_port"] = webserver_port
+                    if steam_cmd:
+                        self.config["steam_cmd_path"] = steam_cmd
+            except Exception as e:
+                logger.warning(f"Could not load current registry values: {str(e)}")
+                
             return True
         except Exception as e:
             logger.error(f"Failed to load configuration: {str(e)}")
@@ -258,6 +361,7 @@ class ConfigManager:
     def create_default_config(self):
         """Create default configuration"""
         try:
+            # Start with default config
             self.config = {
                 "version": "0.1",
                 "web_port": 8080,
@@ -268,6 +372,21 @@ class ConfigManager:
                 "max_log_size": 10485760,  # 10 MB
                 "max_log_files": 10
             }
+            
+            # Try to override with registry values
+            try:
+                success, steam_cmd, webserver_port, registry_values = initialize_registry_values(
+                    r"Software\SkywereIndustries\Servermanager"
+                )
+                if success:
+                    self.config["web_port"] = webserver_port
+                    self.config["steam_cmd_path"] = steam_cmd
+                    # Add other registry values as needed
+                    if registry_values:
+                        for key, value in registry_values.items():
+                            self.config[f"registry_{key.lower()}"] = value
+            except Exception as e:
+                logger.warning(f"Could not load registry values for config: {str(e)}")
             
             # Save default configuration
             self.save_config()
@@ -301,7 +420,7 @@ class ConfigManager:
 
 # Import debug module for exception logging
 try:
-    from debug import log_exception
+    from Modules.debug import log_exception
 except ImportError:
     # Fallback if debug module not available
     def log_exception(e, message="An exception occurred"):
@@ -316,7 +435,7 @@ class SystemUtils:
         try:
             # Try to use debug module first
             try:
-                from debug import get_system_info
+                from Modules.debug import get_system_info
                 return get_system_info()
             except ImportError:
                 # Fallback to direct implementation
@@ -346,7 +465,7 @@ class SystemUtils:
         try:
             # Try to use debug module first
             try:
-                from debug import get_process_info
+                from Modules.debug import get_process_info
                 return get_process_info(pid)
             except ImportError:
                 # Fallback to direct implementation
@@ -379,5 +498,84 @@ process_manager = ProcessManager(paths)
 config_manager = ConfigManager(paths)
 system_utils = SystemUtils()
 
+# Base class for all Server Manager modules
+class ServerManagerModule:
+    """Base class for all Server Manager modules that provides common functionality"""
+    
+    def __init__(self, module_name=None):
+        self.module_name = module_name or self.__class__.__name__
+        self.logger = logging.getLogger(self.module_name)
+        self.registry_path = r"Software\SkywereIndustries\Servermanager"
+        
+        # Use global instances for shared functionality
+        self._paths_manager = paths
+        self._process_manager = process_manager
+        self._config_manager = config_manager
+        
+        # Ensure paths are initialized
+        if not self._paths_manager.initialized:
+            self.logger.warning("Paths not initialized, attempting to initialize...")
+            if not self._paths_manager.initialize_from_registry():
+                self.logger.error("Failed to initialize paths")
+                raise Exception("Failed to initialize Server Manager paths")
+    
+    @property
+    def paths(self):
+        """Get the paths dictionary"""
+        return self._paths_manager.paths
+        
+    @property 
+    def server_manager_dir(self):
+        """Get the server manager directory"""
+        return self._paths_manager.server_manager_dir
+        
+    @property
+    def config(self):
+        """Get configuration"""
+        return self._config_manager.config
+        
+    @property
+    def web_port(self):
+        """Get the web server port from configuration"""
+        return self.get_config_value("web_port", 8080)
+        
+    @web_port.setter
+    def web_port(self, value):
+        """Set the web server port in configuration"""
+        self.set_config_value("web_port", value)
+        
+    def is_process_running(self, pid):
+        """Check if a process with the given PID is running"""
+        return self._process_manager.is_process_running(pid)
+        
+    def write_pid_file(self, process_type, pid):
+        """Write process ID information to a PID file"""
+        return self._process_manager.write_pid_file(process_type, pid)
+        
+    def read_pid_file(self, process_type):
+        """Read process ID information from a PID file"""
+        return self._process_manager.read_pid_file(process_type)
+        
+    def remove_pid_file(self, process_type):
+        """Remove a PID file"""
+        return self._process_manager.remove_pid_file(process_type)
+        
+    def is_component_running(self, process_type):
+        """Check if a server manager component is running"""
+        return self._process_manager.is_component_running(process_type)
+        
+    def get_config_value(self, key, default=None):
+        """Get a configuration value"""
+        return self._config_manager.get(key, default)
+        
+    def set_config_value(self, key, value):
+        """Set a configuration value and save"""
+        return self._config_manager.set(key, value)
+        
+    def get_path(self, path_key):
+        """Get a specific path by key"""
+        return self._paths_manager.get_path(path_key)
+
 # Export these instances to make them available to other modules
-__all__ = ['paths', 'process_manager', 'config_manager', 'system_utils']
+__all__ = ['paths', 'process_manager', 'config_manager', 'system_utils', 'ServerManagerModule',
+           'initialize_paths_from_registry', 'initialize_registry_values']

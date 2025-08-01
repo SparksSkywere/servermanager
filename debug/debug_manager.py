@@ -16,13 +16,13 @@ import psutil
 # Add modules directory to path if needed
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(script_dir)
-modules_dir = os.path.join(parent_dir, "modules")
+modules_dir = os.path.join(parent_dir, "Modules")
 if modules_dir not in sys.path:
     sys.path.append(modules_dir)
 
 # Try to import from modules
 try:
-    from debug import debug_manager, enable_debug, get_system_info, create_diagnostic_report
+    from Modules.debug import debug_manager, enable_debug, get_system_info, create_diagnostic_report
 except ImportError:
     # If import fails, use basic logging
     logging.basicConfig(
@@ -185,31 +185,52 @@ class DebugManager:
                 # Use the debug module to get system info
                 system_info = get_system_info()
                 
-                # Format system information
-                system_info_text = f"""SYSTEM INFORMATION
+                # Format system information with proper error handling
+                if isinstance(system_info, dict):
+                    system_data = system_info.get('system', {})
+                    cpu_data = system_info.get('cpu', {})
+                    memory_data = system_info.get('memory', {})
+                    disk_data = system_info.get('disk', {})
+                    network_data = system_info.get('network', {})
+                    
+                    # Ensure all data are dictionaries
+                    if not isinstance(system_data, dict):
+                        system_data = {}
+                    if not isinstance(cpu_data, dict):
+                        cpu_data = {}
+                    if not isinstance(memory_data, dict):
+                        memory_data = {}
+                    if not isinstance(disk_data, dict):
+                        disk_data = {}
+                    if not isinstance(network_data, dict):
+                        network_data = {}
+                    
+                    system_info_text = f"""SYSTEM INFORMATION
 -----------------
 Computer Name: {platform.node()}
-OS: {system_info['system']['system']} {system_info['system']['release']}
-Version: {system_info['system']['version']}
+OS: {system_data.get('system', 'Unknown')} {system_data.get('release', 'Unknown')}
+Version: {system_data.get('version', 'Unknown')}
 
 HARDWARE
 --------
-CPU: {system_info['system']['processor']}
-Cores: {system_info['cpu']['physical_cores']} physical, {system_info['cpu']['logical_cores']} logical
-CPU Usage: {system_info['cpu']['cpu_percent']}%
-RAM: {round(system_info['memory']['total'] / (1024**3), 2)} GB ({round(system_info['memory']['available'] / (1024**3), 2)} GB available)
+CPU: {system_data.get('processor', 'Unknown')}
+Cores: {cpu_data.get('physical_cores', 'Unknown')} physical, {cpu_data.get('logical_cores', 'Unknown')} logical
+CPU Usage: {cpu_data.get('cpu_percent', 'Unknown')}%
+RAM: {round(float(memory_data.get('total', 0)) / (1024**3), 2)} GB ({round(float(memory_data.get('available', 0)) / (1024**3), 2)} GB available)
 
 STORAGE
 -------
-Total: {round(system_info['disk']['total'] / (1024**3), 2)} GB
-Free: {round(system_info['disk']['free'] / (1024**3), 2)} GB
-Usage: {system_info['disk']['percent']}%
+Total: {round(float(disk_data.get('total', 0)) / (1024**3), 2)} GB
+Free: {round(float(disk_data.get('free', 0)) / (1024**3), 2)} GB
+Usage: {disk_data.get('percent', 'Unknown')}%
 
 NETWORK
 -------
-Bytes Sent: {system_info['network']['bytes_sent']}
-Bytes Received: {system_info['network']['bytes_recv']}
+Bytes Sent: {network_data.get('bytes_sent', 'Unknown')}
+Bytes Received: {network_data.get('bytes_recv', 'Unknown')}
 """
+                else:
+                    system_info_text = "Error: Unable to retrieve system information from debug module\n"
             else:
                 # Fallback to direct psutil calls
                 # OS info
@@ -350,11 +371,46 @@ Usage: {disk_usage.percent}%
                 results_text.tag_config("heading", font=("Arial", 10, "bold"))
                 
                 if debug_manager:
-                    system_info = get_system_info()
-                    results_text.insert(tk.END, f"OS: {system_info['system']['system']} {system_info['system']['release']}\n")
-                    results_text.insert(tk.END, f"CPU: {system_info['cpu']['logical_cores']} cores, {system_info['cpu']['cpu_percent']}% used\n")
-                    results_text.insert(tk.END, f"Memory: {round(system_info['memory']['used'] / (1024**3), 2)} GB of {round(system_info['memory']['total'] / (1024**3), 2)} GB used ({system_info['memory']['percent']}%)\n")
-                    results_text.insert(tk.END, f"Disk: {round(system_info['disk']['used'] / (1024**3), 2)} GB of {round(system_info['disk']['total'] / (1024**3), 2)} GB used ({system_info['disk']['percent']}%)\n\n")
+                    try:
+                        system_info = get_system_info()
+                        if isinstance(system_info, dict):
+                            # Get system info safely
+                            system_data = system_info.get('system', {})
+                            cpu_data = system_info.get('cpu', {})
+                            
+                            if isinstance(system_data, dict):
+                                os_name = system_data.get('system', 'Unknown')
+                                os_release = system_data.get('release', 'Unknown')
+                                results_text.insert(tk.END, f"OS: {os_name} {os_release}\n")
+                            
+                            if isinstance(cpu_data, dict):
+                                cpu_cores = cpu_data.get('logical_cores', 'Unknown')
+                                cpu_percent = cpu_data.get('cpu_percent', 'Unknown')
+                                results_text.insert(tk.END, f"CPU: {cpu_cores} cores, {cpu_percent}% used\n")
+                            
+                            memory_info = system_info.get('memory', {})
+                            if isinstance(memory_info, dict):
+                                mem_used = memory_info.get('used', 0)
+                                mem_total = memory_info.get('total', 0)
+                                mem_percent = memory_info.get('percent', 0)
+                                if isinstance(mem_used, (int, float)) and isinstance(mem_total, (int, float)):
+                                    results_text.insert(tk.END, f"Memory: {round(mem_used / (1024**3), 2)} GB of {round(mem_total / (1024**3), 2)} GB used ({mem_percent}%)\n")
+                                else:
+                                    results_text.insert(tk.END, "Memory: Information unavailable\n")
+                            
+                            disk_info = system_info.get('disk', {})
+                            if isinstance(disk_info, dict):
+                                disk_used = disk_info.get('used', 0)
+                                disk_total = disk_info.get('total', 0)
+                                disk_percent = disk_info.get('percent', 0)
+                                if isinstance(disk_used, (int, float)) and isinstance(disk_total, (int, float)):
+                                    results_text.insert(tk.END, f"Disk: {round(disk_used / (1024**3), 2)} GB of {round(disk_total / (1024**3), 2)} GB used ({disk_percent}%)\n\n")
+                                else:
+                                    results_text.insert(tk.END, "Disk: Information unavailable\n\n")
+                        else:
+                            results_text.insert(tk.END, "System information unavailable from debug module\n\n")
+                    except Exception as e:
+                        results_text.insert(tk.END, f"Error getting system info: {str(e)}\n\n")
                 else:
                     # Fallback to direct calls
                     mem = psutil.virtual_memory()
@@ -372,7 +428,7 @@ Usage: {disk_usage.percent}%
                 
                 results_text.insert(tk.END, "--- Installation Verification ---\n", "heading")
                 
-                if os.path.exists(self.server_manager_dir):
+                if self.server_manager_dir and os.path.exists(self.server_manager_dir):
                     results_text.insert(tk.END, f"[OK] Server Manager directory: {self.server_manager_dir}\n", "ok")
                     results_text.tag_config("ok", foreground="green")
                 else:
@@ -382,8 +438,12 @@ Usage: {disk_usage.percent}%
                 # Check essential directories
                 essential_dirs = ["logs", "config", "servers", "scripts"]
                 for dir_name in essential_dirs:
-                    dir_path = self.paths.get(dir_name, os.path.join(self.server_manager_dir, dir_name))
-                    if os.path.exists(dir_path) and os.path.isdir(dir_path):
+                    if self.server_manager_dir:
+                        dir_path = self.paths.get(dir_name, os.path.join(self.server_manager_dir, dir_name))
+                    else:
+                        dir_path = self.paths.get(dir_name, "")
+                    
+                    if dir_path and os.path.exists(dir_path) and os.path.isdir(dir_path):
                         results_text.insert(tk.END, f"[OK] {dir_name.capitalize()} directory: {dir_path}\n", "ok")
                     else:
                         results_text.insert(tk.END, f"[ERROR] {dir_name.capitalize()} directory not found: {dir_path}\n", "error")
@@ -398,8 +458,12 @@ Usage: {disk_usage.percent}%
                 
                 results_text.insert(tk.END, "--- Server Status ---\n", "heading")
                 
-                servers_dir = self.paths.get("servers", os.path.join(self.server_manager_dir, "servers"))
-                if os.path.exists(servers_dir):
+                if self.server_manager_dir:
+                    servers_dir = self.paths.get("servers", os.path.join(self.server_manager_dir, "servers"))
+                else:
+                    servers_dir = self.paths.get("servers", "")
+                
+                if servers_dir and os.path.exists(servers_dir):
                     server_files = [f for f in os.listdir(servers_dir) if f.endswith('.json')]
                     if server_files:
                         results_text.insert(tk.END, f"Found {len(server_files)} server configuration(s).\n")

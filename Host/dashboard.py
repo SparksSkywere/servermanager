@@ -33,7 +33,7 @@ from Scripts.minecraft import (
 
 # Import logging functions from the logging module
 from Modules.logging import (
-    get_dashboard_logger, configure_dashboard_logging, write_pid_file,
+    get_dashboard_logger, configure_dashboard_logging,
     log_dashboard_event, log_server_action, log_installation_progress,
     log_process_monitoring, log_security_event, log_user_action
 )
@@ -44,10 +44,12 @@ from Modules.timer import TimerManager
 # Import documentation module
 from Modules.documentation import show_help_dialog, show_about_dialog
 
-# Import dashboard functions
+# Import common module infrastructure
+from Modules.common import ServerManagerModule, initialize_paths_from_registry, initialize_registry_values
+
+# Import dashboard functions (reduced scope)
 from Host.dashboard_functions import (
-    load_dashboard_config, initialize_paths_from_registry, initialize_registry_values,
-    is_process_running, is_port_open, check_webserver_status, update_webserver_status,
+    load_dashboard_config, is_port_open, check_webserver_status, update_webserver_status,
     api_headers, get_steam_credentials, update_system_info, format_uptime_from_start_time,
     get_process_info, export_server_configuration, import_server_configuration,
     export_server_to_file, import_server_from_file, extract_server_files_from_archive,
@@ -70,26 +72,22 @@ from Modules.debug import (
 # Get dashboard logger
 logger = get_dashboard_logger()
 
-class ServerManagerDashboard:
+class ServerManagerDashboard(ServerManagerModule):
     def __init__(self, debug_mode=False):
-        self.registry_path = r"Software\SkywereIndustries\Servermanager"
-        self.server_manager_dir = None
+        super().__init__("ServerManagerDashboard")
+        
         self.steam_cmd_path = None
-        self.paths = {}
         self.servers = []
         self.debug_mode = debug_mode
         self.user_manager = None
         self.current_user = None
-        self.config = {}
         self.install_process = None  # Track installation process
         
-        # Initialize configuration and registry first
-        if not self.initialize():
-            logger.error("Failed to initialize dashboard")
-            sys.exit(1)
+        # Load dashboard configuration from JSON file (use inherited config from base class)
+        dashboard_config = load_dashboard_config(self.server_manager_dir)
         
-        # Load dashboard configuration from JSON file
-        self.config = load_dashboard_config(self.server_manager_dir)
+        # Update the base config with dashboard-specific settings
+        self._config_manager.config.update(dashboard_config)
 
         # Load AppID/server info from database (not JSON)
         self.dedicated_servers, self.appid_metadata = load_appid_scanner_list(self.server_manager_dir)
@@ -130,7 +128,21 @@ class ServerManagerDashboard:
         }
         
         # Initialize paths from registry and setup the application
-        if not self.initialize_registry_values():
+        success, self.steam_cmd_path, webserver_port, self.registry_values = initialize_registry_values(self.registry_path)
+        if success:
+            self.variables["defaultSteamPath"] = self.steam_cmd_path or ""
+            self.variables["webserverPort"] = webserver_port
+            # Set default install directories for different server types
+            if self.steam_cmd_path:
+                self.variables["defaultSteamInstallDir"] = self.steam_cmd_path
+            else:
+                self.variables["defaultSteamInstallDir"] = ""
+            # Default directory for Minecraft and Other servers (under servermanager)
+            if self.server_manager_dir:
+                self.variables["defaultServerManagerInstallDir"] = os.path.join(self.server_manager_dir, "servers")
+            else:
+                self.variables["defaultServerManagerInstallDir"] = ""
+        else:
             logger.error("Failed to initialize registry values")
             sys.exit(1)
         
@@ -169,7 +181,7 @@ class ServerManagerDashboard:
         self.setup_ui()
         
         # Write PID file
-        write_pid_file("dashboard", os.getpid(), self.paths["temp"])
+        self.write_pid_file("dashboard", os.getpid())
         
         # Initialize timer manager
         self.timer_manager = TimerManager(self)
@@ -208,36 +220,6 @@ class ServerManagerDashboard:
             self.root.destroy()
             sys.exit(1)
 
-    def initialize(self):
-        """Initialize basic paths from registry"""
-        success, self.server_manager_dir, self.paths = initialize_paths_from_registry(self.registry_path)
-        return success
-
-    def initialize_registry_values(self):
-        """Initialize registry-managed values"""
-        success, self.steam_cmd_path, webserver_port, self.registry_values = initialize_registry_values(self.registry_path)
-        if success:
-            self.variables["defaultSteamPath"] = self.steam_cmd_path or ""
-            self.variables["webserverPort"] = webserver_port
-            # Set default install directories for different server types
-            if self.steam_cmd_path:
-                self.variables["defaultSteamInstallDir"] = self.steam_cmd_path
-            else:
-                self.variables["defaultSteamInstallDir"] = ""
-            # Default directory for Minecraft and Other servers (under servermanager)
-            if self.server_manager_dir:
-                self.variables["defaultServerManagerInstallDir"] = os.path.join(self.server_manager_dir, "servers")
-            else:
-                self.variables["defaultServerManagerInstallDir"] = ""
-        return success
-    
-    def is_process_running(self, pid):
-        """Check if a process with the given PID is running"""
-        try:
-            return psutil.pid_exists(pid)
-        except:
-            return False
-    
     def setup_ui(self):
         """Setup the main UI components"""
         # Create top frame for help and about buttons
@@ -1012,10 +994,7 @@ class ServerManagerDashboard:
                 logger.debug("Stopped agent monitoring")
             
             # Remove PID file
-            pid_file = os.path.join(self.paths["temp"], "dashboard.pid")
-            if os.path.exists(pid_file):
-                os.remove(pid_file)
-                logger.debug("Removed PID file")
+            self.remove_pid_file("dashboard")
                 
             # Close any open processes
             if hasattr(self, 'install_process') and self.install_process:

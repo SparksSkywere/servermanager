@@ -28,6 +28,9 @@ import zipfile
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# Import registry functions from common module
+from Modules.common import initialize_paths_from_registry, initialize_registry_values
+
 # Import logging functions
 from Modules.logging import get_dashboard_logger
 
@@ -389,95 +392,6 @@ def load_dashboard_config(server_manager_dir):
     except Exception as e:
         logger.error(f"Failed to load dashboard configuration: {str(e)}")
         return {}
-
-
-def initialize_paths_from_registry(registry_path):
-    """Initialize basic paths from registry"""
-    try:
-        # Read registry for basic paths
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
-        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-        winreg.CloseKey(key)
-        
-        # Clean up path
-        server_manager_dir = server_manager_dir.strip('"').strip()
-        
-        # Define paths structure
-        paths = {
-            "root": server_manager_dir,
-            "logs": os.path.join(server_manager_dir, "logs"),
-            "config": os.path.join(server_manager_dir, "config"),
-            "temp": os.path.join(server_manager_dir, "temp"),
-            "servers": os.path.join(server_manager_dir, "servers"),
-            "modules": os.path.join(server_manager_dir, "modules"),
-            "data": os.path.join(server_manager_dir, "data")
-        }
-        
-        # Ensure directories exist
-        for path in paths.values():
-            os.makedirs(path, exist_ok=True)
-        
-        logger.info(f"Basic initialization complete. Server Manager directory: {server_manager_dir}")
-        return True, server_manager_dir, paths
-        
-    except Exception as e:
-        logger.error(f"Basic initialization failed: {str(e)}")
-        return False, None, {}
-
-
-def initialize_registry_values(registry_path):
-    """Initialize registry-managed values"""
-    try:
-        # Read registry for all installation-managed values
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
-        
-        registry_values = {}
-        steam_cmd_path = None
-        webserver_port = 8080
-        
-        # Try to get SteamCmd path
-        try:
-            steam_cmd_path = winreg.QueryValueEx(key, "SteamCmdPath")[0]
-        except:
-            steam_cmd_path = os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), "SteamCMD")
-            logger.warning(f"SteamCmd path not found in registry, using default: {steam_cmd_path}")
-            
-        # Try to get WebPort from registry
-        try:
-            webserver_port = int(winreg.QueryValueEx(key, "WebPort")[0])
-        except:
-            webserver_port = 8080
-            logger.warning(f"WebPort not found in registry, using default: 8080")
-        
-        # Read other registry values for reference
-        try:
-            registry_values = {
-                "CurrentVersion": winreg.QueryValueEx(key, "CurrentVersion")[0],
-                "UserWorkspace": winreg.QueryValueEx(key, "UserWorkspace")[0],
-                "InstallDate": winreg.QueryValueEx(key, "InstallDate")[0],
-                "LastUpdate": winreg.QueryValueEx(key, "LastUpdate")[0],
-                "ModulePath": winreg.QueryValueEx(key, "ModulePath")[0],
-                "LogPath": winreg.QueryValueEx(key, "LogPath")[0],
-                "HostType": winreg.QueryValueEx(key, "HostType")[0]
-            }
-            
-            # Try to get HostAddress if it exists (for subhost installations)
-            try:
-                registry_values["HostAddress"] = winreg.QueryValueEx(key, "HostAddress")[0]
-            except:
-                pass  # HostAddress only exists for subhost installations
-                
-        except Exception as e:
-            logger.warning(f"Some registry values could not be read: {str(e)}")
-        
-        winreg.CloseKey(key)
-        
-        logger.info("Registry values initialized successfully")
-        return True, steam_cmd_path, webserver_port, registry_values
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize registry values: {str(e)}")
-        return False, None, 8080, {}
 
 
 def is_process_running(pid):

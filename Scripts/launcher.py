@@ -12,6 +12,10 @@ from pathlib import Path
 from datetime import datetime
 import socket
 
+# Add the parent directory to the path for module imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from Modules.common import ServerManagerModule
+
 # Setup basic logging
 logging.basicConfig(
     level=logging.INFO,
@@ -20,11 +24,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Launcher")
 
-class ServerManagerLauncher:
+class ServerManagerLauncher(ServerManagerModule):
     def __init__(self):
-        self.registry_path = r"Software\SkywereIndustries\Servermanager"
-        self.server_manager_dir = None
-        self.paths = {}
+        super().__init__("Launcher")
         self.processes = {}
         self.running = True
         self.is_service = False
@@ -43,8 +45,14 @@ class ServerManagerLauncher:
         self.is_service = args.service
         self.force_start = args.force
         
-        # Initialize paths and configuration
-        self.initialize()
+        # Set up file logging
+        log_file = os.path.join(self.paths["logs"], "launcher.log")
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        logger.addHandler(file_handler)
+        
+        # Write PID file for launcher
+        self.write_pid_file("launcher", os.getpid())
         
         # Check for existing instance
         if not self.force_start and self.check_existing_instance():
@@ -98,65 +106,6 @@ class ServerManagerLauncher:
             return False
         except Exception as e:
             logger.error(f"Error checking for existing instances: {str(e)}")
-            return False
-    
-    def initialize(self):
-        """Initialize paths and configuration from registry"""
-        try:
-            # Read registry for paths
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
-            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-            winreg.CloseKey(key)
-            
-            # Define paths structure
-            self.paths = {
-                "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config"),
-                "temp": os.path.join(self.server_manager_dir, "temp"),
-                "scripts": os.path.join(self.server_manager_dir, "scripts")
-            }
-            
-            # Ensure directories exist
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
-                
-            # Set up file logging
-            log_file = os.path.join(self.paths["logs"], "launcher.log")
-            file_handler = logging.FileHandler(log_file)
-            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-            logger.addHandler(file_handler)
-            
-            # Write PID file
-            self.write_pid_file("launcher", os.getpid())
-            
-            logger.info(f"Initialization complete. Server Manager directory: {self.server_manager_dir}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Initialization failed: {str(e)}")
-            return False
-            
-    def write_pid_file(self, process_type, pid):
-        """Write process ID to file"""
-        try:
-            pid_file = os.path.join(self.paths["temp"], f"{process_type}.pid")
-            
-            # Create PID info dictionary
-            pid_info = {
-                "ProcessId": pid,
-                "StartTime": datetime.now().isoformat(),
-                "ProcessType": process_type
-            }
-            
-            # Write PID info to file as JSON
-            with open(pid_file, 'w') as f:
-                json.dump(pid_info, f)
-                
-            logger.debug(f"PID file created for {process_type}: {pid}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to write PID file for {process_type}: {str(e)}")
             return False
             
     def start_tray_icon(self):
@@ -250,9 +199,9 @@ class ServerManagerLauncher:
             env = os.environ.copy()
             pythonpath = env.get('PYTHONPATH', '')
             if pythonpath:
-                env['PYTHONPATH'] = f"{self.server_manager_dir};{pythonpath}"
+                env['PYTHONPATH'] = f"{self.server_manager_dir or ''};{pythonpath}"
             else:
-                env['PYTHONPATH'] = self.server_manager_dir
+                env['PYTHONPATH'] = self.server_manager_dir or ''
                 
             # Start web server process with hidden console
             if sys.platform == 'win32':
@@ -379,6 +328,10 @@ class ServerManagerLauncher:
     def install_dependencies(self):
         """Install missing dependencies"""
         try:
+            if not self.server_manager_dir:
+                logger.error("Server manager directory not set")
+                return False
+                
             setup_script = os.path.join(self.server_manager_dir, "setup.py")
             
             if not os.path.exists(setup_script):

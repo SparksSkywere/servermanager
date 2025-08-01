@@ -28,6 +28,10 @@ except ImportError:
     import pystray
     from PIL import Image, ImageDraw
 
+# Add the parent directory to the path for module imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from Modules.common import ServerManagerModule
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -36,13 +40,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("TrayIcon")
 
-class ServerManagerTrayIcon:
+class ServerManagerTrayIcon(ServerManagerModule):
     def __init__(self):
-        self.registry_path = r"Software\SkywereIndustries\Servermanager"
-        self.server_manager_dir = None
-        self.paths = {}
+        super().__init__("TrayIcon")
         self.icon = None
-        self.web_port = 8080
         self.server_status = "Unknown"
         self.debug_mode = False
         self.dashboard_process = None
@@ -75,8 +76,9 @@ class ServerManagerTrayIcon:
             self.notifications_enabled = True
             logger.info("Notifications enabled")
         
-        # Initialize and start the tray icon
-        self.initialize()
+        # Write PID file for tray icon
+        self.write_pid_file("trayicon", os.getpid())
+        
         if args.logpath:
             self.configure_file_logging(args.logpath)
         else:
@@ -101,61 +103,6 @@ class ServerManagerTrayIcon:
         except Exception as e:
             logger.error(f"Failed to configure file logging: {str(e)}")
     
-    def initialize(self):
-        """Initialize paths and configuration from registry"""
-        try:
-            # Read registry for paths
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
-            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-            self.web_port = int(winreg.QueryValueEx(key, "WebPort")[0])
-            winreg.CloseKey(key)
-            
-            # Define paths structure
-            self.paths = {
-                "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config"),
-                "temp": os.path.join(self.server_manager_dir, "temp"),
-                "scripts": os.path.join(self.server_manager_dir, "scripts"),
-                "icons": os.path.join(self.server_manager_dir, "icons")
-            }
-            
-            # Ensure directories exist
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
-                
-            # Write PID file
-            self.write_pid_file("trayicon", os.getpid())
-            
-            logger.info(f"Initialization complete. Server Manager directory: {self.server_manager_dir}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Initialization failed: {str(e)}")
-            return False
-    
-    def write_pid_file(self, process_type, pid):
-        """Write process ID to file"""
-        try:
-            pid_file = os.path.join(self.paths["temp"], f"{process_type}.pid")
-            
-            # Create PID info dictionary
-            pid_info = {
-                "ProcessId": pid,
-                "StartTime": datetime.datetime.now().isoformat(),
-                "ProcessType": process_type
-            }
-            
-            # Write PID info to file as JSON
-            with open(pid_file, 'w') as f:
-                json.dump(pid_info, f)
-                
-            logger.debug(f"PID file created for {process_type}: {pid}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to write PID file for {process_type}: {str(e)}")
-            return False
-    
     def create_icon_image(self):
         """Create icon image for the tray"""
         # First try to use an existing icon file
@@ -175,9 +122,9 @@ class ServerManagerTrayIcon:
         dc = ImageDraw.Draw(image)
         
         # Draw a simple server icon
-        dc.rectangle([(10, 10), (width-10, height-10)], fill=color)
-        dc.rectangle([(20, 20), (width-20, 30)], fill=(255, 255, 255))
-        dc.rectangle([(20, 40), (width-20, 50)], fill=(255, 255, 255))
+        dc.rectangle((10, 10, width-10, height-10), fill=color)
+        dc.rectangle((20, 20, width-20, 30), fill=(255, 255, 255))
+        dc.rectangle((20, 40, width-20, 50), fill=(255, 255, 255))
         
         return image
     
@@ -253,7 +200,7 @@ class ServerManagerTrayIcon:
                     
                     # Update web port from PID file if available
                     if port:
-                        self.web_port = port
+                        self.set_config_value("web_port", port)
                     
                     # Check if process is running
                     if pid and self.is_process_running(pid):

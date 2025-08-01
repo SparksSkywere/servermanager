@@ -293,6 +293,7 @@ class DatabaseUpdateGUI:
                         try:
                             result = conn.execute(text("SELECT COUNT(*) FROM users WHERE account_number IS NULL OR account_number = ''"))
                             count = result.scalar()
+                            count = count if count is not None else 0
                             self.log_message(f"Found {count} users without account numbers")
                             
                             if count > 0:

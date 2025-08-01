@@ -10,6 +10,10 @@ import time
 import ctypes
 import signal
 
+# Add the parent directory to the path for module imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from Modules.common import ServerManagerModule
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -35,11 +39,9 @@ def run_as_admin():
         print("Administrator privileges required")
     sys.exit()
 
-class ServerManagerStopper:
+class ServerManagerStopper(ServerManagerModule):
     def __init__(self):
-        self.registry_path = r"Software\SkywereIndustries\Servermanager"
-        self.server_manager_dir = None
-        self.paths = {}
+        super().__init__("StopServerManager")
         self.debug_mode = False
         
         # Parse command line arguments
@@ -55,43 +57,12 @@ class ServerManagerStopper:
             
         self.force_stop = args.force
         
-        # Initialize paths
-        self.initialize()
+        # Set up file logging
+        log_file = os.path.join(self.paths["logs"], "stop-servermanager.log")
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        logger.addHandler(file_handler)
         
-    def initialize(self):
-        """Initialize paths and configuration from registry"""
-        try:
-            # Read registry for paths
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
-            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-            winreg.CloseKey(key)
-            
-            # Define paths structure
-            self.paths = {
-                "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config"),
-                "temp": os.path.join(self.server_manager_dir, "temp"),
-                "scripts": os.path.join(self.server_manager_dir, "scripts")
-            }
-            
-            # Ensure directories exist
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
-                
-            # Set up file logging
-            log_file = os.path.join(self.paths["logs"], "stop-servermanager.log")
-            file_handler = logging.FileHandler(log_file)
-            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-            logger.addHandler(file_handler)
-            
-            logger.info(f"Initialization complete. Server Manager directory: {self.server_manager_dir}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Initialization failed: {str(e)}")
-            return False
-            
     def stop_process_by_pid(self, pid, process_name=None):
         """Stop a process by PID"""
         try:
@@ -210,7 +181,7 @@ class ServerManagerStopper:
                 
                 # Check if cmdline contains server manager path
                 cmdline = " ".join(proc.info['cmdline'] or []).lower()
-                cmdline_match = self.server_manager_dir.lower() in cmdline
+                cmdline_match = self.server_manager_dir and self.server_manager_dir.lower() in cmdline
                 
                 # Check if Python script matches
                 python_script_match = False
@@ -262,20 +233,21 @@ class ServerManagerStopper:
                 return True
                 
             # Alternative method: look for PIDS.txt
-            pids_file = os.path.join(self.server_manager_dir, "PIDS.txt")
-            if os.path.exists(pids_file):
-                logger.info("Stopping servers listed in PIDS.txt")
-                with open(pids_file, 'r') as f:
-                    for line in f:
-                        parts = line.strip().split(' - ')
-                        if len(parts) >= 2:
-                            pid = int(parts[0])
-                            server_name = parts[1]
-                            logger.info(f"Stopping server: {server_name} (PID: {pid})")
-                            self.stop_process_by_pid(pid, server_name)
+            if self.server_manager_dir:
+                pids_file = os.path.join(self.server_manager_dir, "PIDS.txt")
+                if os.path.exists(pids_file):
+                    logger.info("Stopping servers listed in PIDS.txt")
+                    with open(pids_file, 'r') as f:
+                        for line in f:
+                            parts = line.strip().split(' - ')
+                            if len(parts) >= 2:
+                                pid = int(parts[0])
+                                server_name = parts[1]
+                                logger.info(f"Stopping server: {server_name} (PID: {pid})")
+                                self.stop_process_by_pid(pid, server_name)
                 
-                # Clear the PIDS file
-                open(pids_file, 'w').close()
+                    # Clear the PIDS file
+                    open(pids_file, 'w').close()
                 return True
                 
             return False
