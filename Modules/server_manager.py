@@ -197,6 +197,10 @@ class ServerManager(ServerManagerModule):
     def get_server_list(self):
         """Get list of all configured servers"""
         return list(self.servers.values())
+    
+    def get_all_servers(self):
+        """Get all servers as a dictionary with server names as keys"""
+        return self.servers.copy()
             
     def start_server(self, server_name):
         """Start a server using the appropriate script"""

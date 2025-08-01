@@ -38,8 +38,12 @@ from Modules.logging import (
     log_process_monitoring, log_security_event, log_user_action
 )
 
-# Import timer management
+# Import timer management and scheduler
 from Modules.timer import TimerManager
+from Modules.scheduler import SchedulerManager
+
+# Import server update manager
+from Modules.server_updates import ServerUpdateManager
 
 # Import documentation module
 from Modules.documentation import show_help_dialog, show_about_dialog
@@ -118,6 +122,7 @@ class ServerManagerDashboard(ServerManagerModule):
             "systemInfoUpdateInterval": self.config.get("configuration", {}).get("systemInfoUpdateInterval", 5),
             "processMonitorUpdateInterval": self.config.get("configuration", {}).get("processMonitorUpdateInterval", 10),
             "webserverStatusUpdateInterval": self.config.get("configuration", {}).get("webserverStatusUpdateInterval", 15),
+            "updateCheckInterval": self.config.get("configuration", {}).get("updateCheckInterval", 300),
             # Runtime variables from config
             "formDisplayed": self.config.get("runtime", {}).get("formDisplayed", False),
             "verificationInProgress": self.config.get("runtime", {}).get("verificationInProgress", False),
@@ -183,11 +188,23 @@ class ServerManagerDashboard(ServerManagerModule):
         # Write PID file
         self.write_pid_file("dashboard", os.getpid())
         
-        # Initialize timer manager
-        self.timer_manager = TimerManager(self)
+        # Initialize timer manager (now using SchedulerManager)
+        self.timer_manager = SchedulerManager(self)
+        
+        # Initialize server update manager
+        try:
+            self.update_manager = ServerUpdateManager(self.server_manager_dir, self.config)
+            self.update_manager.set_server_manager(self.server_manager)
+            self.update_manager.set_steam_cmd_path(self.steam_cmd_path)
+            self.timer_manager.set_update_manager(self.update_manager)
+            logger.info("Server update manager initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize server update manager: {str(e)}")
+            self.update_manager = None
         
         # Initialize agent manager
         try:
+            # Now that we added 'data' to paths, we can use it properly
             agents_config_path = os.path.join(self.paths["data"], "agents.json")
             self.agent_manager = AgentManager(agents_config_path)
             logger.info("Agent manager initialized successfully")
@@ -220,8 +237,45 @@ class ServerManagerDashboard(ServerManagerModule):
             self.root.destroy()
             sys.exit(1)
 
+    def setup_menu_bar(self):
+        """Setup the menu bar with update options"""
+        self.menubar = tk.Menu(self.root)
+        self.root.config(menu=self.menubar)
+        
+        # File Menu
+        file_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Add Server", command=self.add_server)
+        file_menu.add_command(label="Import Server", command=self.import_server)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.on_close)
+        
+        # Updates Menu
+        updates_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Updates", menu=updates_menu)
+        updates_menu.add_command(label="Update All Steam Servers", command=self.update_all_servers)
+        updates_menu.add_command(label="Restart All Servers", command=self.restart_all_servers)
+        updates_menu.add_separator()
+        updates_menu.add_command(label="Schedule Manager", command=self.show_schedule_manager)
+        
+        # Tools Menu
+        tools_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Tools", menu=tools_menu)
+        tools_menu.add_command(label="Refresh All", command=self.refresh_all)
+        tools_menu.add_command(label="Sync All", command=self.sync_all)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Add Agent", command=self.add_agent)
+        
+        # Help Menu
+        help_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="Help", command=self.show_help)
+        help_menu.add_command(label="About", command=self.show_about)
+
     def setup_ui(self):
         """Setup the main UI components"""
+        # Menu bar removed as requested - all functionality is available in buttons
+        
         # Create top frame for help and about buttons
         self.top_frame = ttk.Frame(self.root)
         self.top_frame.pack(fill=tk.X, padx=15, pady=(15, 0))
@@ -232,6 +286,20 @@ class ServerManagerDashboard(ServerManagerModule):
         
         self.about_button = ttk.Button(self.top_frame, text="About", command=self.show_about, width=10)
         self.about_button.pack(side=tk.RIGHT, padx=(0, 5))
+        
+        # Add quick update buttons to top left
+        self.update_all_button = ttk.Button(self.top_frame, text="Update All", 
+                                          command=self.update_all_servers, width=12)
+        self.update_all_button.pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.schedules_button = ttk.Button(self.top_frame, text="Schedules", 
+                                         command=self.show_schedule_manager, width=12)
+        self.schedules_button.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Add restart schedule buttons
+        self.restart_all_button = ttk.Button(self.top_frame, text="Restart All", 
+                                           command=self.restart_all_servers, width=12)
+        self.restart_all_button.pack(side=tk.LEFT, padx=(0, 5))
         
         # Create main container with more padding
         self.container_frame = ttk.Frame(self.root, padding=(15, 10, 15, 15))
@@ -282,6 +350,10 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_context_menu.add_command(label="Restart Server", command=self.restart_server)
         self.server_context_menu.add_command(label="View Process Details", command=self.view_process_details)
         self.server_context_menu.add_command(label="Configure Server", command=self.configure_server)
+        self.server_context_menu.add_separator()
+        self.server_context_menu.add_command(label="Check for Updates", command=self.check_server_updates)
+        self.server_context_menu.add_command(label="Update Server", command=self.update_server)
+        self.server_context_menu.add_command(label="Schedule", command=self.show_server_schedule)
         self.server_context_menu.add_separator()
         self.server_context_menu.add_command(label="Export Server", command=self.export_server)
         self.server_context_menu.add_command(label="Open Folder Directory", command=self.open_server_directory)
@@ -3137,9 +3209,6 @@ Includes Files: {'Yes' if has_files else 'No'}"""
             # Update web server status
             self.update_webserver_status()
             
-            # Monitor processes
-            self.timer_manager.monitor_processes()
-            
             messagebox.showinfo("Refresh Complete", "All dashboard data has been refreshed.")
             
         except Exception as e:
@@ -3245,6 +3314,351 @@ Includes Files: {'Yes' if has_files else 'No'}"""
         except Exception as e:
             logger.error(f"Error in add agent: {str(e)}")
             messagebox.showerror("Error", f"Failed to add agent: {str(e)}")
+
+    def check_server_updates(self):
+        """Check for updates for the selected server"""
+        selected = self.server_list.selection()
+        if not selected:
+            messagebox.showinfo("No Selection", "Please select a server first.")
+            return
+        
+        server_name = self.server_list.item(selected[0])['values'][0]
+        
+        if not self.update_manager:
+            messagebox.showerror("Error", "Update manager not available.")
+            return
+        
+        if not self.server_manager:
+            messagebox.showerror("Error", "Server manager not available.")
+            return
+        
+        # Get server configuration
+        server_config = self.server_manager.get_server_config(server_name)
+        if not server_config:
+            messagebox.showerror("Error", f"Server configuration not found for: {server_name}")
+            return
+        
+        # Check if it's a Steam server
+        if server_config.get('Type') != 'Steam' or not server_config.get('AppID'):
+            messagebox.showinfo("Not Supported", f"{server_name} is not a Steam server. Update checking is only available for Steam servers.")
+            return
+        
+        # Show progress dialog
+        from Host.dashboard_functions import create_progress_dialog_with_console
+        progress_dialog = create_progress_dialog_with_console(self.root, f"Checking Updates - {server_name}")
+        
+        def update_check_worker():
+            try:
+                def progress_callback(message):
+                    try:
+                        if 'console_text' in progress_dialog:
+                            progress_dialog['console_text'].insert(tk.END, message + "\n")
+                            progress_dialog['console_text'].see(tk.END)
+                            progress_dialog['console_text'].update()
+                        else:
+                            print(message)  # Fallback
+                    except:
+                        print(message)  # Fallback
+                
+                if self.update_manager:
+                    success, message, has_updates = self.update_manager.check_for_updates(
+                        server_name, server_config['AppID'], progress_callback=progress_callback
+                    )
+                else:
+                    success, message, has_updates = False, "Update manager not available", False
+                
+                if success:
+                    status = "Updates available!" if has_updates else "Server is up to date"
+                    progress_callback(f"[RESULT] {status}")
+                    
+                    # Show result in main thread
+                    def show_result():
+                        if has_updates:
+                            result = messagebox.askyesno("Updates Available", 
+                                f"Updates are available for {server_name}.\n\nWould you like to update now?")
+                            if result:
+                                self.update_server_now(server_name, server_config)
+                        else:
+                            messagebox.showinfo("No Updates", f"{server_name} is up to date.")
+                    
+                    self.root.after(0, show_result)
+                else:
+                    progress_callback(f"[ERROR] {message}")
+                    self.root.after(0, lambda: messagebox.showerror("Update Check Failed", message))
+                
+            except Exception as e:
+                error_msg = f"Update check failed: {str(e)}"
+                logger.error(error_msg)
+                self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
+        
+        # Start check in background thread
+        import threading
+        check_thread = threading.Thread(target=update_check_worker, daemon=True)
+        check_thread.start()
+    
+    def update_server(self):
+        """Update the selected server"""
+        selected = self.server_list.selection()
+        if not selected:
+            messagebox.showinfo("No Selection", "Please select a server first.")
+            return
+        
+        server_name = self.server_list.item(selected[0])['values'][0]
+        
+        if not self.server_manager:
+            messagebox.showerror("Error", "Server manager not available.")
+            return
+        
+        # Get server configuration
+        server_config = self.server_manager.get_server_config(server_name)
+        if not server_config:
+            messagebox.showerror("Error", f"Server configuration not found for: {server_name}")
+            return
+        
+        # Check if it's a Steam server
+        if server_config.get('Type') != 'Steam' or not server_config.get('AppID'):
+            messagebox.showinfo("Not Supported", f"{server_name} is not a Steam server. Updates are only available for Steam servers.")
+            return
+        
+        # Confirm update
+        result = messagebox.askyesno("Confirm Update", 
+            f"Are you sure you want to update {server_name}?\n\n"
+            "The server will be stopped during the update process if it's currently running.")
+        
+        if result:
+            self.update_server_now(server_name, server_config)
+    
+    def update_server_now(self, server_name, server_config):
+        """Perform server update with progress dialog"""
+        if not self.update_manager:
+            messagebox.showerror("Error", "Update manager not available.")
+            return
+        
+        # Show progress dialog
+        from Host.dashboard_functions import create_progress_dialog_with_console
+        progress_dialog = create_progress_dialog_with_console(self.root, f"Updating Server - {server_name}")
+        
+        def update_worker():
+            try:
+                def progress_callback(message):
+                    try:
+                        # Use the console callback function which is more robust
+                        if 'console_callback' in progress_dialog:
+                            progress_dialog['console_callback'](message)
+                        elif 'console_text' in progress_dialog:
+                            progress_dialog['console_text'].config(state=tk.NORMAL)
+                            progress_dialog['console_text'].insert(tk.END, message + "\n")
+                            progress_dialog['console_text'].see(tk.END)
+                            progress_dialog['console_text'].config(state=tk.DISABLED)
+                            progress_dialog['console_text'].update()
+                        else:
+                            print(message)  # Fallback
+                    except Exception as e:
+                        print(f"Console callback error: {e}, message: {message}")  # Fallback with error info
+                
+                if self.update_manager:
+                    # Use scheduled=False to ensure full console output for manual updates
+                    success, message = self.update_manager.update_server(
+                        server_name, server_config, progress_callback=progress_callback, scheduled=False
+                    )
+                else:
+                    success, message = False, "Update manager not available"
+                
+                if success:
+                    progress_callback(f"[SUCCESS] {message}")
+                    self.root.after(0, lambda: messagebox.showinfo("Update Complete", 
+                        f"{server_name} has been updated successfully!"))
+                    # Refresh server list
+                    self.root.after(0, self.update_server_list)
+                else:
+                    progress_callback(f"[ERROR] {message}")
+                    self.root.after(0, lambda: messagebox.showerror("Update Failed", message))
+                
+            except Exception as e:
+                error_msg = f"Server update failed: {str(e)}"
+                logger.error(error_msg)
+                self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
+        
+        # Start update in background thread
+        import threading
+        update_thread = threading.Thread(target=update_worker, daemon=True)
+        update_thread.start()
+    
+    def show_schedule_manager(self):
+        """Show unified schedule manager"""
+        if not self.timer_manager:
+            messagebox.showerror("Error", "Scheduler not available.")
+            return
+        self.timer_manager.show_schedules_manager()
+    
+    def show_server_schedule(self):
+        """Show schedule manager for the selected server"""
+        if not self.timer_manager:
+            messagebox.showerror("Error", "Scheduler not available.")
+            return
+        self.timer_manager.show_schedules_manager()
+    
+    def update_all_servers(self):
+        """Update all Steam servers"""
+        if not self.update_manager:
+            messagebox.showerror("Error", "Update manager not available.")
+            return
+        
+        # Confirm update
+        result = messagebox.askyesno("Confirm Update All", 
+            "Are you sure you want to update all Steam servers?\n\n"
+            "This will stop all running Steam servers during the update process.")
+        
+        if not result:
+            return
+        
+        # Show progress dialog
+        from Host.dashboard_functions import create_progress_dialog_with_console
+        progress_dialog = create_progress_dialog_with_console(self.root, "Updating All Steam Servers")
+        
+        def update_all_worker():
+            try:
+                def progress_callback(message):
+                    try:
+                        # Use the console callback function which is more robust
+                        if 'console_callback' in progress_dialog:
+                            progress_dialog['console_callback'](message)
+                        elif 'console_text' in progress_dialog:
+                            progress_dialog['console_text'].config(state=tk.NORMAL)
+                            progress_dialog['console_text'].insert(tk.END, message + "\n")
+                            progress_dialog['console_text'].see(tk.END)
+                            progress_dialog['console_text'].config(state=tk.DISABLED)
+                            progress_dialog['console_text'].update()
+                        else:
+                            print(message)  # Fallback
+                    except Exception as e:
+                        print(f"Console callback error: {e}, message: {message}")  # Fallback with error info
+                
+                if self.update_manager:
+                    # Use scheduled=False to ensure full console output for manual batch updates
+                    results = self.update_manager.update_all_steam_servers(progress_callback=progress_callback, scheduled=False)
+                else:
+                    results = {"error": (False, "Update manager not available")}
+                
+                # Count successes and failures
+                successes = len([r for r in results.values() if r[0]])
+                failures = len([r for r in results.values() if not r[0]])
+                
+                progress_callback(f"\n[SUMMARY] Updates complete: {successes} successful, {failures} failed")
+                
+                # Show detailed results
+                def show_results():
+                    if failures > 0:
+                        failed_servers = [name for name, (success, _) in results.items() if not success]
+                        messagebox.showwarning("Some Updates Failed", 
+                            f"Update completed with some failures.\n\n"
+                            f"Successful: {successes}\nFailed: {failures}\n\n"
+                            f"Failed servers: {', '.join(failed_servers)}")
+                    else:
+                        messagebox.showinfo("Updates Complete", 
+                            f"All Steam servers updated successfully!\n\n"
+                            f"Updated {successes} servers.")
+                    
+                    # Refresh server list
+                    self.update_server_list()
+                
+                self.root.after(0, show_results)
+                
+            except Exception as e:
+                error_msg = f"Batch update failed: {str(e)}"
+                logger.error(error_msg)
+                self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
+        
+        # Start update in background thread
+        import threading
+        update_thread = threading.Thread(target=update_all_worker, daemon=True)
+        update_thread.start()
+
+    def restart_all_servers(self):
+        """Restart all servers"""
+        if not self.update_manager:
+            messagebox.showerror("Error", "Update manager not available.")
+            return
+        
+        # Get list of all servers
+        all_servers = []
+        if self.server_manager:
+            servers = self.server_manager.get_all_servers()
+            all_servers = list(servers.keys())
+        
+        if not all_servers:
+            messagebox.showinfo("No Servers", "No servers found to restart.")
+            return
+        
+        # Confirm action
+        result = messagebox.askyesno("Confirm Batch Restart", 
+            f"Restart all {len(all_servers)} servers?\n\n"
+            f"Servers to restart: {', '.join(all_servers)}")
+        
+        if not result:
+            return
+        
+        # Show progress dialog
+        from Host.dashboard_functions import create_progress_dialog_with_console
+        progress_dialog = create_progress_dialog_with_console(self.root, "Restarting All Servers")
+        
+        def restart_all_worker():
+            try:
+                def progress_callback(message):
+                    try:
+                        # Use the console callback function which is more robust
+                        if 'console_callback' in progress_dialog:
+                            progress_dialog['console_callback'](message)
+                        elif 'console_text' in progress_dialog:
+                            progress_dialog['console_text'].config(state=tk.NORMAL)
+                            progress_dialog['console_text'].insert(tk.END, message + "\n")
+                            progress_dialog['console_text'].see(tk.END)
+                            progress_dialog['console_text'].config(state=tk.DISABLED)
+                            progress_dialog['console_text'].update()
+                        else:
+                            print(message)  # Fallback
+                    except Exception as e:
+                        print(f"Console callback error: {e}, message: {message}")  # Fallback with error info
+                
+                if self.update_manager:
+                    # Use scheduled=False to ensure full console output for manual batch restarts
+                    results = self.update_manager.restart_all_servers(progress_callback=progress_callback, scheduled=False)
+                else:
+                    results = {"error": (False, "Update manager not available")}
+                
+                # Count successes and failures
+                successes = len([r for r in results.values() if r[0]])
+                failures = len([r for r in results.values() if not r[0]])
+                
+                progress_callback(f"\n[SUMMARY] Restarts complete: {successes} successful, {failures} failed")
+                
+                # Show detailed results
+                def show_results():
+                    if failures > 0:
+                        failed_servers = [name for name, (success, _) in results.items() if not success]
+                        messagebox.showwarning("Some Restarts Failed", 
+                            f"Restart completed with some failures.\n\n"
+                            f"Successful: {successes}\nFailed: {failures}\n\n"
+                            f"Failed servers: {', '.join(failed_servers)}")
+                    else:
+                        messagebox.showinfo("Restarts Complete", 
+                            f"All servers restarted successfully!\n\n"
+                            f"Restarted {successes} servers.")
+                    
+                    # Refresh server list
+                    self.update_server_list()
+                
+                self.root.after(0, show_results)
+                
+            except Exception as e:
+                error_msg = f"Batch restart failed: {str(e)}"
+                logger.error(error_msg)
+                self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
+        
+        # Start restart in background thread
+        import threading
+        restart_thread = threading.Thread(target=restart_all_worker, daemon=True)
+        restart_thread.start()
 
     def show_help(self):
         """Show help dialog using the documentation module"""

@@ -134,14 +134,16 @@ class ServerManagerPaths:
                 "modules": os.path.join(self.server_manager_dir, "modules"),
                 "static": os.path.join(self.server_manager_dir, "static"),
                 "templates": os.path.join(self.server_manager_dir, "templates"),
-                "icons": os.path.join(self.server_manager_dir, "icons")
+                "icons": os.path.join(self.server_manager_dir, "icons"),
+                "data": os.path.join(self.server_manager_dir, "data")
             }
             
             # Define PID file paths
             self.pid_files = {
                 "launcher": os.path.join(self.paths["temp"], "launcher.pid"),
                 "webserver": os.path.join(self.paths["temp"], "webserver.pid"),
-                "trayicon": os.path.join(self.paths["temp"], "trayicon.pid")
+                "trayicon": os.path.join(self.paths["temp"], "trayicon.pid"),
+                "dashboard": os.path.join(self.paths["temp"], "dashboard.pid")
             }
             
             # Ensure all directories exist
@@ -177,14 +179,16 @@ class ServerManagerPaths:
                 "modules": os.path.join(self.server_manager_dir, "modules"),
                 "static": os.path.join(self.server_manager_dir, "static"),
                 "templates": os.path.join(self.server_manager_dir, "templates"),
-                "icons": os.path.join(self.server_manager_dir, "icons")
+                "icons": os.path.join(self.server_manager_dir, "icons"),
+                "data": os.path.join(self.server_manager_dir, "data")
             }
             
             # Define PID file paths
             self.pid_files = {
                 "launcher": os.path.join(self.paths["temp"], "launcher.pid"),
                 "webserver": os.path.join(self.paths["temp"], "webserver.pid"),
-                "trayicon": os.path.join(self.paths["temp"], "trayicon.pid")
+                "trayicon": os.path.join(self.paths["temp"], "trayicon.pid"),
+                "dashboard": os.path.join(self.paths["temp"], "dashboard.pid")
             }
             
             # Ensure all directories exist

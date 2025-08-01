@@ -1865,6 +1865,7 @@ def create_progress_dialog_with_console(parent, title, width=700, height=650):
     
     return {
         'dialog': dialog,
+        'console_text': console_output,  # Add direct access to console text widget
         'console_callback': append_console,
         'status_callback': set_status,
         'progress_start': start_progress,
