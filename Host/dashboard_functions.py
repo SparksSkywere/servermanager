@@ -1105,9 +1105,10 @@ def update_server_status_in_treeview(server_list, server_name, status):
     try:
         # Find the server in the treeview
         for item in server_list.get_children():
-            if server_list.item(item)['values'][0] == server_name:
+            values = server_list.item(item)['values']
+            if len(values) > 0 and values[0] == server_name:
                 # Get current values
-                values = list(server_list.item(item)['values'])
+                values = list(values)
                 # Update status (index 1)
                 values[1] = status
                 # Update the item
@@ -1766,7 +1767,8 @@ def update_server_list_from_files(server_list, paths, variables, log_dashboard_e
                         server_type = server_config.get("Type", "Unknown")
                         process_id = server_config.get("ProcessId", 0)
                         
-                        # Get process information
+                        # Check if process is actually running and clean up orphaned PIDs
+                        config_updated = False
                         if process_id and is_process_running(process_id):
                             status = "Running"
                             process_info = get_process_info(process_id)
@@ -1780,11 +1782,30 @@ def update_server_list_from_files(server_list, paths, variables, log_dashboard_e
                             else:
                                 uptime = "Unknown"
                         else:
+                            # Process is not running
                             status = "Offline"
                             cpu_usage = "N/A"
                             memory_usage = "N/A"
                             uptime = "N/A"
+                            
+                            # Clean up orphaned process ID if it exists
+                            if process_id:
+                                logger.info(f"Cleaning up orphaned process ID {process_id} for server '{server_name}'")
+                                server_config.pop('ProcessId', None)
+                                server_config.pop('StartTime', None)
+                                server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                                config_updated = True
+                                log_dashboard_event("PROCESS_CLEANUP", f"Cleaned up orphaned PID {process_id} for server {server_name}", "INFO")
+                            
                             process_id = "N/A"
+                        
+                        # Save updated configuration if needed
+                        if config_updated:
+                            try:
+                                with open(config_file, 'w') as f:
+                                    json.dump(server_config, f, indent=4)
+                            except Exception as e:
+                                logger.error(f"Failed to update config file {config_file}: {str(e)}")
                         
                         # Insert into treeview
                         server_list.insert("", "end", values=(

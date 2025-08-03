@@ -66,7 +66,9 @@ class SchedulerManager:
     def server_list_timer(self):
         """Timer function for server list updates"""
         try:
-            if self.dashboard and hasattr(self.dashboard, 'refresh_server_list'):
+            if self.dashboard and hasattr(self.dashboard, 'periodic_server_list_refresh'):
+                self.dashboard.periodic_server_list_refresh()
+            elif self.dashboard and hasattr(self.dashboard, 'refresh_server_list'):
                 self.dashboard.refresh_server_list()
             server_interval = self.dashboard.variables["serverListUpdateInterval"] * 1000
             self.dashboard.root.after(server_interval, self.server_list_timer)

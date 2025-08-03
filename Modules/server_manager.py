@@ -265,10 +265,21 @@ class ServerManager(ServerManagerModule):
                 
             with open(config_file, 'r') as f:
                 server_config = json.load(f)
-                
-            if 'ProcessId' in server_config and self.is_process_running(server_config['ProcessId']):
-                logger.info(f"Server '{server_name}' is already running with PID {server_config['ProcessId']}.")
-                return False, f"Server '{server_name}' is already running with PID {server_config['ProcessId']}."
+            
+            # Clean up orphaned process ID first
+            if 'ProcessId' in server_config:
+                if self.is_process_running(server_config['ProcessId']):
+                    logger.info(f"Server '{server_name}' is already running with PID {server_config['ProcessId']}.")
+                    if callback:
+                        callback(f"Server '{server_name}' is already running")
+                    return False, f"Server '{server_name}' is already running with PID {server_config['ProcessId']}."
+                else:
+                    # Clean up dead process ID
+                    logger.info(f"Cleaning up dead process ID {server_config['ProcessId']} for server '{server_name}'")
+                    server_config.pop('ProcessId', None)
+                    server_config.pop('StartTime', None)
+                    server_config['LastUpdate'] = datetime.now().isoformat()
+                    self.save_server_config(server_name, server_config)
                 
             server_type = server_config.get("Type", "Other")
             install_dir = server_config.get('InstallDir', '')
@@ -407,6 +418,8 @@ class ServerManager(ServerManagerModule):
             time.sleep(1)
             if not psutil.pid_exists(process.pid):
                 logger.error(f"Server process terminated immediately after starting. Check logs at {stderr_log}")
+                if callback:
+                    callback(f"Server '{server_name}' failed to start")
                 return False, f"Server process terminated immediately after starting. Check logs at {stderr_log}"
             
             # Update server configuration
@@ -419,11 +432,16 @@ class ServerManager(ServerManagerModule):
             # Save updated configuration
             self.save_server_config(server_name, server_config)
             
+            if callback:
+                callback(f"Server '{server_name}' started successfully")
+            
             logger.info(f"Server '{server_name}' started successfully with PID {process.pid}.")
             return True, f"Server '{server_name}' started successfully with PID {process.pid}."
             
         except Exception as e:
             logger.error(f"Error starting server '{server_name}': {str(e)}")
+            if callback:
+                callback(f"Error starting server '{server_name}': {str(e)}")
             return False, f"Error starting server '{server_name}': {str(e)}"
 
     def stop_server_advanced(self, server_name, callback=None):
@@ -443,6 +461,8 @@ class ServerManager(ServerManagerModule):
             # Check if server has a process ID registered
             if 'ProcessId' not in server_config:
                 logger.info(f"Server '{server_name}' is not running.")
+                if callback:
+                    callback(f"Server '{server_name}' is not running")
                 return False, f"Server '{server_name}' is not running."
                 
             process_id = server_config['ProcessId']
@@ -458,6 +478,9 @@ class ServerManager(ServerManagerModule):
                 
                 # Save updated configuration
                 self.save_server_config(server_name, server_config)
+                
+                if callback:
+                    callback(f"Server '{server_name}' was not running")
                 return False, f"Server process (PID {process_id}) is not running."
                 
             if callback:
@@ -555,15 +578,22 @@ class ServerManager(ServerManagerModule):
                 # Save updated configuration
                 self.save_server_config(server_name, server_config)
                 
+                if callback:
+                    callback(f"Server '{server_name}' stopped successfully")
+                
                 logger.info(f"Server '{server_name}' stopped successfully.")
                 return True, f"Server '{server_name}' stopped successfully."
                 
             except Exception as e:
                 logger.error(f"Failed to stop server process: {str(e)}")
+                if callback:
+                    callback(f"Failed to stop server: {str(e)}")
                 return False, f"Failed to stop server: {str(e)}"
                 
         except Exception as e:
             logger.error(f"Error stopping server: {str(e)}")
+            if callback:
+                callback(f"Error stopping server: {str(e)}")
             return False, f"Failed to stop server: {str(e)}"
 
     def restart_server_advanced(self, server_name, callback=None):
@@ -671,6 +701,8 @@ class ServerManager(ServerManagerModule):
                 
                 except Exception as e:
                     logger.error(f"Failed to stop server process during restart: {str(e)}")
+                    if callback:
+                        callback(f"Failed to stop server for restart: {str(e)}")
                     return False, f"Failed to stop server for restart: {str(e)}"
                 
                 # Wait a moment for process to fully terminate
@@ -679,13 +711,19 @@ class ServerManager(ServerManagerModule):
             # Start the server
             success, message = self.start_server_advanced(server_name, callback)
             if success:
+                if callback:
+                    callback(f"Server '{server_name}' restarted successfully")
                 logger.info(f"Server '{server_name}' restarted successfully.")
                 return True, f"Server '{server_name}' restarted successfully."
             else:
+                if callback:
+                    callback(f"Failed to start server after stopping: {message}")
                 return False, f"Failed to start server after stopping: {message}"
             
         except Exception as e:
             logger.error(f"Error restarting server: {str(e)}")
+            if callback:
+                callback(f"Error restarting server: {str(e)}")
             return False, f"Failed to restart server: {str(e)}"
 
     def remove_server_config(self, server_name):
@@ -887,6 +925,19 @@ class ServerManager(ServerManagerModule):
         except Exception as e:
             logger.error(f"Error getting server status: {str(e)}")
             return "Error", None
+            
+    def get_running_servers(self):
+        """Get list of currently running servers"""
+        try:
+            running_servers = []
+            for server_name in self.servers.keys():
+                status, pid = self.get_server_status(server_name)
+                if status == "Running" and pid:
+                    running_servers.append(server_name)
+            return running_servers
+        except Exception as e:
+            logger.error(f"Error getting running servers: {str(e)}")
+            return []
 
     def validate_server_config(self, server_config, install_dir):
         """Validate a server configuration"""

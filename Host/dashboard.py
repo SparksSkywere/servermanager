@@ -73,6 +73,9 @@ from Modules.debug import (
     is_debug_enabled, log_exception, monitor_process_resources
 )
 
+# Import server console functions
+from Modules.server_console import ServerConsoleManager
+
 # Get dashboard logger
 logger = get_dashboard_logger()
 
@@ -86,6 +89,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.user_manager = None
         self.current_user = None
         self.install_process = None  # Track installation process
+        self._refreshing_server_list = False  # Flag to prevent concurrent refreshes
         
         # Load dashboard configuration from JSON file (use inherited config from base class)
         dashboard_config = load_dashboard_config(self.server_manager_dir)
@@ -170,6 +174,16 @@ class ServerManagerDashboard(ServerManagerModule):
             messagebox.showwarning("Server Manager Warning", 
                                  f"Server manager failed to initialize:\n{str(e)}\n\n"
                                  "Some server operations may not be available.")
+        
+        # Initialize server console manager
+        try:
+            self.console_manager = ServerConsoleManager(self.server_manager)
+            # Start monitoring for server processes
+            self.console_manager.start_monitoring()
+            logger.info("Server console manager initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize server console manager: {e}")
+            self.console_manager = None
             
             
         # Configure dashboard logging after paths are initialized
@@ -301,6 +315,11 @@ class ServerManagerDashboard(ServerManagerModule):
                                            command=self.restart_all_servers, width=12)
         self.restart_all_button.pack(side=tk.LEFT, padx=(0, 5))
         
+        # Add console management button
+        self.console_button = ttk.Button(self.top_frame, text="Consoles", 
+                                       command=self.show_console_manager, width=12)
+        self.console_button.pack(side=tk.LEFT, padx=(0, 5))
+        
         # Create main container with more padding
         self.container_frame = ttk.Frame(self.root, padding=(15, 10, 15, 15))
         self.container_frame.pack(fill=tk.BOTH, expand=True)
@@ -349,6 +368,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_context_menu.add_command(label="Stop Server", command=self.stop_server)
         self.server_context_menu.add_command(label="Restart Server", command=self.restart_server)
         self.server_context_menu.add_command(label="View Process Details", command=self.view_process_details)
+        self.server_context_menu.add_command(label="Show Console", command=self.show_server_console)
         self.server_context_menu.add_command(label="Configure Server", command=self.configure_server)
         self.server_context_menu.add_separator()
         self.server_context_menu.add_command(label="Check for Updates", command=self.check_server_updates)
@@ -481,6 +501,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.server_context_menu.entryconfigure("Stop Server", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("Restart Server", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("View Process Details", state=tk.NORMAL)
+            self.server_context_menu.entryconfigure("Show Console", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("Configure Server", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("Export Server", state=tk.NORMAL)
         else:
@@ -491,6 +512,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.server_context_menu.entryconfigure("Stop Server", state=tk.DISABLED)
             self.server_context_menu.entryconfigure("Restart Server", state=tk.DISABLED)
             self.server_context_menu.entryconfigure("View Process Details", state=tk.DISABLED)
+            self.server_context_menu.entryconfigure("Show Console", state=tk.DISABLED)
             self.server_context_menu.entryconfigure("Configure Server", state=tk.DISABLED)
             self.server_context_menu.entryconfigure("Export Server", state=tk.DISABLED)
             
@@ -1040,6 +1062,27 @@ class ServerManagerDashboard(ServerManagerModule):
         else:
             self.root.after(0, _update)
     
+    def periodic_server_list_refresh(self):
+        """Periodic refresh of server list to clean up orphaned processes and update status"""
+        def _refresh():
+            try:
+                # Only refresh if not already refreshing and enough time has passed
+                if not hasattr(self, '_refreshing_server_list') or not self._refreshing_server_list:
+                    self._refreshing_server_list = True
+                    try:
+                        self.update_server_list(force_refresh=True)
+                    finally:
+                        self._refreshing_server_list = False
+            except Exception as e:
+                logger.error(f"Error in periodic server list refresh: {str(e)}")
+                self._refreshing_server_list = False
+        
+        # Ensure this runs on the main thread
+        if threading.current_thread() == threading.main_thread():
+            _refresh()
+        else:
+            self.root.after(0, _refresh)
+    
     def run(self):
         """Run the dashboard application"""
         logger.info("Starting dashboard")
@@ -1060,6 +1103,11 @@ class ServerManagerDashboard(ServerManagerModule):
         
         # Clean up resources
         try:
+            # Close all console windows
+            if hasattr(self, 'console_manager') and self.console_manager:
+                self.console_manager.close_all_consoles()
+                logger.debug("Closed all console windows")
+            
             # Stop agent monitoring
             if hasattr(self, 'agent_manager') and self.agent_manager:
                 self.agent_manager.stop_monitoring()
@@ -1113,9 +1161,10 @@ class ServerManagerDashboard(ServerManagerModule):
                 def update_ui():
                     if success:
                         messagebox.showinfo("Success", message)
-                        self.update_server_list(force_refresh=True)
                     else:
                         messagebox.showerror("Error", message)
+                    # Always refresh the server list to show current status
+                    self.update_server_list(force_refresh=True)
                 
                 self.root.after(0, update_ui)
                 
@@ -1123,10 +1172,12 @@ class ServerManagerDashboard(ServerManagerModule):
                 logger.error(f"Error starting server: {str(e)}")
                 def show_error():
                     messagebox.showerror("Error", f"Failed to start server: {str(e)}")
+                    # Refresh list even on error to show current status
+                    self.update_server_list(force_refresh=True)
                 self.root.after(0, show_error)
         
         # Show starting message
-        messagebox.showinfo("Starting Server", f"Starting server '{server_name}' in background...")
+        self.update_server_status(server_name, "Starting...")
         
         # Run server start in background thread
         start_thread = threading.Thread(target=start_in_background, daemon=True)
@@ -1172,10 +1223,10 @@ class ServerManagerDashboard(ServerManagerModule):
                 def update_ui():
                     if success:
                         messagebox.showinfo("Success", message)
-                        self.update_server_list(force_refresh=True)
                     else:
                         messagebox.showinfo("Info", message)
-                        self.update_server_list(force_refresh=True)
+                    # Always refresh the server list to show current status
+                    self.update_server_list(force_refresh=True)
                 
                 self.root.after(0, update_ui)
                 
@@ -1183,10 +1234,12 @@ class ServerManagerDashboard(ServerManagerModule):
                 logger.error(f"Error stopping server: {str(e)}")
                 def show_error():
                     messagebox.showerror("Error", f"Failed to stop server: {str(e)}")
+                    # Refresh list even on error to show current status
+                    self.update_server_list(force_refresh=True)
                 self.root.after(0, show_error)
         
         # Show stopping message
-        messagebox.showinfo("Stopping Server", f"Stopping server '{server_name}' in background...")
+        self.update_server_status(server_name, "Stopping...")
         
         # Run server stop in background thread
         stop_thread = threading.Thread(target=stop_in_background, daemon=True)
@@ -1232,9 +1285,10 @@ class ServerManagerDashboard(ServerManagerModule):
                 def update_ui():
                     if success:
                         messagebox.showinfo("Success", message)
-                        self.update_server_list(force_refresh=True)
                     else:
                         messagebox.showerror("Error", message)
+                    # Always refresh the server list to show current status
+                    self.update_server_list(force_refresh=True)
                 
                 self.root.after(0, update_ui)
                 
@@ -1242,10 +1296,12 @@ class ServerManagerDashboard(ServerManagerModule):
                 logger.error(f"Error restarting server: {str(e)}")
                 def show_error():
                     messagebox.showerror("Error", f"Failed to restart server: {str(e)}")
+                    # Refresh list even on error to show current status
+                    self.update_server_list(force_refresh=True)
                 self.root.after(0, show_error)
         
         # Show restarting message
-        messagebox.showinfo("Restarting Server", f"Restarting server '{server_name}' in background...")
+        self.update_server_status(server_name, "Restarting...")
         
         # Run server restart in background thread
         restart_thread = threading.Thread(target=restart_in_background, daemon=True)
@@ -1488,6 +1544,51 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         except Exception as e:
             log_exception(e, f"Error viewing process details for {server_name}")
             messagebox.showerror("Error", f"Failed to get process details: {str(e)}")
+    
+    def show_server_console(self):
+        """Show console window for the selected server"""
+        selected_items = self.server_list.selection()
+        if not selected_items:
+            messagebox.showinfo("No Selection", "Please select a server first.")
+            return
+            
+        server_name = self.server_list.item(selected_items[0])['values'][0]
+        
+        try:
+            if not self.console_manager:
+                messagebox.showerror("Console Error", "Console manager not available.")
+                return
+            
+            # Get server config from server manager
+            server_config = None
+            if self.server_manager:
+                try:
+                    server_config = self.server_manager.get_server_config(server_name)
+                except Exception as e:
+                    logger.warning(f"Could not get server config for {server_name}: {e}")
+            
+            # If we can't get config from server manager, create a basic one
+            if not server_config:
+                server_values = self.server_list.item(selected_items[0])['values']
+                server_config = {
+                    'name': server_name,
+                    'type': 'Unknown',
+                    'pid': server_values[2] if len(server_values) > 2 else None
+                }
+            
+            # Show the console window
+            success = self.console_manager.show_console(server_name, server_config, self.root)
+            
+            if success:
+                log_user_action(self.current_user.username if self.current_user else "Unknown", 
+                              f"Opened console for server: {server_name}", 
+                              "console_open")
+            else:
+                messagebox.showerror("Console Error", f"Failed to open console for {server_name}")
+            
+        except Exception as e:
+            log_exception(e, f"Error showing console for {server_name}")
+            messagebox.showerror("Console Error", f"Failed to open console:\n{str(e)}")
     
     def update_server_status(self, server_name, status):
         """Update the status of a server in the UI - thread-safe"""
@@ -3659,6 +3760,109 @@ Includes Files: {'Yes' if has_files else 'No'}"""
         import threading
         restart_thread = threading.Thread(target=restart_all_worker, daemon=True)
         restart_thread.start()
+
+    def show_console_manager(self):
+        """Show console manager dialog with list of active consoles"""
+        try:
+            if not self.console_manager:
+                messagebox.showinfo("Console Manager", "Console manager not available.")
+                return
+            
+            # Get list of active consoles
+            active_consoles = self.console_manager.get_active_consoles()
+            
+            # Create console manager dialog
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Console Manager")
+            dialog.geometry("600x400")
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            # Create main frame
+            main_frame = ttk.Frame(dialog, padding=15)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Title
+            title_label = ttk.Label(main_frame, text="Server Console Manager", 
+                                   font=("Segoe UI", 12, "bold"))
+            title_label.pack(pady=(0, 15))
+            
+            # Instructions
+            info_label = ttk.Label(main_frame, 
+                                 text="Right-click on a server in the main list and select 'Show Console' to open a console window.\n"
+                                      "Active console windows are listed below:",
+                                 justify=tk.CENTER, wraplength=500)
+            info_label.pack(pady=(0, 15))
+            
+            # Active consoles frame
+            consoles_frame = ttk.LabelFrame(main_frame, text="Active Console Windows", padding=10)
+            consoles_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+            
+            if active_consoles:
+                # Create listbox for active consoles
+                console_listbox = tk.Listbox(consoles_frame, font=("Consolas", 10))
+                
+                for server_name in active_consoles:
+                    console_listbox.insert(tk.END, f"🖥️ {server_name}")
+                
+                # Scrollbar for listbox
+                console_scrollbar = ttk.Scrollbar(consoles_frame, orient=tk.VERTICAL, 
+                                                command=console_listbox.yview)
+                console_listbox.configure(yscrollcommand=console_scrollbar.set)
+                
+                # Pack listbox and scrollbar
+                console_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+                console_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                
+                # Button frame
+                button_frame = ttk.Frame(consoles_frame)
+                button_frame.pack(fill=tk.X, pady=(10, 0))
+                
+                def close_selected_console():
+                    """Close the selected console"""
+                    if not self.console_manager:
+                        return
+                    selection = console_listbox.curselection()
+                    if selection:
+                        server_name = active_consoles[selection[0]]
+                        self.console_manager.close_console(server_name)
+                        dialog.destroy()
+                        # Refresh the dialog
+                        self.show_console_manager()
+                
+                def close_all_consoles():
+                    """Close all console windows"""
+                    if not self.console_manager:
+                        return
+                    if messagebox.askyesno("Confirm", "Close all console windows?"):
+                        self.console_manager.close_all_consoles()
+                        dialog.destroy()
+                
+                # Buttons
+                ttk.Button(button_frame, text="Close Selected", 
+                          command=close_selected_console).pack(side=tk.LEFT, padx=(0, 5))
+                ttk.Button(button_frame, text="Close All", 
+                          command=close_all_consoles).pack(side=tk.LEFT)
+                
+            else:
+                # No active consoles
+                no_consoles_label = ttk.Label(consoles_frame, 
+                                            text="No active console windows\n\n"
+                                                 "Right-click on a server in the main list\n"
+                                                 "and select 'Show Console' to open one.",
+                                            justify=tk.CENTER, foreground="gray")
+                no_consoles_label.pack(expand=True)
+            
+            # Close button
+            close_button = ttk.Button(main_frame, text="Close", command=dialog.destroy)
+            close_button.pack()
+            
+            # Center dialog
+            center_window(dialog, 600, 400, self.root)
+            
+        except Exception as e:
+            logger.error(f"Error showing console manager: {e}")
+            messagebox.showerror("Console Manager Error", f"Failed to show console manager:\n{str(e)}")
 
     def show_help(self):
         """Show help dialog using the documentation module"""
