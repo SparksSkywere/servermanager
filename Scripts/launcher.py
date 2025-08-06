@@ -30,6 +30,11 @@ class ServerManagerLauncher(ServerManagerModule):
         self.processes = {}
         self.running = True
         self.is_service = False
+        self.cluster_role = "Unknown"
+        self.host_address = None
+        
+        # Detect cluster role (Host or Subhost)
+        self.detect_cluster_role()
         
         # Parse command line arguments
         parser = argparse.ArgumentParser(description='Server Manager Launcher')
@@ -51,6 +56,11 @@ class ServerManagerLauncher(ServerManagerModule):
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
         logger.addHandler(file_handler)
         
+        # Log cluster role information
+        logger.info(f"Cluster role detected: {self.cluster_role}")
+        if self.host_address:
+            logger.info(f"Host address: {self.host_address}")
+        
         # Write PID file for launcher
         self.write_pid_file("launcher", os.getpid())
         
@@ -58,6 +68,21 @@ class ServerManagerLauncher(ServerManagerModule):
         if not self.force_start and self.check_existing_instance():
             logger.warning("Another instance of Server Manager is already running. Exiting.")
             sys.exit(0)
+    
+    def detect_cluster_role(self):
+        """Detect whether this instance is a Host or Subhost"""
+        try:
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\SkywereIndustries\Servermanager")
+            self.cluster_role = winreg.QueryValueEx(key, "HostType")[0]
+            try:
+                self.host_address = winreg.QueryValueEx(key, "HostAddress")[0]
+            except Exception:
+                self.host_address = None
+            winreg.CloseKey(key)
+        except Exception as e:
+            logger.warning(f"Could not detect cluster role from registry: {e}")
+            self.cluster_role = "Unknown"
+            self.host_address = None
         
     def check_existing_instance(self):
         """Check if another instance of Server Manager is already running"""
@@ -279,6 +304,86 @@ class ServerManagerLauncher(ServerManagerModule):
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
 
+    def start_subhost_dashboard(self):
+        """Start the subhost dashboard for connecting to a host server"""
+        try:
+            subhost_script = os.path.join(self.paths["project_root"], "Subhost", "dashboard.py")
+            
+            if not os.path.exists(subhost_script):
+                logger.error(f"Subhost dashboard script not found: {subhost_script}")
+                return False
+                
+            python_exe = sys.executable
+            if not os.path.exists(python_exe):
+                logger.error(f"Python executable not found: {python_exe}")
+                return False
+                
+            logger.info(f"Starting subhost dashboard...")
+            logger.debug(f"Using Python executable: {python_exe}")
+            logger.debug(f"Subhost script path: {subhost_script}")
+            
+            # Set environment variables for subhost
+            env = os.environ.copy()
+            if self.host_address:
+                env["CLUSTER_HOST_URL"] = f"http://{self.host_address}:5001"
+                logger.info(f"Connecting to host at: {self.host_address}")
+            
+            # Start subhost dashboard process
+            if sys.platform == 'win32':
+                # On Windows, use CREATE_NO_WINDOW to hide console
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE
+                
+                subhost_process = subprocess.Popen(
+                    [python_exe, subhost_script],
+                    creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                    startupinfo=startupinfo,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.PIPE,
+                    env=env
+                )
+            else:
+                # On Unix-based systems
+                subhost_process = subprocess.Popen(
+                    [python_exe, subhost_script],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.PIPE,
+                    env=env
+                )
+            
+            # Store process for monitoring
+            self.processes["subhost_dashboard"] = subhost_process
+            self.write_pid_file("subhost_dashboard", subhost_process.pid)
+            
+            logger.info(f"Subhost dashboard started with PID: {subhost_process.pid}")
+            
+            # Wait a moment and check if it started successfully
+            time.sleep(2)
+            
+            # Check if it's listening on port 5002 (default subhost port)
+            for attempt in range(15):  # Check for 15 seconds
+                time.sleep(1)
+                if self.is_port_open('localhost', 5002):
+                    logger.info(f"Subhost dashboard successfully started and listening on port 5002")
+                    return True
+                logger.debug(f"Attempt {attempt+1}/15: Subhost dashboard not yet listening")
+                # Check if process is still running
+                if subhost_process.poll() is not None:
+                    logger.error(f"Subhost dashboard process died during startup with exit code {subhost_process.returncode}")
+                    return False
+            
+            logger.warning(f"Subhost dashboard process started (PID: {subhost_process.pid}) but not listening on port 5002")
+            return True  # Return True anyway to keep the process managed
+            
+        except Exception as e:
+            logger.error(f"Failed to start subhost dashboard: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+
     def is_port_open(self, host, port, timeout=1):
         """Check if a port is open on the specified host"""
         try:
@@ -371,7 +476,7 @@ class ServerManagerLauncher(ServerManagerModule):
             return False
 
     def start_processes(self):
-        """Start all server manager component processes"""
+        """Start all server manager component processes based on cluster role"""
         try:
             # Check and install dependencies first
             if not self.check_dependencies():
@@ -379,13 +484,51 @@ class ServerManagerLauncher(ServerManagerModule):
                 if not self.install_dependencies():
                     logger.error("Failed to install dependencies, some components may not work")
             
-            # Start tray icon
-            if not self.start_tray_icon():
-                logger.warning("Failed to start tray icon, continuing anyway")
+            logger.info(f"Starting processes for cluster role: {self.cluster_role}")
+            
+            # Start components based on cluster role
+            if self.cluster_role == "Host":
+                # Host should run all components
+                logger.info("Starting as Host - launching all components")
                 
-            # Start web server
-            if not self.start_web_server():
-                logger.warning("Failed to start web server, continuing anyway")
+                # Start tray icon (only if not running as service)
+                if not self.is_service:
+                    if not self.start_tray_icon():
+                        logger.warning("Failed to start tray icon, continuing anyway")
+                else:
+                    logger.info("Running as service - skipping tray icon")
+                    
+                # Start web server
+                if not self.start_web_server():
+                    logger.warning("Failed to start web server, continuing anyway")
+                    
+            elif self.cluster_role == "Subhost":
+                # Subhost should only run minimal components and connect to host
+                logger.info("Starting as Subhost - launching minimal components")
+                
+                # Start tray icon (only if not running as service)
+                if not self.is_service:
+                    if not self.start_tray_icon():
+                        logger.warning("Failed to start tray icon, continuing anyway")
+                else:
+                    logger.info("Running as service - skipping tray icon")
+                
+                # Start subhost dashboard instead of main web server
+                if not self.start_subhost_dashboard():
+                    logger.warning("Failed to start subhost dashboard, continuing anyway")
+                    
+            else:
+                # Unknown role - start minimal components
+                logger.warning(f"Unknown cluster role '{self.cluster_role}' - starting minimal components")
+                
+                # Start tray icon (only if not running as service)
+                if not self.is_service:
+                    if not self.start_tray_icon():
+                        logger.warning("Failed to start tray icon, continuing anyway")
+                        
+                # Start web server as fallback
+                if not self.start_web_server():
+                    logger.warning("Failed to start web server, continuing anyway")
                 
             logger.info("All processes started")
             return True
@@ -396,7 +539,7 @@ class ServerManagerLauncher(ServerManagerModule):
             
     def monitor_processes(self):
         """Monitor and restart processes if they crash"""
-        restart_attempts = {"tray_icon": 0, "web_server": 0}
+        restart_attempts = {"tray_icon": 0, "web_server": 0, "subhost_dashboard": 0}
         max_restart_attempts = 3  # Maximum number of restart attempts
         
         while self.running:
@@ -430,6 +573,21 @@ class ServerManagerLauncher(ServerManagerModule):
                     else:
                         # Reset counter if process is running
                         restart_attempts["web_server"] = 0
+
+                # Check subhost dashboard
+                if "subhost_dashboard" in self.processes:
+                    p = self.processes["subhost_dashboard"]
+                    if p.poll() is not None:
+                        restart_attempts["subhost_dashboard"] += 1
+                        if restart_attempts["subhost_dashboard"] <= max_restart_attempts:
+                            logger.warning(f"Subhost dashboard process exited with code {p.returncode}, restarting... (Attempt {restart_attempts['subhost_dashboard']}/{max_restart_attempts})")
+                            if not self.start_subhost_dashboard():
+                                logger.error("Failed to restart subhost dashboard process")
+                        else:
+                            logger.error(f"Subhost dashboard process has crashed {restart_attempts['subhost_dashboard']} times. Giving up.")
+                    else:
+                        # Reset counter if process is running
+                        restart_attempts["subhost_dashboard"] = 0
                 
                 # Sleep for a while before checking again
                 time.sleep(5)

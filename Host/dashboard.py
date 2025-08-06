@@ -276,7 +276,7 @@ class ServerManagerDashboard(ServerManagerModule):
         tools_menu.add_command(label="Refresh All", command=self.refresh_all)
         tools_menu.add_command(label="Sync All", command=self.sync_all)
         tools_menu.add_separator()
-        tools_menu.add_command(label="Add Agent", command=self.add_agent)
+        tools_menu.add_command(label="Agents", command=self.add_agent)
         
         # Help Menu
         help_menu = tk.Menu(self.menubar, tearoff=0)

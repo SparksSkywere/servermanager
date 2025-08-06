@@ -91,9 +91,30 @@ Get-Process | Where-Object { $_.ProcessName -like "*steam*" -or $_.ProcessName -
 
 # Remove services
 Write-Host "Removing services..." -ForegroundColor Yellow
-if (Get-Service "ServerManagerService" -ErrorAction SilentlyContinue) {
-    Stop-Service "ServerManagerService" -Force
-    $null = sc.exe delete "ServerManagerService"
+try {
+    # Try to use the service wrapper to properly uninstall the service
+    $serviceWrapperPath = Join-Path $serverManagerDir "Scripts\service_wrapper.py"
+    if (Test-Path $serviceWrapperPath) {
+        Write-Host "Using service wrapper to uninstall service..." -ForegroundColor Cyan
+        $pythonPath = (Get-Command python -ErrorAction SilentlyContinue).Source
+        if ($pythonPath) {
+            & $pythonPath $serviceWrapperPath uninstall 2>&1 | Out-Null
+        }
+    }
+    
+    # Fallback - use sc.exe if service still exists
+    if (Get-Service "ServerManagerService" -ErrorAction SilentlyContinue) {
+        Write-Host "Stopping Server Manager service..." -ForegroundColor Yellow
+        Stop-Service "ServerManagerService" -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+        
+        Write-Host "Removing service registration..." -ForegroundColor Yellow
+        $null = sc.exe delete "ServerManagerService"
+    }
+    
+    Write-Host "Service removal completed" -ForegroundColor Green
+} catch {
+    Write-Host "Warning: Error during service removal: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
 # Remove firewall rules

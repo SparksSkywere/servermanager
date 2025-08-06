@@ -1,6 +1,32 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# Script parameters for both installation and service management
+param(
+    [Parameter()]
+    [ValidateSet("Install", "Uninstall", "Start", "Stop", "Restart", "Status")]
+    [string]$ServiceAction,
+    
+    [Parameter()]
+    [switch]$ServiceOnly,
+    
+    [Parameter()]
+    [switch]$Help
+)
+
+# Show help if requested
+if ($Help) {
+    Show-Help
+    exit
+}
+
+# Check if this is a service management call
+if ($ServiceAction -or $ServiceOnly) {
+    # Service management mode
+    Invoke-ServiceManagement -Action $ServiceAction
+    exit
+}
+
 # Log function
 function Write-Log {
     param (
@@ -45,6 +71,149 @@ function Show-Console {
 
 # Hide Console
 Show-Console -Hide
+
+# Service Management Functions
+function Invoke-ServiceManagement {
+    param([string]$Action)
+    
+    # Check for admin rights and self-elevate if needed
+    if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        Write-Host "Administrator rights required. Attempting to restart with elevated privileges..." -ForegroundColor Yellow
+        Start-Process PowerShell -Verb RunAs -ArgumentList ("-ExecutionPolicy Bypass -File `"{0}`" -ServiceAction {1} -ServiceOnly" -f $PSCommandPath, $Action)
+        exit
+    }
+
+    Write-Host "Server Manager Service Manager" -ForegroundColor Cyan
+    Write-Host "================================" -ForegroundColor Cyan
+
+    # Get Server Manager directory from registry
+    try {
+        $regPath = "HKLM:\Software\SkywereIndustries\Servermanager"
+        $serverManagerDir = (Get-ItemProperty -Path $regPath -Name "ServerManagerPath").ServerManagerPath
+        Write-Host "Server Manager directory: $serverManagerDir" -ForegroundColor Green
+    } catch {
+        Write-Host "Error: Server Manager installation not found in registry." -ForegroundColor Red
+        Write-Host "Please run the installer first." -ForegroundColor Red
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
+
+    # Check if service helper exists
+    $serviceHelperPath = Join-Path $serverManagerDir "service_helper.py"
+    if (-not (Test-Path $serviceHelperPath)) {
+        Write-Host "Error: Service helper script not found at: $serviceHelperPath" -ForegroundColor Red
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
+
+    # Find Python executable
+    $pythonPath = Find-PythonExecutable
+    if (-not $pythonPath) {
+        Write-Host "Error: Python executable not found." -ForegroundColor Red
+        Write-Host "Please ensure Python is installed and added to PATH." -ForegroundColor Red
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
+
+    Write-Host "Using Python: $pythonPath" -ForegroundColor Green
+
+    # Execute the requested action
+    try {
+        Write-Host "Executing action: $Action" -ForegroundColor Yellow
+        
+        $result = & $pythonPath $serviceHelperPath $Action.ToLower() 2>&1
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Action completed successfully!" -ForegroundColor Green
+            Write-Host $result -ForegroundColor White
+        } else {
+            Write-Host "Action failed!" -ForegroundColor Red
+            Write-Host $result -ForegroundColor Red
+        }
+    } catch {
+        Write-Host "Error executing action: $($_.Exception.Message)" -ForegroundColor Red
+    }
+
+    # Additional information based on action
+    switch ($Action.ToLower()) {
+        "install" {
+            Write-Host ""
+            Write-Host "If installation was successful:" -ForegroundColor Cyan
+            Write-Host "- The service is now installed and running" -ForegroundColor White
+            Write-Host "- Server Manager will start automatically with Windows" -ForegroundColor White
+            Write-Host "- You can access the web interface at http://localhost:8080" -ForegroundColor White
+        }
+        "uninstall" {
+            Write-Host ""
+            Write-Host "If uninstallation was successful:" -ForegroundColor Cyan
+            Write-Host "- The service has been removed" -ForegroundColor White
+            Write-Host "- Server Manager will no longer start automatically" -ForegroundColor White
+            Write-Host "- You can still start it manually using Start-ServerManager.pyw" -ForegroundColor White
+        }
+        "status" {
+            Write-Host ""
+            Write-Host "Service management commands:" -ForegroundColor Cyan
+            Write-Host "- To start:   .\install.ps1 -ServiceAction Start" -ForegroundColor White
+            Write-Host "- To stop:    .\install.ps1 -ServiceAction Stop" -ForegroundColor White
+            Write-Host "- To restart: .\install.ps1 -ServiceAction Restart" -ForegroundColor White
+        }
+    }
+
+    Write-Host ""
+    Read-Host "Press Enter to exit"
+}
+
+function Find-PythonExecutable {
+    $pythonPaths = @(
+        (Get-Command python -ErrorAction SilentlyContinue).Source,
+        (Get-Command python3 -ErrorAction SilentlyContinue).Source,
+        "C:\Python\python.exe",
+        "C:\Python39\python.exe",
+        "C:\Python310\python.exe",
+        "C:\Python311\python.exe",
+        "C:\Python312\python.exe"
+    )
+
+    foreach ($path in $pythonPaths) {
+        if ($path -and (Test-Path $path)) {
+            return $path
+        }
+    }
+    return $null
+}
+
+function Show-Help {
+    Write-Host "Server Manager Installer and Service Manager" -ForegroundColor Cyan
+    Write-Host "=============================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Usage:" -ForegroundColor Yellow
+    Write-Host "  install.ps1                           # Run the installation wizard"
+    Write-Host "  install.ps1 -Help                     # Show this help"
+    Write-Host ""
+    Write-Host "Service Management:" -ForegroundColor Yellow
+    Write-Host "  install.ps1 -ServiceAction Install    # Install and start the service"
+    Write-Host "  install.ps1 -ServiceAction Uninstall  # Uninstall the service"
+    Write-Host "  install.ps1 -ServiceAction Start      # Start the service"
+    Write-Host "  install.ps1 -ServiceAction Stop       # Stop the service"
+    Write-Host "  install.ps1 -ServiceAction Restart    # Restart the service"
+    Write-Host "  install.ps1 -ServiceAction Status     # Show service status"
+    Write-Host ""
+    Write-Host "Examples:" -ForegroundColor Green
+    Write-Host "  # Install Server Manager (GUI wizard)"
+    Write-Host "  .\install.ps1"
+    Write-Host ""
+    Write-Host "  # Install as Windows service after installation"
+    Write-Host "  .\install.ps1 -ServiceAction Install"
+    Write-Host ""
+    Write-Host "  # Check service status"
+    Write-Host "  .\install.ps1 -ServiceAction Status"
+    Write-Host ""
+    Write-Host "Notes:" -ForegroundColor Cyan
+    Write-Host "  - Admin privileges are required for installation and service management"
+    Write-Host "  - The installer will automatically elevate if needed"
+    Write-Host "  - Service actions require an existing Server Manager installation"
+    Write-Host ""
+}
 
 # --- Main installer script ---
 # Define global variables first
@@ -1288,10 +1457,51 @@ function Start-Installation {
         if ($Settings.InstallService) {
             Update-Progress "Installing Windows Service..."
             try {
-                # Service installation code here - to be implemented
-                Write-Log "Service installation not yet implemented"
+                Write-Log "Installing Server Manager as Windows Service..."
+                
+                # Path to the service wrapper script
+                $serviceWrapperPath = Join-Path $ServerManagerDir "Scripts\service_wrapper.py"
+                
+                # Check if service wrapper exists
+                if (-not (Test-Path $serviceWrapperPath)) {
+                    throw "Service wrapper script not found at: $serviceWrapperPath"
+                }
+                
+                # Install pywin32 if not already installed
+                Write-Log "Ensuring pywin32 is installed for service functionality..."
+                & $PythonPath -m pip install pywin32 2>&1 | Out-Null
+                
+                # Install the service
+                Write-Log "Installing Windows service..."
+                $installResult = & $PythonPath $serviceWrapperPath install 2>&1
+                
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Log "Service installed successfully"
+                    
+                    # Start the service
+                    Write-Log "Starting Server Manager service..."
+                    $startResult = & $PythonPath $serviceWrapperPath start 2>&1
+                    
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Log "Service started successfully"
+                        
+                        # Set the service to automatically start with Windows
+                        try {
+                            Set-Service -Name "ServerManagerService" -StartupType Automatic
+                            Write-Log "Service configured to start automatically with Windows"
+                        } catch {
+                            Write-Log "Warning: Could not set service startup type: $($_.Exception.Message)"
+                        }
+                    } else {
+                        Write-Log "Warning: Service installed but failed to start: $startResult"
+                    }
+                } else {
+                    throw "Service installation failed: $installResult"
+                }
+                
             } catch {
                 Write-Log "Warning: Windows Service installation failed: $($_.Exception.Message)"
+                Write-Log "Server Manager can still be started manually using Start-ServerManager.pyw"
             }
         }
 

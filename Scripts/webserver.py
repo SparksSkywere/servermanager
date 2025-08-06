@@ -623,6 +623,33 @@ class ServerManagerWebServer(ServerManagerModule):
             return
             
         app = self.app
+        
+        # Register cluster API blueprint
+        try:
+            # Import the cluster API
+            import sys
+            api_path = os.path.join(self.server_manager_dir or "", "api")
+            if api_path not in sys.path:
+                sys.path.insert(0, api_path)
+                
+            # Import using absolute path to avoid issues
+            cluster_module_path = os.path.join(api_path, "cluster.py")
+            if os.path.exists(cluster_module_path):
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("cluster", cluster_module_path)
+                if spec and spec.loader:
+                    cluster_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(cluster_module)
+                    app.register_blueprint(cluster_module.cluster_api)
+                    logger.info("Cluster API registered successfully")
+                else:
+                    logger.warning("Failed to create module spec for cluster API")
+            else:
+                logger.warning(f"Cluster API module not found at: {cluster_module_path}")
+        except Exception as e:
+            logger.warning(f"Failed to register cluster API: {e}")
+            import traceback
+            logger.debug(f"Cluster API registration error: {traceback.format_exc()}")
 
         # Helper function to handle rate limiting
         def limit_decorator(rate_limit):

@@ -1,10 +1,16 @@
 import os
 import winreg
-from flask import Blueprint, jsonify
+import json
+import datetime
+from flask import Blueprint, jsonify, request
 
 cluster_api = Blueprint("cluster_api", __name__)
 
+# In-memory storage for subhost registration (in production, use database)
+registered_subhosts = {}
+
 def get_cluster_role():
+    """Get the cluster role and host address from registry"""
     try:
         key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\SkywereIndustries\Servermanager")
         role = winreg.QueryValueEx(key, "HostType")[0]
@@ -19,8 +25,128 @@ def get_cluster_role():
 
 @cluster_api.route("/api/cluster/role", methods=["GET"])
 def api_cluster_role():
+    """Get the cluster role of this instance"""
     role, host_address = get_cluster_role()
     return jsonify({
         "role": role,
         "hostAddress": host_address
     })
+
+@cluster_api.route("/api/cluster/register", methods=["POST"])
+def api_register_subhost():
+    """Register a subhost with the host"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        subhost_id = data.get("subhost_id")
+        if not subhost_id:
+            return jsonify({"error": "subhost_id is required"}), 400
+            
+        # Store subhost information
+        registered_subhosts[subhost_id] = {
+            "id": subhost_id,
+            "info": data.get("info", {}),
+            "last_seen": datetime.datetime.now().isoformat(),
+            "registered_at": datetime.datetime.now().isoformat()
+        }
+        
+        return jsonify({
+            "status": "registered",
+            "subhost_id": subhost_id,
+            "message": f"Subhost {subhost_id} registered successfully"
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@cluster_api.route("/api/cluster/heartbeat", methods=["POST"])
+def api_subhost_heartbeat():
+    """Receive heartbeat from subhost"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        subhost_id = data.get("subhost_id")
+        if not subhost_id:
+            return jsonify({"error": "subhost_id is required"}), 400
+            
+        # Update last seen timestamp
+        if subhost_id in registered_subhosts:
+            registered_subhosts[subhost_id]["last_seen"] = datetime.datetime.now().isoformat()
+            registered_subhosts[subhost_id]["info"] = data.get("info", {})
+        else:
+            # Auto-register if not already registered
+            registered_subhosts[subhost_id] = {
+                "id": subhost_id,
+                "info": data.get("info", {}),
+                "last_seen": datetime.datetime.now().isoformat(),
+                "registered_at": datetime.datetime.now().isoformat()
+            }
+        
+        return jsonify({
+            "status": "acknowledged",
+            "timestamp": datetime.datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@cluster_api.route("/api/cluster/subhosts", methods=["GET"])
+def api_list_subhosts():
+    """List all registered subhosts"""
+    try:
+        # Clean up old subhosts (haven't been seen in 5 minutes)
+        current_time = datetime.datetime.now()
+        active_subhosts = {}
+        
+        for subhost_id, subhost_data in registered_subhosts.items():
+            last_seen = datetime.datetime.fromisoformat(subhost_data["last_seen"])
+            time_diff = current_time - last_seen
+            
+            # Keep subhosts that have been seen in the last 5 minutes
+            if time_diff.total_seconds() < 300:  # 5 minutes
+                subhost_data["status"] = "active"
+                subhost_data["last_seen_ago"] = f"{int(time_diff.total_seconds())} seconds ago"
+                active_subhosts[subhost_id] = subhost_data
+            else:
+                subhost_data["status"] = "inactive"
+                subhost_data["last_seen_ago"] = f"{int(time_diff.total_seconds())} seconds ago"
+                active_subhosts[subhost_id] = subhost_data
+                
+        # Update the global registry
+        global registered_subhosts
+        registered_subhosts = {k: v for k, v in registered_subhosts.items() 
+                              if datetime.datetime.now() - datetime.datetime.fromisoformat(v["last_seen"]) < datetime.timedelta(hours=1)}
+        
+        return jsonify({
+            "subhosts": active_subhosts,
+            "count": len(active_subhosts)
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@cluster_api.route("/api/cluster/status", methods=["GET"])
+def api_cluster_status():
+    """Get overall cluster status"""
+    try:
+        role, host_address = get_cluster_role()
+        
+        cluster_status = {
+            "role": role,
+            "host_address": host_address,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+        if role == "Host":
+            # Include subhost information for hosts
+            cluster_status["subhosts"] = registered_subhosts
+            cluster_status["subhost_count"] = len(registered_subhosts)
+            
+        return jsonify(cluster_status)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
