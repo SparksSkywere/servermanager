@@ -1586,7 +1586,7 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
         
         def browse_exe():
             fp = filedialog.askopenfilename(title="Select Executable",
-                filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd"),("All","*.*")])
+                filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd;*.ps1"),("All","*.*")])
             if fp:
                 form_vars['exe_path'].set(fp)
         ttk.Button(scrollable_frame, text="Browse", command=browse_exe, width=12).grid(row=current_row, column=2, padx=15, pady=10)

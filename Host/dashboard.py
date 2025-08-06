@@ -74,7 +74,7 @@ from Modules.debug import (
 )
 
 # Import server console functions
-from Modules.server_console import ServerConsoleManager
+from Modules.server_console import ConsoleManager
 
 # Get dashboard logger
 logger = get_dashboard_logger()
@@ -177,9 +177,7 @@ class ServerManagerDashboard(ServerManagerModule):
         
         # Initialize server console manager
         try:
-            self.console_manager = ServerConsoleManager(self.server_manager)
-            # Start monitoring for server processes
-            self.console_manager.start_monitoring()
+            self.console_manager = ConsoleManager(self.server_manager)
             logger.info("Server console manager initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize server console manager: {e}")
@@ -863,7 +861,7 @@ class ServerManagerDashboard(ServerManagerModule):
             
             def browse_exe():
                 fp = filedialog.askopenfilename(title="Select Executable",
-                    filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd"),("All","*.*")])
+                    filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd;*.ps1"),("All","*.*")])
                 if fp:
                     form_vars['exe_path'].set(fp)
             ttk.Button(scrollable_frame, text="Browse", command=browse_exe, width=12).grid(row=current_row, column=2, padx=15, pady=10)
@@ -1105,7 +1103,7 @@ class ServerManagerDashboard(ServerManagerModule):
         try:
             # Close all console windows
             if hasattr(self, 'console_manager') and self.console_manager:
-                self.console_manager.close_all_consoles()
+                self.console_manager.cleanup_all_consoles()
                 logger.debug("Closed all console windows")
             
             # Stop agent monitoring
@@ -1152,10 +1150,19 @@ class ServerManagerDashboard(ServerManagerModule):
                     return
 
                 # Use the server manager to start the server
-                success, message = self.server_manager.start_server_advanced(
+                success, result = self.server_manager.start_server_advanced(
                     server_name, 
                     callback=lambda status: self.update_server_status(server_name, status)
                 )
+                
+                # If successful and we got a process object, start console
+                if success and hasattr(result, 'pid'):
+                    # Start console for real-time monitoring
+                    if self.console_manager:
+                        self.console_manager.attach_console_to_process(server_name, result)
+                    message = f"Server '{server_name}' started successfully with PID {result.pid}."
+                else:
+                    message = result if isinstance(result, str) else "Server started successfully"
                 
                 # Update UI on main thread
                 def update_ui():
@@ -1577,7 +1584,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 }
             
             # Show the console window
-            success = self.console_manager.show_console(server_name, server_config, self.root)
+            success = self.console_manager.show_console(server_name, self.root)
             
             if success:
                 log_user_action(self.current_user.username if self.current_user else "Unknown", 
@@ -1649,7 +1656,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         exe_entry = ttk.Entry(start, textvariable=exe_var, width=40); exe_entry.grid(row=0,column=1,sticky=tk.W)
         def browse_exe():
             fp = filedialog.askopenfilename(initialdir=install_dir,
-                filetypes=[("Exec","*.exe;*.bat;*.cmd;*.sh"),("All","*.*")])
+                filetypes=[("Exec","*.exe;*.bat;*.cmd;*.ps1;*.sh"),("All","*.*")])
             if fp:
                 rel = os.path.relpath(fp, install_dir) if os.path.commonpath([fp,install_dir])==install_dir else fp
                 exe_var.set(rel)
@@ -2571,7 +2578,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         ttk.Entry(info_frame, textvariable=exe_var, width=40).grid(row=3, column=1, sticky=tk.W, padx=(10, 0), pady=5)
         
         def browse_executable():
-            file_types = [("Executable Files", "*.exe"), ("All Files", "*.*")] if os.name == 'nt' else [("All Files", "*")]
+            file_types = [("Executable Files", "*.exe;*.bat;*.cmd;*.ps1;*.sh;*.jar"), ("All Files", "*.*")] if os.name == 'nt' else [("All Files", "*")]
             exe_path = filedialog.askopenfilename(title="Select Server Executable", filetypes=file_types)
             if exe_path:
                 exe_var.set(exe_path)
@@ -2822,7 +2829,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 fp = filedialog.askopenfilename(
                     title="Select Server Executable",
                     initialdir=install_dir,
-                    filetypes=[("Executables", "*.exe;*.jar;*.bat;*.cmd;*.sh"), ("All files", "*.*")]
+                    filetypes=[("Executables", "*.exe;*.jar;*.bat;*.cmd;*.ps1;*.sh"), ("All files", "*.*")]
                 )
                 if fp:
                     # Store relative path if possible
@@ -3768,100 +3775,11 @@ Includes Files: {'Yes' if has_files else 'No'}"""
                 messagebox.showinfo("Console Manager", "Console manager not available.")
                 return
             
-            # Get list of active consoles
-            active_consoles = self.console_manager.get_active_consoles()
-            
-            # Create console manager dialog
-            dialog = tk.Toplevel(self.root)
-            dialog.title("Console Manager")
-            dialog.geometry("600x400")
-            dialog.transient(self.root)
-            dialog.grab_set()
-            
-            # Create main frame
-            main_frame = ttk.Frame(dialog, padding=15)
-            main_frame.pack(fill=tk.BOTH, expand=True)
-            
-            # Title
-            title_label = ttk.Label(main_frame, text="Server Console Manager", 
-                                   font=("Segoe UI", 12, "bold"))
-            title_label.pack(pady=(0, 15))
-            
-            # Instructions
-            info_label = ttk.Label(main_frame, 
-                                 text="Right-click on a server in the main list and select 'Show Console' to open a console window.\n"
-                                      "Active console windows are listed below:",
-                                 justify=tk.CENTER, wraplength=500)
-            info_label.pack(pady=(0, 15))
-            
-            # Active consoles frame
-            consoles_frame = ttk.LabelFrame(main_frame, text="Active Console Windows", padding=10)
-            consoles_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-            
-            if active_consoles:
-                # Create listbox for active consoles
-                console_listbox = tk.Listbox(consoles_frame, font=("Consolas", 10))
-                
-                for server_name in active_consoles:
-                    console_listbox.insert(tk.END, f"🖥️ {server_name}")
-                
-                # Scrollbar for listbox
-                console_scrollbar = ttk.Scrollbar(consoles_frame, orient=tk.VERTICAL, 
-                                                command=console_listbox.yview)
-                console_listbox.configure(yscrollcommand=console_scrollbar.set)
-                
-                # Pack listbox and scrollbar
-                console_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-                console_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-                
-                # Button frame
-                button_frame = ttk.Frame(consoles_frame)
-                button_frame.pack(fill=tk.X, pady=(10, 0))
-                
-                def close_selected_console():
-                    """Close the selected console"""
-                    if not self.console_manager:
-                        return
-                    selection = console_listbox.curselection()
-                    if selection:
-                        server_name = active_consoles[selection[0]]
-                        self.console_manager.close_console(server_name)
-                        dialog.destroy()
-                        # Refresh the dialog
-                        self.show_console_manager()
-                
-                def close_all_consoles():
-                    """Close all console windows"""
-                    if not self.console_manager:
-                        return
-                    if messagebox.askyesno("Confirm", "Close all console windows?"):
-                        self.console_manager.close_all_consoles()
-                        dialog.destroy()
-                
-                # Buttons
-                ttk.Button(button_frame, text="Close Selected", 
-                          command=close_selected_console).pack(side=tk.LEFT, padx=(0, 5))
-                ttk.Button(button_frame, text="Close All", 
-                          command=close_all_consoles).pack(side=tk.LEFT)
-                
-            else:
-                # No active consoles
-                no_consoles_label = ttk.Label(consoles_frame, 
-                                            text="No active console windows\n\n"
-                                                 "Right-click on a server in the main list\n"
-                                                 "and select 'Show Console' to open one.",
-                                            justify=tk.CENTER, foreground="gray")
-                no_consoles_label.pack(expand=True)
-            
-            # Close button
-            close_button = ttk.Button(main_frame, text="Close", command=dialog.destroy)
-            close_button.pack()
-            
-            # Center dialog
-            center_window(dialog, 600, 400, self.root)
+            # Use the built-in console management window
+            self.console_manager.show_console_manager_window(self.root)
             
         except Exception as e:
-            logger.error(f"Error showing console manager: {e}")
+            log_exception(e, "Error showing console manager")
             messagebox.showerror("Console Manager Error", f"Failed to show console manager:\n{str(e)}")
 
     def show_help(self):

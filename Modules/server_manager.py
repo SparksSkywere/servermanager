@@ -97,6 +97,22 @@ class ServerManager(ServerManagerModule):
         # Load configuration and server list
         self.load_config()
         self.load_servers()
+    def get_server_process(self, server_name):
+        """Get the active process object for a server"""
+        if hasattr(self, 'active_processes') and server_name in self.active_processes:
+            process = self.active_processes[server_name]
+            # Check if process is still running
+            if process.poll() is None:
+                return process
+            else:
+                # Clean up dead process
+                del self.active_processes[server_name]
+        return None
+        
+    def get_servers(self):
+        """Get dictionary of all servers and their configurations"""
+        return self.servers
+        
     def load_config(self):
         """Load configuration from file"""
         try:
@@ -296,12 +312,21 @@ class ServerManager(ServerManagerModule):
                 
             # Resolve executable path
             exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
+            # Normalize path separators for Windows compatibility
+            exe_full = os.path.normpath(exe_full)
             if not os.path.exists(exe_full):
                 logger.error(f"Executable not found: {exe_full}")
                 return False, f"Executable not found: {exe_full}"
             
             # Build command with config file support
             cmd_parts = [f'"{exe_full}"']
+            
+            # Resolve config file path if needed
+            config_full = None
+            if use_config_file and config_file_path:
+                config_full = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
+                # Normalize config file path separators
+                config_full = os.path.normpath(config_full)
             
             if use_config_file:
                 # Config file mode
@@ -310,8 +335,7 @@ class ServerManager(ServerManagerModule):
                     cmd_parts.append(additional_args)
                 
                 # Add config file argument
-                if config_file_path and config_argument:
-                    config_full = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
+                if config_file_path and config_argument and config_full:
                     if os.path.exists(config_full):
                         cmd_parts.append(f'{config_argument} "{config_full}"')
                         logger.info(f"Using config file: {config_full}")
@@ -322,62 +346,91 @@ class ServerManager(ServerManagerModule):
                 if startup_args:
                     cmd_parts.append(startup_args)
             
-            # Build final command
-            if server_type == "Minecraft":
-                # For Minecraft servers, handle different executable types
-                if exe_full.lower().endswith(('.bat', '.cmd')):
-                    # For batch files, execute them directly
-                    cmd = f'"{exe_full}"'
-                    if use_config_file:
-                        if additional_args:
-                            cmd += f' {additional_args}'
-                        if config_file_path and config_argument and os.path.exists(config_full):
-                            cmd += f' {config_argument} "{config_full}"'
-                    else:
-                        if startup_args:
-                            cmd += f' {startup_args}'
-                    shell = True
-                elif exe_full.lower().endswith('.jar'):
-                    # For JAR files, use Java command
-                    cmd = f'java -Xmx1024M -Xms1024M -jar "{exe_full}" nogui'
-                    if use_config_file:
-                        if additional_args:
-                            cmd += f' {additional_args}'
-                        if config_file_path and config_argument and os.path.exists(config_full):
-                            cmd += f' {config_argument} "{config_full}"'
-                    else:
-                        if startup_args:
-                            cmd += f' {startup_args}'
-                    shell = True
-                else:
-                    # For other executables, run them directly
-                    cmd = f'"{exe_full}"'
-                    if use_config_file:
-                        if additional_args:
-                            cmd += f' {additional_args}'
-                        if config_file_path and config_argument and os.path.exists(config_full):
-                            cmd += f' {config_argument} "{config_full}"'
-                    else:
-                        if startup_args:
-                            cmd += f' {startup_args}'
-                    shell = True
-            elif exe_full.lower().endswith(('.bat', '.cmd')):
-                cmd = f'start "" /D "{install_dir}" cmd /c ' + ' '.join(cmd_parts)
-                shell = True
-            elif exe_full.lower().endswith('.sh') and sys.platform != 'win32':
-                cmd = ['/bin/sh', exe_full]
-                if use_config_file:
-                    if additional_args:
-                        cmd.extend(additional_args.split())
-                    if config_file_path and config_argument and os.path.exists(config_full):
-                        cmd.extend([config_argument, config_full])
-                else:
-                    if startup_args:
-                        cmd.extend(startup_args.split())
-                shell = False
-            else:
+            # Build final command based on executable type (unified for all server types)
+            if exe_full.lower().endswith(('.bat', '.cmd')):
+                # For batch files, run them directly without using 'start' command
+                # This allows proper process tracking and prevents the "error" issue
                 cmd = ' '.join(cmd_parts)
                 shell = True
+            elif exe_full.lower().endswith('.ps1'):
+                # For PowerShell scripts, use PowerShell to execute them
+                ps_cmd_parts = ['powershell.exe', '-ExecutionPolicy', 'Bypass', '-File', f'"{exe_full}"']
+                if use_config_file:
+                    if additional_args:
+                        ps_cmd_parts.extend(additional_args.split())
+                    if config_file_path and config_argument and config_full and os.path.exists(config_full):
+                        ps_cmd_parts.extend([config_argument, f'"{config_full}"'])
+                else:
+                    if startup_args:
+                        ps_cmd_parts.extend(startup_args.split())
+                cmd = ' '.join(ps_cmd_parts)
+                shell = True
+            elif exe_full.lower().endswith('.sh'):
+                # For shell scripts, handle both Windows (via WSL/Git Bash) and Unix systems
+                if sys.platform == 'win32':
+                    # On Windows, try to use bash (Git Bash, WSL, etc.)
+                    bash_cmd_parts = ['bash', f'"{exe_full}"']
+                    if use_config_file:
+                        if additional_args:
+                            bash_cmd_parts.extend(additional_args.split())
+                        if config_file_path and config_argument and config_full and os.path.exists(config_full):
+                            bash_cmd_parts.extend([config_argument, f'"{config_full}"'])
+                    else:
+                        if startup_args:
+                            bash_cmd_parts.extend(startup_args.split())
+                    cmd = ' '.join(bash_cmd_parts)
+                    shell = True
+                else:
+                    # On Unix systems, use the shell directly
+                    cmd = ['/bin/sh', exe_full]
+                    if use_config_file:
+                        if additional_args:
+                            cmd.extend(additional_args.split())
+                        if config_file_path and config_argument and config_full and os.path.exists(config_full):
+                            cmd.extend([config_argument, config_full])
+                    else:
+                        if startup_args:
+                            cmd.extend(startup_args.split())
+                    shell = False
+            elif exe_full.lower().endswith('.jar'):
+                # For JAR files, use Java command (special handling for Minecraft)
+                if server_type == "Minecraft":
+                    cmd = f'java -Xmx1024M -Xms1024M -jar "{exe_full}" nogui'
+                else:
+                    cmd = f'java -jar "{exe_full}"'
+                
+                if use_config_file:
+                    if additional_args:
+                        cmd += f' {additional_args}'
+                    if config_file_path and config_argument and config_full and os.path.exists(config_full):
+                        cmd += f' {config_argument} "{config_full}"'
+                else:
+                    if startup_args:
+                        cmd += f' {startup_args}'
+                shell = True
+            else:
+                # For regular executables (.exe, etc.) - Default handling for most servers like Factorio
+                # Use shell=False with proper argument list to avoid shell parsing issues
+                cmd = [exe_full]
+                if use_config_file:
+                    # Config file mode
+                    if additional_args:
+                        # Parse arguments and remove quotes since shell=False handles escaping
+                        args = []
+                        for arg in additional_args.split():
+                            args.append(arg.strip('"\''))
+                        cmd.extend(args)
+                    if config_file_path and config_argument and config_full and os.path.exists(config_full):
+                        cmd.extend([config_argument, config_full])
+                else:
+                    # Manual arguments mode
+                    if startup_args:
+                        # Parse arguments and remove quotes since shell=False handles escaping
+                        args = []
+                        for arg in startup_args.split():
+                            args.append(arg.strip('"\''))
+                        cmd.extend(args)
+                shell = False
             
             server_logs_dir = os.path.join(install_dir, "logs")
             os.makedirs(server_logs_dir, exist_ok=True)
@@ -389,32 +442,60 @@ class ServerManager(ServerManagerModule):
             
             if callback:
                 callback(f"Starting server '{server_name}'...")
-                
-            with open(stdout_log, 'a') as stdout_file, open(stderr_log, 'a') as stderr_file:
+            
+            # Initialize log files (console will handle the actual logging)
+            with open(stdout_log, 'w') as stdout_file, open(stderr_log, 'w') as stderr_file:
                 start_time = datetime.now()
                 time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
-                stdout_file.write(f"\n--- Server started at {time_str} ---\n")
-                stdout_file.write(f"Command: {cmd}\n\n")
+                cmd_str = cmd if isinstance(cmd, str) else ' '.join(f'"{arg}"' if ' ' in str(arg) else str(arg) for arg in cmd)
+                stdout_file.write(f"--- Server started at {time_str} ---\n")
+                stdout_file.write(f"Command: {cmd_str}\n\n")
+                stderr_file.write(f"--- Server started at {time_str} ---\n")
+                stderr_file.write(f"Command: {cmd_str}\n\n")
                 
-                hide_consoles = should_hide_server_consoles(self.config)
-                if shell:
-                    process = subprocess.Popen(
-                        cmd,
-                        shell=True,
-                        cwd=install_dir,
-                        stdout=stdout_file,
-                        stderr=stderr_file,
-                        creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
-                    )
-                else:
-                    process = subprocess.Popen(
-                        cmd,
-                        cwd=install_dir,
-                        stdout=stdout_file,
-                        stderr=stderr_file,
-                        creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
-                    )
+            # Create process with pipes for real-time console interaction
+            hide_consoles = should_hide_server_consoles(self.config)
             
+            # For Steam/Source servers, try to force console output to stdout
+            cmd_str_check = cmd if isinstance(cmd, str) else ' '.join(cmd)
+            if "srcds" in cmd_str_check.lower() or "steamcmd" in cmd_str_check.lower():
+                # Add console output flags for Source servers
+                if isinstance(cmd, str):
+                    if "-console" not in cmd:
+                        cmd += " -console"
+                    if "-condebug" not in cmd:
+                        cmd += " -condebug"
+                else:
+                    if "-console" not in cmd:
+                        cmd.append("-console")
+                    if "-condebug" not in cmd:
+                        cmd.append("-condebug")
+                    
+            if shell:
+                process = subprocess.Popen(
+                    cmd,
+                    shell=True,
+                    cwd=install_dir,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,  # Redirect stderr to stdout for combined output
+                    text=True,
+                    bufsize=0,  # Unbuffered for real-time output
+                    universal_newlines=True,
+                    creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
+                )
+            else:
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=install_dir,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,  # Redirect stderr to stdout for combined output
+                    text=True,
+                    bufsize=0,  # Unbuffered for real-time output
+                    universal_newlines=True,
+                    creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
+                )
             time.sleep(1)
             if not psutil.pid_exists(process.pid):
                 logger.error(f"Server process terminated immediately after starting. Check logs at {stderr_log}")
@@ -424,6 +505,7 @@ class ServerManager(ServerManagerModule):
             
             # Update server configuration
             server_config['ProcessId'] = process.pid
+            server_config['PID'] = process.pid  # For console manager compatibility
             server_config['StartTime'] = start_time.isoformat()
             server_config['LastUpdate'] = datetime.now().isoformat()
             server_config['LogStdout'] = stdout_log
@@ -432,11 +514,16 @@ class ServerManager(ServerManagerModule):
             # Save updated configuration
             self.save_server_config(server_name, server_config)
             
+            # Store the process object for console access
+            if not hasattr(self, 'active_processes'):
+                self.active_processes = {}
+            self.active_processes[server_name] = process
+            
             if callback:
                 callback(f"Server '{server_name}' started successfully")
             
             logger.info(f"Server '{server_name}' started successfully with PID {process.pid}.")
-            return True, f"Server '{server_name}' started successfully with PID {process.pid}."
+            return True, process  # Return the process object for console
             
         except Exception as e:
             logger.error(f"Error starting server '{server_name}': {str(e)}")
@@ -887,17 +974,29 @@ class ServerManager(ServerManagerModule):
                 ]) and file_lower.endswith(('.bat', '.cmd')):
                     found_files.append(file)
                 
+                # Script files for servers (PowerShell and shell scripts)
+                elif any(pattern in file_lower for pattern in [
+                    'run.ps1', 'start.ps1', 'server.ps1', 'launch.ps1'
+                ]) and file_lower.endswith('.ps1'):
+                    found_files.append(file)
+                
+                elif any(pattern in file_lower for pattern in [
+                    'run.sh', 'start.sh', 'server.sh', 'launch.sh'
+                ]) and file_lower.endswith('.sh'):
+                    found_files.append(file)
+                
                 # General server executables
                 elif any(pattern in file_lower for pattern in [
                     'server.exe', 'dedicated', 'srcds'
                 ]) and file_lower.endswith('.exe'):
                     found_files.append(file)
             
-            # Sort to prioritize JAR files over batch files for Minecraft
+            # Sort to prioritize JAR files over scripts over executables
             found_files.sort(key=lambda x: (
                 0 if x.lower().endswith('.jar') else
                 1 if x.lower().endswith(('.bat', '.cmd')) else
-                2
+                2 if x.lower().endswith(('.ps1', '.sh')) else
+                3
             ))
             
             return found_files

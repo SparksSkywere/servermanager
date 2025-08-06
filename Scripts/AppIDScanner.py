@@ -8,6 +8,7 @@ import json
 import time
 import re
 import sqlite3
+import shutil
 from datetime import datetime, timezone
 import argparse
 
@@ -72,16 +73,16 @@ class AppIDScanner:
         self.rate_limit_backoff = 5.0  # Initial backoff for rate limit errors
         self.max_rate_limit_backoff = 60.0  # Maximum backoff time
         
-        # Enhanced server-related keywords for better filtering
+        # Enhanced server-related keywords for better filtering (more restrictive)
         self.server_keywords = [
-            'dedicated server', 'server', 'dedicated', 'srcds', 'game server',
-            'multiplayer server', 'listen server', 'host', 'hosting', 'ds'
+            'dedicated server', 'srcds', 'game server', 'hlds',
+            'multiplayer server', 'server tool', 'server files', 'server software'
         ]
         
         # More specific dedicated server keywords
         self.dedicated_keywords = [
             'dedicated server', 'dedicated', 'srcds', 'hlds', 'game server tool',
-            'server tool', 'ds', 'server files', 'server software'
+            'server tool', 'server files', 'server software'
         ]
         
         # JSON file path for AppID list (kept for backward compatibility and migration)
@@ -652,11 +653,34 @@ class AppIDScanner:
                 self.sqlite_conn.rollback()
 
     def is_server_application(self, app_name, app_details=None):
-        """Determine if an application is a server/dedicated server with enhanced detection"""
+        """Determine if an application is a server/dedicated server with enhanced detection and DLC exclusion"""
         if not app_name:
             return False, False
         
         app_name_lower = app_name.lower()
+        
+        # Exclude DLC and non-server content
+        dlc_keywords = [
+            'dlc', 'downloadable content', 'expansion pack', 'content pack',
+            'season pass', 'soundtrack', 'music', 'wallpaper', 'theme',
+            'skin pack', 'character pack', 'weapon pack', 'map pack',
+            'cosmetic', 'avatar', 'demo', 'beta', 'test', 'trailer'
+        ]
+        
+        # Check if it's DLC or other non-server content
+        for dlc_keyword in dlc_keywords:
+            if dlc_keyword in app_name_lower:
+                return False, False
+        
+        # Check app details type for DLC
+        if app_details:
+            app_type = app_details.get('type', '').lower()
+            if app_type in ['dlc', 'music', 'video', 'demo', 'advertising']:
+                return False, False
+            
+            # Check if it's marked as DLC in the data
+            if app_details.get('is_dlc', False):
+                return False, False
         
         # Check for explicit dedicated server keywords first
         is_dedicated = any(keyword in app_name_lower for keyword in self.dedicated_keywords)
@@ -664,7 +688,7 @@ class AppIDScanner:
         # Check for general server keywords
         is_server = is_dedicated or any(keyword in app_name_lower for keyword in self.server_keywords)
         
-        # Enhanced detection patterns
+        # Enhanced detection patterns for dedicated servers only
         dedicated_patterns = [
             r'dedicated\s+server',
             r'server\s+(?:tool|files|software)',
@@ -674,10 +698,14 @@ class AppIDScanner:
             r'game\s+server'
         ]
         
+        # More restrictive server patterns - focus on actual server applications
         server_patterns = [
-            r'server',
-            r'multiplayer\s+(?:tool|host)',
-            r'hosting\s+tool'
+            r'dedicated\s+server',
+            r'server\s+(?:tool|files|software)',
+            r'srcds',
+            r'hlds',
+            r'game\s+server',
+            r'multiplayer\s+server'
         ]
         
         # Pattern matching for dedicated servers
@@ -692,40 +720,47 @@ class AppIDScanner:
             for pattern in server_patterns:
                 if re.search(pattern, app_name_lower):
                     is_server = True
+                    # For these patterns, also mark as dedicated since they're likely actual servers
+                    if any(keyword in pattern for keyword in ['dedicated', 'srcds', 'hlds', 'game server']):
+                        is_dedicated = True
                     break
         
         # Additional checks using app details
         if app_details:
             app_type = app_details.get('type', '').lower()
             
-            # Check app type
-            if 'tool' in app_type or 'server' in app_type:
-                is_server = True
-                if 'dedicated' in app_type or 'server' in app_type:
-                    is_dedicated = True
-            
-            # Check categories
-            categories = app_details.get('categories', [])
-            for category in categories:
-                if isinstance(category, dict):
-                    desc = category.get('description', '').lower()
-                    if any(keyword in desc for keyword in ['dedicated server', 'multiplayer server', 'server tool']):
-                        is_server = True
-                        is_dedicated = True
-            
-            # Check genres for server-related content
-            genres = app_details.get('genres', [])
-            for genre in genres:
-                if isinstance(genre, dict):
-                    desc = genre.get('description', '').lower()
-                    if 'server' in desc or 'multiplayer' in desc:
-                        is_server = True
+            # Only consider 'tool' or 'game' types for servers
+            if app_type in ['tool', 'game']:
+                # Check categories for server-specific content
+                categories = app_details.get('categories', [])
+                for category in categories:
+                    if isinstance(category, dict):
+                        desc = category.get('description', '').lower()
+                        if any(keyword in desc for keyword in ['dedicated server', 'multiplayer server']):
+                            is_server = True
+                            is_dedicated = True
+                
+                # Check genres for server-related content (be more restrictive)
+                genres = app_details.get('genres', [])
+                for genre in genres:
+                    if isinstance(genre, dict):
+                        desc = genre.get('description', '').lower()
+                        if 'server' in desc and 'dedicated' in desc:
+                            is_server = True
+                            is_dedicated = True
+        
+        # Additional validation: must contain "server" to be considered a server
+        if is_server and 'server' not in app_name_lower:
+            # Double-check with more specific patterns
+            if not any(re.search(pattern, app_name_lower) for pattern in [r'srcds', r'hlds', r'\bds\b']):
+                is_server = False
+                is_dedicated = False
         
         return is_server, is_dedicated
     
-    def scan_steam_apps(self, limit=None, server_only=True):
-        """Scan Steam applications and save server apps to database only"""
-        logger.info("Starting Steam app scan (saving to database only)...")
+    def scan_steam_apps(self, limit=None, dedicated_only=True):
+        """Scan Steam applications and save only dedicated server apps to database"""
+        logger.info("Starting Steam app scan (saving only dedicated servers to database)...")
         logger.info(f"Rate limiting: {self.request_delay}s general, {self.api_request_delay}s API calls")
         
         # Get app list from Steam API
@@ -742,6 +777,7 @@ class AppIDScanner:
         processed = 0
         saved_count = 0
         dedicated_count = 0
+        skipped_count = 0
         
         for app in apps:
             try:
@@ -756,7 +792,7 @@ class AppIDScanner:
                 # Add a progress indicator with timing estimates
                 if processed % 50 == 0:
                     logger.info(f"Processed {processed}/{len(apps)} apps ({processed/len(apps)*100:.1f}%), "
-                              f"saved {saved_count} to database, found {dedicated_count} dedicated servers")
+                              f"saved {saved_count} dedicated servers, skipped {skipped_count} non-servers")
                 
                 # Get detailed information with improved error handling
                 app_details = self.get_app_details_steam_api(appid)
@@ -764,11 +800,15 @@ class AppIDScanner:
                 # Determine if it's a server application
                 is_server, is_dedicated = self.is_server_application(name, app_details)
                 
-                # Skip non-server apps if server_only is True (default)
-                if server_only and not is_server:
+                # Only save dedicated servers to reduce database clutter
+                if dedicated_only and not is_dedicated:
+                    skipped_count += 1
+                    continue
+                elif not dedicated_only and not is_server:
+                    skipped_count += 1
                     continue
                 
-                # Prepare app data for database (save all server apps to database)
+                # Prepare app data for database (only dedicated servers)
                 app_data = {
                     'appid': appid,
                     'name': name,
@@ -790,7 +830,7 @@ class AppIDScanner:
                         'platforms': json.dumps(app_details.get('platforms', {}))
                     })
                 
-                # Save to database (all server apps)
+                # Save to database (only dedicated servers)
                 self.save_app_to_database(app_data)
                 saved_count += 1
                 
@@ -798,15 +838,16 @@ class AppIDScanner:
                     dedicated_count += 1
                 
                 if processed % 100 == 0:
-                    logger.info(f"Processed {processed} apps, saved {saved_count} to database, found {dedicated_count} dedicated servers")
+                    logger.info(f"Processed {processed} apps, saved {saved_count} dedicated servers")
                 
             except Exception as e:
                 logger.error(f"Error processing app {app.get('appid', 'unknown')}: {e}")
                 continue
         
         # Final logging and summary
-        logger.info(f"Scan complete! Processed {processed} apps, saved {saved_count} to database, found {dedicated_count} total dedicated servers")
-        logger.info("All server application data is now stored in the database")
+        logger.info(f"Scan complete! Processed {processed} apps, saved {saved_count} dedicated servers to database")
+        logger.info(f"Skipped {skipped_count} non-dedicated server applications")
+        logger.info("Only dedicated server applications are stored in the database")
     
     def search_apps(self, query, server_only=False):
         """Search for apps in the database"""
@@ -905,8 +946,7 @@ class AppIDScanner:
 def main():
     parser = argparse.ArgumentParser(description='Steam AppID Scanner')
     parser.add_argument('--limit', type=int, help='Limit number of apps to scan')
-    parser.add_argument('--server-only', action='store_true', default=True, help='Only save server applications (default: True)')
-    parser.add_argument('--include-all', action='store_true', help='Include all apps, not just servers')
+    parser.add_argument('--include-all', action='store_true', help='Include all server types, not just dedicated servers')
     parser.add_argument('--search', type=str, help='Search for apps by name')
     parser.add_argument('--list-servers', action='store_true', help='List all server applications')
     parser.add_argument('--dedicated-only', action='store_true', help='Show only dedicated servers (use with --list-servers)')
@@ -937,7 +977,7 @@ def main():
         
         elif args.search:
             # Search for apps
-            results = scanner.search_apps(args.search, server_only=args.server_only and not args.include_all)
+            results = scanner.search_apps(args.search, server_only=not args.include_all)
             print(f"\nSearch results for '{args.search}':")
             print("-" * 80)
             for appid, name, is_server, is_dedicated in results:
@@ -964,8 +1004,9 @@ def main():
             print(f"Dedicated Servers: {stats['dedicated_server_apps']:,}")
         
         else:
-            # Perform scan
-            scanner.scan_steam_apps(limit=args.limit, server_only=args.server_only and not args.include_all)
+            # Perform scan - now defaults to dedicated_only=True
+            dedicated_only = not args.include_all  # If include_all is specified, don't restrict to dedicated only
+            scanner.scan_steam_apps(limit=args.limit, dedicated_only=dedicated_only)
             
             # Show final statistics
             stats = scanner.get_database_stats()

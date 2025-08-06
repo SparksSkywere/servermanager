@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+"""
+Real-time Server Console System - Completely Rewritten
+Provides interactive console functionality for game servers with real-time I/O
+"""
 import os
 import sys
 import subprocess
@@ -21,908 +25,882 @@ from Modules.logging import get_dashboard_logger
 logger = get_dashboard_logger()
 
 
-class ServerConsole:
-    """Manages console interaction for a single server process"""
+class RealTimeConsole:
+    """Real-time console for individual server process with interactive command support"""
     
-    def __init__(self, server_name, server_config, server_manager=None):
+    def __init__(self, server_name, server_config):
         self.server_name = server_name
         self.server_config = server_config
-        self.server_manager = server_manager
         self.process = None
-        self.output_queue = queue.Queue()
-        self.input_queue = queue.Queue()
-        self.output_thread = None
-        self.input_thread = None
-        self.is_running = False
-        self.console_window = None
-        self.console_text = None
+        self.is_active = False
+        
+        # GUI components
+        self.window = None
+        self.text_widget = None
         self.command_entry = None
+        
+        # Threading components
+        self.output_thread = None
+        self.error_thread = None
+        self.input_thread = None
+        self.log_monitor_thread = None  # Additional thread for log file monitoring
+        self.stop_event = threading.Event()
+        
+        # Command handling
+        self.command_queue = queue.Queue()
         self.command_history = []
         self.history_index = -1
-        self.max_output_lines = 1000  # Limit console output to prevent memory issues
         
-        # Console output buffer to store recent output
+        # Output buffering
         self.output_buffer = []
-        self.max_buffer_lines = 500  # Keep last 500 lines of output
         self.buffer_lock = threading.Lock()
+        self.max_buffer_size = 1000
         
-        # Real-time output monitoring
-        self.monitoring_process = None
-        self.log_file_path = None
-        self.last_file_position = 0
+        # Log file handles and monitoring
+        self.stdout_log = None
+        self.stderr_log = None
+        self.server_log_paths = []  # Additional server-specific log files to monitor
+        self.log_file_positions = {}  # Track positions in log files
         
-    def _add_to_buffer(self, text, message_type="info"):
-        """Add text to the output buffer"""
+    def attach_to_process(self, process):
+        """Attach console to an existing process object"""
         try:
-            with self.buffer_lock:
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                self.output_buffer.append({
-                    'timestamp': timestamp,
-                    'text': text.strip(),
-                    'type': message_type
-                })
+            if not process:
+                logger.error(f"Cannot attach console to {self.server_name}: No process provided")
+                return False
                 
-                # Limit buffer size
-                if len(self.output_buffer) > self.max_buffer_lines:
-                    self.output_buffer.pop(0)
-                    
-        except Exception as e:
-            logger.error(f"Error adding to output buffer for {self.server_name}: {e}")
-    
-    def _get_server_log_file(self):
-        """Get the log file path for the server"""
-        try:
-            server_type = self.server_config.get('type', '').lower()
+            self.process = process
+            self.is_active = True
+            self.stop_event.clear()
             
-            if server_type == 'minecraft':
-                # Minecraft servers typically log to logs/latest.log
-                install_dir = self.server_config.get('install_dir', '')
-                if install_dir and os.path.exists(install_dir):
-                    log_file = os.path.join(install_dir, 'logs', 'latest.log')
-                    if os.path.exists(log_file):
-                        return log_file
-                    
-                    # Alternative locations
-                    alt_log_files = [
-                        os.path.join(install_dir, 'server.log'),
-                        os.path.join(install_dir, 'logs', 'server.log'),
-                        os.path.join(install_dir, 'minecraft_server.log')
-                    ]
-                    
-                    for alt_log in alt_log_files:
-                        if os.path.exists(alt_log):
-                            return alt_log
+            # Open log files if specified
+            self._open_log_files()
             
-            elif server_type == 'steam':
-                # Steam servers may have different log locations
-                install_dir = self.server_config.get('install_dir', '')
-                if install_dir and os.path.exists(install_dir):
-                    # Common Steam server log patterns
-                    possible_logs = [
-                        os.path.join(install_dir, 'logs', 'console.log'),
-                        os.path.join(install_dir, 'console.log'),
-                        os.path.join(install_dir, 'server.log'),
-                        os.path.join(install_dir, 'srcds.log'),
-                        os.path.join(install_dir, 'logs', 'srcds.log')
-                    ]
-                    
-                    for log_file in possible_logs:
-                        if os.path.exists(log_file):
-                            return log_file
+            # Add session start message
+            self._add_output(f"=== Console attached to {self.server_name} (PID: {process.pid}) ===", "system")
             
-            else:
-                # Other server types - check common log locations
-                install_dir = self.server_config.get('install_dir', '')
-                if install_dir and os.path.exists(install_dir):
-                    common_logs = [
-                        os.path.join(install_dir, 'server.log'),
-                        os.path.join(install_dir, 'console.log'),
-                        os.path.join(install_dir, 'logs', 'server.log'),
-                        os.path.join(install_dir, 'logs', 'console.log')
-                    ]
-                    
-                    for log_file in common_logs:
-                        if os.path.exists(log_file):
-                            return log_file
+            # Start monitoring threads
+            self._start_monitoring_threads()
             
-            return None
+            logger.info(f"Console attached to {self.server_name} (PID: {process.pid})")
+            return True
             
         except Exception as e:
-            logger.error(f"Error finding log file for {self.server_name}: {e}")
-            return None
-    
-    def _load_recent_output(self):
-        """Load recent output from log file or process"""
-        try:
-            # First, try to get output from log file
-            log_file = self._get_server_log_file()
-            if log_file and os.path.exists(log_file):
-                self._load_from_log_file(log_file)
-                return True
-            
-            # If no log file, try to get output from running process
-            if self.process and self.process.is_running():
-                self._add_to_buffer(f"Connected to running {self.server_config.get('type', 'Unknown')} server process (PID: {self.process.pid})", "info")
-                return True
-            
-            # No recent output available
-            self._add_to_buffer(f"No recent console output available for {self.server_name}", "warning")
-            self._add_to_buffer("Console monitoring will start when the server begins outputting new messages.", "info")
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error loading recent output for {self.server_name}: {e}")
-            self._add_to_buffer(f"Error loading recent output: {str(e)}", "error")
+            logger.error(f"Error attaching console to {self.server_name}: {e}")
             return False
     
-    def _load_from_log_file(self, log_file):
-        """Load recent lines from log file"""
+    def _open_log_files(self):
+        """Open log files for writing"""
         try:
-            # Read last N lines from file
-            lines_to_read = min(100, self.max_buffer_lines // 2)  # Read last 100 lines or half buffer
+            stdout_path = self.server_config.get('LogStdout')
+            stderr_path = self.server_config.get('LogStderr')
             
-            with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
-                # Go to end of file
-                f.seek(0, 2)
-                file_size = f.tell()
-                
-                # Read chunks from end to find last N lines
-                lines = []
-                buffer_size = 8192
-                pos = file_size
-                
-                while len(lines) < lines_to_read and pos > 0:
-                    # Calculate chunk size
-                    chunk_size = min(buffer_size, pos)
-                    pos -= chunk_size
-                    
-                    # Read chunk
-                    f.seek(pos)
-                    chunk = f.read(chunk_size)
-                    
-                    # Split into lines and prepend to our list
-                    chunk_lines = chunk.split('\n')
-                    if pos > 0:
-                        # First line might be incomplete, remove it
-                        chunk_lines = chunk_lines[1:]
-                    
-                    lines = chunk_lines + lines
-                
-                # Keep only the last N lines and remove empty lines
-                recent_lines = [line.strip() for line in lines[-lines_to_read:] if line.strip()]
-                
-                # Add to buffer with appropriate message types
-                for line in recent_lines:
-                    message_type = self._classify_log_message(line)
-                    self._add_to_buffer(line, message_type)
-                
-                # Store file position for monitoring
-                self.last_file_position = file_size
-                self.log_file_path = log_file
-                
-                logger.info(f"Loaded {len(recent_lines)} recent log lines for {self.server_name}")
+            if stdout_path:
+                self.stdout_log = open(stdout_path, 'a', encoding='utf-8', buffering=1)
+            if stderr_path:
+                self.stderr_log = open(stderr_path, 'a', encoding='utf-8', buffering=1)
                 
         except Exception as e:
-            logger.error(f"Error reading log file {log_file}: {e}")
-            self._add_to_buffer(f"Error reading log file: {str(e)}", "error")
+            logger.error(f"Error opening log files for {self.server_name}: {e}")
     
-    def _classify_log_message(self, message):
-        """Classify log message type based on content"""
-        message_lower = message.lower()
-        
-        # Error patterns
-        if any(pattern in message_lower for pattern in ['error', 'exception', 'failed', 'crash', 'fatal']):
-            return "error"
-        
-        # Warning patterns
-        if any(pattern in message_lower for pattern in ['warn', 'warning', 'deprecated', 'outdated']):
-            return "warning"
-        
-        # Command patterns (for Minecraft)
-        if any(pattern in message for pattern in ['issued server command:', '] used command:', 'Command used:']):
-            return "command"
-        
-        # Info patterns
-        if any(pattern in message_lower for pattern in ['info', 'starting', 'started', 'loaded', 'enabled', 'done']):
-            return "info"
-        
-        return "default"  # Default message type
-        
-    def start_console(self, process=None):
-        """Start console monitoring for a server process"""
+    def _close_log_files(self):
+        """Close log files"""
         try:
-            if process:
-                self.process = process
-            else:
-                # Try to find the process by name/PID
-                self.process = self._find_server_process()
+            if self.stdout_log:
+                self.stdout_log.close()
+                self.stdout_log = None
+            if self.stderr_log:
+                self.stderr_log.close() 
+                self.stderr_log = None
+        except Exception as e:
+            logger.error(f"Error closing log files for {self.server_name}: {e}")
+    
+    def _start_monitoring_threads(self):
+        """Start all monitoring threads"""
+        try:
+            # Start stdout monitoring
+            if self.process and hasattr(self.process, 'stdout') and self.process.stdout:
+                self.output_thread = threading.Thread(
+                    target=self._monitor_stdout,
+                    daemon=True,
+                    name=f"Console-{self.server_name}-Stdout"
+                )
+                self.output_thread.start()
             
-            # Load recent output before starting monitoring
-            self._load_recent_output()
+            # Start stderr monitoring (only if not redirected to stdout)
+            if self.process and hasattr(self.process, 'stderr') and self.process.stderr and self.process.stderr != self.process.stdout:
+                self.error_thread = threading.Thread(
+                    target=self._monitor_stderr,
+                    daemon=True,
+                    name=f"Console-{self.server_name}-Stderr"
+                )
+                self.error_thread.start()
             
-            if not self.process:
-                logger.warning(f"No process found for server {self.server_name}")
-                # Still return True to allow console window to open for log monitoring
-                self.is_running = True
-                
-                # Start log file monitoring if available
-                if self.log_file_path:
-                    self.output_thread = threading.Thread(
-                        target=self._monitor_log_file,
-                        daemon=True,
-                        name=f"Console-LogMonitor-{self.server_name}"
-                    )
-                    self.output_thread.start()
-                
-                return True
-            
-            self.is_running = True
-            
-            # Start output monitoring thread
-            self.output_thread = threading.Thread(
-                target=self._monitor_output_combined,
-                daemon=True,
-                name=f"Console-Output-{self.server_name}"
-            )
-            self.output_thread.start()
-            
-            # Start input handling thread
+            # Start command input handler
             self.input_thread = threading.Thread(
-                target=self._handle_input,
+                target=self._handle_commands,
                 daemon=True,
-                name=f"Console-Input-{self.server_name}"
+                name=f"Console-{self.server_name}-Input"
             )
             self.input_thread.start()
             
-            logger.info(f"Console started for server {self.server_name}")
-            return True
+            # Start log file monitoring for additional output capture
+            self._discover_server_logs()
+            if self.server_log_paths:
+                self.log_monitor_thread = threading.Thread(
+                    target=self._monitor_log_files,
+                    daemon=True,
+                    name=f"Console-{self.server_name}-LogMonitor"
+                )
+                self.log_monitor_thread.start()
             
         except Exception as e:
-            logger.error(f"Failed to start console for {self.server_name}: {e}")
-            return False
-        """Start console monitoring for a server process"""
-        try:
-            if process:
-                self.process = process
-            else:
-                # Try to find the process by name/PID
-                self.process = self._find_server_process()
-            
-            if not self.process:
-                logger.warning(f"No process found for server {self.server_name}")
-                return False
-            
-            self.is_running = True
-            
-            # Start output monitoring thread
-            self.output_thread = threading.Thread(
-                target=self._monitor_output,
-                daemon=True,
-                name=f"Console-Output-{self.server_name}"
-            )
-            self.output_thread.start()
-            
-            # Start input handling thread
-            self.input_thread = threading.Thread(
-                target=self._handle_input,
-                daemon=True,
-                name=f"Console-Input-{self.server_name}"
-            )
-            self.input_thread.start()
-            
-            logger.info(f"Console started for server {self.server_name}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to start console for {self.server_name}: {e}")
-            return False
+            logger.error(f"Error starting monitoring threads for {self.server_name}: {e}")
     
-    def stop_console(self):
-        """Stop console monitoring"""
+    def _monitor_stdout(self):
+        """Monitor stdout from server process"""
         try:
-            self.is_running = False
+            logger.debug(f"Started stdout monitoring for {self.server_name}")
             
-            # Close console window if open
-            if self.console_window:
-                self.console_window.destroy()
-                self.console_window = None
-            
-            # Wait for threads to finish
-            if self.output_thread and self.output_thread.is_alive():
-                self.output_thread.join(timeout=2.0)
-            
-            if self.input_thread and self.input_thread.is_alive():
-                self.input_thread.join(timeout=2.0)
-            
-            logger.info(f"Console stopped for server {self.server_name}")
-            
-        except Exception as e:
-            logger.error(f"Error stopping console for {self.server_name}: {e}")
-    
-    def send_command(self, command):
-        """Send a command to the server process"""
-        try:
-            if not self.is_running:
-                logger.warning(f"Cannot send command to {self.server_name}: console not running")
-                return False
-            
-            # Add to command history
-            if command.strip() and (not self.command_history or self.command_history[-1] != command.strip()):
-                self.command_history.append(command.strip())
-                # Limit history size
-                if len(self.command_history) > 100:
-                    self.command_history.pop(0)
-            
-            # Add command to buffer
-            self._add_to_buffer(f"> {command.strip()}", "command")
-            
-            # Queue the command for input thread
-            self.input_queue.put(command + '\n')
-            
-            # Log the command
-            logger.info(f"Command sent to {self.server_name}: {command.strip()}")
-            
-            # Update console display if window is open
-            if self.console_text:
-                self._append_to_console(f"> {command.strip()}\n", "command")
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to send command to {self.server_name}: {e}")
-            return False
-    
-    def show_console_window(self, parent=None):
-        """Show the console window for this server"""
-        try:
-            if self.console_window and self.console_window.winfo_exists():
-                # Window already exists, just bring it to front
-                self.console_window.lift()
-                self.console_window.focus_force()
-                return
-            
-            # Create new console window
-            self.console_window = tk.Toplevel(parent)
-            self.console_window.title(f"Server Console - {self.server_name}")
-            self.console_window.geometry("800x600")
-            
-            # Create main frame
-            main_frame = ttk.Frame(self.console_window, padding=10)
-            main_frame.pack(fill=tk.BOTH, expand=True)
-            
-            # Server info frame
-            info_frame = ttk.LabelFrame(main_frame, text="Server Information", padding=5)
-            info_frame.pack(fill=tk.X, pady=(0, 10))
-            
-            # Server details
-            ttk.Label(info_frame, text=f"Name: {self.server_name}", font=("Consolas", 9)).pack(anchor=tk.W)
-            server_type = self.server_config.get('type', 'Unknown')
-            ttk.Label(info_frame, text=f"Type: {server_type}", font=("Consolas", 9)).pack(anchor=tk.W)
-            
-            if self.process:
+            while self.is_active and not self.stop_event.is_set():
                 try:
-                    process_info = psutil.Process(self.process.pid)
-                    ttk.Label(info_frame, text=f"PID: {self.process.pid}", font=("Consolas", 9)).pack(anchor=tk.W)
-                    ttk.Label(info_frame, text=f"Status: {process_info.status()}", font=("Consolas", 9)).pack(anchor=tk.W)
-                except:
-                    ttk.Label(info_frame, text="Process: Not Available", font=("Consolas", 9)).pack(anchor=tk.W)
-            
-            # Console output frame
-            console_frame = ttk.LabelFrame(main_frame, text="Console Output", padding=5)
-            console_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-            
-            # Create console text widget with scrollbar
-            self.console_text = scrolledtext.ScrolledText(
-                console_frame,
-                font=("Consolas", 9),
-                bg="black",
-                fg="white",
-                insertbackground="white",
-                state=tk.DISABLED,
-                wrap=tk.WORD
-            )
-            self.console_text.pack(fill=tk.BOTH, expand=True)
-            
-            # Configure text tags for different message types
-            self.console_text.tag_configure("command", foreground="#90EE90")  # Light green
-            self.console_text.tag_configure("error", foreground="#FF6B6B")    # Light red
-            self.console_text.tag_configure("warning", foreground="#FFD93D")  # Yellow
-            self.console_text.tag_configure("info", foreground="#74C0FC")     # Light blue
-            
-            # Command input frame
-            input_frame = ttk.LabelFrame(main_frame, text="Command Input", padding=5)
-            input_frame.pack(fill=tk.X)
-            
-            # Command entry
-            self.command_entry = ttk.Entry(input_frame, font=("Consolas", 9))
-            self.command_entry.pack(fill=tk.X, side=tk.LEFT, expand=True, padx=(0, 5))
-            
-            # Send button
-            send_button = ttk.Button(input_frame, text="Send", command=self._on_send_command, width=8)
-            send_button.pack(side=tk.RIGHT)
-            
-            # Bind events
-            self.command_entry.bind("<Return>", lambda e: self._on_send_command())
-            self.command_entry.bind("<Up>", self._on_history_up)
-            self.command_entry.bind("<Down>", self._on_history_down)
-            self.console_window.protocol("WM_DELETE_WINDOW", self._on_console_close)
-            
-            # Focus on command entry
-            self.command_entry.focus_set()
-            
-            # Start console monitoring if not already running
-            if not self.is_running:
-                self.start_console()
-            
-            # Display recent output from buffer
-            self._display_buffered_output()
-            
-            # Add separator and current session message
-            self._append_to_console("=" * 60 + "\n", "info")
-            self._append_to_console(f"Console session started for {self.server_name}\n", "info")
-            self._append_to_console("Type commands below and press Enter to send them to the server.\n", "info")
-            self._append_to_console("Use Up/Down arrow keys to navigate command history.\n", "info")
-            
-            if self.log_file_path:
-                self._append_to_console(f"Monitoring log file: {os.path.basename(self.log_file_path)}\n", "info")
-            
-            self._append_to_console("=" * 60 + "\n\n", "info")
-            
-            logger.info(f"Console window opened for {self.server_name}")
-            
-        except Exception as e:
-            logger.error(f"Failed to show console window for {self.server_name}: {e}")
-            messagebox.showerror("Console Error", f"Failed to open console window:\n{str(e)}")
-    
-    def _display_buffered_output(self):
-        """Display recent output from the buffer in the console"""
-        try:
-            if not self.console_text:
-                return
-            
-            with self.buffer_lock:
-                if not self.output_buffer:
-                    self._append_to_console("No recent console output available.\n", "warning")
-                    return
-                
-                # Add header for recent output
-                self._append_to_console("=" * 60 + "\n", "info")
-                self._append_to_console("RECENT CONSOLE OUTPUT\n", "info")
-                self._append_to_console("=" * 60 + "\n", "info")
-                
-                # Display buffered output
-                for entry in self.output_buffer:
-                    formatted_line = f"[{entry['timestamp']}] {entry['text']}\n"
-                    self._append_to_console(formatted_line, entry['type'])
-            
-        except Exception as e:
-            logger.error(f"Error displaying buffered output for {self.server_name}: {e}")
-    
-    def _find_server_process(self):
-        """Find the server process by PID or executable name"""
-        try:
-            # Try to get PID from server manager or config
-            pid = None
-            if self.server_manager:
-                server_status = self.server_manager.get_server_status(self.server_name)
-                if server_status and server_status.get('pid'):
-                    pid = server_status['pid']
-            
-            if not pid and 'pid' in self.server_config:
-                pid = self.server_config['pid']
-            
-            if pid:
-                try:
-                    process = psutil.Process(pid)
-                    if process.is_running():
-                        return process
-                except psutil.NoSuchProcess:
-                    pass
-            
-            # Try to find by executable name
-            executable_name = self._get_server_executable_name()
-            if executable_name:
-                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-                    try:
-                        if proc.info['name'] and executable_name.lower() in proc.info['name'].lower():
-                            return proc
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        continue
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error finding process for {self.server_name}: {e}")
-            return None
-    
-    def _monitor_log_file(self):
-        """Monitor log file for new output"""
-        try:
-            if not self.log_file_path or not os.path.exists(self.log_file_path):
-                return
-            
-            while self.is_running:
-                try:
-                    with open(self.log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        # Seek to last position
-                        f.seek(self.last_file_position)
+                    if self.process and hasattr(self.process, 'stdout') and self.process.stdout:
+                        # On Windows, use non-blocking read with polling
+                        if sys.platform == 'win32':
+                            try:
+                                # Use readline with a small timeout
+                                line = self.process.stdout.readline()
+                                if line:
+                                    line = line.strip()
+                                    if line:
+                                        self._add_output(line, "stdout")
+                                        if self.stdout_log:
+                                            self.stdout_log.write(f"{datetime.now().isoformat()} {line}\n")
+                                            self.stdout_log.flush()
+                                elif self.process.poll() is not None:
+                                    # Process has ended
+                                    break
+                                else:
+                                    # Small sleep to prevent excessive CPU usage
+                                    time.sleep(0.01)
+                            except Exception as e:
+                                logger.debug(f"Windows stdout read error: {e}")
+                                time.sleep(0.1)
+                        else:
+                            # Unix systems - use select for non-blocking reads
+                            try:
+                                import select
+                                ready, _, _ = select.select([self.process.stdout], [], [], 0.1)
+                                if ready:
+                                    line = self.process.stdout.readline()
+                                    if line:
+                                        line = line.strip()
+                                        if line:
+                                            self._add_output(line, "stdout")
+                                            if self.stdout_log:
+                                                self.stdout_log.write(f"{datetime.now().isoformat()} {line}\n")
+                                                self.stdout_log.flush()
+                                else:
+                                    # Check if process ended
+                                    if self.process.poll() is not None:
+                                        break
+                            except ImportError:
+                                # Fallback without select
+                                line = self.process.stdout.readline()
+                                if line:
+                                    line = line.strip()
+                                    if line:
+                                        self._add_output(line, "stdout")
+                                        if self.stdout_log:
+                                            self.stdout_log.write(f"{datetime.now().isoformat()} {line}\n")
+                                            self.stdout_log.flush()
+                                elif self.process.poll() is not None:
+                                    break
+                                else:
+                                    time.sleep(0.05)
+                    else:
+                        time.sleep(0.1)
                         
-                        # Read new lines
-                        new_lines = f.readlines()
-                        
-                        if new_lines:
-                            for line in new_lines:
+                except Exception as e:
+                    logger.debug(f"Stdout monitoring error for {self.server_name}: {e}")
+                    time.sleep(0.1)
+                    
+        except Exception as e:
+            logger.error(f"Fatal stdout monitoring error for {self.server_name}: {e}")
+        finally:
+            logger.debug(f"Stdout monitoring ended for {self.server_name}")
+    
+    def _monitor_stderr(self):
+        """Monitor stderr from server process"""
+        try:
+            logger.debug(f"Started stderr monitoring for {self.server_name}")
+            
+            while self.is_active and not self.stop_event.is_set():
+                try:
+                    if self.process and hasattr(self.process, 'stderr') and self.process.stderr:
+                        # Use select/poll for non-blocking reads if available
+                        try:
+                            import select
+                            if hasattr(select, 'select'):
+                                ready, _, _ = select.select([self.process.stderr], [], [], 0.1)
+                                if ready:
+                                    line = self.process.stderr.readline()
+                                    if line:
+                                        line = line.strip()
+                                        if line:
+                                            self._add_output(line, "stderr")
+                                            if self.stderr_log:
+                                                self.stderr_log.write(f"{datetime.now().isoformat()} {line}\n")
+                                                self.stderr_log.flush()
+                                else:
+                                    # Check if process ended
+                                    if self.process.poll() is not None:
+                                        break
+                            else:
+                                # Fallback for Windows
+                                line = self.process.stderr.readline()
+                                if line:
+                                    line = line.strip()
+                                    if line:
+                                        self._add_output(line, "stderr")
+                                        if self.stderr_log:
+                                            self.stderr_log.write(f"{datetime.now().isoformat()} {line}\n")
+                                            self.stderr_log.flush()
+                                elif self.process.poll() is not None:
+                                    break
+                                else:
+                                    time.sleep(0.05)  # Shorter sleep for more responsive output
+                        except ImportError:
+                            # Fallback for systems without select
+                            line = self.process.stderr.readline()
+                            if line:
                                 line = line.strip()
                                 if line:
-                                    message_type = self._classify_log_message(line)
-                                    self._add_to_buffer(line, message_type)
-                                    
-                                    # Update console display if window is open
-                                    if self.console_text:
-                                        self._append_to_console(line + '\n', message_type)
-                            
-                            # Update file position
-                            self.last_file_position = f.tell()
-                    
-                    time.sleep(0.5)  # Check every 0.5 seconds
-                    
-                except FileNotFoundError:
-                    # Log file might have been rotated or deleted
-                    time.sleep(2)
-                    continue
+                                    self._add_output(line, "stderr")
+                                    if self.stderr_log:
+                                        self.stderr_log.write(f"{datetime.now().isoformat()} {line}\n")
+                                        self.stderr_log.flush()
+                            elif self.process.poll() is not None:
+                                break
+                            else:
+                                time.sleep(0.05)
+                    else:
+                        time.sleep(0.1)
+                        
                 except Exception as e:
-                    logger.error(f"Error monitoring log file for {self.server_name}: {e}")
-                    time.sleep(2)
+                    logger.debug(f"Stderr monitoring error for {self.server_name}: {e}")
+                    time.sleep(0.1)
                     
         except Exception as e:
-            logger.error(f"Log file monitoring thread error for {self.server_name}: {e}")
-    
-    def _monitor_output_combined(self):
-        """Monitor both process output and log file"""
-        try:
-            # Start log file monitoring in parallel if available
-            log_monitor_thread = None
-            if self.log_file_path:
-                log_monitor_thread = threading.Thread(
-                    target=self._monitor_log_file,
-                    daemon=True,
-                    name=f"Console-LogFile-{self.server_name}"
-                )
-                log_monitor_thread.start()
-            
-            # Monitor process if available
-            while self.is_running and self.process:
-                try:
-                    # Check if process is still alive
-                    if not self.process.is_running():
-                        self._add_to_buffer("Server process has stopped", "warning")
-                        if self.console_text:
-                            self._append_to_console("\n[Server process has stopped]\n", "warning")
-                        break
-                    
-                    # For now, we rely primarily on log file monitoring
-                    # In future, this could be enhanced to capture stdout/stderr if process was started appropriately
-                    time.sleep(2)
-                    
-                except psutil.NoSuchProcess:
-                    self._add_to_buffer("Server process no longer exists", "error")
-                    if self.console_text:
-                        self._append_to_console("\n[Server process no longer exists]\n", "error")
-                    break
-                except Exception as e:
-                    logger.error(f"Error monitoring process output for {self.server_name}: {e}")
-                    time.sleep(2)
-            
-        except Exception as e:
-            logger.error(f"Combined output monitoring thread error for {self.server_name}: {e}")
+            logger.error(f"Fatal stderr monitoring error for {self.server_name}: {e}")
         finally:
-            self.is_running = False
+            logger.debug(f"Stderr monitoring ended for {self.server_name}")
     
-    def _get_server_executable_name(self):
-        """Get the expected executable name for the server type"""
-        server_type = self.server_config.get('type', '').lower()
-        
-        if server_type == 'minecraft':
-            return 'java'  # Minecraft servers run with Java
-        elif server_type == 'steam':
-            # Get the executable from app ID or server config
-            app_id = self.server_config.get('appId')
-            if app_id:
-                # Common Steam server executables
-                steam_executables = {
-                    '740': 'srcds',      # Counter-Strike: Global Offensive
-                    '232250': 'srcds',   # Team Fortress 2
-                    '4020': 'srcds',     # Garry's Mod
-                    '90': 'hlds',        # Half-Life 1
-                    '440': 'srcds',      # Team Fortress 2
-                }
-                return steam_executables.get(str(app_id), 'srcds')
-            return 'srcds'
-        else:
-            # For other server types, try to get from config
-            executable = self.server_config.get('executable', '')
-            if executable:
-                return os.path.basename(executable)
-        
-        return None
-    
-    def _monitor_output(self):
-        """Legacy method - now redirects to combined monitoring"""
-        self._monitor_output_combined()
-    
-    def _handle_input(self):
-        """Handle input commands in a separate thread"""
+    def _handle_commands(self):
+        """Handle command input to server process"""
         try:
-            while self.is_running:
+            logger.debug(f"Started command handler for {self.server_name}")
+            
+            while self.is_active and not self.stop_event.is_set():
                 try:
-                    # Get command from queue (blocking with timeout)
-                    command = self.input_queue.get(timeout=1.0)
+                    # Wait for command with timeout
+                    command = self.command_queue.get(timeout=1.0)
                     
-                    if self.process and self.process.is_running():
-                        # For console input, we would need the process to have been
-                        # started with stdin=subprocess.PIPE
-                        # This implementation assumes we'll extend server startup
-                        # to support console input
-                        logger.info(f"Would send command to {self.server_name}: {command.strip()}")
+                    if command and self.process and hasattr(self.process, 'stdin') and self.process.stdin:
+                        try:
+                            # Send command to process
+                            command_with_newline = f"{command}\n"
+                            logger.debug(f"Sending to {self.server_name}: '{command_with_newline.strip()}'")
+                            
+                            # Write command (encode to bytes if needed)
+                            try:
+                                self.process.stdin.write(command_with_newline)
+                            except TypeError:
+                                # If stdin expects bytes, encode the string
+                                self.process.stdin.write(command_with_newline.encode('utf-8'))
+                            self.process.stdin.flush()
+                            
+                            # Show command in console
+                            self._add_output(f"> {command}", "command")
+                            
+                            # Add to history
+                            if command not in self.command_history:
+                                self.command_history.append(command)
+                                if len(self.command_history) > 50:
+                                    self.command_history.pop(0)
+                            
+                            logger.debug(f"Command sent successfully to {self.server_name}: {command}")
+                        except Exception as e:
+                            logger.error(f"Error sending command '{command}' to {self.server_name}: {e}")
+                    else:
+                        logger.warning(f"Cannot send command to {self.server_name}: process or stdin not available")
                     
-                    self.input_queue.task_done()
+                    self.command_queue.task_done()
                     
                 except queue.Empty:
                     continue
                 except Exception as e:
-                    logger.error(f"Error handling input for {self.server_name}: {e}")
-            
+                    logger.debug(f"Command handling error for {self.server_name}: {e}")
+                    
         except Exception as e:
-            logger.error(f"Input handling thread error for {self.server_name}: {e}")
+            logger.error(f"Fatal command handling error for {self.server_name}: {e}")
+        finally:
+            logger.debug(f"Command handler ended for {self.server_name}")
     
-    def _append_to_console(self, text, tag=None):
-        """Append text to the console display"""
-        if not self.console_text:
-            return
-        
+    def _discover_server_logs(self):
+        """Discover additional log files that the server might write to"""
         try:
-            # Enable text widget for editing
-            self.console_text.config(state=tk.NORMAL)
+            install_dir = self.server_config.get('InstallDir', '')
+            if not install_dir or not os.path.exists(install_dir):
+                return
             
-            # Add timestamp
-            timestamp = datetime.now().strftime("[%H:%M:%S] ")
+            # Common server log file patterns
+            log_patterns = [
+                'logs/*.log',
+                'logs/*.txt', 
+                '*.log',
+                'console.log',
+                'server.log',
+                'srcds.log',
+                'debug.log',
+                'l4d2/logs/*.log',  # L4D2 specific
+                'left4dead2/logs/*.log',  # L4D2 specific
+                'addons/sourcemod/logs/*.log'  # SourceMod logs
+            ]
             
-            # Insert timestamp
-            self.console_text.insert(tk.END, timestamp)
-            
-            # Insert text with tag
-            if tag:
-                self.console_text.insert(tk.END, text, tag)
-            else:
-                self.console_text.insert(tk.END, text)
-            
-            # Limit the number of lines to prevent memory issues
-            lines = self.console_text.get("1.0", tk.END).split('\n')
-            if len(lines) > self.max_output_lines:
-                # Remove oldest lines
-                excess_lines = len(lines) - self.max_output_lines
-                self.console_text.delete("1.0", f"{excess_lines + 1}.0")
-            
-            # Disable text widget and scroll to bottom
-            self.console_text.config(state=tk.DISABLED)
-            self.console_text.see(tk.END)
+            import glob
+            for pattern in log_patterns:
+                full_pattern = os.path.join(install_dir, pattern)
+                for log_file in glob.glob(full_pattern):
+                    if os.path.isfile(log_file) and log_file not in self.server_log_paths:
+                        self.server_log_paths.append(log_file)
+                        # Start from END of file to only show new content from current session
+                        try:
+                            with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                                f.seek(0, 2)  # Seek to end of file
+                                self.log_file_positions[log_file] = f.tell()
+                        except:
+                            self.log_file_positions[log_file] = 0
+                        logger.debug(f"Found server log file: {log_file} (starting from end)")
             
         except Exception as e:
-            logger.error(f"Error appending to console for {self.server_name}: {e}")
+            logger.debug(f"Error discovering server logs: {e}")
     
-    def _on_send_command(self):
-        """Handle send command button/enter key"""
+    def _monitor_log_files(self):
+        """Monitor additional server log files for output"""
+        try:
+            logger.debug(f"Started log file monitoring for {self.server_name}")
+            
+            while self.is_active and not self.stop_event.is_set():
+                try:
+                    for log_file in self.server_log_paths:
+                        try:
+                            if os.path.exists(log_file):
+                                with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                                    # Seek to last known position
+                                    f.seek(self.log_file_positions.get(log_file, 0))
+                                    
+                                    # Read new lines
+                                    new_lines = []
+                                    for line in f:
+                                        line = line.strip()
+                                        if line and not self._is_old_log_entry(line):
+                                            new_lines.append(line)
+                                    
+                                    # Only add lines if we have new content
+                                    if new_lines:
+                                        for line in new_lines:
+                                            # Don't prefix with [LOG] if it's already a real-time console output
+                                            if any(marker in line for marker in ['Setting breakpad', 'SteamInternal_', 'Looking up breakpad', 'Calling BreakpadMiniDumpSystemInit', 'Using breakpad']):
+                                                # Skip these repetitive startup messages
+                                                continue
+                                            elif line.startswith('---') or 'Command:' in line:
+                                                # Skip historical startup entries
+                                                continue
+                                            else:
+                                                self._add_output(line, "stdout")
+                                    
+                                    # Update position
+                                    self.log_file_positions[log_file] = f.tell()
+                        except Exception as e:
+                            logger.debug(f"Error reading log file {log_file}: {e}")
+                    
+                    time.sleep(0.5)  # Check log files every 500ms (less frequent than before)
+                    
+                except Exception as e:
+                    logger.debug(f"Log file monitoring error: {e}")
+                    time.sleep(1)
+                    
+        except Exception as e:
+            logger.error(f"Fatal log file monitoring error: {e}")
+        finally:
+            logger.debug(f"Log file monitoring ended for {self.server_name}")
+    
+    def _is_old_log_entry(self, line):
+        """Check if a log entry is from an old session"""
+        try:
+            # Skip historical server start entries
+            if '--- Server started at' in line:
+                return True
+            if 'Command:' in line and 'srcds.exe' in line:
+                return True
+            # Skip repetitive breakpad messages  
+            if any(marker in line for marker in [
+                'Setting breakpad minidump AppID',
+                'SteamInternal_SetMinidumpSteamID',
+                'Looking up breakpad interfaces',
+                'Calling BreakpadMiniDumpSystemInit',
+                'Using breakpad crash handler',
+                'Forcing breakpad minidump interfaces'
+            ]):
+                return True
+            return False
+        except:
+            return False
+    
+    def _add_output(self, text, msg_type="info"):
+        """Add output to buffer and update GUI"""
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            formatted_text = f"[{timestamp}] {text}"
+            
+            with self.buffer_lock:
+                self.output_buffer.append({
+                    'text': formatted_text,
+                    'type': msg_type,
+                    'timestamp': timestamp
+                })
+                
+                # Maintain buffer size
+                if len(self.output_buffer) > self.max_buffer_size:
+                    self.output_buffer.pop(0)
+            
+            # Update GUI if window is open
+            if self.window and self.text_widget:
+                self._update_gui_output(formatted_text, msg_type)
+                
+        except Exception as e:
+            logger.debug(f"Error adding output for {self.server_name}: {e}")
+    
+    def _update_gui_output(self, text, msg_type):
+        """Update GUI with new output (thread-safe)"""
+        try:
+            def update():
+                if self.text_widget and self.window and self.window.winfo_exists():
+                    try:
+                        self.text_widget.config(state=tk.NORMAL)
+                        self.text_widget.insert(tk.END, text + "\n", msg_type)
+                        self.text_widget.see(tk.END)
+                        
+                        # Limit lines in widget
+                        lines = int(self.text_widget.index('end-1c').split('.')[0])
+                        if lines > 1000:
+                            self.text_widget.delete(1.0, f"{lines-1000}.0")
+                        
+                        self.text_widget.config(state=tk.DISABLED)
+                    except Exception as e:
+                        logger.debug(f"GUI update error: {e}")
+            
+            if self.window:
+                self.window.after(0, update)
+                
+        except Exception as e:
+            logger.debug(f"Error scheduling GUI update: {e}")
+    
+    def send_command(self, command):
+        """Send command to server process"""
+        try:
+            if self.is_active and command.strip():
+                self.command_queue.put(command.strip())
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error sending command to {self.server_name}: {e}")
+            return False
+    
+    def show_window(self, parent=None):
+        """Show the console window"""
+        try:
+            if self.window and self.window.winfo_exists():
+                self.window.lift()
+                self.window.focus_set()
+                return
+            
+            # Create window
+            if parent:
+                self.window = tk.Toplevel(parent)
+            else:
+                self.window = tk.Tk()
+            
+            self.window.title(f"Console - {self.server_name}")
+            self.window.geometry("1000x700")
+            
+            # Create main frame
+            main_frame = ttk.Frame(self.window, padding=10)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Console output area
+            output_frame = ttk.LabelFrame(main_frame, text="Server Output", padding=5)
+            output_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+            
+            # Text widget with scrollbar
+            self.text_widget = scrolledtext.ScrolledText(
+                output_frame,
+                wrap=tk.WORD,
+                font=("Consolas", 10),
+                bg="black",
+                fg="white",
+                state=tk.DISABLED
+            )
+            self.text_widget.pack(fill=tk.BOTH, expand=True)
+            
+            # Configure tags for different message types
+            self.text_widget.tag_configure("stdout", foreground="white")
+            self.text_widget.tag_configure("stderr", foreground="#FF6B6B")
+            self.text_widget.tag_configure("command", foreground="#6BCF7F")
+            self.text_widget.tag_configure("system", foreground="#4ECDC4")
+            
+            # Command input area
+            input_frame = ttk.LabelFrame(main_frame, text="Send Command", padding=5)
+            input_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            # Command entry and button
+            cmd_frame = ttk.Frame(input_frame)
+            cmd_frame.pack(fill=tk.X)
+            
+            self.command_entry = ttk.Entry(cmd_frame, font=("Consolas", 10))
+            self.command_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+            
+            send_btn = ttk.Button(cmd_frame, text="Send", command=self._send_command_gui)
+            send_btn.pack(side=tk.RIGHT)
+            
+            # Button frame
+            btn_frame = ttk.Frame(main_frame)
+            btn_frame.pack(fill=tk.X)
+            
+            ttk.Button(btn_frame, text="Clear", command=self._clear_output).pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(btn_frame, text="Close", command=self._close_window).pack(side=tk.RIGHT)
+            
+            # Bind events
+            self.command_entry.bind("<Return>", lambda e: self._send_command_gui())
+            self.command_entry.bind("<Up>", self._prev_command)
+            self.command_entry.bind("<Down>", self._next_command)
+            self.window.protocol("WM_DELETE_WINDOW", self._close_window)
+            
+            # Load existing output
+            self._populate_existing_output()
+            
+            # Focus command entry
+            self.command_entry.focus_set()
+            
+        except Exception as e:
+            logger.error(f"Error showing console window for {self.server_name}: {e}")
+    
+    def _populate_existing_output(self):
+        """Populate console with existing output buffer"""
+        try:
+            if not self.text_widget:
+                return
+                
+            self.text_widget.config(state=tk.NORMAL)
+            self.text_widget.delete(1.0, tk.END)
+            
+            with self.buffer_lock:
+                for entry in self.output_buffer:
+                    self.text_widget.insert(tk.END, entry['text'] + "\n", entry['type'])
+            
+            self.text_widget.see(tk.END)
+            self.text_widget.config(state=tk.DISABLED)
+            
+        except Exception as e:
+            logger.error(f"Error populating existing output: {e}")
+    
+    def _send_command_gui(self):
+        """Send command from GUI entry"""
         try:
             if not self.command_entry:
                 return
                 
             command = self.command_entry.get().strip()
             if command:
-                self.send_command(command)
-                self.command_entry.delete(0, tk.END)
-                self.history_index = -1  # Reset history index
-            
+                if self.send_command(command):
+                    self.command_entry.delete(0, tk.END)
+                    self.history_index = -1
+                else:
+                    messagebox.showwarning("Command Error", "Failed to send command. Server may not be running.")
         except Exception as e:
-            logger.error(f"Error sending command for {self.server_name}: {e}")
+            logger.error(f"Error sending command from GUI: {e}")
     
-    def _on_history_up(self, event):
-        """Handle up arrow key for command history"""
+    def _prev_command(self, event):
+        """Navigate to previous command in history"""
         try:
-            if not self.command_entry or not self.command_history:
-                return
+            if self.command_history and self.command_entry:
+                if self.history_index == -1:
+                    self.history_index = len(self.command_history) - 1
+                elif self.history_index > 0:
+                    self.history_index -= 1
                 
-            if self.history_index == -1:
-                self.history_index = len(self.command_history) - 1
-            elif self.history_index > 0:
-                self.history_index -= 1
-            
-            if 0 <= self.history_index < len(self.command_history):
                 self.command_entry.delete(0, tk.END)
                 self.command_entry.insert(0, self.command_history[self.history_index])
-            
         except Exception as e:
-            logger.error(f"Error handling history up for {self.server_name}: {e}")
+            logger.debug(f"Error navigating command history: {e}")
     
-    def _on_history_down(self, event):
-        """Handle down arrow key for command history"""
+    def _next_command(self, event):
+        """Navigate to next command in history"""
         try:
-            if not self.command_entry or not self.command_history:
-                return
+            if self.command_history and self.history_index != -1 and self.command_entry:
+                if self.history_index < len(self.command_history) - 1:
+                    self.history_index += 1
+                    self.command_entry.delete(0, tk.END)
+                    self.command_entry.insert(0, self.command_history[self.history_index])
+                else:
+                    self.history_index = -1
+                    self.command_entry.delete(0, tk.END)
+        except Exception as e:
+            logger.debug(f"Error navigating command history: {e}")
+    
+    def _clear_output(self):
+        """Clear console output"""
+        try:
+            if self.text_widget:
+                self.text_widget.config(state=tk.NORMAL)
+                self.text_widget.delete(1.0, tk.END)
+                self.text_widget.config(state=tk.DISABLED)
+            
+            with self.buffer_lock:
+                self.output_buffer.clear()
                 
-            if self.history_index < len(self.command_history) - 1:
-                self.history_index += 1
-                self.command_entry.delete(0, tk.END)
-                self.command_entry.insert(0, self.command_history[self.history_index])
-            else:
-                self.history_index = -1
-                self.command_entry.delete(0, tk.END)
-            
         except Exception as e:
-            logger.error(f"Error handling history down for {self.server_name}: {e}")
+            logger.error(f"Error clearing output: {e}")
     
-    def _on_console_close(self):
-        """Handle console window close event"""
+    def _close_window(self):
+        """Close console window"""
         try:
-            if self.console_window:
-                self.console_window.destroy()
-            self.console_window = None
-            self.console_text = None
-            self.command_entry = None
-            logger.info(f"Console window closed for {self.server_name}")
+            if self.window:
+                self.window.destroy()
+                self.window = None
+                self.text_widget = None
+                self.command_entry = None
+        except Exception as e:
+            logger.error(f"Error closing console window: {e}")
+    
+    def detach(self):
+        """Detach from process and cleanup"""
+        try:
+            logger.info(f"Detaching console from {self.server_name}")
+            
+            self.is_active = False
+            self.stop_event.set()
+            
+            # Add session end message
+            self._add_output(f"=== Console detached from {self.server_name} ===", "system")
+            
+            # Close log files
+            self._close_log_files()
+            
+            # Wait for threads to finish
+            threads = [self.output_thread, self.error_thread, self.input_thread, self.log_monitor_thread]
+            for thread in threads:
+                if thread and thread.is_alive():
+                    thread.join(timeout=2.0)
+            
+            # Clear process reference
+            self.process = None
             
         except Exception as e:
-            logger.error(f"Error closing console window for {self.server_name}: {e}")
+            logger.error(f"Error detaching console from {self.server_name}: {e}")
 
 
-class ServerConsoleManager:
+class ConsoleManager:
     """Manages multiple server consoles"""
     
     def __init__(self, server_manager=None):
         self.server_manager = server_manager
-        self.consoles = {}  # server_name -> ServerConsole
-        self.active_console_windows = {}  # server_name -> window reference
-        self.monitoring_interval = 1.0  # Check for new servers every second
-        self.monitoring_thread = None
-        self.is_monitoring = False
+        self.consoles = {}  # server_name -> RealTimeConsole
+        self.lock = threading.Lock()
         
-    def start_monitoring(self):
-        """Start monitoring for server processes"""
-        if not self.is_monitoring:
-            self.is_monitoring = True
-            self.monitoring_thread = threading.Thread(
-                target=self._monitor_servers,
-                daemon=True,
-                name="ServerConsoleMonitoring"
-            )
-            self.monitoring_thread.start()
-    
-    def stop_monitoring(self):
-        """Stop monitoring for server processes"""
-        self.is_monitoring = False
-        if self.monitoring_thread:
-            self.monitoring_thread.join(timeout=2.0)
-    
-    def _monitor_servers(self):
-        """Monitor for new server processes and update existing consoles"""
-        while self.is_monitoring:
-            try:
-                if self.server_manager:
-                    # Get list of running servers
-                    running_servers = self.server_manager.get_running_servers()
-                    
-                    for server_name in running_servers:
-                        if server_name not in self.consoles:
-                            # Auto-create console for new running server
-                            server_config = self.server_manager.get_server_config(server_name)
-                            if server_config:
-                                self.get_console(server_name, server_config)
-                
-                time.sleep(self.monitoring_interval)
-                
-            except Exception as e:
-                logger.error(f"Error in server console monitoring: {e}")
-                time.sleep(5)  # Wait longer on error
-    
-    def get_console(self, server_name, server_config=None):
-        """Get or create a console for a server"""
+    def create_console(self, server_name, server_config):
+        """Create a new console for a server"""
         try:
-            if server_name not in self.consoles:
-                if not server_config and self.server_manager:
-                    server_config = self.server_manager.get_server_config(server_name)
-                
-                if not server_config:
-                    logger.error(f"No server config found for {server_name}")
-                    return None
-                
-                self.consoles[server_name] = ServerConsole(
-                    server_name, 
-                    server_config, 
-                    self.server_manager
-                )
-            
-            return self.consoles[server_name]
-            
+            with self.lock:
+                if server_name not in self.consoles:
+                    console = RealTimeConsole(server_name, server_config) 
+                    self.consoles[server_name] = console
+                    logger.info(f"Created console for {server_name}")
+                    return console
+                else:
+                    return self.consoles[server_name]
         except Exception as e:
-            logger.error(f"Error getting console for {server_name}: {e}")
+            logger.error(f"Error creating console for {server_name}: {e}")
             return None
     
-    def show_console(self, server_name, server_config=None, parent=None):
-        """Show console window for a server"""
+    def attach_console_to_process(self, server_name, process, server_config=None):
+        """Attach console to a running process"""
         try:
-            console = self.get_console(server_name, server_config)
-            if console:
-                console.show_console_window(parent)
-                return True
-            return False
-            
+            with self.lock:
+                # Get or create console
+                console = self.consoles.get(server_name)
+                if not console:
+                    if not server_config and self.server_manager:
+                        server_config = self.server_manager.get_server_config(server_name)
+                    
+                    if server_config:
+                        console = RealTimeConsole(server_name, server_config)
+                        self.consoles[server_name] = console
+                    else:
+                        logger.error(f"No server config available for {server_name}")
+                        return False
+                
+                # Attach to process
+                return console.attach_to_process(process)
+                
         except Exception as e:
-            logger.error(f"Error showing console for {server_name}: {e}")
-            messagebox.showerror("Console Error", f"Failed to show console:\n{str(e)}")
+            logger.error(f"Error attaching console to process for {server_name}: {e}")
             return False
     
-    def send_command_to_server(self, server_name, command):
-        """Send a command to a specific server"""
+    def show_console(self, server_name, parent=None):
+        """Show console window for a server"""
         try:
-            if server_name in self.consoles:
-                return self.consoles[server_name].send_command(command)
-            else:
-                logger.warning(f"No console found for server {server_name}")
-                return False
-                
+            with self.lock:
+                console = self.consoles.get(server_name)
+                if console:
+                    console.show_window(parent)
+                    return True
+                else:
+                    # Try to create console if server exists
+                    if self.server_manager:
+                        try:
+                            server_config = self.server_manager.get_server_config(server_name)
+                            if server_config:
+                                console = RealTimeConsole(server_name, server_config)
+                                self.consoles[server_name] = console
+                                console.show_window(parent)
+                                return True
+                        except Exception as e:
+                            logger.warning(f"Could not create console for {server_name}: {e}")
+                    
+                    messagebox.showerror("Console Error", 
+                                       f"No console available for server '{server_name}'. "
+                                       f"Please start the server first.")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"Error showing console for {server_name}: {e}")
+            return False
+    
+    def send_command(self, server_name, command):
+        """Send command to server console"""
+        try:
+            with self.lock:
+                console = self.consoles.get(server_name)
+                if console:
+                    return console.send_command(command)
+                else:
+                    logger.warning(f"No console available for {server_name}")
+                    return False
         except Exception as e:
             logger.error(f"Error sending command to {server_name}: {e}")
             return False
     
-    def close_console(self, server_name):
-        """Close console for a specific server"""
+    def detach_console(self, server_name):
+        """Detach console from server process"""
         try:
-            if server_name in self.consoles:
-                self.consoles[server_name].stop_console()
-                del self.consoles[server_name]
+            with self.lock:
+                console = self.consoles.get(server_name)
+                if console:
+                    console.detach()
+                    del self.consoles[server_name]
+                    logger.info(f"Detached console from {server_name}")
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"Error detaching console from {server_name}: {e}")
+            return False
+    
+    def cleanup_all_consoles(self):
+        """Cleanup all consoles"""
+        try:
+            with self.lock:
+                for server_name, console in list(self.consoles.items()):
+                    try:
+                        console.detach()
+                    except Exception as e:
+                        logger.error(f"Error detaching console {server_name}: {e}")
+                
+                self.consoles.clear()
+                logger.info("All consoles cleaned up")
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up consoles: {e}")
+    
+    def show_console_manager_window(self, parent=None):
+        """Show console manager window"""
+        try:
+            if parent:
+                window = tk.Toplevel(parent)
+            else:
+                window = tk.Tk()
             
-            if server_name in self.active_console_windows:
-                del self.active_console_windows[server_name]
+            window.title("Console Manager")
+            window.geometry("700x500")
+            
+            main_frame = ttk.Frame(window, padding=10)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Console list
+            list_frame = ttk.LabelFrame(main_frame, text="Active Consoles", padding=5)
+            list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+            
+            # Treeview
+            columns = ("server", "status", "pid")
+            tree = ttk.Treeview(list_frame, columns=columns, show="headings")
+            tree.heading("server", text="Server Name")
+            tree.heading("status", text="Status")  
+            tree.heading("pid", text="Process ID")
+            
+            scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=tree.yview)
+            tree.configure(yscrollcommand=scrollbar.set)
+            
+            tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            # Buttons
+            btn_frame = ttk.Frame(main_frame)
+            btn_frame.pack(fill=tk.X)
+            
+            def show_selected():
+                selection = tree.selection()
+                if selection:
+                    server_name = tree.item(selection[0])['values'][0]
+                    self.show_console(server_name, window)
+            
+            def refresh_list():
+                tree.delete(*tree.get_children())
+                with self.lock:
+                    for server_name, console in self.consoles.items():
+                        status = "Active" if console.is_active else "Inactive"
+                        pid = console.process.pid if console.process else "N/A"
+                        tree.insert("", "end", values=(server_name, status, pid))
+            
+            ttk.Button(btn_frame, text="Show Console", command=show_selected).pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(btn_frame, text="Refresh", command=refresh_list).pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(btn_frame, text="Close", command=window.destroy).pack(side=tk.RIGHT)
+            
+            # Initial refresh
+            refresh_list()
+            
+            # Auto-refresh every 5 seconds
+            def auto_refresh():
+                if window.winfo_exists():
+                    refresh_list()
+                    window.after(5000, auto_refresh)
+            
+            window.after(5000, auto_refresh)
             
         except Exception as e:
-            logger.error(f"Error closing console for {server_name}: {e}")
-    
-    def close_all_consoles(self):
-        """Close all server consoles"""
-        try:
-            # Stop monitoring first
-            self.stop_monitoring()
-            
-            for server_name in list(self.consoles.keys()):
-                self.close_console(server_name)
-            
-        except Exception as e:
-            logger.error(f"Error closing all consoles: {e}")
-    
-    def get_active_consoles(self):
-        """Get list of servers with active consoles"""
-        return list(self.consoles.keys())
+            logger.error(f"Error showing console manager window: {e}")
 
 
-def create_console_window(server_name, server_config, server_manager=None, parent=None):
-    """Convenience function to create and show a console window"""
-    try:
-        console = ServerConsole(server_name, server_config, server_manager)
-        console.show_console_window(parent)
-        return console
-        
-    except Exception as e:
-        logger.error(f"Error creating console window for {server_name}: {e}")
-        messagebox.showerror("Console Error", f"Failed to create console window:\n{str(e)}")
-        return None
-
-
-def send_command_to_server_console(server_name, command, console_manager):
-    """Convenience function to send a command to a server console"""
-    try:
-        if console_manager:
-            return console_manager.send_command_to_server(server_name, command)
-        return False
-        
-    except Exception as e:
-        logger.error(f"Error sending command to {server_name}: {e}")
-        return False
+# For backward compatibility - alias the new classes to the old names
+ServerConsole = RealTimeConsole
+ServerConsoleManager = ConsoleManager
