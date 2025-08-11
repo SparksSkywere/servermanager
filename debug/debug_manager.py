@@ -46,7 +46,7 @@ def run_as_admin():
     ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
     sys.exit()
 
-class DebugManager:
+class DebugManagerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Server Manager - Debug Center")
@@ -552,7 +552,7 @@ def main():
     
     # Create the main window
     root = tk.Tk()
-    app = DebugManager(root)
+    app = DebugManagerGUI(root)
     root.mainloop()
 
 if __name__ == "__main__":

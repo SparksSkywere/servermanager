@@ -34,6 +34,9 @@ from Modules.common import initialize_paths_from_registry, initialize_registry_v
 # Import logging functions
 from Modules.logging import get_dashboard_logger
 
+# Import debug functions
+from Modules.debug import get_process_info
+
 # Get dashboard logger
 logger = get_dashboard_logger()
 
@@ -971,48 +974,6 @@ def format_uptime_from_start_time(start_time_str):
         return "Unknown"
 
 
-def get_process_info(process_id):
-    """Get process information for a given PID"""
-    try:
-        if is_process_running(process_id):
-            process = psutil.Process(process_id)
-            
-            # Get CPU usage
-            try:
-                cpu_usage = f"{process.cpu_percent(interval=0.1):.1f}%"
-            except:
-                cpu_usage = "N/A"
-                
-            # Get memory usage
-            try:
-                memory_mb = process.memory_info().rss / (1024 * 1024)
-                memory_usage = f"{memory_mb:.1f} MB"
-            except:
-                memory_usage = "N/A"
-            
-            return {
-                "status": "Running",
-                "pid": str(process_id),
-                "cpu_usage": cpu_usage,
-                "memory_usage": memory_usage
-            }
-        else:
-            return {
-                "status": "Offline",
-                "pid": "N/A",
-                "cpu_usage": "N/A",
-                "memory_usage": "N/A"
-            }
-    except Exception as e:
-        logger.error(f"Error getting process info for PID {process_id}: {str(e)}")
-        return {
-            "status": "Error",
-            "pid": "N/A",
-            "cpu_usage": "N/A",
-            "memory_usage": "N/A"
-        }
-
-
 def center_window(window, width=None, height=None, parent=None):
     """Center a window on the screen or relative to a parent window"""
     window.update_idletasks()
@@ -1772,8 +1733,13 @@ def update_server_list_from_files(server_list, paths, variables, log_dashboard_e
                         if process_id and is_process_running(process_id):
                             status = "Running"
                             process_info = get_process_info(process_id)
-                            cpu_usage = process_info.get("cpu_usage", "N/A")
-                            memory_usage = process_info.get("memory_usage", "N/A")
+                            if process_info:
+                                cpu_usage = f"{process_info.get('cpu_percent', 0):.1f}%" if process_info.get('cpu_percent') else "N/A"
+                                memory_mb = process_info.get('memory_info', {}).get('rss', 0) / (1024 * 1024) if process_info.get('memory_info') else 0
+                                memory_usage = f"{memory_mb:.1f} MB" if memory_mb else "N/A"
+                            else:
+                                cpu_usage = "N/A"
+                                memory_usage = "N/A"
                             
                             # Calculate uptime
                             start_time = server_config.get("StartTime")
@@ -1893,3 +1859,804 @@ def create_progress_dialog_with_console(parent, title, width=700, height=650):
         'progress_stop': stop_progress,
         'status_var': status_var
     }
+
+
+def show_java_configuration_dialog(parent, server_name, server_config, server_manager, server_manager_dir, config):
+    """Show Java configuration dialog for a specific server"""
+    try:
+        from Scripts.minecraft import detect_java_installations, check_java_compatibility, get_recommended_java_for_minecraft
+        
+        # Create dialog
+        dialog = tk.Toplevel(parent)
+        dialog.title(f"Java Configuration - {server_name}")
+        dialog.geometry("700x600")
+        dialog.transient(parent)
+        dialog.grab_set()
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = ttk.Label(main_frame, text=f"Java Configuration for {server_name}", 
+                               font=("Segoe UI", 14, "bold"))
+        title_label.pack(pady=(0, 20))
+        
+        # Server info frame
+        info_frame = ttk.LabelFrame(main_frame, text="Server Information", padding=10)
+        info_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        version = server_config.get("Version", "Unknown")
+        current_java = server_config.get("JavaPath", "java (system default)")
+        
+        ttk.Label(info_frame, text=f"Minecraft Version: {version}", font=("Segoe UI", 10)).pack(anchor=tk.W, pady=2)
+        ttk.Label(info_frame, text=f"Current Java: {current_java}", font=("Segoe UI", 10)).pack(anchor=tk.W, pady=2)
+        
+        # Check current compatibility
+        if version != "Unknown":
+            is_compatible, java_version, required_version, message = check_java_compatibility(version, current_java)
+            compatibility_color = "green" if is_compatible else "red"
+            compatibility_text = "✓ Compatible" if is_compatible else "✗ Incompatible"
+            
+            ttk.Label(info_frame, text=f"Compatibility: {compatibility_text}", 
+                     foreground=compatibility_color, font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=2)
+            
+            if not is_compatible:
+                ttk.Label(info_frame, text=f"Required: Java {required_version}+", 
+                         foreground="red", font=("Segoe UI", 9)).pack(anchor=tk.W, pady=2)
+        
+        # Java selection frame
+        selection_frame = ttk.LabelFrame(main_frame, text="Available Java Installations", padding=10)
+        selection_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        
+        # Create treeview for Java installations
+        columns = ("name", "path", "compatibility")
+        java_tree = ttk.Treeview(selection_frame, columns=columns, show="headings", height=8)
+        
+        java_tree.heading("name", text="Java Version")
+        java_tree.heading("path", text="Path")
+        java_tree.heading("compatibility", text="Compatibility")
+        
+        java_tree.column("name", width=180, minwidth=150)
+        java_tree.column("path", width=300, minwidth=200)
+        java_tree.column("compatibility", width=120, minwidth=100)
+        
+        # Add scrollbar
+        scroll = ttk.Scrollbar(selection_frame, orient=tk.VERTICAL, command=java_tree.yview)
+        java_tree.configure(yscrollcommand=scroll.set)
+        
+        java_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Populate Java installations
+        installations = detect_java_installations()
+        selected_java = None
+        
+        for installation in installations:
+            if version != "Unknown":
+                is_compatible, _, _, _ = check_java_compatibility(version, installation["path"])
+                compatibility_text = "✓ Compatible" if is_compatible else "✗ Incompatible"
+                tags = ("compatible",) if is_compatible else ("incompatible",)
+            else:
+                compatibility_text = "N/A"
+                tags = ()
+            
+            item_id = java_tree.insert("", tk.END, 
+                                     values=(installation["display_name"], 
+                                           installation["path"], 
+                                           compatibility_text),
+                                     tags=tags)
+            
+            # Select current Java if it matches
+            if installation["path"] == current_java:
+                java_tree.selection_set(item_id)
+                java_tree.focus(item_id)
+                selected_java = installation
+        
+        # Configure tag colors
+        java_tree.tag_configure("compatible", foreground="green")
+        java_tree.tag_configure("incompatible", foreground="red")
+        
+        # Custom Java path frame
+        custom_frame = ttk.LabelFrame(main_frame, text="Custom Java Path", padding=10)
+        custom_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        custom_path_var = tk.StringVar()
+        custom_entry = ttk.Entry(custom_frame, textvariable=custom_path_var, width=50)
+        custom_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        def browse_java():
+            if os.name == 'nt':
+                file_types = [("Java Executable", "java.exe"), ("All Files", "*.*")]
+            else:
+                file_types = [("All Files", "*")]
+            
+            java_path = filedialog.askopenfilename(
+                title="Select Java Executable",
+                filetypes=file_types
+            )
+            if java_path:
+                custom_path_var.set(java_path)
+        
+        ttk.Button(custom_frame, text="Browse", command=browse_java).pack(side=tk.RIGHT)
+        
+        # Action buttons frame
+        action_frame = ttk.Frame(main_frame)
+        action_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        def auto_select_java():
+            if version != "Unknown":
+                recommended = get_recommended_java_for_minecraft(version)
+                if recommended:
+                    # Select the recommended Java in the tree
+                    for child in java_tree.get_children():
+                        if java_tree.item(child)["values"][1] == recommended["path"]:
+                            java_tree.selection_set(child)
+                            java_tree.focus(child)
+                            java_tree.see(child)
+                            break
+                    messagebox.showinfo("Auto-Select", f"Selected: {recommended['display_name']}")
+                else:
+                    messagebox.showwarning("No Suitable Java", 
+                                         "No suitable Java installation found for this Minecraft version.")
+            else:
+                messagebox.showwarning("Unknown Version", "Cannot auto-select Java for unknown Minecraft version.")
+        
+        ttk.Button(action_frame, text="Auto-Select Best Java", command=auto_select_java).pack(side=tk.LEFT, padx=(0, 10))
+        
+        def refresh_java_list():
+            # Clear existing items
+            for item in java_tree.get_children():
+                java_tree.delete(item)
+            
+            # Repopulate
+            installations = detect_java_installations()
+            for installation in installations:
+                if version != "Unknown":
+                    is_compatible, _, _, _ = check_java_compatibility(version, installation["path"])
+                    compatibility_text = "✓ Compatible" if is_compatible else "✗ Incompatible"
+                    tags = ("compatible",) if is_compatible else ("incompatible",)
+                else:
+                    compatibility_text = "N/A"
+                    tags = ()
+                
+                java_tree.insert("", tk.END, 
+                               values=(installation["display_name"], 
+                                     installation["path"], 
+                                     compatibility_text),
+                               tags=tags)
+        
+        ttk.Button(action_frame, text="Refresh List", command=refresh_java_list).pack(side=tk.LEFT)
+        
+        # Return result variable
+        result = {'success': False, 'java_path': None}
+        
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)
+        
+        def on_apply():
+            # Get selected Java
+            custom_path = custom_path_var.get().strip()
+            selected_java_path = None
+            
+            if custom_path:
+                # Use custom path
+                from Scripts.minecraft import get_java_version
+                major, version_str = get_java_version(custom_path)
+                if major is not None:
+                    selected_java_path = custom_path
+                else:
+                    messagebox.showerror("Error", f"Invalid Java executable: {custom_path}")
+                    return
+            else:
+                # Use selected from tree
+                selection = java_tree.selection()
+                if selection:
+                    item = selection[0]
+                    selected_java_path = java_tree.item(item)["values"][1]
+                else:
+                    messagebox.showwarning("No Selection", "Please select a Java installation or provide a custom path.")
+                    return
+            
+            # Update server configuration
+            try:
+                server_config["JavaPath"] = selected_java_path
+                server_config["LastUpdate"] = datetime.datetime.now().isoformat()
+                
+                # Save configuration
+                if server_manager:
+                    server_manager.save_server_config(server_name, server_config)
+                
+                # Update launch script
+                from Scripts.minecraft import MinecraftServerManager
+                manager = MinecraftServerManager(server_manager_dir, config)
+                
+                install_dir = server_config.get("InstallDir", "")
+                if install_dir and os.path.exists(install_dir):
+                    executable_path = server_config.get("ExecutablePath", "")
+                    jar_file = os.path.basename(executable_path) if executable_path else "server.jar"
+                    
+                    script_path = manager.create_launch_script(install_dir, jar_file, 1024, "", selected_java_path)
+                    
+                messagebox.showinfo("Success", f"Java configuration updated for '{server_name}'!\nUsing: {selected_java_path}")
+                result['success'] = True
+                result['java_path'] = selected_java_path
+                dialog.destroy()
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to update configuration: {str(e)}")
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
+        ttk.Button(button_frame, text="Apply", command=on_apply, width=12).pack(side=tk.RIGHT)
+        
+        # Center dialog
+        center_window(dialog, 700, 600, parent)
+        
+        # Auto-select recommended Java if none selected
+        if not java_tree.selection() and version != "Unknown":
+            auto_select_java()
+        
+        return result
+        
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to open Java configuration dialog: {str(e)}")
+        return {'success': False, 'java_path': None}
+
+
+def import_server_from_directory_dialog(parent, server_manager, server_manager_dir, supported_server_types, update_callback=None):
+    """Import an existing server from a directory (legacy method)"""
+    if server_manager is None:
+        messagebox.showerror("Error", "Server manager not initialized.")
+        return
+        
+    try:
+        # Ask user to select a directory
+        install_dir = filedialog.askdirectory(
+            title="Select Server Installation Directory",
+            initialdir=server_manager_dir
+        )
+        
+        if not install_dir:
+            return
+            
+        # Create import dialog
+        dialog = tk.Toplevel(parent)
+        dialog.title("Import Server from Directory")
+        dialog.transient(parent)
+        dialog.grab_set()
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Server name
+        ttk.Label(main_frame, text="Server Name:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
+        name_var = tk.StringVar(value=os.path.basename(install_dir))
+        name_entry = ttk.Entry(main_frame, textvariable=name_var, width=35)
+        name_entry.grid(row=0, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+
+        # Server type
+        ttk.Label(main_frame, text="Server Type:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
+        type_var = tk.StringVar(value="Other")
+        type_combo = ttk.Combobox(main_frame, textvariable=type_var, values=supported_server_types, width=32)
+        type_combo.grid(row=1, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+        
+        # Installation directory (readonly)
+        ttk.Label(main_frame, text="Install Directory:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
+        ttk.Label(main_frame, text=install_dir, wraplength=300).grid(row=2, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+        
+        # Executable path
+        ttk.Label(main_frame, text="Executable:").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
+        exe_var = tk.StringVar()
+        exe_entry = ttk.Entry(main_frame, textvariable=exe_var, width=25)
+        exe_entry.grid(row=3, column=1, padx=10, pady=10, sticky=tk.W)
+        
+        def browse_exe():
+            fp = filedialog.askopenfilename(
+                title="Select Server Executable",
+                initialdir=install_dir,
+                filetypes=[("Executables", "*.exe;*.jar;*.bat;*.cmd;*.ps1;*.sh"), ("All files", "*.*")]
+            )
+            if fp:
+                # Store relative path if possible
+                try:
+                    rel_path = os.path.relpath(fp, install_dir)
+                    exe_var.set(rel_path)
+                except:
+                    exe_var.set(fp)
+        
+        ttk.Button(main_frame, text="Browse", command=browse_exe, width=10).grid(row=3, column=2, padx=5, pady=10)
+        
+        # Startup arguments
+        ttk.Label(main_frame, text="Startup Args:").grid(row=4, column=0, padx=10, pady=10, sticky=tk.W)
+        args_var = tk.StringVar()
+        args_entry = ttk.Entry(main_frame, textvariable=args_var, width=35)
+        args_entry.grid(row=4, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+        
+        # Auto-detect common server files
+        def auto_detect():
+            try:
+                if server_manager:
+                    found_files = server_manager.auto_detect_server_executable(install_dir)
+                else:
+                    messagebox.showerror("Error", "Server manager not initialized.")
+                    return
+                
+                if found_files:
+                    # Show selection dialog if multiple found
+                    if len(found_files) == 1:
+                        exe_var.set(found_files[0])
+                    else:
+                        # Create selection dialog
+                        selection_dialog = tk.Toplevel(dialog)
+                        selection_dialog.title("Select Executable")
+                        selection_dialog.geometry("400x300")
+                        selection_dialog.transient(dialog)
+                        selection_dialog.grab_set()
+                        
+                        ttk.Label(selection_dialog, text="Multiple executables found. Select one:").pack(pady=10)
+                        
+                        listbox = tk.Listbox(selection_dialog)
+                        listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+                        
+                        for file in found_files:
+                            listbox.insert(tk.END, file)
+                        
+                        def select_file():
+                            selection = listbox.curselection()
+                            if selection:
+                                exe_var.set(found_files[selection[0]])
+                            selection_dialog.destroy()
+                        
+                        ttk.Button(selection_dialog, text="Select", command=select_file).pack(pady=10)
+                else:
+                    messagebox.showinfo("Auto-detect", "No common server executables found. Please select manually.")
+                    
+            except Exception as e:
+                logger.error(f"Error during auto-detect: {str(e)}")
+                messagebox.showerror("Error", f"Auto-detection failed: {str(e)}")
+        
+        ttk.Button(main_frame, text="Auto-detect", command=auto_detect, width=15).grid(row=5, column=1, pady=10)
+        
+        # Return result variable
+        result = {'success': False, 'server_name': None}
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=6, column=0, columnspan=3, pady=20)
+        
+        def import_config():
+            try:
+                server_name = name_var.get().strip()
+                server_type = type_var.get()
+                executable_path = exe_var.get().strip()
+                startup_args = args_var.get().strip()
+                
+                if not server_name:
+                    messagebox.showerror("Validation Error", "Server name is required.")
+                    return
+                    
+                if not executable_path:
+                    messagebox.showerror("Validation Error", "Executable path is required.")
+                    return
+                
+                # Use server manager to import the server
+                if server_manager:
+                    success, message = server_manager.import_server_config(
+                        server_name, server_type, install_dir, executable_path, startup_args
+                    )
+                else:
+                    success = False
+                    message = "Server manager not initialized"
+                
+                if success:
+                    # Call update callback if provided
+                    if update_callback:
+                        update_callback()
+                    messagebox.showinfo("Success", message)
+                    result['success'] = True
+                    result['server_name'] = server_name
+                    dialog.destroy()
+                else:
+                    messagebox.showerror("Error", message)
+                
+            except Exception as e:
+                logger.error(f"Error importing server: {str(e)}")
+                messagebox.showerror("Error", f"Failed to import server: {str(e)}")
+
+        ttk.Button(button_frame, text="Import", command=import_config, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy, width=15).pack(side=tk.RIGHT, padx=5)
+        
+        # Center dialog relative to parent
+        center_window(dialog, 500, 400, parent)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error during directory import: {str(e)}")
+        messagebox.showerror("Error", f"Failed to import server from directory: {str(e)}")
+        return {'success': False, 'server_name': None}
+
+
+def import_server_from_export_dialog(parent, paths, server_manager_dir, update_callback=None):
+    """Import server from exported configuration file"""
+    try:
+        # Ask user to select export file
+        file_path = filedialog.askopenfilename(
+            title="Select Server Export File",
+            filetypes=[
+                ("Server Export Files", "*.json;*.zip"),
+                ("JSON Files", "*.json"),
+                ("ZIP Files", "*.zip"),
+                ("All Files", "*.*")
+            ]
+        )
+        
+        if not file_path:
+            return {'success': False, 'server_name': None}
+        
+        # Import server data from file
+        success, export_data, has_files = import_server_from_file(file_path)
+        
+        if not success or not export_data:
+            messagebox.showerror("Import Error", "Failed to read export file. File may be corrupted or invalid.")
+            return {'success': False, 'server_name': None}
+        
+        # Create import configuration dialog
+        dialog = tk.Toplevel(parent)
+        dialog.title("Import Server Configuration")
+        dialog.transient(parent)
+        dialog.grab_set()
+        
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Display export information
+        export_info_frame = ttk.LabelFrame(main_frame, text="Export Information", padding=10)
+        export_info_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        export_metadata = export_data.get("export_metadata", {})
+        server_config = export_data.get("server_configuration", {})
+        dependencies = export_data.get("dependencies", {})
+        
+        info_text = f"""Exported: {export_metadata.get('exported_at', 'Unknown')}
+From Host: {export_metadata.get('source_host', 'Unknown')}
+Server Type: {server_config.get('Type', 'Unknown')}
+Original Name: {server_config.get('Name', 'Unknown')}
+Includes Files: {'Yes' if has_files else 'No'}"""
+        
+        if server_config.get('Type') == 'Steam' and server_config.get('AppId'):
+            info_text += f"\nSteam App ID: {server_config['AppId']}"
+            
+        ttk.Label(export_info_frame, text=info_text, justify=tk.LEFT).pack(anchor=tk.W)
+        
+        # Import configuration frame
+        config_frame = ttk.LabelFrame(main_frame, text="Import Configuration", padding=10)
+        config_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Server name (with unique name generation)
+        ttk.Label(config_frame, text="Server Name:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        original_name = server_config.get("Name", "Imported Server")
+        unique_name = generate_unique_server_name(original_name, paths)
+        name_var = tk.StringVar(value=unique_name)
+        name_entry = ttk.Entry(config_frame, textvariable=name_var, width=40)
+        name_entry.grid(row=0, column=1, columnspan=2, padx=5, pady=5, sticky=tk.W)
+        
+        # Installation directory
+        ttk.Label(config_frame, text="Install Directory:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+        default_install_dir = ""
+        if has_files and server_manager_dir:
+            default_install_dir = os.path.join(server_manager_dir, "servers", unique_name.replace(" ", "_"))
+        
+        install_dir_var = tk.StringVar(value=default_install_dir)
+        install_dir_entry = ttk.Entry(config_frame, textvariable=install_dir_var, width=30)
+        install_dir_entry.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+        
+        def browse_install_dir():
+            dir_path = filedialog.askdirectory(title="Select Installation Directory")
+            if dir_path:
+                install_dir_var.set(dir_path)
+        
+        ttk.Button(config_frame, text="Browse", command=browse_install_dir, width=10).grid(row=1, column=2, padx=5, pady=5)
+        
+        # Steam installation option (if Steam server)
+        auto_install_var = tk.BooleanVar(value=False)
+        if server_config.get('Type') == 'Steam' and server_config.get('AppId'):
+            install_check = ttk.Checkbutton(
+                config_frame,
+                text=f"Automatically install Steam App ID {server_config['AppId']} (requires SteamCMD)",
+                variable=auto_install_var
+            )
+            install_check.grid(row=2, column=0, columnspan=3, padx=5, pady=10, sticky=tk.W)
+        
+        # File extraction option (if files are included)
+        extract_files_var = tk.BooleanVar(value=has_files)
+        if has_files:
+            extract_check = ttk.Checkbutton(
+                config_frame,
+                text="Extract server files from archive",
+                variable=extract_files_var
+            )
+            extract_check.grid(row=3, column=0, columnspan=3, padx=5, pady=5, sticky=tk.W)
+        
+        # Progress frame
+        progress_frame = ttk.Frame(main_frame)
+        progress_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        status_var = tk.StringVar(value="Ready to import")
+        status_label = ttk.Label(progress_frame, textvariable=status_var)
+        status_label.pack(anchor=tk.W, pady=2)
+        
+        progress_bar = ttk.Progressbar(progress_frame, mode="determinate")
+        progress_bar.pack(fill=tk.X, pady=2)
+        
+        # Return result variable
+        result = {'success': False, 'server_name': None}
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        def perform_import():
+            try:
+                server_name = name_var.get().strip()
+                install_dir = install_dir_var.get().strip()
+                
+                if not server_name:
+                    messagebox.showerror("Validation Error", "Server name is required.")
+                    return
+                
+                # Start import process
+                status_var.set("Importing server configuration...")
+                progress_bar.config(value=10)
+                dialog.update()
+                
+                # Import server configuration
+                success, message, imported_config = import_server_configuration(
+                    export_data, paths, install_dir, auto_install_var.get()
+                )
+                
+                if not success:
+                    messagebox.showerror("Import Error", message)
+                    return
+                
+                progress_bar.config(value=50)
+                status_var.set("Server configuration imported successfully")
+                dialog.update()
+                
+                # Extract files if requested
+                if has_files and extract_files_var.get() and install_dir:
+                    status_var.set("Extracting server files...")
+                    progress_bar.config(value=70)
+                    dialog.update()
+                    
+                    extract_success, extract_message = extract_server_files_from_archive(file_path, install_dir)
+                    
+                    if not extract_success:
+                        logger.warning(f"File extraction failed: {extract_message}")
+                        messagebox.showwarning("Extraction Warning", 
+                                             f"Server imported but file extraction failed:\n{extract_message}")
+                    else:
+                        status_var.set("Files extracted successfully")
+                
+                progress_bar.config(value=100)
+                status_var.set("Import completed successfully")
+                dialog.update()
+                
+                # Call update callback if provided
+                if update_callback:
+                    update_callback()
+                
+                # Show completion message
+                completion_msg = f"Server '{server_name}' imported successfully!"
+                if auto_install_var.get():
+                    completion_msg += "\n\nNote: Steam installation will be performed when the server is first started."
+                
+                messagebox.showinfo("Import Complete", completion_msg)
+                result['success'] = True
+                result['server_name'] = server_name
+                dialog.destroy()
+                
+            except Exception as e:
+                logger.error(f"Error during import: {str(e)}")
+                status_var.set(f"Import failed: {str(e)}")
+                messagebox.showerror("Import Error", f"Failed to import server: {str(e)}")
+        
+        def cancel_import():
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="Import", command=perform_import, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=cancel_import, width=15).pack(side=tk.RIGHT, padx=5)
+        
+        # Center dialog relative to parent
+        center_window(dialog, 600, 550, parent)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error importing from export: {str(e)}")
+        messagebox.showerror("Error", f"Failed to import server from export: {str(e)}")
+        return {'success': False, 'server_name': None}
+
+
+def export_server_dialog(parent, server_list, paths):
+    """Export server configuration for use on other hosts or clusters"""
+    selected_items = server_list.selection()
+    if not selected_items:
+        messagebox.showinfo("No Selection", "Please select a server to export first.")
+        return {'success': False, 'server_name': None}
+    
+    try:
+        server_name = server_list.item(selected_items[0])['values'][0]
+        
+        # Create export options dialog
+        dialog = tk.Toplevel(parent)
+        dialog.title(f"Export Server: {server_name}")
+        dialog.transient(parent)
+        dialog.grab_set()
+        
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Export options frame
+        options_frame = ttk.LabelFrame(main_frame, text="Export Options", padding=10)
+        options_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Include files option
+        include_files_var = tk.BooleanVar(value=False)
+        include_files_check = ttk.Checkbutton(
+            options_frame,
+            text="Include server files in export (creates larger archive)",
+            variable=include_files_var
+        )
+        include_files_check.pack(anchor=tk.W, pady=5)
+        
+        # Warning about file inclusion
+        warning_label = ttk.Label(
+            options_frame,
+            text="⚠️ Including files will create a zip archive. Large server installations may take time to export.",
+            foreground="orange",
+            wraplength=450
+        )
+        warning_label.pack(anchor=tk.W, pady=5)
+        
+        # Export location frame
+        location_frame = ttk.LabelFrame(main_frame, text="Export Location", padding=10)
+        location_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(location_frame, text="Export to:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        
+        # Default filename
+        safe_name = "".join(c for c in server_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        default_filename = f"{safe_name.replace(' ', '_')}_export.json"
+        
+        export_path_var = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Desktop", default_filename))
+        export_path_entry = ttk.Entry(location_frame, textvariable=export_path_var, width=40)
+        export_path_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+        
+        def browse_export_location():
+            if include_files_var.get():
+                file_path = filedialog.asksaveasfilename(
+                    title="Save Server Export",
+                    defaultextension=".zip",
+                    filetypes=[("ZIP Archives", "*.zip"), ("All Files", "*.*")]
+                )
+            else:
+                file_path = filedialog.asksaveasfilename(
+                    title="Save Server Export",
+                    defaultextension=".json",
+                    filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
+                )
+            
+            if file_path:
+                export_path_var.set(file_path)
+        
+        def update_filename():
+            # Update file extension based on include files option
+            current_path = export_path_var.get()
+            if include_files_var.get():
+                if current_path.endswith('.json'):
+                    export_path_var.set(current_path[:-5] + '.zip')
+            else:
+                if current_path.endswith('.zip'):
+                    export_path_var.set(current_path[:-4] + '.json')
+        
+        include_files_check.configure(command=update_filename)
+        
+        ttk.Button(location_frame, text="Browse", command=browse_export_location, width=10).grid(row=0, column=2, padx=5, pady=5)
+        
+        # Progress frame
+        progress_frame = ttk.Frame(main_frame)
+        progress_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        status_var = tk.StringVar(value="Ready to export")
+        status_label = ttk.Label(progress_frame, textvariable=status_var)
+        status_label.pack(anchor=tk.W, pady=2)
+        
+        progress_bar = ttk.Progressbar(progress_frame, mode="indeterminate")
+        progress_bar.pack(fill=tk.X, pady=2)
+        
+        # Return result variable
+        result = {'success': False, 'server_name': server_name, 'export_path': None}
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        def perform_export():
+            try:
+                export_path = export_path_var.get().strip()
+                include_files = include_files_var.get()
+                
+                if not export_path:
+                    messagebox.showerror("Validation Error", "Export path is required.")
+                    return
+                
+                # Start export process
+                status_var.set("Generating export configuration...")
+                progress_bar.start()
+                dialog.update()
+                
+                # Export server configuration
+                export_data = export_server_configuration(server_name, paths, include_files)
+                
+                status_var.set("Saving export file...")
+                dialog.update()
+                
+                # Save to file
+                success, message = export_server_to_file(export_data, export_path, include_files)
+                
+                progress_bar.stop()
+                
+                if success:
+                    status_var.set("Export completed successfully")
+                    
+                    # Show completion dialog
+                    completion_msg = f"Server '{server_name}' exported successfully!\n\n{message}"
+                    
+                    # Add usage instructions
+                    completion_msg += "\n\nUsage Instructions:"
+                    completion_msg += "\n• Use 'Import Server' > 'Import from exported configuration file' on target host"
+                    completion_msg += "\n• Configuration includes all startup parameters and settings"
+                    
+                    if include_files:
+                        completion_msg += "\n• Archive includes server files for complete migration"
+                    else:
+                        completion_msg += "\n• Only configuration exported - server files must be installed separately"
+                    
+                    if export_data.get("server_configuration", {}).get("Type") == "Steam":
+                        completion_msg += "\n• Steam servers can be auto-installed on import if SteamCMD is available"
+                    
+                    messagebox.showinfo("Export Complete", completion_msg)
+                    result['success'] = True
+                    result['export_path'] = export_path
+                    dialog.destroy()
+                else:
+                    status_var.set(f"Export failed: {message}")
+                    messagebox.showerror("Export Error", message)
+                
+            except Exception as e:
+                logger.error(f"Error during export: {str(e)}")
+                progress_bar.stop()
+                status_var.set(f"Export failed: {str(e)}")
+                messagebox.showerror("Export Error", f"Failed to export server: {str(e)}")
+        
+        def cancel_export():
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="Export", command=perform_export, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=cancel_export, width=15).pack(side=tk.RIGHT, padx=5)
+        
+        # Center dialog relative to parent
+        center_window(dialog, 500, 400, parent)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in export server: {str(e)}")
+        messagebox.showerror("Error", f"Failed to export server: {str(e)}")
+        return {'success': False, 'server_name': None, 'export_path': None}
