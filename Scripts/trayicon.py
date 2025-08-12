@@ -32,13 +32,17 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Modules.common import ServerManagerModule
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("TrayIcon")
+# Centralized logging
+try:
+    from Modules.logging import get_component_logger, log_dashboard_event
+    logger = get_component_logger("TrayIcon")
+except Exception:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("TrayIcon")
+
+if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
+    logger.setLevel(logging.DEBUG)
+    logger.debug("TrayIcon debug mode enabled via environment")
 
 class ServerManagerTrayIcon(ServerManagerModule):
     def __init__(self):

@@ -11,13 +11,17 @@ import winreg
 from datetime import datetime
 import psutil
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("Network")
+# Centralized logging pattern
+try:
+    from Modules.logging import get_component_logger, log_process_monitoring
+    logger = get_component_logger("Network")
+except Exception:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("Network")
+
+if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
+    logger.setLevel(logging.DEBUG)
+    logger.debug("Network module debug mode enabled via environment")
 
 class NetworkManager:
     """Class for network operations and server connectivity"""

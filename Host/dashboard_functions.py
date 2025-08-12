@@ -35,7 +35,7 @@ from Modules.common import initialize_paths_from_registry, initialize_registry_v
 from Modules.logging import get_dashboard_logger
 
 # Import debug functions
-from Modules.debug import get_process_info
+from debug.debug import get_process_info
 
 # Get dashboard logger
 logger = get_dashboard_logger()

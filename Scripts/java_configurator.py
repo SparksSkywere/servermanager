@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""
-Java Configuration Utility for Server Manager
-
-This utility helps configure Java installations for Minecraft servers.
-"""
-
 import os
 import sys
 import json

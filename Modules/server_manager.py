@@ -9,14 +9,19 @@ import psutil
 import urllib.request
 import threading
 from datetime import datetime
+import os
+import logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("ServerManager")
+try:
+    from Modules.logging import get_component_logger, log_server_action, log_exception
+    logger = get_component_logger("ServerManager")
+except Exception:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("ServerManager")
+
+if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
+    logger.setLevel(logging.DEBUG)
+    logger.debug("ServerManager module debug mode enabled via environment")
 
 def get_subprocess_creation_flags(hide_window=True, new_process_group=False):
     """Get appropriate creation flags for subprocess calls on Windows to prevent console windows.

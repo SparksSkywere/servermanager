@@ -11,13 +11,17 @@ import subprocess
 import socket
 from pathlib import Path
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("DebugModule")
+# Centralized logging
+try:
+    from Modules.logging import get_component_logger
+    logger = get_component_logger("Debug")
+except Exception:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("Debug")
+
+if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
+    logger.setLevel(logging.DEBUG)
+    logger.debug("Debug module debug mode enabled via environment")
 
 class DebugManager:
     """Simplified class for system diagnostics and debugging"""

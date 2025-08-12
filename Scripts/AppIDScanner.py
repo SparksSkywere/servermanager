@@ -25,13 +25,17 @@ except ImportError:
     SQLALCHEMY_AVAILABLE = False
     print("Warning: SQLAlchemy not available, falling back to SQLite")
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("AppIDScanner")
+# Centralized logging
+try:
+    from Modules.logging import get_component_logger
+    logger = get_component_logger("AppIDScanner")
+except Exception:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("AppIDScanner")
+
+if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
+    logger.setLevel(logging.DEBUG)
+    logger.debug("AppIDScanner debug mode enabled via environment")
 
 # Database models
 if SQLALCHEMY_AVAILABLE:

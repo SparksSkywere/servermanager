@@ -5,14 +5,18 @@ import threading
 import psutil
 import logging
 from pathlib import Path
+import os
 
-# Setup logging for the tracker
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("DashboardTracker")
+try:
+    from Modules.logging import get_component_logger
+    logger = get_component_logger("DashboardTracker")
+except Exception:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("DashboardTracker")
+
+if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
+    logger.setLevel(logging.DEBUG)
+    logger.debug("DashboardTracker debug mode enabled via environment")
 
 class DashboardTracker:
     """

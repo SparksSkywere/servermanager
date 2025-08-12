@@ -7,13 +7,17 @@ import time
 import datetime
 import psutil
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("Common")
+# Centralized logging integration
+try:
+    from Modules.logging import get_component_logger
+    logger = get_component_logger("Common")
+except Exception:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("Common")
+
+if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
+    logger.setLevel(logging.DEBUG)
+    logger.debug("Common module debug mode enabled via environment")
 
 # Registry utility functions
 def initialize_paths_from_registry(registry_path):
@@ -424,7 +428,7 @@ class ConfigManager:
 
 # Import debug module for exception logging
 try:
-    from Modules.debug import log_exception
+    from debug.debug import log_exception
 except ImportError:
     # Fallback if debug module not available
     def log_exception(e, message="An exception occurred"):
@@ -439,7 +443,7 @@ class SystemUtils:
         try:
             # Try to use debug module first
             try:
-                from Modules.debug import get_system_info
+                from debug.debug import get_system_info
                 return get_system_info()
             except ImportError:
                 # Fallback to direct implementation
@@ -469,7 +473,7 @@ class SystemUtils:
         try:
             # Try to use debug module first
             try:
-                from Modules.debug import get_process_info
+                from debug.debug import get_process_info
                 return get_process_info(pid)
             except ImportError:
                 # Fallback to direct implementation

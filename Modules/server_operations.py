@@ -7,17 +7,24 @@ import winreg
 import time
 from datetime import datetime
 
+import logging
+
+try:
+    from Modules.logging import get_component_logger, log_server_action
+    logger = get_component_logger("ServerOperations")
+except Exception:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("ServerOperations")
+
+if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
+    logger.setLevel(logging.DEBUG)
+    logger.debug("ServerOperations module debug mode enabled via environment")
 try:
     import psutil
 except ImportError:
     psutil = None
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+# logging configuration handled by centralized logging module when imported; fallback basicConfig already applied if import failed above
 
 def get_subprocess_creation_flags(hide_window=True):
     """Get appropriate creation flags for subprocess calls on Windows to prevent console windows.

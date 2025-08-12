@@ -1,9 +1,3 @@
-"""
-Authentication Module for Server Manager (XML-based fallback system)
-
-This module provides XML-based authentication as a fallback when SQL is not available.
-It can work alongside the SQL-based user management system.
-"""
 import os
 import sys
 import json
@@ -16,13 +10,18 @@ from datetime import datetime
 import subprocess
 import winreg
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("Authentication")
+# Centralized logging / debugging (follows dashboard pattern)
+try:  # Prefer centralized log manager
+    from Modules.logging import get_component_logger, log_security_event, log_user_action, log_exception
+    logger = get_component_logger("Authentication")
+except Exception:  # Fallback minimal logger
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("Authentication")
+
+# Enable debug level if global flag set
+if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
+    logger.setLevel(logging.DEBUG)
+    logger.debug("Authentication module debug mode enabled via environment")
 
 # Get the server manager directory from registry
 def get_server_manager_dir():

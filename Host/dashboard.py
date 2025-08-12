@@ -55,7 +55,7 @@ from Host.dashboard_functions import (
 from Modules.agents import AgentManager, show_agent_management_dialog
 
 # Import debug functions
-from Modules.debug import (
+from debug.debug import (
     get_detailed_process_info, get_server_process_details, check_port_status,
     is_debug_enabled, log_exception, monitor_process_resources
 )

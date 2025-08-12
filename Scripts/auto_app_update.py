@@ -24,7 +24,7 @@ if modules_dir not in sys.path:
 
 # Try to import debug module
 try:
-    from Modules.debug import enable_debug, log_exception
+    from debug.debug import enable_debug, log_exception
 except ImportError:
     # Create a simple fallback if debug module not available
     def enable_debug():

@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""
-Verification script for dedicated server records in the database.
-This script checks existing records and removes any that are not actually dedicated servers.
-It validates each entry against strict criteria to ensure only legitimate dedicated servers remain.
-"""
-
 import os
 import sys
 import logging

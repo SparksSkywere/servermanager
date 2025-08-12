@@ -1,8 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Real-time Server Console System - Completely Rewritten
-Provides interactive console functionality for game servers with real-time I/O
-"""
 import os
 import sys
 import subprocess

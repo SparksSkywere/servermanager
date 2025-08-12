@@ -1,10 +1,3 @@
-"""
-Remote Agent Management Module for Server Manager Dashboard
-
-This module handles the management of remote agents that can be connected to
-the server manager for distributed server monitoring and management.
-"""
-
 import os
 import sys
 import json

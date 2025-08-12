@@ -22,17 +22,18 @@ if modules_dir not in sys.path:
 
 # Try to import from modules
 try:
-    from Modules.debug import debug_manager, enable_debug, get_system_info, create_diagnostic_report
-except ImportError:
-    # If import fails, use basic logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    from debug.debug import DebugManager as CoreDebugManager
+    from Modules.logging import get_component_logger
+    debug_manager = CoreDebugManager()
+    logger = get_component_logger("DebugManager")
+except Exception:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("DebugManager")
     debug_manager = None
 
-logger = logging.getLogger("DebugManager")
+if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
+    logger.setLevel(logging.DEBUG)
+    logger.debug("DebugManager module debug mode enabled via environment")
 
 def is_admin():
     """Check if the script is running with administrator privileges"""
@@ -94,9 +95,9 @@ class DebugManagerGUI:
             
             logger.info(f"Initialization complete. Server Manager directory: {self.server_manager_dir}")
             
-            # Enable debug mode
+            # Enable debug mode via instance
             if debug_manager:
-                enable_debug()
+                debug_manager.set_debug_mode(True)
                 
             return True
             
@@ -162,7 +163,7 @@ class DebugManagerGUI:
         """Toggle debug logging mode"""
         if debug_manager:
             if self.debug_var.get():
-                enable_debug()
+                debug_manager.set_debug_mode(True)
                 messagebox.showinfo("Debug Mode", "Debug logging is now enabled.")
             else:
                 debug_manager.set_debug_mode(False)
@@ -183,7 +184,7 @@ class DebugManagerGUI:
         try:
             if debug_manager:
                 # Use the debug module to get system info
-                system_info = get_system_info()
+                system_info = debug_manager.get_system_info()
                 
                 # Format system information with proper error handling
                 if isinstance(system_info, dict):
@@ -372,7 +373,7 @@ Usage: {disk_usage.percent}%
                 
                 if debug_manager:
                     try:
-                        system_info = get_system_info()
+                        system_info = debug_manager.get_system_info()
                         if isinstance(system_info, dict):
                             # Get system info safely
                             system_data = system_info.get('system', {})
@@ -515,11 +516,14 @@ Usage: {disk_usage.percent}%
                 
                 if debug_manager:
                     try:
-                        report_path = create_diagnostic_report()
+                        # Use debug_manager if it provides a create_diagnostic_report method; otherwise skip
+                        report_path = None
+                        if hasattr(debug_manager, 'create_diagnostic_report'):
+                            report_path = debug_manager.create_diagnostic_report()
                         if report_path:
                             results_text.insert(tk.END, f"[OK] Diagnostic report created: {report_path}\n", "ok")
                         else:
-                            results_text.insert(tk.END, "[ERROR] Failed to create diagnostic report\n", "error")
+                            results_text.insert(tk.END, "[INFO] Diagnostic report feature not available or not created.\n", "warning")
                     except Exception as e:
                         results_text.insert(tk.END, f"[ERROR] Error creating diagnostic report: {str(e)}\n", "error")
                 else:
