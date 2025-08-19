@@ -7,23 +7,12 @@ import socket
 import winreg
 import psutil
 import threading
-import tkinter as tk
-import os
-import sys
-import json
-import datetime
-import psutil
 import subprocess
-import winreg
 import time
-import threading
-import socket
 import zipfile
 import shutil
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-import shutil
-import zipfile
 
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -2660,3 +2649,234 @@ def export_server_dialog(parent, server_list, paths):
         logger.error(f"Error in export server: {str(e)}")
         messagebox.showerror("Error", f"Failed to export server: {str(e)}")
         return {'success': False, 'server_name': None, 'export_path': None}
+
+
+def show_server_rename_dialog(parent, current_server_name, server_config, server_manager, paths):
+    """Create a dialog to rename a server and modify its AppID
+    
+    Args:
+        parent: Parent window
+        current_server_name (str): Current name of the server
+        server_config (dict): Current server configuration
+        server_manager: Server manager instance
+        paths (dict): Application paths dictionary
+        
+    Returns:
+        dict: Result containing success status, new name, and new AppID
+    """
+    try:
+        dialog = tk.Toplevel(parent)
+        dialog.title(f"Rename Server: {current_server_name}")
+        dialog.transient(parent)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Current info section
+        current_frame = ttk.LabelFrame(main_frame, text="Current Configuration", padding=10)
+        current_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        ttk.Label(current_frame, text="Current Name:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(current_frame, text=current_server_name, font=("Segoe UI", 10)).grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        current_server_type = server_config.get('type', 'Unknown')
+        ttk.Label(current_frame, text="Server Type:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(current_frame, text=current_server_type, font=("Segoe UI", 10)).grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        current_appid = server_config.get('appid', 'N/A')
+        if current_server_type == 'Steam':
+            ttk.Label(current_frame, text="Current AppID:", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+            ttk.Label(current_frame, text=str(current_appid), font=("Segoe UI", 10)).grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        # New configuration section
+        new_frame = ttk.LabelFrame(main_frame, text="New Configuration", padding=10)
+        new_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        # New server name
+        ttk.Label(new_frame, text="New Server Name:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky=tk.W, padx=5, pady=10)
+        new_name_var = tk.StringVar(value=current_server_name)
+        name_entry = ttk.Entry(new_frame, textvariable=new_name_var, width=30, font=("Segoe UI", 10))
+        name_entry.grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=10)
+        name_entry.select_range(0, tk.END)
+        name_entry.focus()
+        
+        # AppID field (only for Steam servers)
+        new_appid_var = tk.StringVar(value=str(current_appid) if current_appid != 'N/A' else '')
+        appid_entry = None
+        
+        if current_server_type == 'Steam':
+            ttk.Label(new_frame, text="New AppID:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky=tk.W, padx=5, pady=10)
+            appid_entry = ttk.Entry(new_frame, textvariable=new_appid_var, width=15, font=("Segoe UI", 10))
+            appid_entry.grid(row=1, column=1, sticky=tk.W, padx=5, pady=10)
+            
+            # AppID help
+            help_label = ttk.Label(new_frame, text="Enter Steam AppID (numbers only)", 
+                                 foreground="gray", font=("Segoe UI", 8))
+            help_label.grid(row=1, column=2, sticky=tk.W, padx=5, pady=10)
+        
+        # Configure grid weights
+        new_frame.columnconfigure(1, weight=1)
+        
+        # Warning label
+        warning_frame = ttk.Frame(main_frame)
+        warning_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        warning_label = ttk.Label(warning_frame, 
+                                text="Warning: Renaming will update all configuration files. Make sure the server is stopped.",
+                                foreground="orange", font=("Segoe UI", 9), wraplength=400)
+        warning_label.pack()
+        
+        # Result storage
+        result = {"success": False, "new_name": None, "new_appid": None, "cancelled": True}
+        
+        def validate_inputs():
+            """Validate the input values"""
+            new_name = new_name_var.get().strip()
+            errors = []
+            
+            # Validate server name
+            if not new_name:
+                errors.append("Server name cannot be empty")
+            elif new_name != current_server_name:
+                # Check if new name already exists
+                if server_manager and hasattr(server_manager, 'get_server_config'):
+                    try:
+                        existing_config = server_manager.get_server_config(new_name)
+                        if existing_config:
+                            errors.append(f"Server name '{new_name}' already exists")
+                    except:
+                        pass  # Server doesn't exist, which is good
+            
+            # Validate AppID for Steam servers
+            if current_server_type == 'Steam':
+                new_appid = new_appid_var.get().strip()
+                if not new_appid:
+                    errors.append("AppID cannot be empty for Steam servers")
+                elif not new_appid.isdigit():
+                    errors.append("AppID must contain only numbers")
+            
+            return errors
+        
+        def on_rename():
+            """Handle rename button click"""
+            errors = validate_inputs()
+            if errors:
+                messagebox.showerror("Validation Error", "\n".join(errors))
+                return
+            
+            new_name = new_name_var.get().strip()
+            new_appid = new_appid_var.get().strip() if current_server_type == 'Steam' else None
+            
+            # Confirm the operation
+            confirm_msg = f"Are you sure you want to rename '{current_server_name}' to '{new_name}'?"
+            if current_server_type == 'Steam' and new_appid != str(current_appid):
+                confirm_msg += f"\n\nAppID will be changed from '{current_appid}' to '{new_appid}'"
+            
+            if messagebox.askyesno("Confirm Rename", confirm_msg):
+                result.update({
+                    "success": True,
+                    "new_name": new_name,
+                    "new_appid": int(new_appid) if new_appid else None,
+                    "cancelled": False
+                })
+                dialog.destroy()
+        
+        def on_cancel():
+            """Handle cancel button click"""
+            result["cancelled"] = True
+            dialog.destroy()
+        
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
+        ttk.Button(button_frame, text="Rename", command=on_rename, width=12).pack(side=tk.RIGHT)
+        
+        # Handle window close event (X button)
+        def on_dialog_close():
+            result["cancelled"] = True
+            dialog.destroy()
+        
+        dialog.protocol("WM_DELETE_WINDOW", on_dialog_close)
+        
+        # Center dialog relative to parent
+        center_window(dialog, 500, 350, parent)
+        
+        # Wait for dialog to close
+        parent.wait_window(dialog)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error creating server rename dialog: {e}")
+        messagebox.showerror("Error", f"Failed to create rename dialog:\n{str(e)}")
+        return {"success": False, "new_name": None, "new_appid": None, "cancelled": True}
+
+
+def rename_server_configuration(old_name, new_name, new_appid, server_manager, paths):
+    """Rename a server and update its configuration
+    
+    Args:
+        old_name (str): Current server name
+        new_name (str): New server name
+        new_appid (int): New AppID (for Steam servers, None for others)
+        server_manager: Server manager instance
+        paths (dict): Application paths dictionary
+        
+    Returns:
+        tuple: (success, message)
+    """
+    try:
+        if not server_manager:
+            return False, "Server manager not available"
+        
+        # Get current server configuration
+        current_config = server_manager.get_server_config(old_name)
+        if not current_config:
+            return False, f"Server '{old_name}' not found"
+        
+        # Check if server is running
+        if server_manager.is_server_running(old_name):
+            return False, f"Server '{old_name}' is currently running. Please stop it before renaming."
+        
+        # Create new configuration with updated values
+        new_config = current_config.copy()
+        
+        # Update AppID if provided (Steam servers)
+        if new_appid is not None and current_config.get('type') == 'Steam':
+            new_config['appid'] = new_appid
+            logger.info(f"Updated AppID from {current_config.get('appid')} to {new_appid}")
+        
+        # If name is changing, handle the rename
+        if old_name != new_name:
+            # Remove old server configuration
+            success, msg = server_manager.remove_server(old_name, remove_files=False)
+            if not success:
+                return False, f"Failed to remove old server configuration: {msg}"
+            
+            # Add server with new name and configuration
+            success, msg = server_manager.add_server(new_name, new_config)
+            if not success:
+                # Try to restore old configuration on failure
+                server_manager.add_server(old_name, current_config)
+                return False, f"Failed to create new server configuration: {msg}"
+            
+            logger.info(f"Successfully renamed server from '{old_name}' to '{new_name}'")
+            return True, f"Successfully renamed server to '{new_name}'"
+        
+        # If only AppID changed (same name)
+        else:
+            success, msg = server_manager.update_server_config(old_name, new_config)
+            if success:
+                logger.info(f"Successfully updated AppID for server '{old_name}'")
+                return True, f"Successfully updated server configuration"
+            else:
+                return False, f"Failed to update server configuration: {msg}"
+    
+    except Exception as e:
+        logger.error(f"Error renaming server '{old_name}' to '{new_name}': {e}")
+        return False, f"Error during rename operation: {str(e)}"

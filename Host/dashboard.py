@@ -48,7 +48,7 @@ from Host.dashboard_functions import (
     create_server_removal_dialog, export_server_dialog, perform_server_installation,
     format_uptime_from_start_time, update_server_status_in_treeview,
     import_server_from_directory_dialog, import_server_from_export_dialog,
-    create_progress_dialog_with_console
+    create_progress_dialog_with_console, rename_server_configuration
 )
 
 # Import agent management
@@ -1602,7 +1602,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             self.root.after(0, _update)
     
     def configure_server(self):
-        """Configure server executable and startup settings"""
+        """Configure server settings including name, type, AppID, and startup configuration"""
         selected = self.server_list.selection()
         if not selected:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -1627,36 +1627,102 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Configure Server: {server_name}")
-        dialog.transient(self.root); dialog.grab_set()
-        frm = ttk.Frame(dialog, padding=10); frm.pack(fill=tk.BOTH, expand=True)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Create main frame with scrolling
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create canvas and scrollbar for scrolling
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack the canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
-        # Info
-        info = ttk.LabelFrame(frm, text="Server Information"); info.pack(fill=tk.X,pady=5)
-        ttk.Label(info, text=f"Name: {server_name}").pack(anchor=tk.W,padx=10)
-        ttk.Label(info, text=f"AppID: {server_config.get('AppID','N/A')}").pack(anchor=tk.W,padx=10)
-        ttk.Label(info, text=f"Install Dir: {install_dir}").pack(anchor=tk.W,padx=10)
-
-        # Startup
-        start = ttk.LabelFrame(frm, text="Startup Configuration"); start.pack(fill=tk.X,pady=5)
+        # Server Identity Section
+        identity_frame = ttk.LabelFrame(scrollable_frame, text="Server Identity", padding=10)
+        identity_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Server name
+        ttk.Label(identity_frame, text="Server Name:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, padx=10, pady=5, sticky=tk.W)
+        name_var = tk.StringVar(value=server_name)
+        name_entry = ttk.Entry(identity_frame, textvariable=name_var, width=30, font=("Segoe UI", 10))
+        name_entry.grid(row=0, column=1, padx=10, pady=5, sticky=tk.EW)
+        
+        # Server type
+        ttk.Label(identity_frame, text="Server Type:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
+        current_server_type = server_config.get('type', 'Other')
+        type_var = tk.StringVar(value=current_server_type)
+        type_combo = ttk.Combobox(identity_frame, textvariable=type_var, values=["Steam", "Minecraft", "Other"], 
+                                 state="readonly", width=27, font=("Segoe UI", 10))
+        type_combo.grid(row=1, column=1, padx=10, pady=5, sticky=tk.W)
+        
+        # AppID (conditionally shown for Steam servers)
+        ttk.Label(identity_frame, text="AppID:", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, padx=10, pady=5, sticky=tk.W)
+        appid_var = tk.StringVar(value=str(server_config.get('appid', server_config.get('AppID', ''))))
+        appid_entry = ttk.Entry(identity_frame, textvariable=appid_var, width=20, font=("Segoe UI", 10))
+        appid_entry.grid(row=2, column=1, padx=10, pady=5, sticky=tk.W)
+        appid_help = ttk.Label(identity_frame, text="(Steam servers only)", foreground="gray", font=("Segoe UI", 8))
+        appid_help.grid(row=2, column=2, padx=5, pady=5, sticky=tk.W)
+        
+        # Install directory (read-only display)
+        ttk.Label(identity_frame, text="Install Directory:", font=("Segoe UI", 10, "bold")).grid(row=3, column=0, padx=10, pady=5, sticky=tk.W)
+        dir_label = ttk.Label(identity_frame, text=install_dir, font=("Segoe UI", 9), foreground="gray")
+        dir_label.grid(row=3, column=1, columnspan=2, padx=10, pady=5, sticky=tk.W)
+        
+        # Configure grid
+        identity_frame.grid_columnconfigure(1, weight=1)
+        
+        def toggle_appid_field():
+            """Enable/disable AppID field based on server type"""
+            if type_var.get() == "Steam":
+                appid_entry.config(state=tk.NORMAL)
+                appid_help.config(text="(Required for Steam servers)")
+            else:
+                appid_entry.config(state=tk.DISABLED)
+                appid_help.config(text="(Steam servers only)")
+        
+        # Bind type change event
+        type_var.trace('w', lambda *args: toggle_appid_field())
+        toggle_appid_field()  # Initial state
+        
+        # Startup Configuration Section
+        startup_frame = ttk.LabelFrame(scrollable_frame, text="Startup Configuration", padding=10)
+        startup_frame.pack(fill=tk.X, pady=(0, 15))
+        
         # Executable
-        ttk.Label(start, text="Executable:").grid(row=0,column=0,padx=10,pady=5,sticky=tk.W)
+        ttk.Label(startup_frame, text="Executable:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, padx=10, pady=5, sticky=tk.W)
         exe_var = tk.StringVar(value=server_config.get('ExecutablePath',''))
-        exe_entry = ttk.Entry(start, textvariable=exe_var, width=40); exe_entry.grid(row=0,column=1,sticky=tk.W)
+        exe_entry = ttk.Entry(startup_frame, textvariable=exe_var, width=35, font=("Segoe UI", 10))
+        exe_entry.grid(row=0, column=1, padx=10, pady=5, sticky=tk.EW)
+        
         def browse_exe():
             fp = filedialog.askopenfilename(initialdir=install_dir,
-                filetypes=[("Exec","*.exe;*.bat;*.cmd;*.ps1;*.sh"),("All","*.*")])
+                filetypes=[("Executables","*.exe;*.bat;*.cmd;*.ps1;*.sh"),("All Files","*.*")])
             if fp:
                 rel = os.path.relpath(fp, install_dir) if os.path.commonpath([fp,install_dir])==install_dir else fp
                 exe_var.set(rel)
-        ttk.Button(start, text="Browse", command=browse_exe).grid(row=0,column=2)
+        ttk.Button(startup_frame, text="Browse", command=browse_exe).grid(row=0, column=2, padx=10, pady=5)
 
         # Stop command
-        ttk.Label(start, text="Stop Command:").grid(row=1,column=0,padx=10,pady=5,sticky=tk.W)
+        ttk.Label(startup_frame, text="Stop Command:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
         stop_var = tk.StringVar(value=server_config.get('StopCommand',''))
-        ttk.Entry(start, textvariable=stop_var, width=40).grid(row=1,column=1,columnspan=2,sticky=tk.W)
+        ttk.Entry(startup_frame, textvariable=stop_var, width=35, font=("Segoe UI", 10)).grid(row=1, column=1, padx=10, pady=5, sticky=tk.EW)
         
         # Startup arguments section with radio button choice
-        args_frame = ttk.LabelFrame(start, text="Startup Arguments")
+        args_frame = ttk.LabelFrame(startup_frame, text="Startup Arguments", padding=5)
         args_frame.grid(row=2, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
         
         # Radio button to choose between manual args or config file
@@ -1716,6 +1782,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         ttk.Label(config_frame, text="(optional)", foreground="gray").grid(row=2, column=2, padx=5, pady=2, sticky=tk.W)
         
         # Configure grid weights
+        startup_frame.grid_columnconfigure(1, weight=1)
         args_frame.grid_columnconfigure(0, weight=1)
         args_frame.grid_columnconfigure(1, weight=1)
         manual_frame.grid_columnconfigure(1, weight=1)
@@ -1739,16 +1806,14 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         
         # Bind radio button changes
         startup_mode_var.trace('w', lambda *args: toggle_startup_mode())
-        
-        # Initial toggle
-        toggle_startup_mode()
+        toggle_startup_mode()  # Initial toggle
         
         # Preview command line
-        preview_frame = ttk.LabelFrame(frm, text="Command Preview")
-        preview_frame.pack(fill=tk.X, pady=5)
+        preview_frame = ttk.LabelFrame(scrollable_frame, text="Command Preview", padding=10)
+        preview_frame.pack(fill=tk.X, pady=(0, 15))
         
-        preview_text = tk.Text(preview_frame, height=3, wrap=tk.WORD, background="lightgray")
-        preview_text.pack(fill=tk.X, padx=10, pady=10)
+        preview_text = tk.Text(preview_frame, height=3, wrap=tk.WORD, background="lightgray", font=("Consolas", 9))
+        preview_text.pack(fill=tk.X, padx=5, pady=5)
         
         def update_preview():
             """Update the command preview"""
@@ -1804,82 +1869,216 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         # Initial preview update
         update_preview()
 
-        # Save/Cancel/Test
-        btns = ttk.Frame(frm); btns.pack(fill=tk.X,pady=10)
-        def save():
-            ep = exe_var.get().strip()
-            sc = stop_var.get().strip()
-            mode = startup_mode_var.get()
+        # Warning section
+        if name_var.get() != server_name or type_var.get() != current_server_type:
+            warning_frame = ttk.Frame(scrollable_frame)
+            warning_frame.pack(fill=tk.X, pady=(0, 15))
             
-            if not ep:
-                messagebox.showerror("Validation Error", "Executable path is required.")
+            warning_label = ttk.Label(warning_frame, 
+                                    text="⚠ Warning: Changing server name or type will update configuration files. Ensure server is stopped.",
+                                    foreground="orange", font=("Segoe UI", 9, "bold"), wraplength=650)
+            warning_label.pack()
+
+        # Button frame
+        button_frame = ttk.Frame(scrollable_frame)
+        button_frame.pack(fill=tk.X, pady=10)
+        
+        def validate_inputs():
+            """Validate all input fields"""
+            errors = []
+            
+            new_name = name_var.get().strip()
+            new_type = type_var.get()
+            new_appid = appid_var.get().strip()
+            exe_path = exe_var.get().strip()
+            
+            # Validate server name
+            if not new_name:
+                errors.append("Server name cannot be empty")
+            elif new_name != server_name and self.server_manager:
+                # Check if new name already exists
+                try:
+                    existing_config = self.server_manager.get_server_config(new_name)
+                    if existing_config:
+                        errors.append(f"Server name '{new_name}' already exists")
+                except:
+                    pass  # Server doesn't exist, which is good
+            
+            # Validate AppID for Steam servers
+            if new_type == 'Steam':
+                if not new_appid:
+                    errors.append("AppID is required for Steam servers")
+                elif not new_appid.isdigit():
+                    errors.append("AppID must contain only numbers")
+            
+            # Validate executable
+            if not exe_path:
+                errors.append("Executable path is required")
+            
+            return errors
+        
+        def save_configuration():
+            """Save the server configuration"""
+            errors = validate_inputs()
+            if errors:
+                messagebox.showerror("Validation Error", "\n".join(errors))
                 return
             
-            # resolve abs paths for validation
-            ep_abs = ep if os.path.isabs(ep) else os.path.join(install_dir,ep)
-            if not os.path.exists(ep_abs):
-                if not messagebox.askyesno("Warning",f"Executable not found: {ep_abs}\nSave anyway?"): return
+            new_name = name_var.get().strip()
+            new_type = type_var.get()
+            new_appid = appid_var.get().strip()
+            exe_path = exe_var.get().strip()
+            stop_cmd = stop_var.get().strip()
+            mode = startup_mode_var.get()
             
-            # Prepare configuration based on mode
-            if mode == "manual":
-                startup_args = args_var.get().strip()
-                use_config = False
-                config_file_path = ""
-                config_arg = ""
-                additional_args = ""
-            else:
-                startup_args = ""
-                use_config = True
-                config_file_path = config_file_var.get().strip()
-                config_arg = config_arg_var.get().strip()
-                additional_args = additional_args_var.get().strip()
-                
-                # Validate config file if enabled
-                if config_file_path:
-                    config_abs = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
-                    if not os.path.exists(config_abs):
-                        if not messagebox.askyesno("Warning", f"Config file not found: {config_abs}\nSave anyway?"): return
-                    if not config_arg:
-                        messagebox.showerror("Validation Error", "Config argument is required when using config file."); return
-                else:
-                    messagebox.showerror("Validation Error", "Config file path is required when using config file mode."); return
-            
-            # Use server manager to update configuration
             try:
+                # Validate executable path
+                exe_abs = exe_path if os.path.isabs(exe_path) else os.path.join(install_dir, exe_path)
+                if not os.path.exists(exe_abs):
+                    if not messagebox.askyesno("Warning", f"Executable not found: {exe_abs}\nSave anyway?"):
+                        return
+                
+                # Prepare configuration based on mode
+                if mode == "manual":
+                    startup_args = args_var.get().strip()
+                    use_config = False
+                    config_file_path = ""
+                    config_arg = ""
+                    additional_args = ""
+                else:
+                    startup_args = ""
+                    use_config = True
+                    config_file_path = config_file_var.get().strip()
+                    config_arg = config_arg_var.get().strip()
+                    additional_args = additional_args_var.get().strip()
+                    
+                    # Validate config file if enabled
+                    if config_file_path:
+                        config_abs = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
+                        if not os.path.exists(config_abs):
+                            if not messagebox.askyesno("Warning", f"Config file not found: {config_abs}\nSave anyway?"):
+                                return
+                        if not config_arg:
+                            messagebox.showerror("Validation Error", "Config argument is required when using config file.")
+                            return
+                    else:
+                        messagebox.showerror("Validation Error", "Config file path is required when using config file mode.")
+                        return
+                
+                # Handle name/type/AppID changes first
+                name_changed = new_name != server_name
+                type_changed = new_type != current_server_type
+                current_appid_str = str(server_config.get('appid', server_config.get('AppID', ''))) if server_config else ''
+                appid_changed = new_type == 'Steam' and new_appid != current_appid_str
+                
+                if name_changed or type_changed or appid_changed:
+                    # Create updated server config
+                    if server_config:
+                        updated_config = server_config.copy()
+                        updated_config['type'] = new_type
+                        if new_type == 'Steam' and new_appid:
+                            updated_config['appid'] = int(new_appid)
+                            updated_config['AppID'] = int(new_appid)  # Legacy support
+                    
+                    # Use the rename function if name changed
+                    if name_changed:
+                        success, message = rename_server_configuration(server_name, new_name, 
+                                                                      int(new_appid) if new_type == 'Steam' and new_appid else None, 
+                                                                      self.server_manager, self.paths)
+                        if not success:
+                            messagebox.showerror("Error", f"Failed to rename server: {message}")
+                            return
+                        
+                        # Update server_name for subsequent operations
+                        current_server_name = new_name
+                    else:
+                        # Just update the type/AppID without renaming
+                        try:
+                            # Read current config file
+                            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+                            with open(config_file, 'r', encoding='utf-8') as f:
+                                current_config = json.load(f)
+                            
+                            # Update the config
+                            current_config['type'] = new_type
+                            if new_type == 'Steam' and new_appid:
+                                current_config['appid'] = int(new_appid)
+                                current_config['AppID'] = int(new_appid)  # Legacy support
+                            
+                            # Save updated config
+                            with open(config_file, 'w', encoding='utf-8') as f:
+                                json.dump(current_config, f, indent=2, ensure_ascii=False)
+                            
+                            logger.info(f"Updated server type/AppID for '{server_name}'")
+                        except Exception as e:
+                            messagebox.showerror("Error", f"Failed to update server configuration: {str(e)}")
+                            return
+                        
+                        current_server_name = server_name
+                else:
+                    current_server_name = server_name
+                
+                # Update startup configuration
                 if self.server_manager:
                     success, message = self.server_manager.update_server_config(
-                        server_name, ep, startup_args, sc, use_config, 
+                        current_server_name, exe_path, startup_args, stop_cmd, use_config, 
                         config_file_path, config_arg, additional_args
                     )
                 else:
                     success = False
-                    message = "Server manager not initialized"
+                    message = "Server manager not available"
                 
                 if success:
-                    messagebox.showinfo("Success", "Configuration saved.")
+                    # Log the actions
+                    actions = []
+                    if name_changed:
+                        actions.append(f"renamed to '{new_name}'")
+                    if type_changed:
+                        actions.append(f"changed type to '{new_type}'")
+                    if appid_changed:
+                        actions.append(f"updated AppID to {new_appid}")
+                    
+                    if actions:
+                        log_user_action(self.current_user.username if self.current_user else "Unknown",
+                                      f"Server '{server_name}' {', '.join(actions)}",
+                                      "server_configure")
+                    
+                    log_user_action(self.current_user.username if self.current_user else "Unknown",
+                                  f"Updated startup configuration for server '{current_server_name}'",
+                                  "server_configure")
+                    
+                    messagebox.showinfo("Success", "Server configuration saved successfully.")
                     dialog.destroy()
+                    
+                    # Refresh server list to show changes
+                    self.update_server_list(force_refresh=True)
                 else:
-                    messagebox.showerror("Error", message)
+                    messagebox.showerror("Error", f"Failed to save startup configuration: {message}")
                     
             except Exception as e:
-                logger.error(f"Error saving configuration: {str(e)}")
+                logger.error(f"Error saving server configuration: {str(e)}")
                 messagebox.showerror("Error", f"Failed to save configuration: {str(e)}")
+        
+        def test_executable():
+            """Test if the executable path exists"""
+            exe_path = exe_var.get().strip()
+            if not exe_path:
+                messagebox.showwarning("Test", "Please specify an executable path first.")
+                return
                 
-        ttk.Button(btns, text="Save", command=save).pack(side=tk.RIGHT,padx=5)
-        ttk.Button(btns, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
-
-        def test():
-            ep = exe_var.get().strip()
-            ep_abs = ep if os.path.isabs(ep) else os.path.join(install_dir,ep)
-            if os.path.exists(ep_abs):
-                messagebox.showinfo("Test OK",f"Found: {ep_abs}")
+            exe_abs = exe_path if os.path.isabs(exe_path) else os.path.join(install_dir, exe_path)
+            if os.path.exists(exe_abs):
+                messagebox.showinfo("Test OK", f"Executable found: {exe_abs}")
             else:
-                messagebox.showerror("Test Failed",f"Not found: {ep_abs}")
-        ttk.Button(btns, text="Test Path", command=test).pack(side=tk.LEFT)
+                messagebox.showerror("Test Failed", f"Executable not found: {exe_abs}")
+        
+        # Buttons
+        ttk.Button(button_frame, text="Test Path", command=test_executable).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Save Configuration", command=save_configuration).pack(side=tk.RIGHT, padx=5)
 
-        # Center dialog
         # Center dialog relative to parent
-        center_window(dialog, 650, 550, self.root)
+        center_window(dialog, 750, 700, self.root)
 
     def configure_java(self):
         """Open Java configuration dialog for selected server"""
