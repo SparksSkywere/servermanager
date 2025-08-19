@@ -2274,7 +2274,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         
         # Buttons
         ttk.Button(button_frame, text="Test Path", command=test_executable).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Save Configuration", command=save_configuration).pack(side=tk.RIGHT, padx=5)
 
         # Center dialog relative to parent
