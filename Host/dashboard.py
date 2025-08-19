@@ -253,7 +253,6 @@ class ServerManagerDashboard(ServerManagerModule):
         updates_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Updates", menu=updates_menu)
         updates_menu.add_command(label="Update All Steam Servers", command=self.update_all_servers)
-        updates_menu.add_command(label="Restart All Servers", command=self.restart_all_servers)
         updates_menu.add_separator()
         updates_menu.add_command(label="Schedule Manager", command=self.show_schedule_manager)
         
@@ -294,11 +293,6 @@ class ServerManagerDashboard(ServerManagerModule):
         self.schedules_button = ttk.Button(self.top_frame, text="Schedules", 
                                          command=self.show_schedule_manager, width=12)
         self.schedules_button.pack(side=tk.LEFT, padx=(0, 5))
-        
-        # Add restart schedule buttons
-        self.restart_all_button = ttk.Button(self.top_frame, text="Restart All", 
-                                           command=self.restart_all_servers, width=12)
-        self.restart_all_button.pack(side=tk.LEFT, padx=(0, 5))
         
         # Add console management button
         self.console_button = ttk.Button(self.top_frame, text="Consoles", 
@@ -348,6 +342,7 @@ class ServerManagerDashboard(ServerManagerModule):
         # Setup right-click context menu for server list
         self.server_context_menu = tk.Menu(self.root, tearoff=0)
         self.server_context_menu.add_command(label="Add Server", command=self.add_server)
+        self.server_context_menu.add_command(label="Refresh", command=self.refresh_all)
         self.server_context_menu.add_separator()
         self.server_context_menu.add_command(label="Start Server", command=self.start_server)
         self.server_context_menu.add_command(label="Stop Server", command=self.stop_server)
@@ -460,7 +455,6 @@ class ServerManagerDashboard(ServerManagerModule):
         row2_buttons = [
             {"text": "Configure Java", "command": self.configure_java},
             {"text": "Configure Server", "command": self.show_server_type_configuration},
-            {"text": "Refresh", "command": self.refresh_all},
             {"text": "Sync All", "command": self.sync_all},
             {"text": "Add Agent", "command": self.add_agent}
         ]
@@ -2941,7 +2935,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             # Update web server status
             self.update_webserver_status()
             
-            messagebox.showinfo("Refresh Complete", "All dashboard data has been refreshed.")
+            # Silently complete the refresh without showing a dialog
             
         except Exception as e:
             logger.error(f"Error refreshing dashboard: {str(e)}")
