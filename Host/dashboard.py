@@ -362,6 +362,9 @@ class ServerManagerDashboard(ServerManagerModule):
         # Bind right-click to server list
         self.server_list.bind("<Button-3>", self.show_server_context_menu)
         
+        # Bind left-click to handle deselection on empty space (like Windows Explorer)
+        self.server_list.bind("<Button-1>", self.on_server_list_click)
+        
         # Create system info frame (right side)
         self.system_frame = ttk.LabelFrame(self.main_pane, text="System Information", padding=10)
         self.main_pane.add(self.system_frame, weight=30)
@@ -497,6 +500,16 @@ class ServerManagerDashboard(ServerManagerModule):
             
         # Show context menu
         self.server_context_menu.tk_popup(event.x_root, event.y_root)
+
+    def on_server_list_click(self, event):
+        """Handle left-click on server list - deselect all if clicking on empty space"""
+        # Get item under cursor
+        item = self.server_list.identify_row(event.y)
+        
+        if not item:
+            # Clicked on empty space - clear all selections (like Windows Explorer)
+            self.server_list.selection_remove(self.server_list.selection())
+            logger.debug("Cleared server list selection due to empty space click")
 
     def add_server(self):
         """Add a new server using database-backed AppID/server info"""
@@ -980,6 +993,11 @@ class ServerManagerDashboard(ServerManagerModule):
         """Update server list from configuration files - thread-safe"""
         def _update():
             try:
+                # Skip update if already refreshing
+                if hasattr(self, '_refreshing_server_list') and self._refreshing_server_list:
+                    log_dashboard_event("SERVER_LIST_UPDATE", "Skipping update - refresh already in progress", "DEBUG")
+                    return
+                
                 # Skip update if it's been less than configured interval since the last update and force_refresh isn't specified
                 update_interval = self.variables.get("serverListUpdateInterval", 30)
                 if not force_refresh and \
@@ -988,13 +1006,22 @@ class ServerManagerDashboard(ServerManagerModule):
                     log_dashboard_event("SERVER_LIST_UPDATE", f"Skipping update - last update was less than {update_interval} seconds ago", "DEBUG")
                     return
                 
-                # Use the new function from dashboard_functions
-                update_server_list_from_files(
-                    self.server_list, self.paths, self.variables, 
-                    log_dashboard_event, format_uptime_from_start_time
-                )
+                # Set refreshing flag
+                self._refreshing_server_list = True
+                
+                try:
+                    # Use the new function from dashboard_functions
+                    update_server_list_from_files(
+                        self.server_list, self.paths, self.variables, 
+                        log_dashboard_event, format_uptime_from_start_time
+                    )
+                finally:
+                    # Always clear the refreshing flag
+                    self._refreshing_server_list = False
+                    
             except Exception as e:
                 logger.error(f"Error in update_server_list: {str(e)}")
+                self._refreshing_server_list = False
         
         # Ensure this runs on the main thread
         if threading.current_thread() == threading.main_thread():
@@ -1048,14 +1075,12 @@ class ServerManagerDashboard(ServerManagerModule):
             try:
                 # Only refresh if not already refreshing and enough time has passed
                 if not hasattr(self, '_refreshing_server_list') or not self._refreshing_server_list:
-                    self._refreshing_server_list = True
-                    try:
-                        self.update_server_list(force_refresh=True)
-                    finally:
-                        self._refreshing_server_list = False
+                    # Use the main update method which now has its own protection
+                    self.update_server_list(force_refresh=True)
+                else:
+                    log_dashboard_event("PERIODIC_REFRESH", "Skipping periodic refresh - update already in progress", "DEBUG")
             except Exception as e:
                 logger.error(f"Error in periodic server list refresh: {str(e)}")
-                self._refreshing_server_list = False
         
         # Ensure this runs on the main thread
         if threading.current_thread() == threading.main_thread():

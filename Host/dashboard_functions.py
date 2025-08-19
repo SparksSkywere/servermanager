@@ -1879,6 +1879,22 @@ def perform_server_installation(server_manager, server_type, form_vars, credenti
 def update_server_list_from_files(server_list, paths, variables, log_dashboard_event, format_uptime_from_start_time):
     """Update server list treeview from configuration files"""
     try:
+        # Remember currently selected server(s) to restore selection after refresh
+        selected_items = server_list.selection()
+        selected_server_names = []
+        
+        for item in selected_items:
+            try:
+                values = server_list.item(item)['values']
+                if values and len(values) > 0:
+                    server_name = values[0]
+                    selected_server_names.append(server_name)
+                    log_dashboard_event("SERVER_LIST_UPDATE", f"Preserving selection for server: {server_name}", "DEBUG")
+            except (IndexError, KeyError, tk.TclError) as e:
+                # Handle case where item doesn't exist, has no values, or Tkinter error
+                log_dashboard_event("SERVER_LIST_UPDATE", f"Could not preserve selection for item: {str(e)}", "DEBUG")
+                pass
+        
         # Clear current items
         for item in server_list.get_children():
             server_list.delete(item)
@@ -1957,6 +1973,28 @@ def update_server_list_from_files(server_list, paths, variables, log_dashboard_e
         # Update last refresh time
         variables["lastServerListUpdate"] = datetime.datetime.now()
         variables["lastProcessUpdate"] = datetime.datetime.now()
+        
+        # Restore selection if any servers were previously selected
+        if selected_server_names:
+            selections_restored = 0
+            for item in server_list.get_children():
+                try:
+                    values = server_list.item(item)['values']
+                    if values and len(values) > 0:
+                        server_name = values[0]
+                        if server_name in selected_server_names:
+                            server_list.selection_add(item)
+                            selections_restored += 1
+                            log_dashboard_event("SERVER_LIST_UPDATE", f"Restored selection for server: {server_name}", "DEBUG")
+                except (IndexError, KeyError, tk.TclError) as e:
+                    # Handle case where item doesn't exist, has no values, or Tkinter error
+                    log_dashboard_event("SERVER_LIST_UPDATE", f"Could not restore selection for item: {str(e)}", "DEBUG")
+                    pass
+            
+            if selections_restored > 0:
+                log_dashboard_event("SERVER_LIST_UPDATE", f"Restored {selections_restored} server selection(s)", "INFO")
+            elif selected_server_names:
+                log_dashboard_event("SERVER_LIST_UPDATE", f"Could not restore any of {len(selected_server_names)} previously selected servers", "WARNING")
         
         log_dashboard_event("SERVER_LIST_UPDATE", "Server list updated successfully", "DEBUG")
         
