@@ -1672,10 +1672,188 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         # AppID (conditionally shown for Steam servers)
         ttk.Label(identity_frame, text="AppID:", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, padx=10, pady=5, sticky=tk.W)
         appid_var = tk.StringVar(value=str(server_config.get('appid', server_config.get('AppID', ''))))
-        appid_entry = ttk.Entry(identity_frame, textvariable=appid_var, width=20, font=("Segoe UI", 10))
+        appid_entry = ttk.Entry(identity_frame, textvariable=appid_var, width=15, font=("Segoe UI", 10))
         appid_entry.grid(row=2, column=1, padx=10, pady=5, sticky=tk.W)
+        
+        def browse_appid():
+            # Create AppID selection dialog
+            appid_dialog = tk.Toplevel(dialog)
+            appid_dialog.title("Select Dedicated Server")
+            appid_dialog.transient(dialog)
+            appid_dialog.grab_set()
+            appid_dialog.geometry("600x500")
+            
+            # Create search frame
+            search_frame = ttk.Frame(appid_dialog, padding=10)
+            search_frame.pack(fill=tk.X)
+            
+            ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT)
+            search_var = tk.StringVar()
+            search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
+            search_entry.pack(side=tk.LEFT, padx=(5, 10))
+            
+            # Load dedicated servers from scanner's AppID list
+            try:
+                dedicated_servers_data, metadata = load_appid_scanner_list(self.server_manager_dir)
+                
+                if not dedicated_servers_data:
+                    # Fallback to hardcoded list if scanner data not available
+                    logger.warning("Scanner AppID list not available, using fallback list")
+                    dedicated_servers = [
+                        {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
+                        {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
+                        {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
+                        {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
+                        {"name": "ARK: Survival Evolved Dedicated Server", "appid": "376030"},
+                        {"name": "Rust Dedicated Server", "appid": "258550"},
+                        {"name": "7 Days to Die Dedicated Server", "appid": "294420"},
+                        {"name": "Valheim Dedicated Server", "appid": "896660"},
+                        {"name": "Source Dedicated Server (Generic)", "appid": "205"}
+                    ]
+                else:
+                    # Use scanner data - convert to compatible format
+                    dedicated_servers = [
+                        {
+                            "name": server.get("name", "Unknown Server"),
+                            "appid": str(server.get("appid", "0")),
+                            "developer": server.get("developer", ""),
+                            "publisher": server.get("publisher", ""),
+                            "description": server.get("description", ""),
+                            "type": server.get("type", "Dedicated Server")
+                        }
+                        for server in dedicated_servers_data
+                    ]
+                    
+                    logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner (last updated: {metadata.get('last_updated', 'Unknown')})")
+                    
+                    # Add refresh info to dialog
+                    if metadata.get('last_updated'):
+                        last_updated = metadata['last_updated']
+                        if 'T' in last_updated:  # ISO format
+                            try:
+                                from datetime import datetime
+                                dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                                formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
+                                ttk.Label(search_frame, text=f"Data last updated: {formatted_date}", 
+                                        foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
+                            except:
+                                pass
+                        
+            except Exception as e:
+                logger.error(f"Error loading scanner AppID list: {e}")
+                # Use fallback list
+                dedicated_servers = [
+                    {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
+                    {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
+                    {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
+                    {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
+                    {"name": "Source Dedicated Server (Generic)", "appid": "205"}
+                ]
+            
+            # Create server list
+            list_frame = ttk.Frame(appid_dialog, padding=10)
+            list_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Enhanced treeview for server list with additional columns
+            columns = ("name", "appid", "developer", "type")
+            server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
+            server_tree.heading("name", text="Server Name")
+            server_tree.heading("appid", text="App ID")
+            server_tree.heading("developer", text="Developer")
+            server_tree.heading("type", text="Type")
+            server_tree.column("name", width=300)
+            server_tree.column("appid", width=80)
+            server_tree.column("developer", width=150)
+            server_tree.column("type", width=120)
+            
+            # Scrollbar
+            scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=server_tree.yview)
+            server_tree.configure(yscrollcommand=scrollbar.set)
+            
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            server_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            
+            # Populate server list with enhanced data
+            def populate_servers(filter_text=""):
+                server_tree.delete(*server_tree.get_children())
+                for server in dedicated_servers:
+                    server_name = server["name"]
+                    if not filter_text or filter_text.lower() in server_name.lower():
+                        server_tree.insert("", tk.END, values=(
+                            server_name, 
+                            server["appid"],
+                            server.get("developer", "Unknown")[:25] + ("..." if len(server.get("developer", "")) > 25 else ""),
+                            server.get("type", "Dedicated Server")
+                        ))
+            
+            populate_servers()
+            
+            # Enhanced search functionality
+            def on_search(*args):
+                populate_servers(search_var.get())
+            
+            search_var.trace('w', on_search)
+            
+            # Add tooltip functionality for descriptions
+            def show_server_info(event):
+                item = server_tree.selection()
+                if item:
+                    selected_server = None
+                    item_values = server_tree.item(item[0])['values']
+                    for server in dedicated_servers:
+                        if server["appid"] == str(item_values[1]):
+                            selected_server = server
+                            break
+                    
+                    if selected_server and selected_server.get("description"):
+                        # Create a simple tooltip window
+                        tooltip = tk.Toplevel(appid_dialog)
+                        tooltip.wm_overrideredirect(True)
+                        tooltip.geometry(f"+{event.x_root+10}+{event.y_root+10}")
+                        
+                        # Limit description length
+                        desc = selected_server["description"][:200] + ("..." if len(selected_server["description"]) > 200 else "")
+                        
+                        label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}", 
+                                       background="lightyellow", relief="solid", borderwidth=1,
+                                       wraplength=300, justify=tk.LEFT, font=("Segoe UI", 9))
+                        label.pack()
+                        
+                        # Auto-hide after 3 seconds
+                        tooltip.after(3000, tooltip.destroy)
+            
+            server_tree.bind('<Double-1>', show_server_info)
+            
+            # Button frame
+            button_frame = ttk.Frame(appid_dialog, padding=10)
+            button_frame.pack(fill=tk.X)
+            
+            def select_server():
+                selected = server_tree.selection()
+                
+                if selected:
+                    # Use selected server from list
+                    item = server_tree.item(selected[0])
+                    appid = item['values'][1]
+                    appid_var.set(appid)
+                    appid_dialog.destroy()
+                else:
+                    messagebox.showinfo("No Selection", "Please select a server from the list.")
+            
+            def cancel_selection():
+                appid_dialog.destroy()
+            
+            ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT)
+            ttk.Button(button_frame, text="Select Server", command=select_server, width=15).pack(side=tk.RIGHT)
+            
+            # Center dialog
+            center_window(appid_dialog, 600, 500, dialog)
+        
+        appid_browse_btn = ttk.Button(identity_frame, text="Browse", command=browse_appid, width=10)
+        appid_browse_btn.grid(row=2, column=2, padx=5, pady=5)
+        
         appid_help = ttk.Label(identity_frame, text="(Steam servers only)", foreground="gray", font=("Segoe UI", 8))
-        appid_help.grid(row=2, column=2, padx=5, pady=5, sticky=tk.W)
+        appid_help.grid(row=2, column=3, padx=5, pady=5, sticky=tk.W)
         
         # Install directory (read-only display)
         ttk.Label(identity_frame, text="Install Directory:", font=("Segoe UI", 10, "bold")).grid(row=3, column=0, padx=10, pady=5, sticky=tk.W)
@@ -1684,14 +1862,17 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         
         # Configure grid
         identity_frame.grid_columnconfigure(1, weight=1)
+        identity_frame.grid_columnconfigure(3, weight=0)
         
         def toggle_appid_field():
             """Enable/disable AppID field based on server type"""
             if type_var.get() == "Steam":
                 appid_entry.config(state=tk.NORMAL)
+                appid_browse_btn.config(state=tk.NORMAL)
                 appid_help.config(text="(Required for Steam servers)")
             else:
                 appid_entry.config(state=tk.DISABLED)
+                appid_browse_btn.config(state=tk.DISABLED)
                 appid_help.config(text="(Steam servers only)")
         
         # Bind type change event

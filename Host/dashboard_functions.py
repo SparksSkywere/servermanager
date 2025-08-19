@@ -1499,8 +1499,188 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
     # App ID (Steam only)
     if server_type == "Steam":
         ttk.Label(scrollable_frame, text="App ID:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-        app_id_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['app_id'], width=40, font=("Segoe UI", 10))
-        app_id_entry.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
+        app_id_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['app_id'], width=30, font=("Segoe UI", 10))
+        app_id_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
+        
+        def browse_appid():
+            # Create AppID selection dialog
+            appid_dialog = tk.Toplevel(dialog)
+            appid_dialog.title("Select Dedicated Server")
+            appid_dialog.transient(dialog)
+            appid_dialog.grab_set()
+            appid_dialog.geometry("600x500")
+            
+            # Create search frame
+            search_frame = ttk.Frame(appid_dialog, padding=10)
+            search_frame.pack(fill=tk.X)
+            
+            ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT)
+            search_var = tk.StringVar()
+            search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
+            search_entry.pack(side=tk.LEFT, padx=(5, 10))
+            
+            # Load dedicated servers from scanner's AppID list
+            try:
+                dedicated_servers_data, metadata = load_appid_scanner_list(server_manager_dir)
+                
+                if not dedicated_servers_data:
+                    # Fallback to hardcoded list if scanner data not available
+                    logger.warning("Scanner AppID list not available, using fallback list")
+                    dedicated_servers = [
+                        {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
+                        {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
+                        {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
+                        {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
+                        {"name": "ARK: Survival Evolved Dedicated Server", "appid": "376030"},
+                        {"name": "Rust Dedicated Server", "appid": "258550"},
+                        {"name": "7 Days to Die Dedicated Server", "appid": "294420"},
+                        {"name": "Valheim Dedicated Server", "appid": "896660"},
+                        {"name": "Source Dedicated Server (Generic)", "appid": "205"}
+                    ]
+                else:
+                    # Use scanner data - convert to compatible format
+                    dedicated_servers = [
+                        {
+                            "name": server.get("name", "Unknown Server"),
+                            "appid": str(server.get("appid", "0")),
+                            "developer": server.get("developer", ""),
+                            "publisher": server.get("publisher", ""),
+                            "description": server.get("description", ""),
+                            "type": server.get("type", "Dedicated Server")
+                        }
+                        for server in dedicated_servers_data
+                    ]
+                    
+                    logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner (last updated: {metadata.get('last_updated', 'Unknown')})")
+                    
+                    # Add refresh info to dialog
+                    if metadata.get('last_updated'):
+                        last_updated = metadata['last_updated']
+                        if 'T' in last_updated:  # ISO format
+                            try:
+                                from datetime import datetime
+                                dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                                formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
+                                ttk.Label(search_frame, text=f"Data last updated: {formatted_date}", 
+                                        foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
+                            except:
+                                pass
+                    
+            except Exception as e:
+                logger.error(f"Error loading scanner AppID list: {e}")
+                # Use fallback list
+                dedicated_servers = [
+                    {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
+                    {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
+                    {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
+                    {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
+                    {"name": "Source Dedicated Server (Generic)", "appid": "205"}
+                ]
+            
+            # Create server list
+            list_frame = ttk.Frame(appid_dialog, padding=10)
+            list_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Enhanced treeview for server list with additional columns
+            columns = ("name", "appid", "developer", "type")
+            server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
+            server_tree.heading("name", text="Server Name")
+            server_tree.heading("appid", text="App ID")
+            server_tree.heading("developer", text="Developer")
+            server_tree.heading("type", text="Type")
+            server_tree.column("name", width=300)
+            server_tree.column("appid", width=80)
+            server_tree.column("developer", width=150)
+            server_tree.column("type", width=120)
+            
+            # Scrollbar
+            scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=server_tree.yview)
+            server_tree.configure(yscrollcommand=scrollbar.set)
+            
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            server_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            
+            # Populate server list with enhanced data
+            def populate_servers(filter_text=""):
+                server_tree.delete(*server_tree.get_children())
+                for server in dedicated_servers:
+                    server_name = server["name"]
+                    if not filter_text or filter_text.lower() in server_name.lower():
+                        server_tree.insert("", tk.END, values=(
+                            server_name, 
+                            server["appid"],
+                            server.get("developer", "Unknown")[:25] + ("..." if len(server.get("developer", "")) > 25 else ""),
+                            server.get("type", "Dedicated Server")
+                        ))
+            
+            populate_servers()
+            
+            # Enhanced search functionality
+            def on_search(*args):
+                populate_servers(search_var.get())
+            
+            search_var.trace('w', on_search)
+            
+            # Add tooltip functionality for descriptions
+            def show_server_info(event):
+                item = server_tree.selection()
+                if item:
+                    selected_server = None
+                    item_values = server_tree.item(item[0])['values']
+                    for server in dedicated_servers:
+                        if server["appid"] == str(item_values[1]):
+                            selected_server = server
+                            break
+                    
+                    if selected_server and selected_server.get("description"):
+                        # Create a simple tooltip window
+                        tooltip = tk.Toplevel(appid_dialog)
+                        tooltip.wm_overrideredirect(True)
+                        tooltip.geometry(f"+{event.x_root+10}+{event.y_root+10}")
+                        
+                        # Limit description length
+                        desc = selected_server["description"][:200] + ("..." if len(selected_server["description"]) > 200 else "")
+                        
+                        label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}", 
+                                       background="lightyellow", relief="solid", borderwidth=1,
+                                       wraplength=300, justify=tk.LEFT, font=("Segoe UI", 9))
+                        label.pack()
+                        
+                        # Auto-hide after 3 seconds
+                        tooltip.after(3000, tooltip.destroy)
+            
+            server_tree.bind('<Double-1>', show_server_info)
+            
+            # Button frame
+            button_frame = ttk.Frame(appid_dialog, padding=10)
+            button_frame.pack(fill=tk.X)
+            
+            def select_server():
+                selected = server_tree.selection()
+                
+                if selected:
+                    # Use selected server from list
+                    item = server_tree.item(selected[0])
+                    appid = item['values'][1]
+                    form_vars['app_id'].set(appid)
+                    appid_dialog.destroy()
+                else:
+                    messagebox.showinfo("No Selection", "Please select a server from the list.")
+            
+            def cancel_selection():
+                appid_dialog.destroy()
+            
+            ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT)
+            ttk.Button(button_frame, text="Select Server", command=select_server, width=15).pack(side=tk.RIGHT)
+            
+            # Center dialog
+            center_window(appid_dialog, 600, 500, dialog)
+        
+        ttk.Button(scrollable_frame, text="Browse", command=browse_appid, width=12).grid(row=current_row, column=2, padx=15, pady=10)
+        current_row += 1
+        
+        # Help text for App ID
+        ttk.Label(scrollable_frame, text="(Enter Steam App ID or use Browse to select from list)", foreground="gray", font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
         current_row += 1
 
     # Install directory
@@ -2651,7 +2831,7 @@ def export_server_dialog(parent, server_list, paths):
         return {'success': False, 'server_name': None, 'export_path': None}
 
 
-def show_server_rename_dialog(parent, current_server_name, server_config, server_manager, paths):
+def show_server_rename_dialog(parent, current_server_name, server_config, server_manager, paths, server_manager_dir):
     """Create a dialog to rename a server and modify its AppID
     
     Args:
@@ -2660,6 +2840,7 @@ def show_server_rename_dialog(parent, current_server_name, server_config, server
         server_config (dict): Current server configuration
         server_manager: Server manager instance
         paths (dict): Application paths dictionary
+        server_manager_dir (str): Server manager directory path
         
     Returns:
         dict: Result containing success status, new name, and new AppID
@@ -2840,7 +3021,8 @@ def rename_server_configuration(old_name, new_name, new_appid, server_manager, p
             return False, f"Server '{old_name}' not found"
         
         # Check if server is running
-        if server_manager.is_server_running(old_name):
+        server_status, _ = server_manager.get_server_status(old_name)
+        if server_status == "Running":
             return False, f"Server '{old_name}' is currently running. Please stop it before renaming."
         
         # Create new configuration with updated values
@@ -2853,29 +3035,47 @@ def rename_server_configuration(old_name, new_name, new_appid, server_manager, p
         
         # If name is changing, handle the rename
         if old_name != new_name:
-            # Remove old server configuration
-            success, msg = server_manager.remove_server(old_name, remove_files=False)
-            if not success:
-                return False, f"Failed to remove old server configuration: {msg}"
-            
-            # Add server with new name and configuration
-            success, msg = server_manager.add_server(new_name, new_config)
-            if not success:
-                # Try to restore old configuration on failure
-                server_manager.add_server(old_name, current_config)
-                return False, f"Failed to create new server configuration: {msg}"
-            
-            logger.info(f"Successfully renamed server from '{old_name}' to '{new_name}'")
-            return True, f"Successfully renamed server to '{new_name}'"
+            # Use the simplest and safest approach: save new config, then remove old
+            try:
+                # First check if new name already exists
+                existing_config = server_manager.get_server_config(new_name)
+                if existing_config:
+                    return False, f"A server with the name '{new_name}' already exists"
+                
+                # Update the config data with new name
+                new_config['Name'] = new_name
+                new_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                
+                # Save the configuration with the new name
+                server_manager.save_server_config(new_name, new_config)
+                
+                # Remove the old configuration only after new one is saved successfully
+                success, msg = server_manager.remove_server_config(old_name)
+                if not success:
+                    # If old removal fails, cleanup the new config to avoid duplicates
+                    try:
+                        server_manager.remove_server_config(new_name)
+                    except:
+                        pass
+                    return False, f"Failed to remove old server configuration: {msg}"
+                
+                logger.info(f"Successfully renamed server from '{old_name}' to '{new_name}'")
+                return True, f"Successfully renamed server to '{new_name}'"
+                
+            except Exception as e:
+                logger.error(f"Error during server rename: {str(e)}")
+                return False, f"Failed to rename server: {str(e)}"
         
         # If only AppID changed (same name)
         else:
-            success, msg = server_manager.update_server_config(old_name, new_config)
-            if success:
-                logger.info(f"Successfully updated AppID for server '{old_name}'")
+            # Use save_server_config for simple config updates
+            try:
+                server_manager.save_server_config(old_name, new_config)
+                logger.info(f"Successfully updated configuration for server '{old_name}'")
                 return True, f"Successfully updated server configuration"
-            else:
-                return False, f"Failed to update server configuration: {msg}"
+            except Exception as e:
+                logger.error(f"Error updating server config: {str(e)}")
+                return False, f"Failed to update server configuration: {str(e)}"
     
     except Exception as e:
         logger.error(f"Error renaming server '{old_name}' to '{new_name}': {e}")
