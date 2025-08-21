@@ -51,11 +51,11 @@ def create_java_selection_dialog(root, minecraft_version=None):
         dialog.transient(root)
         dialog.grab_set()
         
-        # Create main frame
+        # Main frame
         main_frame = ttk.Frame(dialog, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Title and info
+        # Title and version info
         title_label = ttk.Label(main_frame, text="Select Java Installation", font=("Segoe UI", 12, "bold"))
         title_label.pack(pady=(0, 10))
         
@@ -66,33 +66,29 @@ def create_java_selection_dialog(root, minecraft_version=None):
                                  font=("Segoe UI", 9))
             info_label.pack(pady=(0, 15))
         
-        # Create frame for java list
+        # Java installations list
         list_frame = ttk.LabelFrame(main_frame, text="Available Java Installations", padding=10)
         list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
         
-        # Create treeview for Java installations
+        # Treeview for Java installations
         columns = ("version", "path", "compatibility")
         java_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=10)
         
-        # Define headings
         java_tree.heading("version", text="Java Version")
         java_tree.heading("path", text="Installation Path")
         java_tree.heading("compatibility", text="Compatibility")
         
-        # Configure column widths
         java_tree.column("version", width=150, minwidth=100)
         java_tree.column("path", width=300, minwidth=200)
         java_tree.column("compatibility", width=120, minwidth=100)
         
-        # Add scrollbar
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=java_tree.yview)
         java_tree.configure(yscrollcommand=scrollbar.set)
         
-        # Pack treeview and scrollbar
         java_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Populate with detected Java installations
+        # Populate with detected installations
         java_installations = detect_java_installations()
         selected_java = None
         
@@ -116,23 +112,21 @@ def create_java_selection_dialog(root, minecraft_version=None):
                                            compatibility_text),
                                      tags=tags)
             
-            # Store the installation data in the item
+            # Store installation data in the item
             java_tree.set(item_id, "data", installation)
         
-        # Configure tags for coloring
+        # Configure tag colors
         java_tree.tag_configure("compatible", foreground="green")
         java_tree.tag_configure("incompatible", foreground="red")
         
-        # Add refresh button
+        # Refresh button
         refresh_frame = ttk.Frame(main_frame)
         refresh_frame.pack(fill=tk.X, pady=(0, 15))
         
         def refresh_java_list():
-            # Clear existing items
             for item in java_tree.get_children():
                 java_tree.delete(item)
             
-            # Repopulate
             java_installations = detect_java_installations()
             for installation in java_installations:
                 if minecraft_version:
@@ -152,7 +146,7 @@ def create_java_selection_dialog(root, minecraft_version=None):
         
         ttk.Button(refresh_frame, text="Refresh List", command=refresh_java_list).pack(side=tk.LEFT)
         
-        # Add custom Java path entry
+        # Custom Java path entry
         custom_frame = ttk.LabelFrame(main_frame, text="Custom Java Path", padding=10)
         custom_frame.pack(fill=tk.X, pady=(0, 15))
         
@@ -175,7 +169,6 @@ def create_java_selection_dialog(root, minecraft_version=None):
         
         ttk.Button(custom_frame, text="Browse", command=browse_java).pack(side=tk.RIGHT)
         
-        # Button frame
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X)
         
@@ -185,7 +178,6 @@ def create_java_selection_dialog(root, minecraft_version=None):
             # Check if custom path is provided
             custom_path = custom_path_var.get().strip()
             if custom_path:
-                # Validate custom path
                 from Scripts.minecraft import get_java_version
                 major, version = get_java_version(custom_path)
                 if major is not None:
@@ -233,7 +225,6 @@ def create_java_selection_dialog(root, minecraft_version=None):
                         java_tree.focus(items[i])
                     break
         
-        # Center dialog
         center_window(dialog, 600, 400, root)
         
         # Wait for dialog to close
@@ -250,7 +241,7 @@ def create_java_selection_dialog(root, minecraft_version=None):
 def load_appid_scanner_list(server_manager_dir):
     """Load the AppID list from database or fallback to JSON"""
     try:
-        # First try to load from database
+        # Try to load from database
         dedicated_servers, metadata = load_appid_list_from_database()
         
         if dedicated_servers:
@@ -342,7 +333,6 @@ def load_appid_list_from_database():
                 if latest_update is None or app_last_updated > latest_update:
                     latest_update = app_last_updated
         
-        # Close session
         session.close()
         
         # Create metadata
@@ -1149,10 +1139,7 @@ def create_confirmation_dialog(parent, title, message, confirm_text="Confirm", c
     ttk.Button(button_frame, text=cancel_text, command=on_cancel, width=12).pack(side=tk.LEFT)
     ttk.Button(button_frame, text=confirm_text, command=on_confirm, width=12).pack(side=tk.RIGHT)
     
-    # Center dialog
     center_window(dialog, 400, 150, parent)
-    
-    # Wait for dialog to close
     parent.wait_window(dialog)
     
     return result["confirmed"]

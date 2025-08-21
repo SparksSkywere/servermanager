@@ -75,8 +75,8 @@ class ServerManagerDashboard(ServerManagerModule):
         self.debug_mode = debug_mode
         self.user_manager = None
         self.current_user = None
-        self.install_process = None  # Track installation process
-        self._refreshing_server_list = False  # Flag to prevent concurrent refreshes
+        self.install_process = None
+        self._refreshing_server_list = False
         
         # Load dashboard configuration from JSON file (use inherited config from base class)
         dashboard_config = load_dashboard_config(self.server_manager_dir)
@@ -299,23 +299,23 @@ class ServerManagerDashboard(ServerManagerModule):
                                        command=self.show_console_manager, width=12)
         self.console_button.pack(side=tk.LEFT, padx=(0, 5))
         
-        # Create main container with more padding
+        # Main container
         self.container_frame = ttk.Frame(self.root, padding=(15, 10, 15, 15))
         self.container_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Create main layout - servers list and system info
+        # Main layout - servers list and system info
         self.main_pane = ttk.PanedWindow(self.container_frame, orient=tk.HORIZONTAL)
         self.main_pane.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
-        # Create frame for server list (left side)
+        # Server list frame (left side)
         self.servers_frame = ttk.LabelFrame(self.main_pane, text="Game Servers", padding=10)
         self.main_pane.add(self.servers_frame, weight=70)
         
-        # Create server list with columns
+        # Server list with columns
         columns = ("name", "status", "pid", "cpu", "memory", "uptime")
         self.server_list = ttk.Treeview(self.servers_frame, columns=columns, show="headings")
         
-        # Define column headings
+        # Column headings
         self.server_list.heading("name", text="Server Name")
         self.server_list.heading("status", text="Status")
         self.server_list.heading("pid", text="PID")
@@ -323,7 +323,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_list.heading("memory", text="Memory Usage")
         self.server_list.heading("uptime", text="Uptime")
         
-        # Define column widths with better proportions
+        # Column widths
         self.server_list.column("name", width=180, minwidth=120)
         self.server_list.column("status", width=100, minwidth=80)
         self.server_list.column("pid", width=80, minwidth=60)
@@ -335,7 +335,6 @@ class ServerManagerDashboard(ServerManagerModule):
         server_scroll = ttk.Scrollbar(self.servers_frame, orient=tk.VERTICAL, command=self.server_list.yview)
         self.server_list.configure(yscrollcommand=server_scroll.set)
         
-        # Pack server list components with better spacing
         server_scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         self.server_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -365,7 +364,7 @@ class ServerManagerDashboard(ServerManagerModule):
         # Bind left-click to handle deselection on empty space (like Windows Explorer)
         self.server_list.bind("<Button-1>", self.on_server_list_click)
         
-        # Create system info frame (right side)
+        # System info frame (right side)
         self.system_frame = ttk.LabelFrame(self.main_pane, text="System Information", padding=10)
         self.main_pane.add(self.system_frame, weight=30)
         
@@ -409,7 +408,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.metrics_frame = ttk.Frame(self.system_frame, padding=(5, 10))
         self.metrics_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Configure grid columns and rows with better weight distribution
+        # Configure grid layout
         for i in range(2):
             self.metrics_frame.columnconfigure(i, weight=1, minsize=150)
         for i in range(3):
@@ -436,18 +435,18 @@ class ServerManagerDashboard(ServerManagerModule):
             
             self.metric_labels[metric["name"]] = value
         
-        # Create button bar at bottom with better spacing
+        # Button bar at bottom
         self.button_frame = ttk.Frame(self.container_frame)
         self.button_frame.pack(fill=tk.X, pady=(15, 0))
         
-        # Create two rows of buttons for better organization
+        # Two rows of buttons for better organization
         self.button_row1 = ttk.Frame(self.button_frame)
         self.button_row1.pack(fill=tk.X, pady=(0, 8))
         
         self.button_row2 = ttk.Frame(self.button_frame)
         self.button_row2.pack(fill=tk.X)
         
-        # Add buttons with better organization
+        # Add buttons
         row1_buttons = [
             {"text": "Add Server", "command": self.add_server},
             {"text": "Remove Server", "command": self.remove_server},
@@ -512,17 +511,6 @@ class ServerManagerDashboard(ServerManagerModule):
             logger.debug("Cleared server list selection due to empty space click")
 
     def add_server(self):
-        """Add a new server using database-backed AppID/server info"""
-        # Use self.dedicated_servers for AppID/server selection
-        # Example: show a dialog to select from self.dedicated_servers
-        # ...existing code...
-        # When creating a Steam server, use the database info for AppID lookup
-        # For example:
-        # selected_appid = ... # from user selection
-        # server_info = next((s for s in self.dedicated_servers if s["appid"] == selected_appid), None)
-        # if server_info:
-        #     # Use server_info for server creation
-        # ...existing code...
         """Add a new game server (Steam, Minecraft, or Other)"""
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
@@ -542,28 +530,28 @@ class ServerManagerDashboard(ServerManagerModule):
             if not credentials:
                 return
 
-        # Create dialog for server details
+        # Server details dialog
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Create {server_type} Server")
         dialog.transient(self.root)
         dialog.grab_set()
         
-        # Create main frame with padding
+        # Main frame
         main_frame = ttk.Frame(dialog, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         # Installation control
         self.install_cancelled = tk.BooleanVar(value=False)
         
-        # Create a paned window for top-bottom split layout
+        # Paned window for top-bottom split layout
         paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
         paned_window.pack(fill=tk.BOTH, expand=True)
         
-        # Top frame for setup information (50% of space)
+        # Top frame for setup information
         top_frame = ttk.Frame(paned_window)
         paned_window.add(top_frame, weight=1)
         
-        # Create scrollable frame for the form inside top_frame
+        # Scrollable form
         canvas = tk.Canvas(top_frame)
         scrollbar = ttk.Scrollbar(top_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
@@ -576,15 +564,14 @@ class ServerManagerDashboard(ServerManagerModule):
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
         
-        # Pack the canvas and scrollbar
         canvas.pack(side="left", fill="both", expand=True, padx=(0, 5))
         scrollbar.pack(side="right", fill="y")
         
-        # Configure grid weights for scrollable frame
+        # Configure scrollable frame grid
         for i in range(3):
             scrollable_frame.columnconfigure(i, weight=1 if i == 1 else 0)
 
-        # Create form variables
+        # Form variables
         form_vars = {
             'name': tk.StringVar(),
             'app_id': tk.StringVar(),
@@ -1430,7 +1417,6 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 child_scroll = ttk.Scrollbar(children_frame, orient=tk.VERTICAL, command=child_list.yview)
                 child_list.configure(yscrollcommand=child_scroll.set)
                 
-                # Pack components
                 child_scroll.pack(side=tk.RIGHT, fill=tk.Y)
                 child_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
                 
@@ -1461,7 +1447,6 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 conn_scroll = ttk.Scrollbar(network_frame, orient=tk.VERTICAL, command=conn_list.yview)
                 conn_list.configure(yscrollcommand=conn_scroll.set)
                 
-                # Pack components
                 conn_scroll.pack(side=tk.RIGHT, fill=tk.Y)
                 conn_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
                 
@@ -2917,7 +2902,6 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             ttk.Button(button_frame, text="Cancel", command=cancel_import, width=15).pack(side=tk.LEFT, padx=5)
             
             # Center dialog
-            # Center dialog relative to parent
             center_window(import_dialog, 400, 300, self.root)
             
         except Exception as e:
@@ -2926,7 +2910,6 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
     def import_server_from_directory(self):
         """Import an existing server from a directory (legacy method)"""
-        # This method has been moved to dashboard_functions.py for better maintainability
         result = import_server_from_directory_dialog(
             self.root, self.server_manager, self.server_manager_dir, 
             self.supported_server_types, 
@@ -2935,7 +2918,6 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
     def import_server_from_export(self):
         """Import server from exported configuration file"""
-        # This method has been moved to dashboard_functions.py for better maintainability
         result = import_server_from_export_dialog(
             self.root, self.paths, self.server_manager_dir,
             update_callback=lambda: self.update_server_list(force_refresh=True)
@@ -2943,7 +2925,6 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
     def export_server(self):
         """Export server configuration for use on other hosts or clusters"""
-        # This method has been moved to dashboard_functions.py for better maintainability
         result = export_server_dialog(self.root, self.server_list, self.paths)
 
     def refresh_all(self):
@@ -3106,9 +3087,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                             progress_dialog['console_text'].see(tk.END)
                             progress_dialog['console_text'].update()
                         else:
-                            print(message)  # Fallback
+                            print(message)
                     except:
-                        print(message)  # Fallback
+                        print(message)
                 
                 if self.update_manager:
                     success, message, has_updates = self.update_manager.check_for_updates(
