@@ -70,42 +70,6 @@ export async function checkAuth() {
 }
 
 /**
- * Check if current user is an admin
- * @returns {Promise<boolean>} - True if user is admin
- */
-export async function isAdmin() {
-    try {
-        // First check session storage
-        const isAdminInSession = sessionStorage.getItem('isAdmin');
-        if (isAdminInSession === 'true') {
-            return true;
-        }
-        
-        // If not in session or false, verify with server
-        const token = sessionStorage.getItem('auth_token');
-        if (!token) {
-            return false;
-        }
-
-        const response = await fetch(`${API_URL}/verify-admin`, {
-            headers: {
-                'Authorization': `Bearer ${token}`
-            }
-        });
-
-        if (!response.ok) {
-            return false;
-        }
-
-        const data = await response.json();
-        return data.isAdmin === true;
-    } catch (error) {
-        console.error('Admin check error:', error);
-        return false;
-    }
-}
-
-/**
  * Logout user
  */
 export function logout() {

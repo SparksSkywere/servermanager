@@ -185,7 +185,7 @@ class Authentication:
                     "created": datetime.datetime.now().isoformat(),
                     "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat()
                 }
-                return {"token": token, "username": username, "isAdmin": self.users[username].get("isAdmin", False)}
+                return {"token": token, "username": username}
         return None
 
     def verify_token(self, token):
@@ -262,7 +262,7 @@ class SQLAuthentication:
                 "created": datetime.datetime.now().isoformat(),
                 "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat()
             }
-            return {"token": token, "username": username, "isAdmin": getattr(user, "is_admin", False)}
+            return {"token": token, "username": username}
         return None
 
     def verify_token(self, token):
@@ -821,24 +821,6 @@ class ServerManagerWebServer(ServerManagerModule):
             except Exception as e:
                 logger.error(f"Auth verification error: {e}")
                 return jsonify({"error": "Authentication verification error"}), 500
-
-        @app.route('/api/verify-admin', methods=['GET'])
-        def api_verify_admin():
-            try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"isAdmin": False}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if token_data:
-                    is_admin = safe_auth_call('is_admin', token_data["username"])
-                    return jsonify({"isAdmin": is_admin if is_admin is not None else False})
-                return jsonify({"isAdmin": False}), 401
-            except Exception as e:
-                logger.error(f"Admin verification error: {e}")
-                return jsonify({"error": "Admin verification error"}), 500
 
         @app.route('/api/servers', methods=['GET'])
         def api_get_servers():

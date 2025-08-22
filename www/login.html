@@ -133,8 +133,7 @@
         </form>
         
         <div class="help-text">
-            Try: username "admin", password "admin"<br>
-            Or use your Windows username with any password
+            Use your Windows username with any password
         </div>
     </div>
 
@@ -177,7 +176,6 @@
                     // Store token in session storage instead of local storage
                     sessionStorage.setItem('auth_token', data.token);
                     sessionStorage.setItem('username', data.username);
-                    sessionStorage.setItem('isAdmin', data.isAdmin);
                     
                     // Show success message
                     successDiv.textContent = 'Login successful! Redirecting...';

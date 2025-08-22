@@ -129,14 +129,6 @@ class API {
             body: JSON.stringify(serverData)
         });
     }
-
-    /**
-     * Verify if user has admin privileges
-     * @returns {Promise<Object>} Admin verification result
-     */
-    static async verifyAdmin() {
-        return this.request('/verify-admin');
-    }
 }
 
 export default API;

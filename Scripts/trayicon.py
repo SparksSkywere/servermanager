@@ -154,10 +154,6 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 self.open_web_interface
             ),
             pystray.MenuItem(
-                "Open Web Admin",
-                self.open_web_admin
-            ),
-            pystray.MenuItem(
                 "Open Admin Dashboard",
                 self.open_admin_dashboard
             ),
@@ -361,62 +357,6 @@ class ServerManagerTrayIcon(ServerManagerModule):
             logger.error(f"Traceback: {traceback.format_exc()}")
             if self.icon and self.notifications_enabled:
                 self.icon.notify(f"Failed to open web interface: {str(e)}", "Server Manager Error")
-
-    def open_web_admin(self):
-        """Open the web admin interface in a browser"""
-        logger.info("Opening web admin interface...")
-        
-        # Check if we're in offline mode
-        if self.offline_mode:
-            logger.info("Currently in offline mode")
-            if self.icon and self.notifications_enabled:
-                self.icon.notify(
-                    "Cannot open web interface in offline mode",
-                    "Server Manager"
-                )
-            return
-            
-        # Ensure webserver is running
-        self.check_webserver_status()
-        if self.webserver_status != "Connected":
-            logger.info("Web server not connected, attempting to start...")
-            # Try to start via the open_web_interface method which handles webserver startup
-            try:
-                # First ensure webserver is started
-                if hasattr(self, 'start_webserver_for_dashboard'):
-                    self.start_webserver_for_dashboard()
-                
-                # Wait a moment for webserver to start
-                import time
-                time.sleep(2)
-                self.check_webserver_status()
-                
-                if self.webserver_status != "Connected":
-                    if self.icon and self.notifications_enabled:
-                        self.icon.notify("Web server failed to start", "Server Manager Error")
-                    return
-                    
-            except Exception as e:
-                logger.error(f"Failed to start webserver: {e}")
-                if self.icon and self.notifications_enabled:
-                    self.icon.notify(f"Failed to start webserver: {str(e)}", "Server Manager Error")
-                return
-        
-        # Open the admin interface in a browser
-        try:
-            url = f"http://localhost:{self.web_port}/admin.html"
-            logger.info(f"Opening web admin interface: {url}")
-            webbrowser.open(url)
-            
-            # Show notification only if enabled
-            if self.icon and self.notifications_enabled:
-                self.icon.notify("Web admin interface opened in browser", "Server Manager")
-                
-        except Exception as e:
-            logger.error(f"Failed to open web admin interface: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            if self.icon and self.notifications_enabled:
-                self.icon.notify(f"Failed to open web admin interface: {str(e)}", "Server Manager Error")
 
     def open_dashboard(self):
         """Open the Python dashboard instead of web dashboard"""

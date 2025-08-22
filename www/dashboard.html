@@ -112,7 +112,6 @@
         <h1>Server Manager Dashboard</h1>
         <div class="user-info">
             <span>Welcome, <span id="username">User</span></span>
-            <span id="adminBadge" style="display: none; background: rgba(255, 255, 255, 0.2); padding: 4px 8px; border-radius: 3px;">Admin</span>
             <a href="#" class="logout-btn" onclick="logout()">Logout</a>
         </div>
     </div>
@@ -122,7 +121,6 @@
             <a href="dashboard.html">Dashboard</a>
             <a href="status.html">Server Status</a>
             <a href="create-server.html">Create Server</a>
-            <a href="admin.html" id="adminLink" style="display: none;">Admin Panel</a>
         </div>
 
         <div class="welcome-card">
@@ -172,7 +170,7 @@
     <div id="notification" class="notification"></div>
 
     <script type="module">
-        import { checkAuth, logout, isAdmin } from './js/auth.js';
+        import { checkAuth, logout } from './js/auth.js';
         import { showNotification } from './js/utils.js';
         
         // Check authentication immediately
@@ -194,14 +192,9 @@
 
                 // Get user info
                 const username = sessionStorage.getItem('username');
-                const userIsAdmin = await isAdmin();
                 
                 // Display user info
                 document.getElementById('username').textContent = username || 'User';
-                if (userIsAdmin) {
-                    document.getElementById('adminBadge').style.display = 'inline-block';
-                    document.getElementById('adminLink').style.display = 'inline-block';
-                }
 
                 // Load initial data
                 await loadServerStatus();
@@ -286,7 +279,7 @@
     <div id="notification" class="notification"></div>
 
     <script type="module">
-        import { checkAuth, logout as authLogout, isAdmin } from './js/auth.js';
+        import { checkAuth, logout as authLogout } from './js/auth.js';
         import { showNotification } from './js/utils.js';
         import API from './js/api.js';
         import { Dashboard } from './js/dashboard.js';
@@ -330,9 +323,6 @@
 
                 document.getElementById('username').textContent = username;
                 
-                const adminButton = document.getElementById('adminButton');
-                adminButton.style.display = await isAdmin() ? 'block' : 'none';
-
                 dashboard = new Dashboard();
                 console.log('Dashboard initialized successfully');
 
@@ -351,22 +341,6 @@
         } else {
             await initDashboard();
         }
-
-        // Admin link handler
-        document.getElementById('adminLink')?.addEventListener('click', async (event) => {
-            event.preventDefault();
-            try {
-                const adminCheck = await API.verifyAdmin();
-                if (adminCheck.isAdmin) {
-                    window.location.href = 'admin.html';
-                } else {
-                    showNotification('Access denied: Admin privileges required', 'error');
-                }
-            } catch (error) {
-                console.error('Admin navigation error:', error);
-                showNotification('Failed to verify admin access', 'error');
-            }
-        });
 
         // Theme toggle handler
         document.getElementById('themeToggle')?.addEventListener('change', (e) => {
