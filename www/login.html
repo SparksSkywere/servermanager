@@ -138,6 +138,9 @@
         </div>
     </div>
 
+    <!-- Notification System -->
+    <div id="notification" class="notification"></div>
+
     <script>
         document.getElementById('loginForm').addEventListener('submit', async function(e) {
             e.preventDefault();
@@ -171,18 +174,18 @@
                 const data = await response.json();
                 
                 if (response.ok && data.token) {
-                    // Store token
-                    localStorage.setItem('authToken', data.token);
-                    localStorage.setItem('username', data.username);
-                    localStorage.setItem('isAdmin', data.isAdmin);
+                    // Store token in session storage instead of local storage
+                    sessionStorage.setItem('auth_token', data.token);
+                    sessionStorage.setItem('username', data.username);
+                    sessionStorage.setItem('isAdmin', data.isAdmin);
                     
                     // Show success message
                     successDiv.textContent = 'Login successful! Redirecting...';
                     successDiv.style.display = 'block';
                     
-                    // Redirect to dashboard (create a simple dashboard page)
+                    // Redirect to dashboard
                     setTimeout(() => {
-                        window.location.href = '/dashboard.html';
+                        window.location.href = 'dashboard.html';
                     }, 1000);
                 } else {
                     // Show error message
@@ -196,6 +199,30 @@
             } finally {
                 loadingDiv.style.display = 'none';
                 loginBtn.disabled = false;
+            }
+        });
+
+        // Check if already logged in
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                if (token) {
+                    // Verify token is still valid
+                    const response = await fetch('/api/auth/verify', {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.authenticated) {
+                            window.location.replace('dashboard.html');
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Auth check error:', error);
             }
         });
     </script>

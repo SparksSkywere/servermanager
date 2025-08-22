@@ -1,8 +1,15 @@
 import os
+import sys
 import winreg
 import json
 import datetime
 from flask import Blueprint, jsonify, request
+
+# Add project root to sys.path for module resolution
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Import centralized registry constants
+from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
 
 cluster_api = Blueprint("cluster_api", __name__)
 
@@ -12,7 +19,7 @@ registered_subhosts = {}
 def get_cluster_role():
     """Get the cluster role and host address from registry"""
     try:
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\SkywereIndustries\Servermanager")
+        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         role = winreg.QueryValueEx(key, "HostType")[0]
         try:
             host_address = winreg.QueryValueEx(key, "HostAddress")[0]
@@ -35,6 +42,8 @@ def api_cluster_role():
 @cluster_api.route("/api/cluster/register", methods=["POST"])
 def api_register_subhost():
     """Register a subhost with the host"""
+    global registered_subhosts
+    
     try:
         data = request.get_json()
         if not data:
@@ -64,6 +73,8 @@ def api_register_subhost():
 @cluster_api.route("/api/cluster/heartbeat", methods=["POST"])
 def api_subhost_heartbeat():
     """Receive heartbeat from subhost"""
+    global registered_subhosts
+    
     try:
         data = request.get_json()
         if not data:
@@ -97,6 +108,8 @@ def api_subhost_heartbeat():
 @cluster_api.route("/api/cluster/subhosts", methods=["GET"])
 def api_list_subhosts():
     """List all registered subhosts"""
+    global registered_subhosts
+    
     try:
         # Clean up old subhosts (haven't been seen in 5 minutes)
         current_time = datetime.datetime.now()
@@ -117,9 +130,10 @@ def api_list_subhosts():
                 active_subhosts[subhost_id] = subhost_data
                 
         # Update the global registry
-        global registered_subhosts
+        # Clean up old entries (older than 1 hour)
+        current_time = datetime.datetime.now()
         registered_subhosts = {k: v for k, v in registered_subhosts.items() 
-                              if datetime.datetime.now() - datetime.datetime.fromisoformat(v["last_seen"]) < datetime.timedelta(hours=1)}
+                              if current_time - datetime.datetime.fromisoformat(v["last_seen"]) < datetime.timedelta(hours=1)}
         
         return jsonify({
             "subhosts": active_subhosts,

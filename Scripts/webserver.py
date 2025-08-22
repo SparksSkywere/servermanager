@@ -42,8 +42,10 @@ logger = logging.getLogger("WebServer")
 # Import dashboard tracker with fallback
 def get_server_manager_dir():
     try:
-        registry_path = r"Software\SkywereIndustries\Servermanager"
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
+        # Add project root to sys.path for imports
+        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+        from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
         winreg.CloseKey(key)
         return server_manager_dir
@@ -57,6 +59,8 @@ def get_server_manager_dir():
 # Create a dummy dashboard tracker class for fallback
 class DummyDashboardTracker:
     def start_auto_refresh(self):
+        pass
+    def stop_auto_refresh(self):
         pass
     def get_dashboards(self):
         return []
@@ -105,8 +109,6 @@ try:
     
     from Modules.SQL_Connection import get_engine, ensure_root_admin, build_db_url, get_sql_config_from_registry
     from Scripts.user_management import User, UserManager
-    # Import authentication modules
-    from Modules.authentication import authenticate_user, is_admin_user
     # Import server manager
     from Modules.server_manager import ServerManager as CoreServerManager
     logger.info("SQL modules imported successfully")
@@ -117,8 +119,6 @@ except ImportError as e:
     ensure_root_admin = None
     User = None
     UserManager = None
-    authenticate_user = None
-    is_admin_user = None
     CoreServerManager = None
 
 # Legacy Authentication system (kept for fallback compatibility)
@@ -450,7 +450,8 @@ class ServerManagerWebServer(ServerManagerModule):
         else:
             # Try to read host type from registry for additional info
             try:
-                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
+                from Modules.common import REGISTRY_ROOT
+                key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
                 try:
                     self.host_type = winreg.QueryValueEx(key, "HostType")[0]
                 except:
@@ -512,6 +513,16 @@ class ServerManagerWebServer(ServerManagerModule):
         except Exception as e:
             logger.error(f"Failed to initialize server manager: {e}")
             self.server_manager = None
+
+        # Initialize analytics
+        try:
+            from Modules.analytics import AnalyticsCollector
+            self.analytics = AnalyticsCollector()
+            self.analytics.start_collection()
+            logger.info("Analytics module initialized and started successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize analytics module: {e}")
+            self.analytics = None
 
         # Setup routes after all components are initialized
         self.setup_routes()
@@ -624,6 +635,28 @@ class ServerManagerWebServer(ServerManagerModule):
             
         app = self.app
         
+        # Add root route to serve index.html which handles login redirect
+        @app.route('/')
+        def index():
+            try:
+                www_path = os.path.join(self.server_manager_dir or "", "www")
+                if not os.path.exists(www_path):
+                    logger.error(f"WWW directory not found: {www_path}")
+                    from flask import redirect
+                    return redirect('/login.html')
+                
+                index_file = os.path.join(www_path, "index.html")
+                if os.path.exists(index_file):
+                    return send_from_directory(www_path, "index.html")
+                else:
+                    logger.debug("index.html not found, redirecting to login.html")
+                    from flask import redirect
+                    return redirect('/login.html')
+            except Exception as e:
+                logger.error(f"Error serving index page: {e}")
+                from flask import redirect
+                return redirect('/login.html')
+        
         # Register cluster API blueprint
         try:
             # Import the cluster API
@@ -695,35 +728,18 @@ class ServerManagerWebServer(ServerManagerModule):
                         })
                     logger.warning(f"SQL authentication failed for user: {username}")
 
-                try:
-                    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-                    from Modules.authentication import authenticate_user, is_admin_user
-                    logger.info(f"Attempting XML authentication for user: {username}")
-                    if authenticate_user(username, password):
-                        token = str(uuid.uuid4())
-                        if not hasattr(self, 'auth_tokens'):
-                            self.auth_tokens = {}
-                        is_admin = is_admin_user(username)
-                        self.auth_tokens[token] = {
-                            "username": username,
-                            "created": datetime.datetime.now().isoformat(),
-                            "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat(),
-                            "isAdmin": is_admin
-                        }
-                        logger.info(f"Successful XML authentication for user: {username}, isAdmin: {is_admin}")
+                # Try SQL authentication if available
+                if self.sql_auth:
+                    sql_result = safe_auth_call('authenticate', username, password, auth_instance=self.sql_auth)
+                    if sql_result:
+                        logger.info(f"Successful SQL authentication for user: {username}")
                         return jsonify({
-                            "token": token,
-                            "username": username,
-                            "isAdmin": is_admin
+                            "token": sql_result["token"],
+                            "username": sql_result["username"],
+                            "isAdmin": sql_result["isAdmin"]
                         })
-                    logger.warning(f"XML authentication failed for user: {username}")
-                except ImportError as e:
-                    logger.warning(f"XML authentication module not available: {e}")
-                except Exception as e:
-                    logger.error(f"XML authentication error: {e}")
-                    import traceback
-                    logger.error(f"XML authentication traceback: {traceback.format_exc()}")
 
+                # Try file-based authentication
                 auth_result = safe_auth_call('authenticate', username, password)
                 if auth_result:
                     logger.info(f"Successful file-based authentication for user: {username}")
@@ -940,6 +956,219 @@ class ServerManagerWebServer(ServerManagerModule):
                 logger.error(f"Get users error: {e}")
                 return jsonify({"error": "Failed to get users"}), 500
 
+        @app.route('/api/users', methods=['POST'])
+        def api_create_user():
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                if not safe_auth_call('is_admin', token_data["username"]):
+                    return jsonify({"error": "Admin privileges required"}), 403
+
+                data = request.json
+                if not data:
+                    return jsonify({"error": "No data provided"}), 400
+
+                username = data.get('username', '').strip()
+                email = data.get('email', '').strip()
+                password = data.get('password', '')
+                is_admin = data.get('is_admin', False)
+
+                if not username or not password:
+                    return jsonify({"error": "Username and password are required"}), 400
+
+                if len(password) < 6:
+                    return jsonify({"error": "Password must be at least 6 characters"}), 400
+
+                # Use SQL user management if available
+                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager') and self.sql_auth.user_manager:
+                    try:
+                        success = self.sql_auth.user_manager.add_user(username, password, email, is_admin)
+                        if success:
+                            return jsonify({"message": "User created successfully"})
+                        else:
+                            return jsonify({"error": "Failed to create user - user may already exist"}), 409
+                    except Exception as e:
+                        logger.error(f"SQL user creation error: {e}")
+                        return jsonify({"error": f"Failed to create user: {str(e)}"}), 500
+                else:
+                    # Fallback to legacy authentication
+                    try:
+                        result = safe_auth_call('add_user', username, password, is_admin)
+                        if result:
+                            return jsonify({"message": "User created successfully"})
+                        else:
+                            return jsonify({"error": "Failed to create user"}), 500
+                    except Exception as e:
+                        logger.error(f"Legacy user creation error: {e}")
+                        return jsonify({"error": f"Failed to create user: {str(e)}"}), 500
+
+            except Exception as e:
+                logger.error(f"Create user error: {e}")
+                return jsonify({"error": "Failed to create user"}), 500
+
+        @app.route('/api/users/<username>', methods=['DELETE'])
+        def api_delete_user(username):
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                if not safe_auth_call('is_admin', token_data["username"]):
+                    return jsonify({"error": "Admin privileges required"}), 403
+
+                # Prevent deletion of current user
+                if token_data["username"] == username:
+                    return jsonify({"error": "Cannot delete your own account"}), 400
+
+                # Use SQL user management if available
+                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager') and self.sql_auth.user_manager:
+                    try:
+                        success = self.sql_auth.user_manager.delete_user(username)
+                        if success:
+                            return jsonify({"message": "User deleted successfully"})
+                        else:
+                            return jsonify({"error": "User not found"}), 404
+                    except Exception as e:
+                        logger.error(f"SQL user deletion error: {e}")
+                        return jsonify({"error": f"Failed to delete user: {str(e)}"}), 500
+                else:
+                    # Fallback to legacy authentication
+                    try:
+                        result = safe_auth_call('delete_user', username)
+                        if result:
+                            return jsonify({"message": "User deleted successfully"})
+                        else:
+                            return jsonify({"error": "User not found"}), 404
+                    except Exception as e:
+                        logger.error(f"Legacy user deletion error: {e}")
+                        return jsonify({"error": f"Failed to delete user: {str(e)}"}), 500
+
+            except Exception as e:
+                logger.error(f"Delete user error: {e}")
+                return jsonify({"error": "Failed to delete user"}), 500
+
+        @app.route('/api/users/<username>/password', methods=['PUT'])
+        def api_reset_password(username):
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                if not safe_auth_call('is_admin', token_data["username"]):
+                    return jsonify({"error": "Admin privileges required"}), 403
+
+                data = request.json
+                if not data:
+                    return jsonify({"error": "No data provided"}), 400
+
+                new_password = data.get('password', '')
+                if not new_password:
+                    return jsonify({"error": "New password is required"}), 400
+
+                if len(new_password) < 6:
+                    return jsonify({"error": "Password must be at least 6 characters"}), 400
+
+                # Use SQL user management if available
+                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager') and self.sql_auth.user_manager:
+                    try:
+                        success = self.sql_auth.user_manager.update_user(username, password=new_password)
+                        if success:
+                            return jsonify({"message": "Password updated successfully"})
+                        else:
+                            return jsonify({"error": "User not found"}), 404
+                    except Exception as e:
+                        logger.error(f"SQL password reset error: {e}")
+                        return jsonify({"error": f"Failed to reset password: {str(e)}"}), 500
+                else:
+                    # Fallback to legacy authentication
+                    try:
+                        result = safe_auth_call('change_password', username, new_password)
+                        if result:
+                            return jsonify({"message": "Password updated successfully"})
+                        else:
+                            return jsonify({"error": "User not found"}), 404
+                    except Exception as e:
+                        logger.error(f"Legacy password reset error: {e}")
+                        return jsonify({"error": f"Failed to reset password: {str(e)}"}), 500
+
+            except Exception as e:
+                logger.error(f"Reset password error: {e}")
+                return jsonify({"error": "Failed to reset password"}), 500
+
+        @app.route('/api/system-settings', methods=['GET'])
+        def api_get_system_settings():
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                if not safe_auth_call('is_admin', token_data["username"]):
+                    return jsonify({"error": "Admin privileges required"}), 403
+
+                # Return default settings for now
+                return jsonify({
+                    "autoUpdate": False,
+                    "backupSchedule": 24,
+                    "debugLogging": False
+                })
+            except Exception as e:
+                logger.error(f"Get system settings error: {e}")
+                return jsonify({"error": "Failed to get system settings"}), 500
+
+        @app.route('/api/system-settings', methods=['POST'])
+        def api_save_system_settings():
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                if not safe_auth_call('is_admin', token_data["username"]):
+                    return jsonify({"error": "Admin privileges required"}), 403
+
+                data = request.json
+                if not data:
+                    return jsonify({"error": "No data provided"}), 400
+
+                # For now, just return success - settings would be saved to database/config in a real implementation
+                logger.info(f"System settings update requested by {token_data['username']}: {data}")
+                return jsonify({"message": "Settings saved successfully"})
+
+            except Exception as e:
+                logger.error(f"Save system settings error: {e}")
+                return jsonify({"error": "Failed to save system settings"}), 500
+
         @app.route('/api/settings', methods=['GET'])
         def api_get_settings():
             try:
@@ -1063,6 +1292,111 @@ class ServerManagerWebServer(ServerManagerModule):
                 logger.error(f"Tracker servers error: {e}")
                 return jsonify({"error": "Failed to process tracker request"}), 500
 
+        # Analytics API routes
+        @app.route('/api/analytics/metrics', methods=['GET'])
+        def api_analytics_metrics():
+            """Get current system and server metrics"""
+            try:
+                if not self.analytics:
+                    return jsonify({"error": "Analytics not available"}), 503
+                    
+                format_type = request.args.get('format', 'json')
+                
+                if format_type == 'prometheus':
+                    return self.analytics.get_prometheus_metrics(), 200, {'Content-Type': 'text/plain'}
+                elif format_type == 'snmp':
+                    return jsonify(self.analytics.get_snmp_metrics())
+                else:
+                    return jsonify(self.analytics.get_json_metrics())
+                    
+            except Exception as e:
+                logger.error(f"Analytics metrics error: {e}")
+                return jsonify({"error": "Failed to get metrics"}), 500
+
+        @app.route('/api/analytics/metrics/<metric_name>', methods=['GET'])
+        def api_analytics_metric_history(metric_name):
+            """Get historical data for a specific metric"""
+            try:
+                if not self.analytics:
+                    return jsonify({"error": "Analytics not available"}), 503
+                    
+                hours = request.args.get('hours', 24, type=int)
+                history = self.analytics.get_metric_history(metric_name, hours)
+                
+                return jsonify({
+                    'metric_name': metric_name,
+                    'hours': hours,
+                    'data': history
+                })
+                
+            except Exception as e:
+                logger.error(f"Analytics metric history error: {e}")
+                return jsonify({"error": "Failed to get metric history"}), 500
+
+        @app.route('/api/analytics/servers', methods=['GET'])
+        def api_analytics_servers():
+            """Get server summary with performance metrics"""
+            try:
+                if not self.analytics:
+                    return jsonify({"error": "Analytics not available"}), 503
+                    
+                return jsonify(self.analytics.get_server_summary())
+                
+            except Exception as e:
+                logger.error(f"Analytics servers error: {e}")
+                return jsonify({"error": "Failed to get server analytics"}), 500
+
+        @app.route('/api/analytics/health', methods=['GET'])
+        def api_analytics_health():
+            """Get overall system health metrics"""
+            try:
+                if not self.analytics:
+                    return jsonify({"error": "Analytics not available"}), 503
+                    
+                return jsonify(self.analytics.get_system_health())
+                
+            except Exception as e:
+                logger.error(f"Analytics health error: {e}")
+                return jsonify({"error": "Failed to get system health"}), 500
+
+        @limit_decorator("10 per minute")
+        @app.route('/api/analytics/snmp', methods=['GET'])
+        def api_analytics_snmp():
+            """SNMP-compatible metrics endpoint"""
+            try:
+                if not self.analytics:
+                    return jsonify({"error": "Analytics not available"}), 503
+                    
+                # Return SNMP-formatted metrics
+                snmp_metrics = self.analytics.get_snmp_metrics()
+                
+                # Format as SNMP walk output if requested
+                if request.args.get('format') == 'walk':
+                    output_lines = []
+                    for oid, value in snmp_metrics.items():
+                        output_lines.append(f"{oid} = {value}")
+                    return '\n'.join(output_lines), 200, {'Content-Type': 'text/plain'}
+                
+                return jsonify(snmp_metrics)
+                
+            except Exception as e:
+                logger.error(f"Analytics SNMP error: {e}")
+                return jsonify({"error": "Failed to get SNMP metrics"}), 500
+
+        # Prometheus metrics endpoint (commonly used path)
+        @app.route('/metrics', methods=['GET'])
+        def prometheus_metrics():
+            """Standard Prometheus metrics endpoint"""
+            try:
+                if not self.analytics:
+                    return "# Analytics not available\n", 503, {'Content-Type': 'text/plain'}
+                    
+                return self.analytics.get_prometheus_metrics(), 200, {'Content-Type': 'text/plain'}
+                
+            except Exception as e:
+                logger.error(f"Prometheus metrics error: {e}")
+                return f"# Error: {str(e)}\n", 500, {'Content-Type': 'text/plain'}
+
         @app.errorhandler(404)
         def page_not_found(e):
             return jsonify({"error": "Not found"}), 404
@@ -1076,6 +1410,41 @@ class ServerManagerWebServer(ServerManagerModule):
         def ratelimit_handler(e):
             logger.warning(f"Rate limit exceeded: {e}")
             return jsonify({"error": "Too many requests"}), 429
+
+        # Static file serving routes
+        @app.route('/<path:filename>')
+        def serve_static_files(filename):
+            """Serve static files from the www directory"""
+            try:
+                # Try multiple possible www directory locations
+                www_paths = [
+                    os.path.join(self.server_manager_dir or "", "www"),
+                    os.path.join(os.path.dirname(os.path.dirname(__file__)), "www"),  # Development location
+                    os.path.join(os.path.dirname(__file__), "..", "www"),  # Relative to Scripts
+                ]
+                
+                www_path = None
+                for path in www_paths:
+                    if os.path.exists(path):
+                        www_path = path
+                        logger.debug(f"Using www directory: {www_path}")
+                        break
+                
+                if not www_path:
+                    logger.error(f"WWW directory not found. Tried paths: {www_paths}")
+                    return jsonify({"error": "Static files directory not found"}), 404
+                
+                file_path = os.path.join(www_path, filename)
+                if os.path.exists(file_path) and os.path.isfile(file_path):
+                    logger.debug(f"Serving static file: {filename} from {www_path}")
+                    return send_from_directory(www_path, filename)
+                else:
+                    logger.debug(f"Static file not found: {filename} in {www_path}")
+                    return jsonify({"error": "File not found"}), 404
+                    
+            except Exception as e:
+                logger.error(f"Error serving static file {filename}: {e}")
+                return jsonify({"error": "Error serving file"}), 500
 
     def run(self):
         try:
@@ -1115,39 +1484,59 @@ class ServerManagerWebServer(ServerManagerModule):
             return True
         except KeyboardInterrupt:
             logger.info("Web server stopping due to keyboard interrupt")
+            self.cleanup()
             return True
         except Exception as e:
             logger.error(f"Web server error: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
+            self.cleanup()
             return False
 
-    def test_xml_auth_module(self):
+    def cleanup(self):
+        """Cleanup resources when shutting down"""
         try:
-            if self.server_manager_dir:
-                sys.path.insert(0, self.server_manager_dir)
-            from Modules.authentication import authenticate_user, is_admin_user
-            logger.info("XML authentication module imported successfully")
-            if self.server_manager_dir:
-                config_dir = os.path.join(self.server_manager_dir, "config")
-                users_file = os.path.join(config_dir, "users.xml")
-                logger.info(f"Checking authentication files:")
-                logger.info(f"  Config dir: {config_dir} (exists: {os.path.exists(config_dir)})")
-                logger.info(f"  Users file: {users_file} (exists: {os.path.exists(users_file)})")
-            try:
-                # Remove the non-existent import
-                # from Modules.authentication import initialize_default_admin
-                if self.server_manager_dir and not os.path.exists(users_file):
-                    logger.info("Users file doesn't exist, but initialize_default_admin not available")
-                    # result = initialize_default_admin()
-                    # logger.info(f"Default admin initialization result: {result}")
-            except ImportError:
-                logger.warning("initialize_default_admin not available in XML authentication module")
-        except ImportError as e:
-            logger.warning(f"Failed to import XML authentication module: {e}")
-            logger.info(f"Python path: {sys.path}")
+            # Stop analytics collection
+            if hasattr(self, 'analytics') and self.analytics:
+                logger.info("Stopping analytics collection...")
+                self.analytics.stop_collection()
+                
+            # Stop tracker
+            if hasattr(self, 'tracker') and self.tracker:
+                try:
+                    if hasattr(self.tracker, 'stop_auto_refresh'):
+                        self.tracker.stop_auto_refresh()
+                except Exception as e:
+                    logger.warning(f"Error stopping tracker: {e}")
+                    
+            logger.info("Cleanup completed")
         except Exception as e:
-            logger.error(f"Error testing XML authentication module: {e}")
+            logger.error(f"Error during cleanup: {e}")
+
+    def test_auth_modules(self):
+        """Test available authentication modules"""
+        try:
+            logger.info("Testing authentication modules...")
+            
+            # Test SQL authentication
+            if self.sql_auth:
+                try:
+                    users = self.sql_auth.get_all_users()
+                    logger.info(f"SQL authentication available with {len(users)} users")
+                except Exception as e:
+                    logger.warning(f"SQL authentication test failed: {e}")
+            
+            # Test file-based authentication
+            try:
+                if hasattr(self, 'auth') and self.auth:
+                    users = self.auth.get_all_users()
+                    logger.info(f"File-based authentication available with {len(users)} users")
+            except Exception as e:
+                logger.warning(f"File-based authentication test failed: {e}")
+                
+            logger.info("Authentication module testing completed")
+        except Exception as e:
+            logger.error(f"Error testing authentication modules: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
 

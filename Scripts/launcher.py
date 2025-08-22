@@ -76,7 +76,8 @@ class ServerManagerLauncher(ServerManagerModule):
     def detect_cluster_role(self):
         """Detect whether this instance is a Host or Subhost"""
         try:
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\SkywereIndustries\Servermanager")
+            from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+            key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
             self.cluster_role = winreg.QueryValueEx(key, "HostType")[0]
             try:
                 self.host_address = winreg.QueryValueEx(key, "HostAddress")[0]
@@ -218,11 +219,27 @@ class ServerManagerLauncher(ServerManagerModule):
     def start_web_server(self):
         """Start the web server process"""
         try:
+            # Try using a batch file wrapper for better compatibility
+            bat_script = os.path.join(self.paths["scripts"], "start_webserver.bat")
             web_script = os.path.join(self.paths["scripts"], "webserver.py")
             
             if not os.path.exists(web_script):
                 logger.error(f"Web server script not found: {web_script}")
                 return False
+
+            # Create the batch file if it doesn't exist
+            if not os.path.exists(bat_script):
+                batch_content = f"""@echo off
+cd /d "{self.server_manager_dir}"
+"{sys.executable}" Scripts\\webserver.py"""
+                try:
+                    with open(bat_script, 'w') as f:
+                        f.write(batch_content)
+                    logger.info(f"Created webserver batch file: {bat_script}")
+                except Exception as e:
+                    logger.error(f"Failed to create batch file: {e}")
+                    # Fall back to direct Python execution
+                    bat_script = None
             
             # Add the server manager directory to PYTHONPATH for module imports
             env = os.environ.copy()
@@ -232,23 +249,38 @@ class ServerManagerLauncher(ServerManagerModule):
             else:
                 env['PYTHONPATH'] = self.server_manager_dir or ''
                 
-            # Start web server process with hidden console
+            # Start web server process 
             if sys.platform == 'win32':
-                # On Windows, use CREATE_NO_WINDOW to hide console
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = 0  # SW_HIDE
+                startupinfo.wShowWindow = 7  # SW_SHOWMINNOACTIVE - minimized but visible
                 
-                web_process = subprocess.Popen(
-                    [sys.executable, web_script],
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                    startupinfo=startupinfo,
-                    shell=False,
-                    env=env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    stdin=subprocess.PIPE
-                )
+                if bat_script and os.path.exists(bat_script):
+                    # Use cmd.exe to execute the batch file with better error handling
+                    logger.info("Starting web server using batch file wrapper")
+                    web_process = subprocess.Popen(
+                        ['cmd.exe', '/c', bat_script],
+                        startupinfo=startupinfo,
+                        shell=False,  # Use cmd.exe directly instead of shell=True
+                        env=env,
+                        cwd=self.server_manager_dir,
+                        stdout=subprocess.DEVNULL,  # Redirect output to avoid blocking
+                        stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL
+                    )
+                else:
+                    # Fall back to direct Python execution
+                    logger.info("Starting web server directly with Python")
+                    web_process = subprocess.Popen(
+                        [sys.executable, web_script],
+                        startupinfo=startupinfo,
+                        shell=False,
+                        env=env,
+                        cwd=self.server_manager_dir,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL
+                    )
             else:
                 # On Unix-based systems
                 web_process = subprocess.Popen(
@@ -256,22 +288,16 @@ class ServerManagerLauncher(ServerManagerModule):
                     start_new_session=True,
                     shell=False,
                     env=env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    stdin=subprocess.PIPE
+                    cwd=self.server_manager_dir  # Explicit working directory
                 )
             
             # Wait longer to see if the process exits immediately
             time.sleep(5)
             if web_process.poll() is not None:
                 exit_code = web_process.returncode
-                try:
-                    stdout, stderr = web_process.communicate(timeout=2)
-                    logger.error(f"Web server process exited immediately with code {exit_code}")
-                    logger.error(f"Stdout: {stdout.decode('utf-8', errors='replace')}")
-                    logger.error(f"Stderr: {stderr.decode('utf-8', errors='replace')}")
-                except subprocess.TimeoutExpired:
-                    logger.error(f"Web server process exited immediately with code {exit_code} (output timeout)")
+                logger.error(f"Web server process exited immediately with code {exit_code}")
+                # Since we're not capturing stdout/stderr, we can't show detailed error info
+                # but the process started and exited, which indicates a runtime error
                 return False
             
             self.processes["web_server"] = web_process
@@ -280,8 +306,9 @@ class ServerManagerLauncher(ServerManagerModule):
             # Check if the web server is actually listening on the port
             web_port = 8080  # Default port
             try:
+                from Modules.common import REGISTRY_ROOT
                 # Try to get the port from registry
-                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
+                key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
                 web_port = int(winreg.QueryValueEx(key, "WebPort")[0])
                 winreg.CloseKey(key)
             except:
@@ -294,13 +321,39 @@ class ServerManagerLauncher(ServerManagerModule):
                     logger.info(f"Web server successfully started and listening on port {web_port}")
                     return True
                 logger.debug(f"Attempt {attempt+1}/15: Web server not yet listening")
+                
                 # Check if process is still running
                 if web_process.poll() is not None:
                     logger.error(f"Web server process died during startup with exit code {web_process.returncode}")
+                    try:
+                        stdout, stderr = web_process.communicate(timeout=2)
+                        if stdout:
+                            logger.error(f"Web server stdout: {stdout.decode('utf-8', errors='replace')}")
+                        if stderr:
+                            logger.error(f"Web server stderr: {stderr.decode('utf-8', errors='replace')}")
+                    except subprocess.TimeoutExpired:
+                        logger.error("Could not get web server output (timeout)")
                     return False
             
-            logger.warning(f"Web server process started (PID: {web_process.pid}) but not listening on port {web_port}")
-            return True  # Return True anyway to keep the process managed
+            # Final check: if still not listening, try to capture any error output
+            if not self.is_port_open('localhost', web_port):
+                logger.warning(f"Web server process started (PID: {web_process.pid}) but not listening on port {web_port}")
+                # Since we're not capturing output, we can't get detailed error info
+                # but we can try to terminate the non-responsive process
+                try:
+                    if web_process.poll() is None:  # Process still running
+                        logger.warning("Terminating unresponsive web server process")
+                        web_process.terminate()
+                        time.sleep(2)
+                        if web_process.poll() is None:
+                            web_process.kill()  # Force kill if terminate didn't work
+                except Exception as e:
+                    logger.error(f"Error terminating web server process: {e}")
+            else:
+                logger.info(f"Web server successfully started and listening on port {web_port}")
+                return True
+            
+            return True  # Return True anyway to keep the process managed if it didn't crash immediately
             
         except Exception as e:
             logger.error(f"Failed to start web server: {str(e)}")

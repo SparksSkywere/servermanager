@@ -4,6 +4,31 @@ import sys
 import ctypes
 import json
 import time
+import winreg
+
+# Add project root to sys.path for module resolution
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
+
+# Import centralized registry constants
+from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+
+def is_admin():
+    """Check if the script is running with administrator privileges"""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except:
+        return False
+
+def get_server_manager_dir_from_registry():
+    """Get the server manager directory from registry"""
+    try:
+        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
+        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
+        winreg.CloseKey(key)
+        return server_manager_dir.strip('"').strip()
+    except Exception as e:
+        print(f"Error reading registry: {e}")
+        return None
 
 def check_process_running(pid):
     """Check if a process with given PID is still running"""
@@ -31,6 +56,10 @@ def check_process_running(pid):
 
 def cleanup_orphaned_pid_files(temp_dir):
     """Clean up PID files for processes that are no longer running"""
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir, exist_ok=True)
+        return
+        
     pid_files = ["launcher.pid", "trayicon.pid", "webserver.pid"]
     
     for pid_file_name in pid_files:
@@ -44,10 +73,12 @@ def cleanup_orphaned_pid_files(temp_dir):
                     # If process is not running, remove the PID file
                     if not check_process_running(pid):
                         os.remove(pid_file)
+                        print(f"Cleaned up orphaned PID file: {pid_file_name}")
             except (json.JSONDecodeError, IOError, OSError):
                 # If we can't read the file or it's corrupted, remove it
                 try:
                     os.remove(pid_file)
+                    print(f"Cleaned up corrupted PID file: {pid_file_name}")
                 except:
                     pass
 
@@ -70,8 +101,13 @@ def prompt_user_restart():
 def is_already_running():
     """Check if an instance of Server Manager is already running"""
     try:
+        # Get server manager directory from registry or use script directory
+        server_manager_dir = get_server_manager_dir_from_registry()
+        if not server_manager_dir or not os.path.exists(server_manager_dir):
+            server_manager_dir = os.path.dirname(os.path.abspath(__file__))
+            
         # Check for launcher PID file
-        temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
+        temp_dir = os.path.join(server_manager_dir, "temp")
         pid_file = os.path.join(temp_dir, "launcher.pid")
         
         # First, clean up any orphaned PID files
@@ -108,7 +144,12 @@ def is_already_running():
 def check_for_improper_shutdown():
     """Check if there are orphaned PID files indicating improper shutdown"""
     try:
-        temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp")
+        # Get server manager directory from registry or use script directory
+        server_manager_dir = get_server_manager_dir_from_registry()
+        if not server_manager_dir or not os.path.exists(server_manager_dir):
+            server_manager_dir = os.path.dirname(os.path.abspath(__file__))
+            
+        temp_dir = os.path.join(server_manager_dir, "temp")
         pid_files = ["launcher.pid", "trayicon.pid", "webserver.pid"]
         
         orphaned_files = []
@@ -133,8 +174,27 @@ def check_for_improper_shutdown():
     except Exception:
         return False
 
-# Get the directory where this script is located
-script_dir = os.path.dirname(os.path.abspath(__file__))
+# Check for administrator privileges first
+if not is_admin():
+    if sys.platform == "win32":
+        try:
+            # Try to elevate to administrator
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, f'"{__file__}"', None, 1)
+        except Exception as e:
+            ctypes.windll.user32.MessageBoxW(0, f"Administrator privileges required.\n\nError: {str(e)}", "Server Manager - Elevation Required", 0x10)
+    sys.exit(0)
+
+# Try to get the server manager directory from registry first
+server_manager_dir = get_server_manager_dir_from_registry()
+
+if server_manager_dir and os.path.exists(server_manager_dir):
+    # Use the registry path as the script directory
+    script_dir = server_manager_dir
+    print(f"Using registry path: {server_manager_dir}")
+else:
+    # Fallback to current script directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    print(f"Registry path not found, using script directory: {script_dir}")
 
 # Make sure temp directory exists
 temp_dir = os.path.join(script_dir, "temp")
@@ -157,12 +217,58 @@ if is_already_running():
     sys.exit(0)
 
 # Launch the Python launcher script
-launcher_path = os.path.join(script_dir, "scripts", "launcher.py")
+launcher_path = os.path.join(script_dir, "Scripts", "launcher.py")
 
-# Use subprocess with CREATE_NO_WINDOW flag to hide console
-startupinfo = subprocess.STARTUPINFO()
-startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-startupinfo.wShowWindow = 0  # SW_HIDE
+# Check if the launcher script exists
+if not os.path.exists(launcher_path):
+    if sys.platform == "win32":
+        ctypes.windll.user32.MessageBoxW(0, f"Launcher script not found at:\n{launcher_path}", "Server Manager - Error", 0x10)
+    else:
+        print(f"Error: Launcher script not found at: {launcher_path}")
+    sys.exit(1)
 
-# Run the launcher script
-subprocess.Popen([sys.executable, launcher_path], startupinfo=startupinfo)
+try:
+    # Use subprocess with CREATE_NO_WINDOW flag to hide console
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0  # SW_HIDE
+
+    # Run the launcher script with proper working directory and debug flag
+    process = subprocess.Popen(
+        [sys.executable, launcher_path, "--debug"], 
+        startupinfo=startupinfo,
+        cwd=script_dir,  # Set working directory to the Server Manager root
+        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE
+    )
+    
+    # Give the process more time to start properly
+    time.sleep(2.0)
+    
+    # Check if the process failed to start
+    if process.poll() is not None:
+        # Process terminated immediately, get error info
+        stdout, stderr = process.communicate()
+        stdout_text = stdout.decode() if stdout else "No stdout output"
+        stderr_text = stderr.decode() if stderr else "No stderr output"
+        
+        error_msg = f"Failed to start Server Manager launcher.\n\nReturn code: {process.returncode}\n\nStdout:\n{stdout_text}\n\nStderr:\n{stderr_text}"
+        
+        if sys.platform == "win32":
+            # Truncate message if too long for message box
+            if len(error_msg) > 1000:
+                error_msg = error_msg[:1000] + "...\n\n[Output truncated]"
+            ctypes.windll.user32.MessageBoxW(0, error_msg, "Server Manager - Startup Error", 0x10)
+        else:
+            print(error_msg)
+        sys.exit(1)
+    else:
+        print(f"Server Manager launcher started successfully (PID: {process.pid})")
+    
+except Exception as e:
+    error_msg = f"Failed to start Server Manager launcher.\n\nError: {str(e)}"
+    if sys.platform == "win32":
+        ctypes.windll.user32.MessageBoxW(0, error_msg, "Server Manager - Startup Error", 0x10)
+    else:
+        print(error_msg)
+    sys.exit(1)

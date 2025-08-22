@@ -22,7 +22,8 @@ DEFAULT_BACKUP_COUNT = 5
 class LogManager:
     """Class for managing logs with rotation and compression"""
     def __init__(self):
-        self.registry_path = r"Software\SkywereIndustries\Servermanager"
+        from Modules.common import REGISTRY_PATH
+        self.registry_path = REGISTRY_PATH
         self.server_manager_dir = None
         self.paths = {}
         self.log_level = logging.INFO
@@ -71,8 +72,9 @@ class LogManager:
     def initialize(self):
         """Initialize paths and configuration from registry"""
         try:
+            from Modules.common import REGISTRY_ROOT
             # Read registry for paths
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
+            key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             

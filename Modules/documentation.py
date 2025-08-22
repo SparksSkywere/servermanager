@@ -306,8 +306,8 @@ def get_version_from_registry():
         str: Version string from registry or 'Unknown' if not found
     """
     try:
-        registry_path = r"Software\SkywereIndustries\Servermanager"
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
+        from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         version = winreg.QueryValueEx(key, "CurrentVersion")[0]
         winreg.CloseKey(key)
         return version

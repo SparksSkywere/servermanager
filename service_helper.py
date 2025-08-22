@@ -5,10 +5,16 @@ import subprocess
 import argparse
 import winreg
 
+# Add project root to sys.path for module resolution
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
+
+# Import centralized registry constants
+from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+
 def get_server_manager_dir():
     """Get Server Manager directory from registry"""
     try:
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\SkywereIndustries\Servermanager")
+        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         server_manager_dir = winreg.QueryValueEx(key, "ServerManagerPath")[0]
         winreg.CloseKey(key)
         return server_manager_dir

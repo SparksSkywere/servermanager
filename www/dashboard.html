@@ -80,6 +80,31 @@
             border-radius: 5px;
             margin: 20px 0;
         }
+        .nav-menu {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .nav-menu a {
+            display: inline-block;
+            margin: 0 10px;
+            padding: 8px 16px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        .nav-menu a:hover {
+            background: #5a67d8;
+        }
+        .nav-menu a.disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -93,6 +118,13 @@
     </div>
 
     <div class="container">
+        <div class="nav-menu">
+            <a href="dashboard.html">Dashboard</a>
+            <a href="status.html">Server Status</a>
+            <a href="create-server.html">Create Server</a>
+            <a href="admin.html" id="adminLink" style="display: none;">Admin Panel</a>
+        </div>
+
         <div class="welcome-card">
             <h2>Welcome to Server Manager</h2>
             <p>Your centralized server management dashboard is ready to use.</p>
@@ -136,25 +168,60 @@
         </div>
     </div>
 
-    <script>
-        // Check if user is logged in
-        const token = localStorage.getItem('authToken');
-        const username = localStorage.getItem('username');
-        const isAdmin = localStorage.getItem('isAdmin') === 'true';
+    <!-- Notification System -->
+    <div id="notification" class="notification"></div>
 
-        if (!token) {
-            window.location.href = '/login.html';
-        }
+    <script type="module">
+        import { checkAuth, logout, isAdmin } from './js/auth.js';
+        import { showNotification } from './js/utils.js';
+        
+        // Check authentication immediately
+        async function initDashboard() {
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                if (!token) {
+                    window.location.replace('login.html');
+                    return;
+                }
 
-        // Display user info
-        document.getElementById('username').textContent = username || 'User';
-        if (isAdmin) {
-            document.getElementById('adminBadge').style.display = 'inline-block';
+                // Verify token is still valid
+                const isAuthenticated = await checkAuth();
+                if (!isAuthenticated) {
+                    sessionStorage.clear();
+                    window.location.replace('login.html');
+                    return;
+                }
+
+                // Get user info
+                const username = sessionStorage.getItem('username');
+                const userIsAdmin = await isAdmin();
+                
+                // Display user info
+                document.getElementById('username').textContent = username || 'User';
+                if (userIsAdmin) {
+                    document.getElementById('adminBadge').style.display = 'inline-block';
+                    document.getElementById('adminLink').style.display = 'inline-block';
+                }
+
+                // Load initial data
+                await loadServerStatus();
+                updateUptime();
+                
+                // Set up periodic updates
+                setInterval(updateUptime, 1000);
+                setInterval(loadServerStatus, 30000); // Refresh every 30 seconds
+                
+            } catch (error) {
+                console.error('Dashboard initialization error:', error);
+                sessionStorage.clear();
+                window.location.replace('login.html');
+            }
         }
 
         // Load server status
         async function loadServerStatus() {
             try {
+                const token = sessionStorage.getItem('auth_token');
                 const response = await fetch('/api/servers', {
                     headers: {
                         'Authorization': `Bearer ${token}`
@@ -186,18 +253,15 @@
             document.getElementById('uptime').textContent = `${minutes}m ${seconds}s`;
         }
 
-        function logout() {
-            localStorage.removeItem('authToken');
-            localStorage.removeItem('username');
-            localStorage.removeItem('isAdmin');
-            window.location.href = '/login.html';
-        }
+        // Make logout available globally
+        window.logout = logout;
 
-        // Load initial data
-        loadServerStatus();
-        updateUptime();
-        setInterval(updateUptime, 1000);
-        setInterval(loadServerStatus, 30000); // Refresh every 30 seconds
+        // Initialize dashboard when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initDashboard);
+        } else {
+            initDashboard();
+        }
     </script>
 </body>
 </html>

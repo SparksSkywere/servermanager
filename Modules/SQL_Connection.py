@@ -15,8 +15,8 @@ logger = logging.getLogger("SQL_Connection")
 def get_sql_config_from_registry():
     """Get SQL configuration from Windows registry"""
     try:
-        registry_path = r"Software\SkywereIndustries\Servermanager"
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
+        from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         
         # Try to get SQL type
         try:

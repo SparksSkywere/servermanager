@@ -154,6 +154,10 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 self.open_web_interface
             ),
             pystray.MenuItem(
+                "Open Web Admin",
+                self.open_web_admin
+            ),
+            pystray.MenuItem(
                 "Open Admin Dashboard",
                 self.open_admin_dashboard
             ),
@@ -231,8 +235,12 @@ class ServerManagerTrayIcon(ServerManagerModule):
             return False
 
     def open_web_interface(self):
-        """Open the web interface in a browser"""
+        """Open the web interface in a browser, starting the webserver if needed"""
+        logger.info("Opening web interface...")
+        
+        # Check if we're in offline mode
         if self.offline_mode:
+            logger.info("Currently in offline mode")
             if self.icon and self.notifications_enabled:
                 self.icon.notify(
                     "Cannot open web interface in offline mode",
@@ -240,8 +248,13 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 )
             return
             
+        # First, always check current webserver status
+        self.check_webserver_status()
+        logger.info(f"Current webserver status: {self.webserver_status}")
+            
         # Check if web server is running
         if self.webserver_status != "Connected":
+            logger.info("Web server not connected, attempting to start...")
             if self.icon and self.notifications_enabled:
                 self.icon.notify(
                     "Web server is not connected. Starting web server...",
@@ -257,13 +270,13 @@ class ServerManagerTrayIcon(ServerManagerModule):
                         self.icon.notify(f"Web server script not found: {webserver_script}", "Server Manager Error")
                     return
                 
-                # Build command with debug flag if needed
+                # Build command (webserver doesn't accept --debug flag)
                 cmd = [sys.executable, webserver_script]
-                if self.debug_mode:
-                    cmd.append("--debug")
                 
                 # Launch web server process with hidden console
                 logger.info(f"Starting web server: {' '.join(cmd)}")
+                logger.info(f"Working directory: {self.server_manager_dir}")
+                logger.info(f"Using port: {self.web_port}")
                 
                 if sys.platform == 'win32':
                     # On Windows, use CREATE_NO_WINDOW to hide console
@@ -273,6 +286,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
                     
                     proc = subprocess.Popen(
                         cmd,
+                        cwd=self.server_manager_dir,  # Set working directory
                         creationflags=subprocess.CREATE_NO_WINDOW,
                         startupinfo=startupinfo,
                         shell=False,
@@ -284,6 +298,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
                     # On Unix, use start_new_session
                     proc = subprocess.Popen(
                         cmd,
+                        cwd=self.server_manager_dir,  # Set working directory
                         start_new_session=True,
                         shell=False,
                         stdout=subprocess.PIPE,
@@ -291,19 +306,35 @@ class ServerManagerTrayIcon(ServerManagerModule):
                         stdin=subprocess.PIPE
                     )
                 
-                # Wait for web server to start
+                logger.info(f"Web server process started with PID: {proc.pid}")
+                
+                # Wait for web server to start with better timing
                 connected = False
                 logger.info(f"Waiting for web server to start on port {self.web_port}...")
-                for attempt in range(10):
+                for attempt in range(15):  # Increased to 15 seconds
                     time.sleep(1)
-                    logger.debug(f"Connection attempt {attempt+1}/10...")
+                    logger.debug(f"Connection attempt {attempt+1}/15...")
                     if self.is_port_open('localhost', self.web_port):
                         connected = True
                         self.webserver_status = "Connected"
+                        logger.info("Web server connected successfully!")
                         break
                 
                 if not connected:
-                    logger.error(f"Failed to connect to web server after 10 seconds")
+                    logger.error(f"Failed to connect to web server after 15 seconds")
+                    # Try to get some error information from the process
+                    try:
+                        if proc.poll() is not None:
+                            stdout, stderr = proc.communicate(timeout=2)
+                            if stderr:
+                                logger.error(f"Web server stderr: {stderr.decode(errors='replace')}")
+                            if stdout:
+                                logger.info(f"Web server stdout: {stdout.decode(errors='replace')}")
+                        else:
+                            logger.error("Web server process is still running but port is not accessible")
+                    except Exception as debug_e:
+                        logger.error(f"Failed to get process output: {debug_e}")
+                        
                     if self.icon and self.notifications_enabled:
                         self.icon.notify("Failed to start web server", "Server Manager Error")
                     return
@@ -330,6 +361,62 @@ class ServerManagerTrayIcon(ServerManagerModule):
             logger.error(f"Traceback: {traceback.format_exc()}")
             if self.icon and self.notifications_enabled:
                 self.icon.notify(f"Failed to open web interface: {str(e)}", "Server Manager Error")
+
+    def open_web_admin(self):
+        """Open the web admin interface in a browser"""
+        logger.info("Opening web admin interface...")
+        
+        # Check if we're in offline mode
+        if self.offline_mode:
+            logger.info("Currently in offline mode")
+            if self.icon and self.notifications_enabled:
+                self.icon.notify(
+                    "Cannot open web interface in offline mode",
+                    "Server Manager"
+                )
+            return
+            
+        # Ensure webserver is running
+        self.check_webserver_status()
+        if self.webserver_status != "Connected":
+            logger.info("Web server not connected, attempting to start...")
+            # Try to start via the open_web_interface method which handles webserver startup
+            try:
+                # First ensure webserver is started
+                if hasattr(self, 'start_webserver_for_dashboard'):
+                    self.start_webserver_for_dashboard()
+                
+                # Wait a moment for webserver to start
+                import time
+                time.sleep(2)
+                self.check_webserver_status()
+                
+                if self.webserver_status != "Connected":
+                    if self.icon and self.notifications_enabled:
+                        self.icon.notify("Web server failed to start", "Server Manager Error")
+                    return
+                    
+            except Exception as e:
+                logger.error(f"Failed to start webserver: {e}")
+                if self.icon and self.notifications_enabled:
+                    self.icon.notify(f"Failed to start webserver: {str(e)}", "Server Manager Error")
+                return
+        
+        # Open the admin interface in a browser
+        try:
+            url = f"http://localhost:{self.web_port}/admin.html"
+            logger.info(f"Opening web admin interface: {url}")
+            webbrowser.open(url)
+            
+            # Show notification only if enabled
+            if self.icon and self.notifications_enabled:
+                self.icon.notify("Web admin interface opened in browser", "Server Manager")
+                
+        except Exception as e:
+            logger.error(f"Failed to open web admin interface: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            if self.icon and self.notifications_enabled:
+                self.icon.notify(f"Failed to open web admin interface: {str(e)}", "Server Manager Error")
 
     def open_dashboard(self):
         """Open the Python dashboard instead of web dashboard"""
@@ -417,9 +504,8 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 logger.error(f"Web server script not found: {webserver_script}")
                 return False
 
+            # Build command (webserver doesn't accept --debug flag)
             cmd = [sys.executable, webserver_script]
-            if self.debug_mode:
-                cmd.append("--debug")
 
             logger.info(f"Starting web server for dashboard: {' '.join(cmd)}")
 
@@ -430,6 +516,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
 
                 proc = subprocess.Popen(
                     cmd,
+                    cwd=self.server_manager_dir,  # Set working directory
                     creationflags=subprocess.CREATE_NO_WINDOW,
                     startupinfo=startupinfo,
                     shell=False,
@@ -440,6 +527,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
             else:
                 proc = subprocess.Popen(
                     cmd,
+                    cwd=self.server_manager_dir,  # Set working directory
                     start_new_session=True,
                     shell=False,
                     stdout=subprocess.PIPE,

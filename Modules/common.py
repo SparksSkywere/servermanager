@@ -7,6 +7,10 @@ import time
 import datetime
 import psutil
 
+# Centralized registry constants
+REGISTRY_ROOT = winreg.HKEY_LOCAL_MACHINE
+REGISTRY_PATH = r"Software\SkywereIndustries\Servermanager"
+
 # Centralized logging integration
 try:
     from Modules.logging import get_component_logger
@@ -24,7 +28,7 @@ def initialize_paths_from_registry(registry_path):
     """Initialize basic paths from registry"""
     try:
         # Read registry for basic paths
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
+        key = winreg.OpenKey(REGISTRY_ROOT, registry_path)
         server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
         winreg.CloseKey(key)
         
@@ -58,7 +62,7 @@ def initialize_registry_values(registry_path):
     """Initialize registry-managed values"""
     try:
         # Read registry for all installation-managed values
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path)
+        key = winreg.OpenKey(REGISTRY_ROOT, registry_path)
         
         registry_values = {}
         steam_cmd_path = None
@@ -111,7 +115,7 @@ def initialize_registry_values(registry_path):
 class ServerManagerPaths:
     """Class to handle paths for the server manager"""
     def __init__(self):
-        self.registry_path = r"Software\SkywereIndustries\Servermanager"
+        self.registry_path = REGISTRY_PATH
         self.server_manager_dir = None
         self.paths = {}
         self.initialized = False
@@ -123,7 +127,7 @@ class ServerManagerPaths:
         """Initialize paths from registry settings"""
         try:
             # Read registry for paths
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
+            key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             
@@ -134,8 +138,8 @@ class ServerManagerPaths:
                 "config": os.path.join(self.server_manager_dir, "config"),
                 "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
-                "scripts": os.path.join(self.server_manager_dir, "scripts"),
-                "modules": os.path.join(self.server_manager_dir, "modules"),
+                "scripts": os.path.join(self.server_manager_dir, "Scripts"),
+                "modules": os.path.join(self.server_manager_dir, "Modules"),
                 "static": os.path.join(self.server_manager_dir, "static"),
                 "templates": os.path.join(self.server_manager_dir, "templates"),
                 "icons": os.path.join(self.server_manager_dir, "icons"),
@@ -179,8 +183,8 @@ class ServerManagerPaths:
                 "config": os.path.join(self.server_manager_dir, "config"),
                 "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
-                "scripts": os.path.join(self.server_manager_dir, "scripts"),
-                "modules": os.path.join(self.server_manager_dir, "modules"),
+                "scripts": os.path.join(self.server_manager_dir, "Scripts"),
+                "modules": os.path.join(self.server_manager_dir, "Modules"),
                 "static": os.path.join(self.server_manager_dir, "static"),
                 "templates": os.path.join(self.server_manager_dir, "templates"),
                 "icons": os.path.join(self.server_manager_dir, "icons"),
@@ -350,7 +354,7 @@ class ConfigManager:
             # Always try to merge current registry values
             try:
                 success, steam_cmd, webserver_port, registry_values = initialize_registry_values(
-                    r"Software\SkywereIndustries\Servermanager"
+                    REGISTRY_PATH
                 )
                 if success:
                     # Override with current registry values
@@ -384,7 +388,7 @@ class ConfigManager:
             # Try to override with registry values
             try:
                 success, steam_cmd, webserver_port, registry_values = initialize_registry_values(
-                    r"Software\SkywereIndustries\Servermanager"
+                    REGISTRY_PATH
                 )
                 if success:
                     self.config["web_port"] = webserver_port
@@ -513,7 +517,7 @@ class ServerManagerModule:
     def __init__(self, module_name=None):
         self.module_name = module_name or self.__class__.__name__
         self.logger = logging.getLogger(self.module_name)
-        self.registry_path = r"Software\SkywereIndustries\Servermanager"
+        self.registry_path = REGISTRY_PATH
         
         # Use global instances for shared functionality
         self._paths_manager = paths
@@ -586,4 +590,4 @@ class ServerManagerModule:
 
 # Export these instances to make them available to other modules
 __all__ = ['paths', 'process_manager', 'config_manager', 'system_utils', 'ServerManagerModule',
-           'initialize_paths_from_registry', 'initialize_registry_values']
+           'initialize_paths_from_registry', 'initialize_registry_values', 'REGISTRY_ROOT', 'REGISTRY_PATH']

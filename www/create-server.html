@@ -34,26 +34,62 @@
         </div>
     </div>
 
+    <!-- Notification System -->
+    <div id="notification" class="notification"></div>
+
     <script type="module">
+        import { checkAuth, logout } from './js/auth.js';
         import API from './js/api.js';
         import { showNotification } from './js/utils.js';
 
-        document.getElementById('createServerForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
+        // Check authentication first
+        async function initCreateServerPage() {
             try {
-                const serverData = {
-                    name: document.getElementById('serverName').value,
-                    type: document.getElementById('serverType').value,
-                    path: document.getElementById('serverPath').value
-                };
+                const token = sessionStorage.getItem('auth_token');
+                if (!token) {
+                    window.location.replace('login.html');
+                    return;
+                }
 
-                await API.createServer(serverData);
-                showNotification('Server created successfully', 'success');
-                setTimeout(() => window.location.href = 'dashboard.html', 1000);
+                // Verify token is still valid
+                const isAuthenticated = await checkAuth();
+                if (!isAuthenticated) {
+                    sessionStorage.clear();
+                    window.location.replace('login.html');
+                    return;
+                }
+
+                // Set up form handler
+                document.getElementById('createServerForm').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    try {
+                        const serverData = {
+                            name: document.getElementById('serverName').value,
+                            type: document.getElementById('serverType').value,
+                            path: document.getElementById('serverPath').value
+                        };
+
+                        await API.createServer(serverData);
+                        showNotification('Server created successfully', 'success');
+                        setTimeout(() => window.location.href = 'dashboard.html', 1000);
+                    } catch (error) {
+                        showNotification(error.message, 'error');
+                    }
+                });
+
             } catch (error) {
-                showNotification(error.message, 'error');
+                console.error('Create server page initialization error:', error);
+                sessionStorage.clear();
+                window.location.replace('login.html');
             }
-        });
+        }
+
+        // Initialize when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initCreateServerPage);
+        } else {
+            initCreateServerPage();
+        }
     </script>
 </body>
 </html>

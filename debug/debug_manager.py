@@ -55,7 +55,8 @@ class DebugManagerGUI:
         self.root.minsize(600, 400)
         
         # Initialize paths
-        self.registry_path = r"Software\SkywereIndustries\Servermanager"
+        from Modules.common import REGISTRY_PATH
+        self.registry_path = REGISTRY_PATH
         self.server_manager_dir = None
         self.paths = {}
         
@@ -68,8 +69,9 @@ class DebugManagerGUI:
     def initialize(self):
         """Initialize paths and configuration from registry"""
         try:
+            from Modules.common import REGISTRY_ROOT
             # Read registry for paths
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
+            key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             

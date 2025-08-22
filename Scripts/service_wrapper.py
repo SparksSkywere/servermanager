@@ -49,7 +49,8 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
         try:
             # Get server manager directory from registry
             import winreg
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\SkywereIndustries\Servermanager")
+            from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+            key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
             server_manager_dir = winreg.QueryValueEx(key, "ServerManagerPath")[0]
             winreg.CloseKey(key)
             
