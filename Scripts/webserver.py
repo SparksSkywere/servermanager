@@ -1557,16 +1557,14 @@ def main():
 
 if __name__ == "__main__":
     try:
-        print("Starting ServerManager webserver...", file=sys.stderr)
-        print(f"Working directory: {os.getcwd()}", file=sys.stderr)
-        print(f"Script path: {__file__}", file=sys.stderr)
-        print(f"Python path: {sys.path[:3]}", file=sys.stderr)  # First 3 entries
-        sys.stderr.flush()
-        sys.stdout.flush()
+        # Use logger instead of print for debug info to avoid console windows
+        logger.info("Starting ServerManager webserver...")
+        logger.debug(f"Working directory: {os.getcwd()}")
+        logger.debug(f"Script path: {__file__}")
+        logger.debug(f"Python path: {sys.path[:3]}")  # First 3 entries
         main()
     except Exception as e:
         import traceback
-        print("Webserver failed to start!", file=sys.stderr)
-        print(traceback.format_exc(), file=sys.stderr)
-        sys.stderr.flush()
+        logger.error("Webserver failed to start!")
+        logger.error(traceback.format_exc())
         sys.exit(1)

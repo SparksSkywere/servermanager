@@ -219,28 +219,12 @@ class ServerManagerLauncher(ServerManagerModule):
     def start_web_server(self):
         """Start the web server process"""
         try:
-            # Try using a batch file wrapper for better compatibility
-            bat_script = os.path.join(self.paths["scripts"], "start_webserver.bat")
             web_script = os.path.join(self.paths["scripts"], "webserver.py")
             
             if not os.path.exists(web_script):
                 logger.error(f"Web server script not found: {web_script}")
                 return False
 
-            # Create the batch file if it doesn't exist
-            if not os.path.exists(bat_script):
-                batch_content = f"""@echo off
-cd /d "{self.server_manager_dir}"
-"{sys.executable}" Scripts\\webserver.py"""
-                try:
-                    with open(bat_script, 'w') as f:
-                        f.write(batch_content)
-                    logger.info(f"Created webserver batch file: {bat_script}")
-                except Exception as e:
-                    logger.error(f"Failed to create batch file: {e}")
-                    # Fall back to direct Python execution
-                    bat_script = None
-            
             # Add the server manager directory to PYTHONPATH for module imports
             env = os.environ.copy()
             pythonpath = env.get('PYTHONPATH', '')
@@ -249,38 +233,25 @@ cd /d "{self.server_manager_dir}"
             else:
                 env['PYTHONPATH'] = self.server_manager_dir or ''
                 
-            # Start web server process 
+            # Start web server process using direct Python execution (no batch file)
             if sys.platform == 'win32':
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = 7  # SW_SHOWMINNOACTIVE - minimized but visible
+                startupinfo.wShowWindow = 0  # SW_HIDE - completely hidden
                 
-                if bat_script and os.path.exists(bat_script):
-                    # Use cmd.exe to execute the batch file with better error handling
-                    logger.info("Starting web server using batch file wrapper")
-                    web_process = subprocess.Popen(
-                        ['cmd.exe', '/c', bat_script],
-                        startupinfo=startupinfo,
-                        shell=False,  # Use cmd.exe directly instead of shell=True
-                        env=env,
-                        cwd=self.server_manager_dir,
-                        stdout=subprocess.DEVNULL,  # Redirect output to avoid blocking
-                        stderr=subprocess.DEVNULL,
-                        stdin=subprocess.DEVNULL
-                    )
-                else:
-                    # Fall back to direct Python execution
-                    logger.info("Starting web server directly with Python")
-                    web_process = subprocess.Popen(
-                        [sys.executable, web_script],
-                        startupinfo=startupinfo,
-                        shell=False,
-                        env=env,
-                        cwd=self.server_manager_dir,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        stdin=subprocess.DEVNULL
-                    )
+                # Use direct Python execution for better reliability and no console windows
+                logger.info("Starting web server directly with Python")
+                web_process = subprocess.Popen(
+                    [sys.executable, web_script],
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    startupinfo=startupinfo,
+                    shell=False,
+                    env=env,
+                    cwd=self.server_manager_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL
+                )
             else:
                 # On Unix-based systems
                 web_process = subprocess.Popen(
@@ -510,6 +481,7 @@ cd /d "{self.server_manager_dir}"
                 
                 result = subprocess.run(
                     [sys.executable, setup_script, "--no-admin-check"],
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                     startupinfo=startupinfo,
                     capture_output=True,
                     text=True
