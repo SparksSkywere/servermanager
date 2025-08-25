@@ -26,7 +26,7 @@ from Modules.minecraft import MinecraftServerManager
 # Import logging functions from the logging module
 from Modules.server_logging import (
     get_dashboard_logger, configure_dashboard_logging,
-    log_dashboard_event, log_user_action
+    log_dashboard_event
 )
 
 # Import timer management and scheduler
@@ -1636,9 +1636,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             success = self.console_manager.show_console(server_name, self.root)
             
             if success:
-                log_user_action(self.current_user.username if self.current_user else "Unknown", 
-                              f"Opened console for server: {server_name}", 
-                              "console_open")
+                logger.info(f"USER_ACTION: {self.current_user.username if self.current_user else 'Unknown'} opened console for server: {server_name}")
             else:
                 messagebox.showerror("Console Error", f"Failed to open console for {server_name}")
             
@@ -2286,13 +2284,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                         actions.append(f"updated AppID to {new_appid}")
                     
                     if actions:
-                        log_user_action(self.current_user.username if self.current_user else "Unknown",
-                                      f"Server '{server_name}' {', '.join(actions)}",
-                                      "server_configure")
+                        logger.info(f"USER_ACTION: {self.current_user.username if self.current_user else 'Unknown'} - Server '{server_name}' {', '.join(actions)}")
                     
-                    log_user_action(self.current_user.username if self.current_user else "Unknown",
-                                  f"Updated startup configuration for server '{current_server_name}'",
-                                  "server_configure")
+                    logger.info(f"USER_ACTION: {self.current_user.username if self.current_user else 'Unknown'} updated startup configuration for server '{current_server_name}'")
                     
                     messagebox.showinfo("Success", "Server configuration saved successfully.")
                     dialog.destroy()

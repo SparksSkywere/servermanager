@@ -16,8 +16,8 @@ from pathlib import Path
 # Default logging format
 DEFAULT_LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 DEFAULT_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
-DEFAULT_MAX_SIZE = 10 * 1024 * 1024  # 10 MB
-DEFAULT_BACKUP_COUNT = 5
+DEFAULT_MAX_SIZE = 10 * 1024 * 1024
+DEFAULT_BACKUP_COUNT = 3
 
 class LogManager:
     """Class for managing logs with rotation and compression"""
@@ -36,7 +36,6 @@ class LogManager:
         self._log_stats = {
             'errors': 0,
             'warnings': 0,
-            'security_events': 0,
             'last_reset': time.time()
         }
         
@@ -49,18 +48,6 @@ class LogManager:
             "default": logging.Formatter(DEFAULT_LOG_FORMAT, DEFAULT_DATE_FORMAT),
             "detailed": logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(funcName)s() - %(message)s',
-                DEFAULT_DATE_FORMAT
-            ),
-            "security": logging.Formatter(
-                '%(asctime)s - SECURITY - %(levelname)s - %(message)s - [Process: %(process)d] [Thread: %(thread)d]',
-                DEFAULT_DATE_FORMAT
-            ),
-            "performance": logging.Formatter(
-                '%(asctime)s - PERF - %(name)s - %(message)s',
-                DEFAULT_DATE_FORMAT
-            ),
-            "audit": logging.Formatter(
-                '%(asctime)s - AUDIT - %(name)s - %(levelname)s - %(message)s - [User: %(user)s]',
                 DEFAULT_DATE_FORMAT
             ),
             "json": logging.Formatter(
@@ -82,11 +69,7 @@ class LogManager:
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config"),
-                "security_logs": os.path.join(self.server_manager_dir, "logs", "security"),
-                "audit_logs": os.path.join(self.server_manager_dir, "logs", "audit"),
-                "performance_logs": os.path.join(self.server_manager_dir, "logs", "performance"),
-                "error_logs": os.path.join(self.server_manager_dir, "logs", "errors")
+                "config": os.path.join(self.server_manager_dir, "config")
             }
             
             # Ensure directories exist
@@ -102,11 +85,7 @@ class LogManager:
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config"),
-                "security_logs": os.path.join(self.server_manager_dir, "logs", "security"),
-                "audit_logs": os.path.join(self.server_manager_dir, "logs", "audit"),
-                "performance_logs": os.path.join(self.server_manager_dir, "logs", "performance"),
-                "error_logs": os.path.join(self.server_manager_dir, "logs", "errors")
+                "config": os.path.join(self.server_manager_dir, "config")
             }
             
             # Ensure directories exist
@@ -116,7 +95,6 @@ class LogManager:
             # Log the fallback initialization
             print(f"Registry initialization failed, using fallback path: {self.server_manager_dir}")
             self._setup_main_logger()
-            self.log_security_event("SYSTEM", f"Failed to read registry, using fallback: {str(e)}")
 
     def _setup_main_logger(self):
         """Setup the main application logger"""
@@ -213,34 +191,20 @@ class LogManager:
         log_file = os.path.join(self.paths["logs"], "components", f"{component_name}.log")
         return self.get_logger(f"component.{component_name}", log_file, formatter_name="detailed")
 
-    def get_security_logger(self):
-        """Get the security logger for authentication and security events"""
-        if "security" not in self.loggers:
-            log_file = os.path.join(self.paths["security_logs"], "security.log")
-            logger = self.get_logger("security", log_file, formatter_name="security", level=logging.INFO)
-            return logger
-        return self.loggers["security"]
-
-    def get_audit_logger(self):
-        """Get the audit logger for user actions and system changes"""
-        if "audit" not in self.loggers:
-            log_file = os.path.join(self.paths["audit_logs"], "audit.log")
-            logger = self.get_logger("audit", log_file, formatter_name="audit", level=logging.INFO)
-            return logger
-        return self.loggers["audit"]
-
-    def get_performance_logger(self):
-        """Get the performance logger for monitoring system performance"""
-        if "performance" not in self.loggers:
-            log_file = os.path.join(self.paths["performance_logs"], "performance.log")
-            logger = self.get_logger("performance", log_file, formatter_name="performance", level=logging.INFO)
-            return logger
-        return self.loggers["performance"]
+    def get_debug_logger(self, debug_module_name="debug"):
+        """Get a logger for debug modules that writes to logs/debug/ directory"""
+        # Ensure debug directory exists
+        debug_dir = os.path.join(self.paths["logs"], "debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        log_file = os.path.join(debug_dir, f"{debug_module_name}.log")
+        return self.get_logger(f"debug.{debug_module_name}", log_file, formatter_name="detailed")
 
     def get_error_logger(self):
         """Get the dedicated error logger"""
         if "errors" not in self.loggers:
-            log_file = os.path.join(self.paths["error_logs"], "errors.log")
+            # Use main logs directory instead of separate errors directory
+            log_file = os.path.join(self.paths["logs"], "errors.log")
             logger = self.get_logger("errors", log_file, formatter_name="detailed", level=logging.ERROR)
             return logger
         return self.loggers["errors"]
@@ -350,60 +314,6 @@ class LogManager:
             dashboard_logger.critical(formatted_msg)
         else:
             dashboard_logger.info(formatted_msg)
-
-    def log_security_event(self, event_type, message, user=None, severity="INFO"):
-        """Log security-related events"""
-        security_logger = self.get_security_logger()
-        
-        # Format security message
-        security_msg = f"[{event_type}] {message}"
-        if user:
-            security_msg += f" | User: {user}"
-        
-        # Add IP/hostname if available
-        try:
-            import socket
-            hostname = socket.gethostname()
-            security_msg += f" | Host: {hostname}"
-        except:
-            pass
-        
-        # Log based on severity
-        if severity.upper() == "CRITICAL":
-            security_logger.critical(security_msg)
-        elif severity.upper() == "ERROR":
-            security_logger.error(security_msg)
-        elif severity.upper() == "WARNING":
-            security_logger.warning(security_msg)
-        else:
-            security_logger.info(security_msg)
-        
-        # Update stats
-        self._log_stats['security_events'] += 1
-
-    def log_user_action(self, user, action, resource=None, result="SUCCESS"):
-        """Log user actions for auditing"""
-        audit_logger = self.get_audit_logger()
-        
-        audit_msg = f"User: {user} | Action: {action} | Result: {result}"
-        if resource:
-            audit_msg += f" | Resource: {resource}"
-        
-        # Create audit record with extra context
-        extra = {'user': user}
-        audit_logger.info(audit_msg, extra=extra)
-
-    def log_performance_metric(self, metric_name, value, unit="", context=None):
-        """Log performance metrics"""
-        perf_logger = self.get_performance_logger()
-        
-        perf_msg = f"{metric_name}: {value}"
-        if unit:
-            perf_msg += f" {unit}"
-        if context:
-            perf_msg += f" | Context: {context}"
-        
-        perf_logger.info(perf_msg)
 
     def log_system_state(self, component, state, details=None):
         """Log system state changes"""
@@ -525,7 +435,6 @@ class LogManager:
             'uptime_seconds': uptime,
             'errors': self._log_stats['errors'],
             'warnings': self._log_stats['warnings'],
-            'security_events': self._log_stats['security_events'],
             'active_loggers': len(self.loggers),
             'log_directories': list(self.paths.keys())
         }
@@ -537,7 +446,6 @@ class LogManager:
         self._log_stats = {
             'errors': 0,
             'warnings': 0,
-            'security_events': 0,
             'last_reset': time.time()
         }
         
@@ -611,14 +519,8 @@ def get_server_logger(server_name):
 def get_component_logger(component_name):
     return log_manager.get_component_logger(component_name)
 
-def get_security_logger():
-    return log_manager.get_security_logger()
-
-def get_audit_logger():
-    return log_manager.get_audit_logger()
-
-def get_performance_logger():
-    return log_manager.get_performance_logger()
+def get_debug_logger(debug_module_name="debug"):
+    return log_manager.get_debug_logger(debug_module_name)
 
 def get_error_logger():
     return log_manager.get_error_logger()
@@ -628,15 +530,6 @@ def get_dashboard_logger():
 
 def log_exception(logger, message="An exception occurred", exc_info=None):
     log_manager.log_exception(logger, message, exc_info)
-
-def log_security_event(event_type, message, user=None, severity="INFO"):
-    log_manager.log_security_event(event_type, message, user, severity)
-
-def log_user_action(user, action, resource=None, result="SUCCESS"):
-    log_manager.log_user_action(user, action, resource, result)
-
-def log_performance_metric(metric_name, value, unit="", context=None):
-    log_manager.log_performance_metric(metric_name, value, unit, context)
 
 def log_system_state(component, state, details=None):
     log_manager.log_system_state(component, state, details)

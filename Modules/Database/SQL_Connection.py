@@ -1,11 +1,17 @@
 import os
 import sys
-import logging
 
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-logger = logging.getLogger("SQL_Connection")
+# Import standardized logging
+try:
+    from Modules.server_logging import get_component_logger
+    logger = get_component_logger("SQL_Connection")
+except Exception:
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("SQL_Connection")
 
 # Import the new database modules
 try:

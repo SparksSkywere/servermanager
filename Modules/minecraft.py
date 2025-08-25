@@ -1,12 +1,17 @@
 import json
 import os
 import urllib.request
-import logging
 import subprocess
 import re
 
-# Get logger for this module
-logger = logging.getLogger(__name__)
+# Import standardized logging
+try:
+    from Modules.server_logging import get_component_logger
+    logger = get_component_logger("Minecraft")
+except Exception:
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
 
 
 def get_java_version(java_path="java"):

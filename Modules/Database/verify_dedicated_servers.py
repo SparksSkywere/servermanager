@@ -23,13 +23,18 @@ except ImportError:
 
 import sqlite3
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("ServerVerifier")
+# Import standardized logging
+try:
+    from Modules.server_logging import get_component_logger
+    logger = get_component_logger("ServerVerifier")
+except Exception:
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    logger = logging.getLogger("ServerVerifier")
 
 # Database models (same as AppIDScanner)
 if SQLALCHEMY_AVAILABLE:

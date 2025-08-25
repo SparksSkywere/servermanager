@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 
 # Centralized logging / debugging (follows dashboard pattern)
 try:  # Prefer centralized log manager
-    from Modules.server_logging import get_component_logger, log_security_event, log_user_action, log_exception
+    from Modules.server_logging import get_component_logger, log_exception
     logger = get_component_logger("Authentication")
 except Exception:  # Fallback minimal logger
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -43,19 +43,6 @@ try:
 except ImportError as e:
     WINDOWS_AUTH_AVAILABLE = False
     logger.warning(f"Windows authentication not available: {e}")
-
-# Centralized logging / debugging (follows dashboard pattern)
-try:  # Prefer centralized log manager
-    from Modules.server_logging import get_component_logger, log_security_event, log_user_action, log_exception
-    logger = get_component_logger("Authentication")
-except Exception:  # Fallback minimal logger
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("Authentication")
-
-# Enable debug level if global flag set
-if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
-    logger.setLevel(logging.DEBUG)
-    logger.debug("Authentication module debug mode enabled via environment")
 
 # SQL Authentication support
 try:

@@ -14,13 +14,18 @@ import signal
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Modules.common import ServerManagerModule
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("StopServerManager")
+# Import standardized logging
+try:
+    from Modules.server_logging import get_component_logger
+    logger = get_component_logger("StopServerManager")
+except Exception:
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    logger = logging.getLogger("StopServerManager")
 
 def is_admin():
     """Check if the script is running with administrator privileges"""

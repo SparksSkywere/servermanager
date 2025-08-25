@@ -23,9 +23,9 @@ if modules_dir not in sys.path:
 # Try to import from modules
 try:
     from debug.debug import DebugManager as CoreDebugManager
-    from Modules.server_logging import get_component_logger
+    from Modules.server_logging import get_debug_logger
     debug_manager = CoreDebugManager()
-    logger = get_component_logger("DebugManager")
+    logger = get_debug_logger("debug-manager")
 except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger("DebugManager")
@@ -82,19 +82,14 @@ class DebugManagerGUI:
                 "config": os.path.join(self.server_manager_dir, "config"),
                 "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
-                "scripts": os.path.join(self.server_manager_dir, "Modules")
+                "scripts": os.path.join(self.server_manager_dir, "Modules"),
+                "debug": os.path.join(self.server_manager_dir, "logs", "debug")
             }
             
             # Ensure directories exist
             for path in self.paths.values():
                 os.makedirs(path, exist_ok=True)
                 
-            # Set up file logging
-            log_file = os.path.join(self.paths["logs"], "debug-manager.log")
-            file_handler = logging.FileHandler(log_file)
-            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-            logger.addHandler(file_handler)
-            
             logger.info(f"Initialization complete. Server Manager directory: {self.server_manager_dir}")
             
             # Enable debug mode via instance

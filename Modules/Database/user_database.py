@@ -1,6 +1,5 @@
 import os
 import sys
-import logging
 import winreg
 import hashlib
 import datetime
@@ -13,7 +12,14 @@ from sqlalchemy.orm import sessionmaker
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-logger = logging.getLogger("UserDatabase")
+# Import standardized logging
+try:
+    from Modules.server_logging import get_component_logger
+    logger = get_component_logger("UserDatabase")
+except Exception:
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("UserDatabase")
 
 def get_user_sql_config_from_registry():
     """Get SQL configuration for user database from Windows registry"""

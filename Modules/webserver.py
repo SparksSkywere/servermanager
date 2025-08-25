@@ -27,13 +27,18 @@ from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
-# Configure logging with structured JSON format for production
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("WebServer")
+# Import standardized logging
+try:
+    from Modules.server_logging import get_component_logger
+    logger = get_component_logger("WebServer")
+except Exception:
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    logger = logging.getLogger("WebServer")
 
 # Import dashboard tracker with fallback
 def get_server_manager_dir():
@@ -407,7 +412,11 @@ class ServerManagerWebServer(ServerManagerModule):
             logger.error(f"Traceback: {traceback.format_exc()}")
             # Initialize minimal attributes to prevent AttributeError
             self.module_name = "ServerManagerWebServer"
-            self.logger = logging.getLogger("ServerManagerWebServer")
+            try:
+                from Modules.server_logging import get_component_logger
+                self.logger = get_component_logger("ServerManagerWebServer")
+            except Exception:
+                self.logger = logging.getLogger("ServerManagerWebServer")
         
         # Initialize all attributes to ensure they exist
         self.auth = None

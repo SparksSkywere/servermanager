@@ -13,8 +13,9 @@ from pathlib import Path
 
 # Centralized logging
 try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("Debug")
+    from Modules.server_logging import get_debug_logger
+    # Create debug logger that writes to logs/debug/ directory
+    logger = get_debug_logger("debug")
 except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger("Debug")

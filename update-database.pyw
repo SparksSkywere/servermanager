@@ -9,6 +9,15 @@ from datetime import datetime
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 
+# Import standardized logging
+try:
+    from Modules.server_logging import get_component_logger
+    logger = get_component_logger("DatabaseUpdate")
+except Exception:
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("DatabaseUpdate")
+
 class DatabaseUpdateGUI:
     def __init__(self):
         self.root = tk.Tk()

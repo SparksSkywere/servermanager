@@ -15,7 +15,14 @@ from sqlalchemy.orm import sessionmaker
 # Use the new user_database module for all DB config and engine
 from Modules.Database.user_database import get_user_engine
 
-logger = logging.getLogger("UserManagement")
+# Import standardized logging
+try:
+    from Modules.server_logging import get_component_logger
+    logger = get_component_logger("UserManagement")
+except Exception:
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("UserManagement")
 Base = declarative_base()
 
 class User(Base):

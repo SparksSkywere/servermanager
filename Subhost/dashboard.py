@@ -1,9 +1,22 @@
 import os
+import sys
 import json
 import time
 import threading
 import requests
 from flask import Flask, jsonify, render_template_string
+
+# Add project root to sys.path for module resolution
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Import standardized logging
+try:
+    from Modules.server_logging import get_component_logger
+    logger = get_component_logger("SubhostDashboard")
+except Exception:
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger("SubhostDashboard")
 
 app = Flask(__name__)
 
@@ -28,17 +41,21 @@ def report_status():
             requests.post(f"{HOST_URL}/api/register", json=payload, timeout=2)
             # Heartbeat
             requests.post(f"{HOST_URL}/api/heartbeat", json=payload, timeout=2)
-        except Exception:
-            pass
+            logger.debug(f"Status reported for subhost {SUBHOST_ID}")
+        except Exception as e:
+            logger.warning(f"Failed to report status: {str(e)}")
         time.sleep(10)
 
 def fetch_servers():
     try:
         resp = requests.get(WEB_API, headers=get_headers(), timeout=5)
         if resp.status_code == 200:
+            logger.debug("Successfully fetched server data")
             return resp.json()
-    except Exception:
-        pass
+        else:
+            logger.warning(f"Failed to fetch servers: HTTP {resp.status_code}")
+    except Exception as e:
+        logger.error(f"Error fetching servers: {str(e)}")
     return {}
 
 @app.route("/servers")

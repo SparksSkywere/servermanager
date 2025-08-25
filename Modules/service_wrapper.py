@@ -47,36 +47,44 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
     def setup_service_logging(self):
         """Configure logging for the service"""
         try:
-            # Get server manager directory from registry
-            import winreg
-            from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-            key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-            server_manager_dir = winreg.QueryValueEx(key, "ServerManagerPath")[0]
-            winreg.CloseKey(key)
-            
-            # Create logs directory if it doesn't exist
-            logs_dir = os.path.join(server_manager_dir, "logs")
-            os.makedirs(logs_dir, exist_ok=True)
-            
-            # Configure logging
-            log_file = os.path.join(logs_dir, "service.log")
-            logging.basicConfig(
-                level=logging.INFO,
-                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                handlers=[
-                    logging.FileHandler(log_file),
-                    logging.StreamHandler()
-                ]
-            )
-            
-            self.logger = logging.getLogger("ServerManagerService")
-            self.logger.info("Service logging initialized")
+            # Try to use standardized logging
+            from Modules.server_logging import get_component_logger
+            self.logger = get_component_logger("ServerManagerService")
+            self.logger.info("Service logging initialized with standardized logger")
             
         except Exception as e:
-            # Fallback logging if registry read fails
-            logging.basicConfig(level=logging.INFO)
-            self.logger = logging.getLogger("ServerManagerService")
-            self.logger.error(f"Failed to setup service logging: {e}")
+            # Fallback logging if centralized logging fails
+            try:
+                # Get server manager directory from registry
+                import winreg
+                from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+                key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
+                server_manager_dir = winreg.QueryValueEx(key, "ServerManagerPath")[0]
+                winreg.CloseKey(key)
+                
+                # Create logs directory if it doesn't exist
+                logs_dir = os.path.join(server_manager_dir, "logs")
+                os.makedirs(logs_dir, exist_ok=True)
+                
+                # Configure logging
+                log_file = os.path.join(logs_dir, "service.log")
+                logging.basicConfig(
+                    level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    handlers=[
+                        logging.FileHandler(log_file),
+                        logging.StreamHandler()
+                    ]
+                )
+                
+                self.logger = logging.getLogger("ServerManagerService")
+                self.logger.info("Service logging initialized with fallback logger")
+                
+            except Exception as e2:
+                # Final fallback logging if registry read fails
+                logging.basicConfig(level=logging.INFO)
+                self.logger = logging.getLogger("ServerManagerService")
+                self.logger.error(f"Failed to setup service logging: {e2}")
     
     def SvcStop(self):
         """Called when the service is asked to stop"""
