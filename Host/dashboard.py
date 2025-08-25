@@ -16,14 +16,15 @@ from tkinter import ttk, messagebox, filedialog, scrolledtext
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import user management system
-from Modules.SQL_Connection import get_engine, initialize_user_manager, sql_login
+from Modules.Database.user_database import get_user_engine, initialize_user_manager
+from Modules.Database.SQL_Connection import sql_login
 from Modules.server_manager import ServerManager
 
 # Import Minecraft server functions
-from Scripts.minecraft import MinecraftServerManager
+from Modules.minecraft import MinecraftServerManager
 
 # Import logging functions from the logging module
-from Modules.logging import (
+from Modules.server_logging import (
     get_dashboard_logger, configure_dashboard_logging,
     log_dashboard_event, log_user_action
 )
@@ -2399,7 +2400,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         
         def auto_detect_java():
             try:
-                from Scripts.minecraft import get_recommended_java_for_minecraft
+                from Modules.minecraft import get_recommended_java_for_minecraft
                 version = version_var.get()
                 if version:
                     recommended = get_recommended_java_for_minecraft(version)
@@ -2487,7 +2488,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 
                 # Update launch script
                 try:
-                    from Scripts.minecraft import MinecraftServerManager
+                    from Modules.minecraft import MinecraftServerManager
                     manager = MinecraftServerManager(self.server_manager_dir, self.config)
                     script_path = manager.create_launch_script(
                         install_dir_var.get(),

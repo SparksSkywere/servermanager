@@ -5,8 +5,8 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from tkinter import messagebox, simpledialog
-from Scripts.user_management import UserManager
-from Modules.SQL_Connection import get_engine, ensure_root_admin
+from Modules.user_management import UserManager
+from Modules.Database.SQL_Connection import get_engine, ensure_root_admin
 
 try:
     import pyotp

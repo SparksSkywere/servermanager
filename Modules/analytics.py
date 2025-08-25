@@ -12,7 +12,7 @@ import socket
 # Import server manager common functionality
 try:
     from Modules.common import ServerManagerModule
-    from Modules.logging import get_component_logger
+    from Modules.server_logging import get_component_logger
     logger = get_component_logger("Analytics")
 except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

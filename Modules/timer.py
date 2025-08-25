@@ -4,7 +4,7 @@ import datetime
 import psutil
 import threading
 import tkinter as tk
-from Modules.logging import log_process_monitoring
+from Modules.server_logging import log_process_monitoring
 
 
 class TimerManager:

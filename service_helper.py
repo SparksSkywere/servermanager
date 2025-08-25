@@ -52,7 +52,7 @@ def install_service():
         print("Server Manager installation not found in registry.")
         return False
     
-    service_wrapper_path = os.path.join(server_manager_dir, "Scripts", "service_wrapper.py")
+    service_wrapper_path = os.path.join(server_manager_dir, "Modules", "service_wrapper.py")
     if not os.path.exists(service_wrapper_path):
         print(f"Service wrapper not found: {service_wrapper_path}")
         return False
@@ -108,7 +108,7 @@ def uninstall_service():
         print("Server Manager installation not found in registry.")
         return False
     
-    service_wrapper_path = os.path.join(server_manager_dir, "Scripts", "service_wrapper.py")
+    service_wrapper_path = os.path.join(server_manager_dir, "Modules", "service_wrapper.py")
     if not os.path.exists(service_wrapper_path):
         print(f"Service wrapper not found: {service_wrapper_path}")
         return False
@@ -168,7 +168,7 @@ def start_stop_service(action):
         print("Server Manager installation not found in registry.")
         return False
     
-    service_wrapper_path = os.path.join(server_manager_dir, "Scripts", "service_wrapper.py")
+    service_wrapper_path = os.path.join(server_manager_dir, "Modules", "service_wrapper.py")
     if not os.path.exists(service_wrapper_path):
         print(f"Service wrapper not found: {service_wrapper_path}")
         return False

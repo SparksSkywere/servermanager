@@ -13,7 +13,7 @@ REGISTRY_PATH = r"Software\SkywereIndustries\Servermanager"
 
 # Centralized logging integration
 try:
-    from Modules.logging import get_component_logger
+    from Modules.server_logging import get_component_logger
     logger = get_component_logger("Common")
 except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -134,11 +134,12 @@ class ServerManagerPaths:
             # Define paths structure
             self.paths = {
                 "root": self.server_manager_dir,
+                "project_root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
                 "config": os.path.join(self.server_manager_dir, "config"),
                 "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
-                "scripts": os.path.join(self.server_manager_dir, "Scripts"),
+                "scripts": os.path.join(self.server_manager_dir, "Modules"),
                 "modules": os.path.join(self.server_manager_dir, "Modules"),
                 "static": os.path.join(self.server_manager_dir, "static"),
                 "templates": os.path.join(self.server_manager_dir, "templates"),
@@ -179,11 +180,12 @@ class ServerManagerPaths:
             # Define paths structure
             self.paths = {
                 "root": self.server_manager_dir,
+                "project_root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
                 "config": os.path.join(self.server_manager_dir, "config"),
                 "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
-                "scripts": os.path.join(self.server_manager_dir, "Scripts"),
+                "scripts": os.path.join(self.server_manager_dir, "Modules"),
                 "modules": os.path.join(self.server_manager_dir, "Modules"),
                 "static": os.path.join(self.server_manager_dir, "static"),
                 "templates": os.path.join(self.server_manager_dir, "templates"),

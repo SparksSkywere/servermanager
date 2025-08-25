@@ -15,7 +15,7 @@ import psutil
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import logging functions
-from Modules.logging import get_dashboard_logger
+from Modules.server_logging import get_dashboard_logger
 
 # Get logger
 logger = get_dashboard_logger()

@@ -23,7 +23,7 @@ if modules_dir not in sys.path:
 # Try to import from modules
 try:
     from debug.debug import DebugManager as CoreDebugManager
-    from Modules.logging import get_component_logger
+    from Modules.server_logging import get_component_logger
     debug_manager = CoreDebugManager()
     logger = get_component_logger("DebugManager")
 except Exception:
@@ -82,7 +82,7 @@ class DebugManagerGUI:
                 "config": os.path.join(self.server_manager_dir, "config"),
                 "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
-                "scripts": os.path.join(self.server_manager_dir, "scripts")
+                "scripts": os.path.join(self.server_manager_dir, "Modules")
             }
             
             # Ensure directories exist

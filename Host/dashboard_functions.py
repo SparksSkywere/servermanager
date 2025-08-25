@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from Modules.common import initialize_paths_from_registry, initialize_registry_values
 
 # Import logging functions
-from Modules.logging import get_dashboard_logger
+from Modules.server_logging import get_dashboard_logger
 
 # Import debug functions
 from debug.debug import get_process_info
@@ -42,7 +42,7 @@ def create_java_selection_dialog(root, minecraft_version=None):
     """
     try:
         # Import here to avoid circular imports
-        from Scripts.minecraft import detect_java_installations, get_minecraft_java_requirement, check_java_compatibility
+        from Modules.minecraft import detect_java_installations, get_minecraft_java_requirement, check_java_compatibility
         
         dialog = tk.Toplevel(root)
         dialog.title("Select Java Installation")
@@ -178,7 +178,7 @@ def create_java_selection_dialog(root, minecraft_version=None):
             # Check if custom path is provided
             custom_path = custom_path_var.get().strip()
             if custom_path:
-                from Scripts.minecraft import get_java_version
+                from Modules.minecraft import get_java_version
                 major, version = get_java_version(custom_path)
                 if major is not None:
                     result["java"] = {
@@ -239,36 +239,20 @@ def create_java_selection_dialog(root, minecraft_version=None):
 
 
 def load_appid_scanner_list(server_manager_dir):
-    """Load the AppID list from database or fallback to JSON"""
+    """Load the AppID list from database only (no JSON fallback)"""
     try:
-        # Try to load from database
+        # Load from database only
         dedicated_servers, metadata = load_appid_list_from_database()
         
         if dedicated_servers:
             logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from database")
             return dedicated_servers, metadata
-        
-        # Fallback to JSON file if database is empty or unavailable
-        logger.info("Database empty or unavailable, falling back to JSON file")
-        json_file_path = os.path.join(server_manager_dir, 'data', 'AppIDList.json')
-        
-        if os.path.exists(json_file_path):
-            with open(json_file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            dedicated_servers = data.get('dedicated_servers', [])
-            metadata = data.get('metadata', {})
-            
-            logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from JSON fallback")
-            logger.info(f"Last updated: {metadata.get('last_updated', 'Unknown')}")
-            
-            return dedicated_servers, metadata
         else:
-            logger.warning(f"Neither database nor JSON file available for AppID list")
+            logger.warning("No dedicated servers found in database")
             return [], {}
             
     except Exception as e:
-        logger.error(f"Error loading AppID scanner list: {e}")
+        logger.error(f"Error loading AppID scanner list from database: {e}")
         return [], {}
 
 
@@ -276,7 +260,7 @@ def load_appid_list_from_database():
     """Load AppID list directly from database"""
     try:
         # Import database components
-        from Modules.SQL_Connection import get_engine
+        from Modules.Database.steam_database import get_steam_engine
         from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
         from sqlalchemy.orm import declarative_base, sessionmaker
         
@@ -291,7 +275,8 @@ def load_appid_list_from_database():
             type = Column(String(50))
             is_server = Column(Boolean, default=False)
             is_dedicated_server = Column(Boolean, default=False)
-            developer = Column(String(255))
+            requires_subscription = Column(Boolean, default=False)  # Whether the server requires a paid subscription
+            anonymous_install = Column(Boolean, default=True)  # Whether the server can be installed anonymously
             publisher = Column(String(255))
             release_date = Column(String(50))
             description = Column(Text)
@@ -302,7 +287,7 @@ def load_appid_list_from_database():
             source = Column(String(50), default='steamdb')
         
         # Connect to database
-        engine = get_engine()
+        engine = get_steam_engine()
         Session = sessionmaker(bind=engine)
         session = Session()
         
@@ -317,7 +302,8 @@ def load_appid_list_from_database():
                 "appid": app.appid,
                 "name": app.name,
                 "type": app.type or "Dedicated Server",
-                "developer": app.developer or "",
+                "requires_subscription": getattr(app, 'requires_subscription', False),
+                "anonymous_install": getattr(app, 'anonymous_install', True),
                 "publisher": app.publisher or "",
                 "release_date": app.release_date or "",
                 "description": app.description or "",
@@ -345,13 +331,18 @@ def load_appid_list_from_database():
             "description": "Steam dedicated server applications from database"
         }
         
+        if dedicated_servers:
+            logger.info(f"Successfully loaded {len(dedicated_servers)} dedicated servers from steam database")
+        else:
+            logger.warning("No dedicated servers found in steam database. Database may be empty.")
+        
         return dedicated_servers, metadata
         
     except ImportError as e:
-        logger.warning(f"Database modules not available: {e}")
+        logger.error(f"Database modules not available: {e}")
         return [], {}
     except Exception as e:
-        logger.warning(f"Error loading AppID list from database: {e}")
+        logger.error(f"Error loading AppID list from database: {e}")
         return [], {}
 
 
@@ -654,18 +645,15 @@ def export_server_configuration(server_name, paths, include_files=False):
         # Add Steam App ID information if it's a Steam server
         if server_config.get("Type") == "Steam" and server_config.get("AppId"):
             try:
-                # Try to get app information from AppIDList
-                appid_file = os.path.join(paths["data"], "AppIDList.json")
-                if os.path.exists(appid_file):
-                    with open(appid_file, 'r') as f:
-                        app_data = json.load(f)
-                    
-                    # Find app info by ID
-                    app_info = None
-                    for app in app_data.get("dedicated_servers", []):
-                        if str(app.get("appid")) == str(server_config["AppId"]):
-                            app_info = app
-                            break
+                # Try to get app information from database
+                dedicated_servers, _ = load_appid_list_from_database()
+                
+                # Find app info by ID
+                app_info = None
+                for app in dedicated_servers:
+                    if str(app.get("appid")) == str(server_config["AppId"]):
+                        app_info = app
+                        break
                     
                     if app_info:
                         export_data["dependencies"]["steam_app_info"] = app_info
@@ -1210,7 +1198,7 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
     try:
         # Import here to avoid circular imports
         if server_type == "Minecraft":
-            from Scripts.minecraft import detect_java_installations
+            from Modules.minecraft import detect_java_installations
             
         installation_dialog = tk.Toplevel(root)
         installation_dialog.title(f"Install {server_type} Server")
@@ -1264,7 +1252,7 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
             
             # Try to populate with actual versions
             try:
-                from Scripts.minecraft import fetch_minecraft_versions
+                from Modules.minecraft import fetch_minecraft_versions
                 versions = fetch_minecraft_versions()
                 if versions:
                     version_list = [v['id'] for v in versions[:20]]  # Latest 20 versions
@@ -1304,7 +1292,7 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
                     
                     # Check compatibility and show warning if needed
                     if selected_version:
-                        from Scripts.minecraft import check_java_compatibility
+                        from Modules.minecraft import check_java_compatibility
                         is_compatible, _, _, message = check_java_compatibility(selected_version, java['path'])
                         if not is_compatible:
                             messagebox.showwarning("Compatibility Warning", 
@@ -1313,7 +1301,7 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
             def auto_select_java():
                 selected_version = form_vars['version'].get()
                 if selected_version:
-                    from Scripts.minecraft import get_recommended_java_for_minecraft
+                    from Modules.minecraft import get_recommended_java_for_minecraft
                     recommended = get_recommended_java_for_minecraft(selected_version)
                     if recommended:
                         form_vars['selected_java'] = recommended
@@ -1530,7 +1518,8 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
                         {
                             "name": server.get("name", "Unknown Server"),
                             "appid": str(server.get("appid", "0")),
-                            "developer": server.get("developer", ""),
+                            "requires_subscription": server.get("requires_subscription", False),
+                            "anonymous_install": server.get("anonymous_install", True),
                             "publisher": server.get("publisher", ""),
                             "description": server.get("description", ""),
                             "type": server.get("type", "Dedicated Server")
@@ -1569,15 +1558,15 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
             list_frame.pack(fill=tk.BOTH, expand=True)
             
             # Enhanced treeview for server list with additional columns
-            columns = ("name", "appid", "developer", "type")
+            columns = ("name", "appid", "subscription", "type")
             server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
             server_tree.heading("name", text="Server Name")
             server_tree.heading("appid", text="App ID")
-            server_tree.heading("developer", text="Developer")
+            server_tree.heading("subscription", text="Subscription")
             server_tree.heading("type", text="Type")
             server_tree.column("name", width=300)
             server_tree.column("appid", width=80)
-            server_tree.column("developer", width=150)
+            server_tree.column("subscription", width=150)
             server_tree.column("type", width=120)
             
             # Scrollbar
@@ -1593,10 +1582,21 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
                 for server in dedicated_servers:
                     server_name = server["name"]
                     if not filter_text or filter_text.lower() in server_name.lower():
+                        # Determine subscription status
+                        requires_sub = server.get("requires_subscription", False)
+                        anonymous = server.get("anonymous_install", True)
+                        
+                        if requires_sub:
+                            sub_status = "Subscription Required"
+                        elif anonymous:
+                            sub_status = "Free/Anonymous"
+                        else:
+                            sub_status = "Auth Required"
+                        
                         server_tree.insert("", tk.END, values=(
                             server_name, 
                             server["appid"],
-                            server.get("developer", "Unknown")[:25] + ("..." if len(server.get("developer", "")) > 25 else ""),
+                            sub_status,
                             server.get("type", "Dedicated Server")
                         ))
             
@@ -2058,7 +2058,7 @@ def create_progress_dialog_with_console(parent, title, width=700, height=650):
 def show_java_configuration_dialog(parent, server_name, server_config, server_manager, server_manager_dir, config):
     """Show Java configuration dialog for a specific server"""
     try:
-        from Scripts.minecraft import detect_java_installations, check_java_compatibility, get_recommended_java_for_minecraft
+        from Modules.minecraft import detect_java_installations, check_java_compatibility, get_recommended_java_for_minecraft
         
         # Create dialog
         dialog = tk.Toplevel(parent)
@@ -2236,7 +2236,7 @@ def show_java_configuration_dialog(parent, server_name, server_config, server_ma
             
             if custom_path:
                 # Use custom path
-                from Scripts.minecraft import get_java_version
+                from Modules.minecraft import get_java_version
                 major, version_str = get_java_version(custom_path)
                 if major is not None:
                     selected_java_path = custom_path
@@ -2263,7 +2263,7 @@ def show_java_configuration_dialog(parent, server_name, server_config, server_ma
                     server_manager.save_server_config(server_name, server_config)
                 
                 # Update launch script
-                from Scripts.minecraft import MinecraftServerManager
+                from Modules.minecraft import MinecraftServerManager
                 manager = MinecraftServerManager(server_manager_dir, config)
                 
                 install_dir = server_config.get("InstallDir", "")

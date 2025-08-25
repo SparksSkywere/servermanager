@@ -358,13 +358,17 @@ function Initialize-SQLDatabase {
         [string]$SQLLocation,
         [string]$DataFolder
     )
-    Write-Log "Setting up SQL database..."
+    Write-Log "Setting up SQL databases..."
 
     if ($SQLType -eq "SQLite") {
-        $dbFile = Join-Path $DataFolder "users.db"
-        $global:SQLDatabaseFile = $dbFile
-        if (-not (Test-Path $dbFile)) {
-            Write-Log "Creating SQLite database at $dbFile"
+        # Create separate user and Steam databases
+        $userDbFile = Join-Path $DataFolder "servermanager_users.db"
+        $steamDbFile = Join-Path $DataFolder "steam_ID.db"
+        $global:SQLDatabaseFile = $userDbFile
+        $global:SteamDatabaseFile = $steamDbFile
+        
+        if (-not (Test-Path $userDbFile)) {
+            Write-Log "Creating SQLite user database at $userDbFile"
             $pythonScript = @"
 import sqlite3
 import sys
@@ -377,8 +381,14 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
     email TEXT,
+    first_name TEXT,
+    last_name TEXT,
+    display_name TEXT,
+    account_number TEXT UNIQUE,
     is_admin INTEGER DEFAULT 0,
     is_active INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_login DATETIME,
     two_factor_enabled INTEGER DEFAULT 0,
     two_factor_secret TEXT
 )
@@ -388,10 +398,46 @@ conn.close()
 "@
             $tempPy = [System.IO.Path]::GetTempFileName() + ".py"
             Set-Content -Path $tempPy -Value $pythonScript
-            python $tempPy $dbFile
+            python $tempPy $userDbFile
             Remove-Item $tempPy -Force
         }
-        return $dbFile
+        
+        if (-not (Test-Path $steamDbFile)) {
+            Write-Log "Creating SQLite Steam database at $steamDbFile"
+            $steamPythonScript = @"
+import sqlite3
+import sys
+dbfile = sys.argv[1]
+conn = sqlite3.connect(dbfile)
+c = conn.cursor()
+c.execute('''
+CREATE TABLE IF NOT EXISTS steam_apps (
+    appid INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT,
+    is_server INTEGER DEFAULT 0,
+    is_dedicated_server INTEGER DEFAULT 0,
+    requires_subscription INTEGER DEFAULT 0,
+    anonymous_install INTEGER DEFAULT 1,
+    publisher TEXT,
+    release_date TEXT,
+    description TEXT,
+    tags TEXT,
+    price TEXT,
+    platforms TEXT,
+    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+    source TEXT DEFAULT 'steamdb'
+)
+''')
+conn.commit()
+conn.close()
+"@
+            $tempSteamPy = [System.IO.Path]::GetTempFileName() + ".py"
+            Set-Content -Path $tempSteamPy -Value $steamPythonScript
+            python $tempSteamPy $steamDbFile
+            Remove-Item $tempSteamPy -Force
+        }
+        return $userDbFile
     }
     # Add other SQL types handling here if needed
     return $SQLLocation
@@ -1324,6 +1370,21 @@ function Start-Installation {
                 'ModulePath' = "$ServerManagerDir\Modules"
                 'LogPath' = "$ServerManagerDir\logs"
                 'HostType' = $Settings.HostType
+                'SQLType' = $Settings.SQLType
+            }
+            
+            # Add database paths for SQLite
+            if ($Settings.SQLType -eq "SQLite") {
+                $registryValues['UsersSQLDatabasePath'] = "$ServerManagerDir\config\servermanager_users.db"
+                $registryValues['SteamSQLDatabasePath'] = "$ServerManagerDir\config\steam_ID.db"
+            } else {
+                # For other SQL types, set database names
+                $registryValues['UsersSQLDatabase'] = "servermanager_users"
+                $registryValues['SteamSQLDatabase'] = "steam_apps"
+                if ($Settings.SQLHost) { $registryValues['SQLHost'] = $Settings.SQLHost }
+                if ($Settings.SQLPort) { $registryValues['SQLPort'] = $Settings.SQLPort }
+                if ($Settings.SQLUsername) { $registryValues['SQLUsername'] = $Settings.SQLUsername }
+                if ($Settings.SQLPassword) { $registryValues['SQLPassword'] = $Settings.SQLPassword }
             }
             if ($Settings.HostType -eq "Subhost" -and $Settings.HostAddress) {
                 $registryValues['HostAddress'] = $Settings.HostAddress
@@ -1460,7 +1521,7 @@ function Start-Installation {
                 Write-Log "Installing Server Manager as Windows Service..."
                 
                 # Path to the service wrapper script
-                $serviceWrapperPath = Join-Path $ServerManagerDir "Scripts\service_wrapper.py"
+                $serviceWrapperPath = Join-Path $ServerManagerDir "Modules\service_wrapper.py"
                 
                 # Check if service wrapper exists
                 if (-not (Test-Path $serviceWrapperPath)) {

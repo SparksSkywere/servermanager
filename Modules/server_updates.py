@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple, Optional, Callable, Any
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from Modules.common import ServerManagerModule
-from Modules.logging import get_dashboard_logger
+from Modules.server_logging import get_dashboard_logger
 from Modules.server_manager import get_subprocess_creation_flags
 
 logger = get_dashboard_logger()

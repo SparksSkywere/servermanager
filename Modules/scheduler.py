@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Callable
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Modules.logging import log_process_monitoring, get_dashboard_logger
+from Modules.server_logging import log_process_monitoring, get_dashboard_logger
 
 logger = get_dashboard_logger()
 

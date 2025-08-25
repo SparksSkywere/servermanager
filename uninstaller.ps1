@@ -5,7 +5,7 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 # First stop the service for incase it is running in the background before uninstalling
-$stopScript = Join-Path $PSScriptRoot "Scripts\stop-servermanager.ps1"
+$stopScript = Join-Path $PSScriptRoot "Modules\stop_servermanager.py"
 if (Test-Path $stopScript) {
     Write-Host "Stopping Server Manager service..." -ForegroundColor Yellow
     & powershell -ExecutionPolicy Bypass -NoProfile -File $stopScript
@@ -93,7 +93,7 @@ Get-Process | Where-Object { $_.ProcessName -like "*steam*" -or $_.ProcessName -
 Write-Host "Removing services..." -ForegroundColor Yellow
 try {
     # Try to use the service wrapper to properly uninstall the service
-    $serviceWrapperPath = Join-Path $serverManagerDir "Scripts\service_wrapper.py"
+    $serviceWrapperPath = Join-Path $serverManagerDir "Modules\service_wrapper.py"
     if (Test-Path $serviceWrapperPath) {
         Write-Host "Using service wrapper to uninstall service..." -ForegroundColor Cyan
         $pythonPath = (Get-Command python -ErrorAction SilentlyContinue).Source

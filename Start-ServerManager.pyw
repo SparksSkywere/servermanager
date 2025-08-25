@@ -217,7 +217,7 @@ if is_already_running():
     sys.exit(0)
 
 # Launch the Python launcher script
-launcher_path = os.path.join(script_dir, "Scripts", "launcher.py")
+launcher_path = os.path.join(script_dir, "Modules", "launcher.py")
 
 # Check if the launcher script exists
 if not os.path.exists(launcher_path):

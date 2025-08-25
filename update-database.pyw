@@ -78,7 +78,7 @@ class DatabaseUpdateGUI:
         self.update_status("Loading modules...")
         
         try:
-            from Modules.SQL_Connection import get_engine
+            from Modules.Database.user_database import get_user_engine
             from sqlalchemy import inspect, text
             self.log_message("Successfully imported required modules")
         except ImportError as e:
@@ -152,7 +152,7 @@ class DatabaseUpdateGUI:
             self.update_status("Connecting to database...")
             self.log_message("Step 1: Getting database engine...")
             try:
-                engine = get_engine()
+                engine = get_user_engine()
                 self.log_message(f"Engine created successfully: {engine.url}")
             except Exception as e:
                 self.log_message(f"FAILED to create engine: {e}")

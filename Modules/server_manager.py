@@ -13,7 +13,7 @@ import os
 import logging
 
 try:
-    from Modules.logging import get_component_logger, log_server_action, log_exception
+    from Modules.server_logging import get_component_logger, log_server_action, log_exception
     logger = get_component_logger("ServerManager")
 except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -58,7 +58,7 @@ def should_hide_server_consoles(config=None):
     return True  # Default to hiding consoles
 
 # Import Minecraft-specific functions
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Scripts'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Modules'))
 
 # Define fallback functions with correct types
 def _fallback_fetch_minecraft_versions():
@@ -77,7 +77,7 @@ def _fallback_fetch_neoforge_installer_url(mc_version):
     return None
 
 try:
-    from Scripts.minecraft import (
+    from Modules.minecraft import (
         fetch_minecraft_versions, get_minecraft_server_jar_url,
         fetch_fabric_installer_url, fetch_forge_installer_url,
         fetch_neoforge_installer_url
@@ -906,7 +906,7 @@ class ServerManager(ServerManagerModule):
             if server_type == "Minecraft" and not executable_path:
                 # Try to import minecraft module for detection
                 try:
-                    from Scripts.minecraft import MinecraftServerManager
+                    from Modules.minecraft import MinecraftServerManager
                     mc_manager = MinecraftServerManager(self.server_manager_dir, self.config)
                     exec_type, detected_path = mc_manager.detect_server_executable(install_dir)
                     if detected_path:

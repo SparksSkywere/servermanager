@@ -8,7 +8,7 @@ from pathlib import Path
 import os
 
 try:
-    from Modules.logging import get_component_logger
+    from Modules.server_logging import get_component_logger
     logger = get_component_logger("DashboardTracker")
 except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

@@ -12,7 +12,7 @@ import os
 import logging
 
 try:
-    from Modules.logging import get_security_logger, log_security_event
+    from Modules.server_logging import get_security_logger, log_security_event
     logger = get_security_logger()
 except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

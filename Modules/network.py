@@ -13,7 +13,7 @@ import psutil
 
 # Centralized logging pattern
 try:
-    from Modules.logging import get_component_logger, log_process_monitoring
+    from Modules.server_logging import get_component_logger, log_process_monitoring
     logger = get_component_logger("Network")
 except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

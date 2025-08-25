@@ -14,7 +14,7 @@ from tkinter import ttk, messagebox, scrolledtext
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Modules.logging import get_dashboard_logger
+from Modules.server_logging import get_dashboard_logger
 
 # Get logger
 logger = get_dashboard_logger()

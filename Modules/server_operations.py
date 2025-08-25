@@ -10,7 +10,7 @@ from datetime import datetime
 import logging
 
 try:
-    from Modules.logging import get_component_logger, log_server_action
+    from Modules.server_logging import get_component_logger, log_server_action
     logger = get_component_logger("ServerOperations")
 except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
