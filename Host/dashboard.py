@@ -49,7 +49,9 @@ from Host.dashboard_functions import (
     create_server_removal_dialog, export_server_dialog, perform_server_installation,
     format_uptime_from_start_time, update_server_status_in_treeview,
     import_server_from_directory_dialog, import_server_from_export_dialog,
-    create_progress_dialog_with_console, rename_server_configuration
+    create_progress_dialog_with_console, rename_server_configuration,
+    check_appid_in_database, detect_server_type_from_appid, detect_server_type_from_directory,
+    batch_update_server_types, update_server_configuration_with_detection
 )
 
 # Import agent management
@@ -262,6 +264,8 @@ class ServerManagerDashboard(ServerManagerModule):
         self.menubar.add_cascade(label="Tools", menu=tools_menu)
         tools_menu.add_command(label="Refresh All", command=self.refresh_all)
         tools_menu.add_command(label="Sync All", command=self.sync_all)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Update Server Types", command=self.batch_update_server_types)
         tools_menu.add_separator()
         tools_menu.add_command(label="Agents", command=self.add_agent)
         
@@ -895,29 +899,58 @@ class ServerManagerDashboard(ServerManagerModule):
         
         # Add initial message to console
         def append_console(text):
-            console_output.config(state=tk.NORMAL)
-            console_output.insert(tk.END, text + "\n")
-            console_output.see(tk.END)
-            console_output.config(state=tk.DISABLED)
+            try:
+                if not dialog.winfo_exists():
+                    return
+                console_output.config(state=tk.NORMAL)
+                console_output.insert(tk.END, text + "\n")
+                console_output.see(tk.END)
+                console_output.config(state=tk.DISABLED)
+            except (tk.TclError, AttributeError):
+                # Widget was destroyed, ignore
+                pass
         
         append_console(f"[INFO] Ready to create {server_type} server...")
         append_console(f"[INFO] Please fill in the required fields above and click 'Create Server' to begin.")
 
         def install_server():
             try:
+                # Check if dialog still exists before accessing widgets
+                if not dialog.winfo_exists():
+                    return
+                    
                 create_button.config(state=tk.DISABLED)
                 cancel_button.config(state=tk.NORMAL)
                 progress.start(10)
                 status_var.set("Starting installation...")
                 
+                # Define safe callback functions
+                def safe_status_callback(msg):
+                    try:
+                        if dialog.winfo_exists():
+                            status_var.set(msg)
+                    except (tk.TclError, AttributeError):
+                        pass
+                
+                def safe_console_callback(msg):
+                    try:
+                        if dialog.winfo_exists():
+                            append_console(msg)
+                    except (tk.TclError, AttributeError):
+                        pass
+                
                 # Use the existing installation function from dashboard_functions
                 success, message = perform_server_installation(
                     self.server_manager, server_type, form_vars, credentials, self.paths,
-                    status_callback=status_var.set,
-                    console_callback=append_console,
+                    status_callback=safe_status_callback,
+                    console_callback=safe_console_callback,
                     cancel_flag=self.install_cancelled,
                     steam_cmd_path=getattr(self, 'steam_cmd_path', None)
                 )
+
+                # Check if dialog still exists before updating UI
+                if not dialog.winfo_exists():
+                    return
 
                 if success:
                     append_console(f"[SUCCESS] {message}")
@@ -931,14 +964,25 @@ class ServerManagerDashboard(ServerManagerModule):
                     create_button.config(state=tk.NORMAL)
                     cancel_button.config(state=tk.DISABLED)
                     
+            except tk.TclError:
+                # Dialog was destroyed while thread was running - this is normal
+                logger.info("Installation dialog was closed while installation was in progress")
+                return
             except Exception as e:
                 logger.error(f"Error during server installation: {str(e)}")
-                append_console(f"[ERROR] {str(e)}")
-                status_var.set("Installation failed!")
-                create_button.config(state=tk.NORMAL)
-                cancel_button.config(state=tk.DISABLED)
+                if dialog.winfo_exists():
+                    append_console(f"[ERROR] {str(e)}")
+                    status_var.set("Installation failed!")
+                    create_button.config(state=tk.NORMAL)
+                    cancel_button.config(state=tk.DISABLED)
             finally:
-                progress.stop()
+                # Safely stop progress bar only if dialog still exists
+                try:
+                    if dialog.winfo_exists():
+                        progress.stop()
+                except (tk.TclError, AttributeError):
+                    # Widget was destroyed, ignore
+                    pass
         
         def start_installation():
             installation_thread = threading.Thread(target=install_server)
@@ -952,6 +996,9 @@ class ServerManagerDashboard(ServerManagerModule):
             append_console("[INFO] Cancellation requested, stopping installation process...")
             
         def close_dialog():
+            # Cancel any running installation
+            if hasattr(self, 'install_cancelled'):
+                self.install_cancelled.set(True)
             dialog.destroy()
             
         # Assign button commands
@@ -960,16 +1007,25 @@ class ServerManagerDashboard(ServerManagerModule):
         close_button.config(command=close_dialog)
         
         def on_close():
-            if cancel_button.instate(['!disabled']):
-                result = messagebox.askyesno("Confirm Exit", 
-                                           "An installation is in progress. Do you want to cancel it?",
-                                           icon=messagebox.QUESTION)
-                if result:
-                    cancel_installation()
-                    dialog.after(1000, dialog.destroy)
-                    return
-                else:
-                    return
+            # Handle window close (X button) - check if installation is running
+            if hasattr(self, 'install_cancelled') and hasattr(cancel_button, 'instate'):
+                try:
+                    if cancel_button.instate(['!disabled']):
+                        result = messagebox.askyesno("Confirm Exit", 
+                                                   "An installation is in progress. Do you want to cancel it?",
+                                                   icon=messagebox.QUESTION)
+                        if result:
+                            self.install_cancelled.set(True)
+                            dialog.destroy()
+                        # If they chose not to cancel, don't close the dialog
+                        return
+                except tk.TclError:
+                    # Widget was destroyed, just close
+                    pass
+            
+            # Cancel any running installation and close
+            if hasattr(self, 'install_cancelled'):
+                self.install_cancelled.set(True)
             dialog.destroy()
             
         dialog.protocol("WM_DELETE_WINDOW", on_close)
@@ -1627,7 +1683,12 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             
         install_dir = server_config.get('InstallDir','')
         if not install_dir or not os.path.exists(install_dir):
-            messagebox.showerror("Error", "Server installation directory not found.")
+            messagebox.showerror("Server Installation Directory Missing", 
+                               f"Server installation directory is missing or invalid.\n\n"
+                               f"Server: {server_name}\n"
+                               f"Expected Directory: {install_dir or '(not set)'}\n\n"
+                               f"The server installation may have been incomplete or the files were moved.\n"
+                               f"Please reinstall the server to resolve this issue.")
             return
 
         dialog = tk.Toplevel(self.root)
@@ -1668,7 +1729,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         
         # Server type
         ttk.Label(identity_frame, text="Server Type:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
-        current_server_type = server_config.get('type', 'Other')
+        current_server_type = server_config.get('Type', 'Other')
         type_var = tk.StringVar(value=current_server_type)
         type_combo = ttk.Combobox(identity_frame, textvariable=type_var, values=["Steam", "Minecraft", "Other"], 
                                  state="readonly", width=27, font=("Segoe UI", 10))
@@ -3402,6 +3463,95 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         except Exception as e:
             log_exception(e, "Error showing console manager")
             messagebox.showerror("Console Manager Error", f"Failed to show console manager:\n{str(e)}")
+
+    def batch_update_server_types(self):
+        """Batch update all server types using database-based detection"""
+        try:
+            # Show confirmation dialog first
+            response = messagebox.askyesno(
+                "Update Server Types",
+                "This will analyze all server configurations and update their types based on:\n"
+                "• Steam AppIDs in the database\n"
+                "• Directory contents and files\n"
+                "• Executable paths\n\n"
+                "This operation is safe and will backup the original type information.\n\n"
+                "Do you want to continue?"
+            )
+            
+            if not response:
+                return
+            
+            # Show progress dialog
+            progress_dialog = tk.Toplevel(self.root)
+            progress_dialog.title("Updating Server Types")
+            progress_dialog.geometry("400x150")
+            progress_dialog.transient(self.root)
+            progress_dialog.grab_set()
+            center_window(progress_dialog, 400, 150, self.root)
+            
+            # Progress frame
+            progress_frame = ttk.Frame(progress_dialog, padding=20)
+            progress_frame.pack(fill=tk.BOTH, expand=True)
+            
+            status_var = tk.StringVar(value="Analyzing server configurations...")
+            status_label = ttk.Label(progress_frame, textvariable=status_var)
+            status_label.pack(pady=(0, 10))
+            
+            progress_bar = ttk.Progressbar(progress_frame, mode="indeterminate")
+            progress_bar.pack(fill=tk.X, pady=(0, 20))
+            progress_bar.start(10)
+            
+            # Run the update in a separate thread to avoid freezing UI
+            def run_update():
+                try:
+                    # Perform batch update
+                    updated_count, updated_servers = batch_update_server_types(self.paths)
+                    
+                    # Update UI in main thread
+                    self.root.after(0, update_complete, updated_count, updated_servers)
+                    
+                except Exception as e:
+                    # Handle error in main thread
+                    self.root.after(0, update_error, str(e))
+            
+            def update_complete(count, servers):
+                progress_bar.stop()
+                progress_dialog.destroy()
+                
+                if count == 0:
+                    messagebox.showinfo(
+                        "Update Complete",
+                        "No server type updates were needed. All servers are already correctly classified."
+                    )
+                else:
+                    # Show results dialog
+                    result_msg = f"Successfully updated {count} server(s):\n\n"
+                    for server in servers[:10]:  # Show first 10 servers
+                        result_msg += f"• {server['name']}: {server['old_type']} → {server['new_type']}\n"
+                    
+                    if len(servers) > 10:
+                        result_msg += f"... and {len(servers) - 10} more\n"
+                    
+                    result_msg += f"\nPlease refresh the server list to see the changes."
+                    
+                    messagebox.showinfo("Update Complete", result_msg)
+                
+                # Refresh the server list
+                self.update_server_list(force_refresh=True)
+            
+            def update_error(error_msg):
+                progress_bar.stop()
+                progress_dialog.destroy()
+                messagebox.showerror("Update Error", f"Failed to update server types:\n{error_msg}")
+            
+            # Start the update thread
+            import threading
+            update_thread = threading.Thread(target=run_update, daemon=True)
+            update_thread.start()
+            
+        except Exception as e:
+            log_exception(e, "Error in batch update server types")
+            messagebox.showerror("Update Error", f"Failed to update server types:\n{str(e)}")
 
     def show_help(self):
         """Show help dialog using the documentation module"""

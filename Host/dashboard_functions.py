@@ -346,6 +346,198 @@ def load_appid_list_from_database():
         return [], {}
 
 
+def check_appid_in_database(appid):
+    """Check if an AppID exists in the Steam database and return server info"""
+    if not appid:
+        return None
+    
+    try:
+        # Import database components
+        from Modules.Database.steam_database import get_steam_engine
+        from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
+        from sqlalchemy.orm import declarative_base, sessionmaker
+        
+        # Define the SteamApp model (matching AppIDScanner.py)
+        Base = declarative_base()
+        
+        class SteamApp(Base):
+            __tablename__ = 'steam_apps'
+            
+            appid = Column(Integer, primary_key=True)
+            name = Column(String(255), nullable=False)
+            type = Column(String(50))
+            is_server = Column(Boolean, default=False)
+            is_dedicated_server = Column(Boolean, default=False)
+            requires_subscription = Column(Boolean, default=False)
+            anonymous_install = Column(Boolean, default=True)
+            publisher = Column(String(255))
+            release_date = Column(String(50))
+            description = Column(Text)
+            tags = Column(Text)
+            price = Column(String(20))
+            platforms = Column(String(100))
+            last_updated = Column(DateTime)
+            source = Column(String(50), default='steamdb')
+        
+        # Convert appid to int if it's a string
+        try:
+            appid_int = int(appid)
+        except (ValueError, TypeError):
+            logger.debug(f"Invalid AppID format: {appid}")
+            return None
+        
+        # Connect to database
+        engine = get_steam_engine()
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
+        # Query for the specific AppID
+        app = session.query(SteamApp).filter(SteamApp.appid == appid_int).first()
+        
+        if app:
+            app_info = {
+                "appid": app.appid,
+                "name": app.name,
+                "type": app.type or "Unknown",
+                "is_server": getattr(app, 'is_server', False),
+                "is_dedicated_server": getattr(app, 'is_dedicated_server', False),
+                "requires_subscription": getattr(app, 'requires_subscription', False),
+                "anonymous_install": getattr(app, 'anonymous_install', True),
+                "publisher": app.publisher or "",
+                "description": app.description or "",
+                "exists": True
+            }
+        else:
+            app_info = None
+        
+        session.close()
+        return app_info
+        
+    except ImportError as e:
+        logger.debug(f"Database modules not available for AppID check: {e}")
+        return None
+    except Exception as e:
+        logger.debug(f"Error checking AppID {appid} in database: {e}")
+        return None
+
+
+def detect_server_type_from_appid(appid):
+    """Detect server type based on AppID from database"""
+    if not appid:
+        return "Other"
+    
+    app_info = check_appid_in_database(appid)
+    if app_info and app_info.get('exists'):
+        if app_info.get('is_dedicated_server') or app_info.get('is_server'):
+            return "Steam"
+    
+    return "Other"
+
+
+def detect_server_type_from_directory(directory_path):
+    """Detect server type from directory contents and configuration"""
+    if not directory_path or not os.path.exists(directory_path):
+        return "Other"
+    
+    try:
+        # Look for common server files and configuration
+        server_type = "Other"
+        
+        # Check for common Steam server executables and files
+        steam_server_files = [
+            'srcds.exe', 'srcds_run', 'srcds_linux', 'hlds.exe', 'hlds_run',
+            'steamcmd.exe', 'steam_appid.txt'
+        ]
+        
+        # Check for Minecraft server files
+        minecraft_server_files = [
+            'server.jar', 'minecraft_server.jar', 'paper.jar', 'spigot.jar',
+            'forge.jar', 'server.properties', 'bukkit.yml', 'spigot.yml'
+        ]
+        
+        # Check directory contents
+        dir_contents = []
+        for root, dirs, files in os.walk(directory_path):
+            dir_contents.extend([f.lower() for f in files])
+            # Only check first level to avoid deep recursion
+            if root == directory_path:
+                continue
+            break
+        
+        # Check for Steam server indicators
+        if any(steam_file.lower() in dir_contents for steam_file in steam_server_files):
+            server_type = "Steam"
+        
+        # Check for steam_appid.txt file specifically
+        steam_appid_path = os.path.join(directory_path, 'steam_appid.txt')
+        if os.path.exists(steam_appid_path):
+            try:
+                with open(steam_appid_path, 'r') as f:
+                    appid = f.read().strip()
+                    if appid.isdigit():
+                        # Verify this AppID exists in our database
+                        detected_type = detect_server_type_from_appid(appid)
+                        if detected_type == "Steam":
+                            return "Steam"
+            except Exception as e:
+                logger.debug(f"Error reading steam_appid.txt: {e}")
+        
+        # Check for Minecraft server indicators
+        if any(mc_file.lower() in dir_contents for mc_file in minecraft_server_files):
+            if server_type == "Other":  # Don't override Steam detection
+                server_type = "Minecraft"
+        
+        return server_type
+        
+    except Exception as e:
+        logger.debug(f"Error detecting server type from directory {directory_path}: {e}")
+        return "Other"
+
+
+def find_appid_in_directory(directory_path):
+    """Find Steam AppID from directory contents"""
+    if not directory_path or not os.path.exists(directory_path):
+        return None
+    
+    try:
+        # Check for steam_appid.txt file
+        steam_appid_path = os.path.join(directory_path, 'steam_appid.txt')
+        if os.path.exists(steam_appid_path):
+            try:
+                with open(steam_appid_path, 'r') as f:
+                    appid = f.read().strip()
+                    if appid.isdigit():
+                        return appid
+            except Exception as e:
+                logger.debug(f"Error reading steam_appid.txt: {e}")
+        
+        # Check for other common Steam configuration files
+        steam_config_files = [
+            'steamapps/appmanifest_*.acf',
+            'Steam/steamapps/appmanifest_*.acf',
+            '.steam/steamapps/appmanifest_*.acf'
+        ]
+        
+        import glob
+        for pattern in steam_config_files:
+            search_path = os.path.join(directory_path, pattern)
+            matches = glob.glob(search_path)
+            if matches:
+                # Try to extract AppID from filename
+                for match in matches:
+                    filename = os.path.basename(match)
+                    if filename.startswith('appmanifest_') and filename.endswith('.acf'):
+                        appid_str = filename[12:-4]  # Remove 'appmanifest_' and '.acf'
+                        if appid_str.isdigit():
+                            return appid_str
+        
+        return None
+        
+    except Exception as e:
+        logger.debug(f"Error finding AppID in directory {directory_path}: {e}")
+        return None
+
+
 def load_dashboard_config(server_manager_dir):
     """Load dashboard configuration from JSON file"""
     try:
@@ -646,21 +838,33 @@ def export_server_configuration(server_name, paths, include_files=False):
         if server_config.get("Type") == "Steam" and server_config.get("AppId"):
             try:
                 # Try to get app information from database
-                dedicated_servers, _ = load_appid_list_from_database()
+                app_info = check_appid_in_database(server_config["AppId"])
                 
-                # Find app info by ID
-                app_info = None
-                for app in dedicated_servers:
-                    if str(app.get("appid")) == str(server_config["AppId"]):
-                        app_info = app
-                        break
-                    
-                    if app_info:
-                        export_data["dependencies"]["steam_app_info"] = app_info
-                        export_data["dependencies"]["requires_steam_install"] = True
+                if app_info and app_info.get("exists"):
+                    export_data["dependencies"]["steam_app_info"] = {
+                        "appid": app_info["appid"],
+                        "name": app_info["name"],
+                        "type": app_info["type"],
+                        "is_dedicated_server": app_info["is_dedicated_server"],
+                        "requires_subscription": app_info["requires_subscription"],
+                        "anonymous_install": app_info["anonymous_install"]
+                    }
+                    export_data["dependencies"]["requires_steam_install"] = True
+                    export_data["dependencies"]["app_verified"] = True
+                else:
+                    # AppID not found in database
+                    export_data["dependencies"]["steam_app_info"] = {
+                        "appid": server_config["AppId"],
+                        "name": "Unknown (not in database)",
+                        "verified": False
+                    }
+                    export_data["dependencies"]["requires_steam_install"] = True
+                    export_data["dependencies"]["app_verified"] = False
+                    export_data["dependencies"]["app_warning"] = f"AppID {server_config['AppId']} not found in Steam database"
                         
             except Exception as e:
                 logger.warning(f"Could not load Steam app information: {str(e)}")
+                export_data["dependencies"]["steam_app_error"] = str(e)
         
         # Add file information if requested
         if include_files and server_config.get("InstallDir"):
@@ -705,13 +909,42 @@ def import_server_configuration(export_data, paths, install_directory=None, auto
         if install_directory:
             server_config["InstallDir"] = install_directory
         
-        # Handle Steam server dependencies
-        if server_config.get("Type") == "Steam" and auto_install:
+        # Handle Steam server dependencies and AppID verification
+        if server_config.get("Type") == "Steam":
             app_id = server_config.get("AppId")
-            if app_id and dependencies.get("requires_steam_install"):
-                # This would trigger Steam installation process
-                server_config["RequiresInstallation"] = True
-                server_config["InstallationPending"] = True
+            if app_id:
+                # Verify AppID exists in current database
+                app_info = check_appid_in_database(app_id)
+                
+                if app_info and app_info.get("exists"):
+                    # AppID verified in current database
+                    server_config["AppIdVerified"] = True
+                    server_config["AppName"] = app_info.get("name", "Unknown")
+                    logger.info(f"Verified Steam AppID {app_id} ({app_info.get('name', 'Unknown')})")
+                    
+                    if auto_install and dependencies.get("requires_steam_install"):
+                        server_config["RequiresInstallation"] = True
+                        server_config["InstallationPending"] = True
+                else:
+                    # AppID not found in current database
+                    server_config["AppIdVerified"] = False
+                    
+                    # Check if export had app info
+                    export_app_info = dependencies.get("steam_app_info", {})
+                    if export_app_info.get("name"):
+                        server_config["AppName"] = f"{export_app_info['name']} (unverified)"
+                        logger.warning(f"Steam AppID {app_id} not found in database, using exported name: {export_app_info['name']}")
+                    else:
+                        server_config["AppName"] = f"Unknown AppID {app_id}"
+                        logger.warning(f"Steam AppID {app_id} not found in database and no export info available")
+                    
+                    # Still allow installation if requested, but mark as unverified
+                    if auto_install:
+                        server_config["RequiresInstallation"] = True
+                        server_config["InstallationPending"] = True
+                        server_config["InstallationUnverified"] = True
+            else:
+                logger.warning("Steam server missing AppID during import")
         
         # Clean up runtime-specific data
         server_config.pop("ProcessId", None)
@@ -1052,6 +1285,7 @@ def update_server_status_in_treeview(server_list, server_name, status):
 def validate_server_creation_inputs(server_type, server_name, app_id=None, executable_path=None):
     """Validate inputs for server creation"""
     errors = []
+    warnings = []
     
     if not server_name.strip():
         errors.append("Server name is required.")
@@ -1061,12 +1295,21 @@ def validate_server_creation_inputs(server_type, server_name, app_id=None, execu
             errors.append("App ID is required for Steam servers.")
         elif not app_id.strip().isdigit():
             errors.append("App ID must be a valid number.")
+        else:
+            # Validate AppID exists in database
+            app_info = check_appid_in_database(app_id.strip())
+            if not app_info or not app_info.get('exists'):
+                warnings.append(f"Warning: AppID {app_id.strip()} not found in Steam database. This may be an invalid or outdated AppID.")
+            elif not app_info.get('is_dedicated_server'):
+                warnings.append(f"Warning: AppID {app_id.strip()} ({app_info.get('name', 'Unknown')}) is not marked as a dedicated server.")
     
     if server_type == "Other":
         if not executable_path or not executable_path.strip():
             errors.append("Executable path is required for Other server types.")
     
-    return errors
+    # Combine errors and warnings
+    all_messages = errors + warnings
+    return all_messages
 
 
 def open_directory_in_explorer(directory_path):
@@ -2317,6 +2560,10 @@ def import_server_from_directory_dialog(parent, server_manager, server_manager_d
         if not install_dir:
             return
             
+        # Auto-detect server type from directory
+        detected_server_type = detect_server_type_from_directory(install_dir)
+        detected_appid = find_appid_in_directory(install_dir)
+        
         # Create import dialog
         dialog = tk.Toplevel(parent)
         dialog.title("Import Server from Directory")
@@ -2333,21 +2580,246 @@ def import_server_from_directory_dialog(parent, server_manager, server_manager_d
         name_entry = ttk.Entry(main_frame, textvariable=name_var, width=35)
         name_entry.grid(row=0, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
 
-        # Server type
+        # Server type with auto-detection
         ttk.Label(main_frame, text="Server Type:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
-        type_var = tk.StringVar(value="Other")
+        type_var = tk.StringVar(value=detected_server_type)
         type_combo = ttk.Combobox(main_frame, textvariable=type_var, values=supported_server_types, width=32)
         type_combo.grid(row=1, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+        
+        # Show detection result
+        if detected_server_type != "Other":
+            detection_text = f"Auto-detected as: {detected_server_type}"
+            if detected_appid:
+                app_info = check_appid_in_database(detected_appid)
+                if app_info and app_info.get('exists'):
+                    detection_text += f" (AppID: {detected_appid} - {app_info.get('name', 'Unknown')})"
+                else:
+                    detection_text += f" (AppID: {detected_appid})"
+            ttk.Label(main_frame, text=detection_text, foreground="green", font=("Segoe UI", 8)).grid(
+                row=1, column=3, padx=10, pady=10, sticky=tk.W
+            )
         
         # Installation directory (readonly)
         ttk.Label(main_frame, text="Install Directory:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
         ttk.Label(main_frame, text=install_dir, wraplength=300).grid(row=2, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
         
+        # Steam AppID field (for Steam servers)
+        appid_var = tk.StringVar(value=detected_appid or "")
+        appid_label = ttk.Label(main_frame, text="Steam AppID:")
+        appid_entry = ttk.Entry(main_frame, textvariable=appid_var, width=25)
+        
+        # Browse AppID button
+        def browse_appid():
+            # Create AppID selection dialog
+            appid_dialog = tk.Toplevel(dialog)
+            appid_dialog.title("Select Dedicated Server")
+            appid_dialog.transient(dialog)
+            appid_dialog.grab_set()
+            appid_dialog.geometry("600x500")
+            
+            # Create search frame
+            search_frame = ttk.Frame(appid_dialog, padding=10)
+            search_frame.pack(fill=tk.X)
+            
+            ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT)
+            search_var = tk.StringVar()
+            search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
+            search_entry.pack(side=tk.LEFT, padx=(5, 10))
+            
+            # Load dedicated servers from scanner's AppID list
+            try:
+                dedicated_servers_data, metadata = load_appid_scanner_list(server_manager_dir)
+                
+                if not dedicated_servers_data:
+                    # Fallback to hardcoded list if scanner data not available
+                    logger.warning("Scanner AppID list not available, using fallback list")
+                    dedicated_servers = [
+                        {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
+                        {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
+                        {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
+                        {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
+                        {"name": "ARK: Survival Evolved Dedicated Server", "appid": "376030"},
+                        {"name": "Rust Dedicated Server", "appid": "258550"},
+                        {"name": "7 Days to Die Dedicated Server", "appid": "294420"},
+                        {"name": "Valheim Dedicated Server", "appid": "896660"},
+                        {"name": "Source Dedicated Server (Generic)", "appid": "205"}
+                    ]
+                else:
+                    # Use scanner data - convert to compatible format
+                    dedicated_servers = [
+                        {
+                            "name": server.get("name", "Unknown Server"),
+                            "appid": str(server.get("appid", "0")),
+                            "requires_subscription": server.get("requires_subscription", False),
+                            "anonymous_install": server.get("anonymous_install", True),
+                            "publisher": server.get("publisher", ""),
+                            "description": server.get("description", ""),
+                            "type": server.get("type", "Dedicated Server")
+                        }
+                        for server in dedicated_servers_data
+                    ]
+                    
+                    logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner (last updated: {metadata.get('last_updated', 'Unknown')})")
+                    
+                    # Add refresh info to dialog
+                    if metadata.get('last_updated'):
+                        last_updated = metadata['last_updated']
+                        if 'T' in last_updated:  # ISO format
+                            try:
+                                from datetime import datetime
+                                dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                                formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
+                                ttk.Label(search_frame, text=f"Data last updated: {formatted_date}", 
+                                        foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
+                            except:
+                                pass
+                        
+            except Exception as e:
+                logger.error(f"Error loading scanner AppID list: {e}")
+                # Use fallback list
+                dedicated_servers = [
+                    {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
+                    {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
+                    {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
+                    {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
+                    {"name": "Source Dedicated Server (Generic)", "appid": "205"}
+                ]
+            
+            # Create server list
+            list_frame = ttk.Frame(appid_dialog, padding=10)
+            list_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Enhanced treeview for server list with additional columns
+            columns = ("name", "appid", "subscription", "type")
+            server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
+            server_tree.heading("name", text="Server Name")
+            server_tree.heading("appid", text="App ID")
+            server_tree.heading("subscription", text="Subscription")
+            server_tree.heading("type", text="Type")
+            server_tree.column("name", width=300)
+            server_tree.column("appid", width=80)
+            server_tree.column("subscription", width=150)
+            server_tree.column("type", width=120)
+            
+            # Scrollbar
+            scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=server_tree.yview)
+            server_tree.configure(yscrollcommand=scrollbar.set)
+            
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            server_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            
+            # Populate server list with enhanced data
+            def populate_servers(filter_text=""):
+                server_tree.delete(*server_tree.get_children())
+                for server in dedicated_servers:
+                    server_name = server["name"]
+                    if not filter_text or filter_text.lower() in server_name.lower():
+                        # Determine subscription status
+                        requires_sub = server.get("requires_subscription", False)
+                        anonymous = server.get("anonymous_install", True)
+                        
+                        if requires_sub:
+                            sub_status = "Subscription Required"
+                        elif anonymous:
+                            sub_status = "Free/Anonymous"
+                        else:
+                            sub_status = "Auth Required"
+                        
+                        server_tree.insert("", tk.END, values=(
+                            server_name, 
+                            server["appid"],
+                            sub_status,
+                            server.get("type", "Dedicated Server")
+                        ))
+            
+            populate_servers()
+            
+            # Enhanced search functionality
+            def on_search(*args):
+                populate_servers(search_var.get())
+            
+            search_var.trace('w', on_search)
+            
+            # Add tooltip functionality for descriptions
+            def show_server_info(event):
+                item = server_tree.selection()
+                if item:
+                    selected_server = None
+                    item_values = server_tree.item(item[0])['values']
+                    for server in dedicated_servers:
+                        if server["appid"] == str(item_values[1]):
+                            selected_server = server
+                            break
+                    
+                    if selected_server and selected_server.get("description"):
+                        # Create a simple tooltip window
+                        tooltip = tk.Toplevel(appid_dialog)
+                        tooltip.wm_overrideredirect(True)
+                        tooltip.geometry(f"+{event.x_root+10}+{event.y_root+10}")
+                        
+                        # Limit description length
+                        desc = selected_server["description"][:200] + ("..." if len(selected_server["description"]) > 200 else "")
+                        
+                        label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}", 
+                                       background="lightyellow", relief="solid", borderwidth=1,
+                                       wraplength=300, justify=tk.LEFT, font=("Segoe UI", 9))
+                        label.pack()
+                        
+                        # Auto-hide after 3 seconds
+                        tooltip.after(3000, tooltip.destroy)
+            
+            server_tree.bind('<Double-1>', show_server_info)
+            
+            # Button frame
+            button_frame = ttk.Frame(appid_dialog, padding=10)
+            button_frame.pack(fill=tk.X)
+            
+            def select_server():
+                selected = server_tree.selection()
+                
+                if selected:
+                    # Use selected server from list
+                    item = server_tree.item(selected[0])
+                    appid = item['values'][1]
+                    appid_var.set(appid)
+                    appid_dialog.destroy()
+                else:
+                    messagebox.showinfo("No Selection", "Please select a server from the list.")
+            
+            def cancel_selection():
+                appid_dialog.destroy()
+            
+            ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT)
+            ttk.Button(button_frame, text="Select Server", command=select_server, width=15).pack(side=tk.RIGHT)
+            
+            # Center dialog
+            center_window(appid_dialog, 600, 500, dialog)
+        
+        appid_browse_btn = ttk.Button(main_frame, text="Browse", command=browse_appid, width=10)
+        
+        # Initially hide AppID field
+        appid_row = 3
+        
+        def update_appid_visibility():
+            if type_var.get() == "Steam":
+                appid_label.grid(row=appid_row, column=0, padx=10, pady=10, sticky=tk.W)
+                appid_entry.grid(row=appid_row, column=1, padx=10, pady=10, sticky=tk.W)
+                appid_browse_btn.grid(row=appid_row, column=2, padx=5, pady=10)
+            else:
+                appid_label.grid_remove()
+                appid_entry.grid_remove()
+                appid_browse_btn.grid_remove()
+        
+        # Bind type change to visibility update
+        type_var.trace('w', lambda *args: update_appid_visibility())
+        update_appid_visibility()
+        
         # Executable path
-        ttk.Label(main_frame, text="Executable:").grid(row=3, column=0, padx=10, pady=10, sticky=tk.W)
+        exe_row = appid_row + 1
+        ttk.Label(main_frame, text="Executable:").grid(row=exe_row, column=0, padx=10, pady=10, sticky=tk.W)
         exe_var = tk.StringVar()
         exe_entry = ttk.Entry(main_frame, textvariable=exe_var, width=25)
-        exe_entry.grid(row=3, column=1, padx=10, pady=10, sticky=tk.W)
+        exe_entry.grid(row=exe_row, column=1, padx=10, pady=10, sticky=tk.W)
         
         def browse_exe():
             fp = filedialog.askopenfilename(
@@ -2363,13 +2835,14 @@ def import_server_from_directory_dialog(parent, server_manager, server_manager_d
                 except:
                     exe_var.set(fp)
         
-        ttk.Button(main_frame, text="Browse", command=browse_exe, width=10).grid(row=3, column=2, padx=5, pady=10)
+        ttk.Button(main_frame, text="Browse", command=browse_exe, width=10).grid(row=exe_row, column=2, padx=5, pady=10)
         
         # Startup arguments
-        ttk.Label(main_frame, text="Startup Args:").grid(row=4, column=0, padx=10, pady=10, sticky=tk.W)
+        args_row = exe_row + 1
+        ttk.Label(main_frame, text="Startup Args:").grid(row=args_row, column=0, padx=10, pady=10, sticky=tk.W)
         args_var = tk.StringVar()
         args_entry = ttk.Entry(main_frame, textvariable=args_var, width=35)
-        args_entry.grid(row=4, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+        args_entry.grid(row=args_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
         
         # Auto-detect common server files
         def auto_detect():
@@ -2414,14 +2887,15 @@ def import_server_from_directory_dialog(parent, server_manager, server_manager_d
                 logger.error(f"Error during auto-detect: {str(e)}")
                 messagebox.showerror("Error", f"Auto-detection failed: {str(e)}")
         
-        ttk.Button(main_frame, text="Auto-detect", command=auto_detect, width=15).grid(row=5, column=1, pady=10)
+        detect_row = args_row + 1
+        ttk.Button(main_frame, text="Auto-detect", command=auto_detect, width=15).grid(row=detect_row, column=1, pady=10)
         
         # Return result variable
         result = {'success': False, 'server_name': None}
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=6, column=0, columnspan=3, pady=20)
+        button_frame.grid(row=detect_row + 1, column=0, columnspan=3, pady=20)
         
         def import_config():
             try:
@@ -2429,6 +2903,7 @@ def import_server_from_directory_dialog(parent, server_manager, server_manager_d
                 server_type = type_var.get()
                 executable_path = exe_var.get().strip()
                 startup_args = args_var.get().strip()
+                steam_appid = appid_var.get().strip()
                 
                 if not server_name:
                     messagebox.showerror("Validation Error", "Server name is required.")
@@ -2438,11 +2913,47 @@ def import_server_from_directory_dialog(parent, server_manager, server_manager_d
                     messagebox.showerror("Validation Error", "Executable path is required.")
                     return
                 
-                # Use server manager to import the server
+                # Validate Steam AppID if server type is Steam
+                if server_type == "Steam":
+                    if not steam_appid:
+                        messagebox.showerror("Validation Error", "Steam AppID is required for Steam servers.")
+                        return
+                    
+                    # Check if AppID exists in database
+                    app_info = check_appid_in_database(steam_appid)
+                    if not app_info or not app_info.get('exists'):
+                        response = messagebox.askyesno(
+                            "AppID Not Found", 
+                            f"AppID {steam_appid} was not found in the Steam database. "
+                            "This may mean the AppID is invalid or the database needs updating.\n\n"
+                            "Do you want to continue with the import anyway?"
+                        )
+                        if not response:
+                            return
+                    else:
+                        # Show AppID verification info
+                        app_name = app_info.get('name', 'Unknown')
+                        is_dedicated = app_info.get('is_dedicated_server', False)
+                        if not is_dedicated:
+                            response = messagebox.askyesno(
+                                "AppID Warning", 
+                                f"AppID {steam_appid} ({app_name}) is not marked as a dedicated server in our database. "
+                                "This may not be a valid server AppID.\n\n"
+                                "Do you want to continue anyway?"
+                            )
+                            if not response:
+                                return
+                
+                # Use server manager to import the server (pass AppID for Steam servers)
                 if server_manager:
-                    success, message = server_manager.import_server_config(
-                        server_name, server_type, install_dir, executable_path, startup_args
-                    )
+                    if server_type == "Steam":
+                        success, message = server_manager.import_server_config(
+                            server_name, server_type, install_dir, executable_path, startup_args, steam_appid
+                        )
+                    else:
+                        success, message = server_manager.import_server_config(
+                            server_name, server_type, install_dir, executable_path, startup_args
+                        )
                 else:
                     success = False
                     message = "Server manager not initialized"
@@ -2466,7 +2977,7 @@ def import_server_from_directory_dialog(parent, server_manager, server_manager_d
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy, width=15).pack(side=tk.RIGHT, padx=5)
         
         # Center dialog relative to parent
-        center_window(dialog, 500, 400, parent)
+        center_window(dialog, 600, 500, parent)
         
         return result
         
@@ -2524,7 +3035,20 @@ Original Name: {server_config.get('Name', 'Unknown')}
 Includes Files: {'Yes' if has_files else 'No'}"""
         
         if server_config.get('Type') == 'Steam' and server_config.get('AppId'):
-            info_text += f"\nSteam App ID: {server_config['AppId']}"
+            app_id = server_config['AppId']
+            info_text += f"\nSteam App ID: {app_id}"
+            
+            # Verify AppID in current database
+            app_info = check_appid_in_database(app_id)
+            if app_info and app_info.get('exists'):
+                info_text += f" - {app_info.get('name', 'Unknown')} ✓"
+            else:
+                # Check if export had app info
+                export_app_info = dependencies.get("steam_app_info", {})
+                if export_app_info.get("name") and export_app_info.get("verified", True):
+                    info_text += f" - {export_app_info['name']} (not in local database) ⚠️"
+                else:
+                    info_text += " - Unknown/Unverified ❌"
             
         ttk.Label(export_info_frame, text=info_text, justify=tk.LEFT).pack(anchor=tk.W)
         
@@ -2888,11 +3412,11 @@ def show_server_rename_dialog(parent, current_server_name, server_config, server
         ttk.Label(current_frame, text="Current Name:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         ttk.Label(current_frame, text=current_server_name, font=("Segoe UI", 10)).grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
         
-        current_server_type = server_config.get('type', 'Unknown')
+        current_server_type = server_config.get('Type', 'Unknown')
         ttk.Label(current_frame, text="Server Type:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         ttk.Label(current_frame, text=current_server_type, font=("Segoe UI", 10)).grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
         
-        current_appid = server_config.get('appid', 'N/A')
+        current_appid = server_config.get('AppID', 'N/A')
         if current_server_type == 'Steam':
             ttk.Label(current_frame, text="Current AppID:", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
             ttk.Label(current_frame, text=str(current_appid), font=("Segoe UI", 10)).grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
@@ -3054,9 +3578,9 @@ def rename_server_configuration(old_name, new_name, new_appid, server_manager, p
         new_config = current_config.copy()
         
         # Update AppID if provided (Steam servers)
-        if new_appid is not None and current_config.get('type') == 'Steam':
-            new_config['appid'] = new_appid
-            logger.info(f"Updated AppID from {current_config.get('appid')} to {new_appid}")
+        if new_appid is not None and current_config.get('Type') == 'Steam':
+            new_config['AppID'] = new_appid
+            logger.info(f"Updated AppID from {current_config.get('AppID')} to {new_appid}")
         
         # If name is changing, handle the rename
         if old_name != new_name:
@@ -3105,3 +3629,118 @@ def rename_server_configuration(old_name, new_name, new_appid, server_manager, p
     except Exception as e:
         logger.error(f"Error renaming server '{old_name}' to '{new_name}': {e}")
         return False, f"Error during rename operation: {str(e)}"
+
+
+def re_detect_server_type_from_config(server_config):
+    """Re-detect server type from existing server configuration"""
+    if not server_config:
+        return "Other"
+    
+    current_type = server_config.get('Type', 'Other')
+    
+    # If already Steam, check if AppID is valid
+    if current_type == "Steam":
+        app_id = server_config.get('AppId')
+        if app_id:
+            app_info = check_appid_in_database(app_id)
+            if app_info and app_info.get('exists'):
+                return "Steam"  # Valid Steam server
+            else:
+                logger.warning(f"Server has Steam type but invalid AppID {app_id}, changing to Other")
+                return "Other"
+    
+    # Check install directory for clues
+    install_dir = server_config.get('InstallDir')
+    if install_dir:
+        detected_type = detect_server_type_from_directory(install_dir)
+        if detected_type != "Other":
+            # Found evidence in directory
+            if detected_type == "Steam":
+                # Look for AppID in directory
+                found_appid = find_appid_in_directory(install_dir)
+                if found_appid:
+                    app_info = check_appid_in_database(found_appid)
+                    if app_info and app_info.get('exists'):
+                        # Update configuration with found AppID
+                        server_config['AppId'] = found_appid
+                        server_config['AppName'] = app_info.get('name', 'Unknown')
+                        return "Steam"
+            else:
+                return detected_type
+    
+    # Check executable path for clues
+    executable_path = server_config.get('ExecutablePath', '')
+    if executable_path:
+        exe_lower = executable_path.lower()
+        if any(steam_exe in exe_lower for steam_exe in ['srcds', 'hlds', 'steamcmd']):
+            return "Steam"
+        elif any(mc_exe in exe_lower for mc_exe in ['server.jar', 'minecraft_server', 'paper', 'spigot', 'forge']):
+            return "Minecraft"
+    
+    return current_type  # Keep current type if no better detection
+
+
+def update_server_configuration_with_detection(server_config_path):
+    """Update server configuration file with improved type detection"""
+    try:
+        if not os.path.exists(server_config_path):
+            return False, "Configuration file not found"
+        
+        # Load current configuration
+        with open(server_config_path, 'r') as f:
+            server_config = json.load(f)
+        
+        old_type = server_config.get('Type', 'Other')
+        new_type = re_detect_server_type_from_config(server_config)
+        
+        if old_type != new_type:
+            server_config['Type'] = new_type
+            server_config['TypeUpdated'] = datetime.datetime.now().isoformat()
+            server_config['PreviousType'] = old_type
+            
+            # Save updated configuration
+            with open(server_config_path, 'w') as f:
+                json.dump(server_config, f, indent=4)
+            
+            logger.info(f"Updated server type from {old_type} to {new_type}: {server_config.get('Name', 'Unknown')}")
+            return True, f"Updated server type from {old_type} to {new_type}"
+        else:
+            return True, "No type change needed"
+        
+    except Exception as e:
+        logger.error(f"Error updating server configuration: {str(e)}")
+        return False, f"Failed to update configuration: {str(e)}"
+
+
+def batch_update_server_types(paths):
+    """Batch update all server configurations with improved type detection"""
+    try:
+        servers_path = os.path.join(paths["root"], "servers")
+        if not os.path.exists(servers_path):
+            return 0, []
+        
+        updated_count = 0
+        updated_servers = []
+        
+        for file in os.listdir(servers_path):
+            if file.endswith('.json'):
+                config_path = os.path.join(servers_path, file)
+                try:
+                    success, message = update_server_configuration_with_detection(config_path)
+                    if success and "Updated server type" in message:
+                        updated_count += 1
+                        with open(config_path, 'r') as f:
+                            config = json.load(f)
+                        updated_servers.append({
+                            'name': config.get('Name', 'Unknown'),
+                            'old_type': config.get('PreviousType', 'Unknown'),
+                            'new_type': config.get('Type', 'Unknown')
+                        })
+                except Exception as e:
+                    logger.error(f"Error updating {file}: {str(e)}")
+        
+        return updated_count, updated_servers
+        
+    except Exception as e:
+        logger.error(f"Error in batch update: {str(e)}")
+        return 0, []

@@ -27,10 +27,10 @@ def get_steam_sql_config_from_registry():
             try:
                 db_path = winreg.QueryValueEx(key, "SteamSQLDatabasePath")[0]
             except:
-                # Default SQLite path for Steam apps database
+                # Default SQLite path for Steam apps database - using db directory
                 try:
                     server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-                    db_path = os.path.join(server_manager_dir, "config", "steam_ID.db")
+                    db_path = os.path.join(server_manager_dir, "db", "steam_ID.db")
                 except:
                     db_path = "steam_ID.db"
             

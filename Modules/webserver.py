@@ -14,7 +14,6 @@ import win32api
 import traceback
 import ctypes
 from pathlib import Path
-from dotenv import load_dotenv
 from waitress import serve
 
 # Try to import psutil with fallback
@@ -27,9 +26,6 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-
-# Load environment variables
-load_dotenv()
 
 # Configure logging with structured JSON format for production
 logging.basicConfig(

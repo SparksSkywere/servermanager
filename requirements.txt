@@ -15,6 +15,5 @@ cryptography
 pyodbc
 pyotp
 vdf
-python-dotenv
 waitress
 bcrypt

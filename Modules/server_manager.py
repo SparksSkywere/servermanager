@@ -888,7 +888,7 @@ class ServerManager(ServerManagerModule):
             logger.error(f"Error updating server configuration: {str(e)}")
             return False, f"Failed to update server configuration: {str(e)}"
 
-    def import_server_config(self, server_name, server_type, install_dir, executable_path, startup_args=""):
+    def import_server_config(self, server_name, server_type, install_dir, executable_path, startup_args="", app_id=""):
         """Import an existing server from a directory"""
         try:
             # Check if server name already exists
@@ -935,7 +935,7 @@ class ServerManager(ServerManagerModule):
             server_config = {
                 "Name": server_name,
                 "Type": server_type,
-                "AppID": "",
+                "AppID": app_id,
                 "InstallDir": install_dir,
                 "ExecutablePath": executable_path or "",
                 "StartupArgs": startup_args,
@@ -1447,6 +1447,56 @@ class ServerManager(ServerManagerModule):
                 )
                 if not success:
                     return False, message
+                
+                # If install_dir was empty (using SteamCMD default), determine the actual installation path
+                if not install_dir:
+                    # SteamCMD default installation path is <steamcmd_path>/steamapps/common/<app_name>
+                    steamapps_common = os.path.join(steam_cmd_path, "steamapps", "common")
+                    if os.path.exists(steamapps_common):
+                        # Look for the most recently modified directory (likely our installation)
+                        try:
+                            directories = []
+                            for d in os.listdir(steamapps_common):
+                                dir_path = os.path.join(steamapps_common, d)
+                                if os.path.isdir(dir_path):
+                                    directories.append((d, os.path.getmtime(dir_path)))
+                            
+                            if directories:
+                                # Sort by modification time (most recent first)
+                                directories.sort(key=lambda x: x[1], reverse=True)
+                                most_recent_dir = directories[0][0]
+                                install_dir = os.path.join(steamapps_common, most_recent_dir)
+                                
+                                if progress_callback:
+                                    progress_callback(f"[INFO] Auto-detected installation directory: {install_dir}")
+                                logger.info(f"Auto-detected Steam server installation directory: {install_dir}")
+                            else:
+                                # No directories found, use steamapps/common as fallback
+                                install_dir = steamapps_common
+                                if progress_callback:
+                                    progress_callback(f"[WARN] No game directories found, using steamapps/common: {install_dir}")
+                                logger.warning(f"No directories in steamapps/common, using: {install_dir}")
+                        except Exception as e:
+                            # Error accessing directories, use steamapps as fallback
+                            install_dir = os.path.join(steam_cmd_path, "steamapps")
+                            if progress_callback:
+                                progress_callback(f"[WARN] Error detecting installation directory ({str(e)}), using: {install_dir}")
+                            logger.warning(f"Error detecting installation directory: {str(e)}, using fallback: {install_dir}")
+                    else:
+                        # steamapps/common doesn't exist, create it and use as install_dir
+                        try:
+                            os.makedirs(steamapps_common, exist_ok=True)
+                            install_dir = steamapps_common
+                            if progress_callback:
+                                progress_callback(f"[INFO] Created steamapps/common directory: {install_dir}")
+                            logger.info(f"Created steamapps/common directory: {install_dir}")
+                        except Exception as e:
+                            # Final fallback: use steamcmd root
+                            install_dir = steam_cmd_path
+                            if progress_callback:
+                                progress_callback(f"[WARN] Could not create steamapps directories, using SteamCMD root: {install_dir}")
+                            logger.warning(f"Could not create steamapps directories: {str(e)}, using SteamCMD root: {install_dir}")
+                
                 installation_success = True
                 
             elif server_type == "Minecraft":

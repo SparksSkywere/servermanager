@@ -172,11 +172,11 @@ class AppIDScanner:
     def init_sqlite_fallback(self):
         """Initialize SQLite fallback database"""
         try:
-            # Create data directory if it doesn't exist
-            data_dir = os.path.join(os.path.dirname(__file__), '..', 'data')
-            os.makedirs(data_dir, exist_ok=True)
+            # Create db directory if it doesn't exist - using centralized db directory
+            db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
+            os.makedirs(db_dir, exist_ok=True)
             
-            db_path = os.path.join(data_dir, 'steam_ID.db')
+            db_path = os.path.join(db_dir, 'steam_ID.db')
             self.sqlite_conn = sqlite3.connect(db_path)
             self.sqlite_conn.execute('''
                 CREATE TABLE IF NOT EXISTS steam_apps (

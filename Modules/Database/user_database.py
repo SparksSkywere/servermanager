@@ -32,10 +32,10 @@ def get_user_sql_config_from_registry():
             try:
                 db_path = winreg.QueryValueEx(key, "UsersSQLDatabasePath")[0]
             except:
-                # Default SQLite path for users database
+                # Default SQLite path for users database - using db directory
                 try:
                     server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-                    db_path = os.path.join(server_manager_dir, "config", "servermanager_users.db")
+                    db_path = os.path.join(server_manager_dir, "db", "servermanager_users.db")
                 except:
                     db_path = "servermanager_users.db"
             

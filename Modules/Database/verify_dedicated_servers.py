@@ -123,8 +123,9 @@ class DedicatedServerVerifier:
     def init_sqlite_fallback(self):
         """Initialize SQLite fallback database"""
         try:
-            data_dir = os.path.join(os.path.dirname(__file__), '..', 'data')
-            db_path = os.path.join(data_dir, 'steam_ID.db')
+            # Use centralized db directory
+            db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
+            db_path = os.path.join(db_dir, 'steam_ID.db')
             self.sqlite_conn = sqlite3.connect(db_path)
             logger.info(f"Connected to SQLite database: {db_path}")
         except Exception as e:

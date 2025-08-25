@@ -1,6 +1,3 @@
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-
 # Script parameters for both installation and service management
 param(
     [Parameter()]
@@ -13,6 +10,30 @@ param(
     [Parameter()]
     [switch]$Help
 )
+
+# Set preferences to suppress all interactive prompts
+$ConfirmPreference = "None"
+$VerbosePreference = "SilentlyContinue"
+$WarningPreference = "SilentlyContinue"
+
+# Force all cmdlets to not prompt for confirmation
+$PSDefaultParameterValues = @{
+    '*:Confirm' = $false
+    '*:Force' = $true
+    'Remove-Item:Confirm' = $false
+    'Remove-Item:Force' = $true
+    'Move-Item:Confirm' = $false
+    'Move-Item:Force' = $true
+}
+
+# Disable all progress bars and informational output
+$ProgressPreference = 'SilentlyContinue'
+$InformationPreference = 'SilentlyContinue'
+$DebugPreference = 'SilentlyContinue'
+
+# Load Windows Forms and Drawing assemblies
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
 # Show help if requested
 if ($Help) {
@@ -50,7 +71,7 @@ function Write-LogToFile {
     $global:logMemory = @()
 }
 
-# Console window handling function (unified version)
+# Console window handling function
 function Show-Console {
     param ([Switch]$Show, [Switch]$Hide)
     if (-not ("Console.Window" -as [type])) {
@@ -67,6 +88,45 @@ function Show-Console {
     [Console.Window]::ShowWindow($consolePtr, $nCmdShow) | Out-Null
     $script:DebugLoggingEnabled = $Show.IsPresent
     Write-Log -Message "Console visibility set to: $($Show.IsPresent)" -Level DEBUG
+}
+
+# Function to ensure no console prompts during GUI operations
+function Set-NoConsolePrompts {
+    # Set all preference variables to suppress prompts - MAXIMUM SUPPRESSION
+    $Global:ConfirmPreference = "None"
+    $Global:VerbosePreference = "SilentlyContinue" 
+    $Global:WarningPreference = "SilentlyContinue"
+    $Global:InformationPreference = "SilentlyContinue"
+    $Global:DebugPreference = "SilentlyContinue"
+    $Global:ProgressPreference = "SilentlyContinue"
+    $Global:ErrorActionPreference = "SilentlyContinue"
+    
+    # Also set for current session
+    $ConfirmPreference = "None"
+    $VerbosePreference = "SilentlyContinue"
+    $WarningPreference = "SilentlyContinue"
+    $InformationPreference = "SilentlyContinue"
+    $DebugPreference = "SilentlyContinue"
+    $ProgressPreference = "SilentlyContinue"
+    $ErrorActionPreference = "SilentlyContinue"
+    
+    # Force all cmdlets to default to non-interactive behavior
+    $Global:PSDefaultParameterValues = @{
+        '*:Confirm' = $false
+        '*:Force' = $true
+        'Remove-Item:Confirm' = $false
+        'Remove-Item:Force' = $true
+        'Remove-Item:Recurse' = $true
+        'Move-Item:Confirm' = $false
+        'Move-Item:Force' = $true
+        'Copy-Item:Confirm' = $false
+        'Copy-Item:Force' = $true
+    }
+    
+    # Redirect standard error to null to prevent console output
+    $Global:ErrorView = 'CategoryView'
+    
+    Write-Log "All console prompts have been maximally suppressed for GUI installation"
 }
 
 # Hide Console
@@ -219,7 +279,7 @@ function Show-Help {
 # Define global variables first
 $global:logMemory = @()
 $global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Install-Log.txt"
-$CurrentVersion = "0.4"
+$CurrentVersion = "0.5"
 $steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
 $gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"
@@ -238,47 +298,6 @@ function Prompt-Reinstall {
         [System.Windows.Forms.MessageBoxIcon]::Question
     )
     return $result -eq [System.Windows.Forms.DialogResult]::Yes
-}
-
-# Add missing New-EnvironmentFile function
-function New-EnvironmentFile {
-    param(
-        [string]$ServerManagerDir,
-        [hashtable]$SQLOptions,
-        [string]$SQLDatabasePath,
-        [hashtable]$HostTypeOptions
-    )
-    
-    Write-Log "Creating environment configuration file..."
-    
-    try {
-        $envFilePath = Join-Path $ServerManagerDir ".env"
-        
-        $envContent = @"
-# Server Manager Configuration
-FLASK_ENV=production
-SECRET_KEY=$(New-Salt -Length 64)
-DATABASE_TYPE=$($SQLOptions.SQLType)
-DATABASE_PATH=$SQLDatabasePath
-WEB_PORT=8080
-LOG_LEVEL=INFO
-HOST_TYPE=$($HostTypeOptions.HostType)
-"@
-
-        if ($HostTypeOptions.HostType -eq "Subhost" -and $HostTypeOptions.HostAddress) {
-            $envContent += "`nHOST_ADDRESS=$($HostTypeOptions.HostAddress)"
-        }
-
-        Set-Content -Path $envFilePath -Value $envContent -Force
-        Protect-ConfigFile -FilePath $envFilePath
-        
-        Write-Log "Environment file created successfully at: $envFilePath"
-        return $true
-    }
-    catch {
-        Write-Log "Failed to create environment file: $($_.Exception.Message)" -ForegroundColor Red
-        return $false
-    }
 }
 
 # Add all missing functions from original script
@@ -360,16 +379,21 @@ function Initialize-SQLDatabase {
     )
     Write-Log "Setting up SQL databases..."
 
-    if ($SQLType -eq "SQLite") {
-        # Create separate user and Steam databases
-        $userDbFile = Join-Path $DataFolder "servermanager_users.db"
-        $steamDbFile = Join-Path $DataFolder "steam_ID.db"
+    if ($SQLType -eq "SQLite" -or [string]::IsNullOrEmpty($SQLType)) {
+        # Create separate user and Steam databases in db folder
+        $dbFolder = $DataFolder -replace "data$", "db"
+        if (-not (Test-Path $dbFolder)) {
+            New-Item -ItemType Directory -Force -Path $dbFolder | Out-Null
+        }
+        $userDbFile = Join-Path $dbFolder "servermanager_users.db"
+        $steamDbFile = Join-Path $dbFolder "steam_ID.db"
         $global:SQLDatabaseFile = $userDbFile
         $global:SteamDatabaseFile = $steamDbFile
         
         if (-not (Test-Path $userDbFile)) {
             Write-Log "Creating SQLite user database at $userDbFile"
-            $pythonScript = @"
+            try {
+                $pythonScript = @"
 import sqlite3
 import sys
 dbfile = sys.argv[1]
@@ -395,16 +419,28 @@ CREATE TABLE IF NOT EXISTS users (
 ''')
 conn.commit()
 conn.close()
+print('SUCCESS: User database created')
 "@
-            $tempPy = [System.IO.Path]::GetTempFileName() + ".py"
-            Set-Content -Path $tempPy -Value $pythonScript
-            python $tempPy $userDbFile
-            Remove-Item $tempPy -Force
+                $tempPy = [System.IO.Path]::GetTempFileName() + ".py"
+                Set-Content -Path $tempPy -Value $pythonScript
+                $dbResult = python $tempPy $userDbFile 2>&1
+                Remove-Item $tempPy -Force -Confirm:$false
+                Write-Log "Database creation result: $dbResult"
+                
+                if (-not (Test-Path $userDbFile)) {
+                    throw "User database file was not created successfully"
+                }
+            } catch {
+                throw "Failed to create user database: $($_.Exception.Message)"
+            }
+            
+            # The admin user will be created via GUI after database setup
         }
         
         if (-not (Test-Path $steamDbFile)) {
             Write-Log "Creating SQLite Steam database at $steamDbFile"
-            $steamPythonScript = @"
+            try {
+                $steamPythonScript = @"
 import sqlite3
 import sys
 dbfile = sys.argv[1]
@@ -431,11 +467,20 @@ CREATE TABLE IF NOT EXISTS steam_apps (
 ''')
 conn.commit()
 conn.close()
+print('SUCCESS: Steam database created')
 "@
-            $tempSteamPy = [System.IO.Path]::GetTempFileName() + ".py"
-            Set-Content -Path $tempSteamPy -Value $steamPythonScript
-            python $tempSteamPy $steamDbFile
-            Remove-Item $tempSteamPy -Force
+                $tempSteamPy = [System.IO.Path]::GetTempFileName() + ".py"
+                Set-Content -Path $tempSteamPy -Value $steamPythonScript
+                $steamDbResult = python $tempSteamPy $steamDbFile 2>&1
+                Remove-Item $tempSteamPy -Force -Confirm:$false
+                Write-Log "Steam database creation result: $steamDbResult"
+                
+                if (-not (Test-Path $steamDbFile)) {
+                    throw "Steam database file was not created successfully"
+                }
+            } catch {
+                Write-Log "Warning: Failed to create Steam database: $($_.Exception.Message)"
+            }
         }
         return $userDbFile
     }
@@ -451,15 +496,7 @@ function Test-Administrator {
 
 function Test-AdminPrivileges {
     if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Log "Administrative privileges required. Requesting elevation..."
-        
-        # Show message to user
-        [System.Windows.Forms.MessageBox]::Show(
-            "This installer requires administrative privileges to install Server Manager.`n`nClick OK to restart with administrator rights.",
-            "Administrator Rights Required",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Information
-        )
+        Write-Log "Administrative privileges required. Automatically elevating..."
         
         try {
             # Get the current script path
@@ -489,9 +526,11 @@ function Test-AdminPrivileges {
         }
         catch {
             Write-Log "Failed to restart with administrator privileges: $($_.Exception.Message)"
+            
+            # Show message box only if automatic elevation failed
             [System.Windows.Forms.MessageBox]::Show(
-                "Failed to restart with administrator privileges. Please run this installer as an administrator manually.`n`nError: $($_.Exception.Message)",
-                "Elevation Failed",
+                "This installer requires administrative privileges to install Server Manager.`n`nAutomatic elevation failed. Please run this installer as an administrator manually.`n`nError: $($_.Exception.Message)",
+                "Administrator Rights Required",
                 [System.Windows.Forms.MessageBoxButtons]::OK,
                 [System.Windows.Forms.MessageBoxIcon]::Error
             )
@@ -539,7 +578,7 @@ function Install-Git {
             }
 
             Write-Log "Git installation completed."
-            Remove-Item -Path $installerPath -Force
+            Remove-Item -Path $installerPath -Force -Confirm:$false
         } catch {
             Write-Log "Failed to install Git: $($_.Exception.Message)"
             exit 1
@@ -566,103 +605,318 @@ function Update-SteamCmd {
     }
 }
 
+function Stop-RunningServerManager {
+    Write-Log "Checking for and stopping any running Server Manager instances..."
+    
+    try {
+        # Check for the Server Manager service
+        $service = Get-Service -Name "ServerManager" -ErrorAction SilentlyContinue
+        if ($service -and $service.Status -eq 'Running') {
+            Write-Log "Stopping Server Manager service..."
+            Stop-Service -Name "ServerManager" -Force -ErrorAction Stop
+            Start-Sleep -Seconds 3
+            Write-Log "Server Manager service stopped"
+        }
+        
+        # Check for any python processes that might be running Server Manager
+        $pythonProcesses = Get-Process -Name "python*" -ErrorAction SilentlyContinue
+        foreach ($proc in $pythonProcesses) {
+            try {
+                $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)").CommandLine
+                if ($cmdLine -and ($cmdLine -like "*servermanager*" -or $cmdLine -like "*Start-ServerManager*")) {
+                    Write-Log "Stopping Server Manager Python process (PID: $($proc.Id))"
+                    $proc.CloseMainWindow()
+                    Start-Sleep -Seconds 2
+                    if (-not $proc.HasExited) {
+                        $proc.Kill()
+                        Start-Sleep -Seconds 1
+                    }
+                    Write-Log "Server Manager process stopped"
+                }
+            } catch {
+                Write-Log "Warning: Could not stop process $($proc.ProcessName): $($_.Exception.Message)"
+            }
+        }
+        
+        # Check for any pythonw.exe processes (windowless Python)
+        $pythonwProcesses = Get-Process -Name "pythonw*" -ErrorAction SilentlyContinue
+        foreach ($proc in $pythonwProcesses) {
+            try {
+                $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)").CommandLine
+                if ($cmdLine -and ($cmdLine -like "*servermanager*" -or $cmdLine -like "*Start-ServerManager*")) {
+                    Write-Log "Stopping Server Manager Python windowless process (PID: $($proc.Id))"
+                    $proc.Kill()
+                    Start-Sleep -Seconds 1
+                    Write-Log "Server Manager windowless process stopped"
+                }
+            } catch {
+                Write-Log "Warning: Could not stop process $($proc.ProcessName): $($_.Exception.Message)"
+            }
+        }
+        
+        return $true
+    } catch {
+        Write-Log "Warning: Error while stopping Server Manager instances: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+# Function to force delete directories using .NET methods (bypasses PowerShell confirmation system)
+function Force-DeleteDirectory {
+    param([string]$Path)
+    
+    if (-not (Test-Path $Path)) {
+        return $true
+    }
+    
+    try {
+        Write-Log "Using .NET Directory.Delete to force remove: $Path"
+        
+        # First try to remove all read-only attributes
+        if (Test-Path $Path) {
+            Get-ChildItem -Path $Path -Recurse -Force | ForEach-Object {
+                try {
+                    $_.Attributes = [System.IO.FileAttributes]::Normal
+                } catch {
+                    # Ignore errors
+                }
+            }
+        }
+        
+        # Use .NET method which is more forceful than PowerShell cmdlets
+        [System.IO.Directory]::Delete($Path, $true)
+        Write-Log "Successfully removed directory using .NET method"
+        return $true
+        
+    } catch {
+        Write-Log "NET Directory.Delete failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Remove-ExistingInstallation {
+    param([string]$destination)
+    
+    Write-Log "Attempting to clean up existing installation at: $destination"
+    
+    if (-not (Test-Path $destination)) {
+        Write-Log "No existing installation found at destination"
+        return $true
+    }
+    
+    try {
+        # First attempt: Try the .NET method directly (most reliable)
+        if (Force-DeleteDirectory -Path $destination) {
+            Write-Log "Successfully removed directory using .NET method"
+            return $true
+        }
+        
+        # Second attempt: Use robocopy method to force delete the directory - this bypasses most Windows file locking issues
+        Write-Log "Using robocopy method to force remove directory..."
+        
+        # Create empty temp directory
+        $emptyDir = Join-Path $env:TEMP "empty_$(Get-Date -Format 'yyyyMMddHHmmss')"
+        New-Item -ItemType Directory -Path $emptyDir -Force | Out-Null
+        
+        # Use robocopy to "mirror" empty directory over the target (effectively deleting everything)
+        Write-Log "Running robocopy to clear directory contents..."
+        Start-Process -FilePath "robocopy.exe" -ArgumentList "`"$emptyDir`"", "`"$destination`"", "/MIR", "/R:0", "/W:0", "/NFL", "/NDL", "/NJH", "/NJS" -Wait -WindowStyle Hidden | Out-Null
+        
+        # Clean up empty temp directory
+        Remove-Item -Path $emptyDir -Force -Confirm:$false -ErrorAction SilentlyContinue
+        
+        # Try to remove the now-empty destination directory
+        if (Test-Path $destination) {
+            try {
+                [System.IO.Directory]::Delete($destination, $true)
+                Write-Log "Successfully removed directory using System.IO.Directory.Delete"
+            } catch {
+                # Fallback to PowerShell cmdlet with all suppression flags
+                try {
+                    $null = Remove-Item -Path $destination -Recurse -Force -Confirm:$false -ErrorAction Stop 2>$null
+                    Write-Log "Successfully removed directory using Remove-Item"
+                } catch {
+                    Write-Log "Standard removal failed, trying alternative method..."
+                    
+                    # Ultimate fallback: Use cmd.exe rmdir
+                    Write-Log "Using cmd.exe rmdir as final removal method..."
+                    Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "rmdir", "/s", "/q", "`"$destination`"" -Wait -WindowStyle Hidden | Out-Null
+                    
+                    if (Test-Path $destination) {
+                        # Last resort: rename the directory
+                        try {
+                            $backupName = "$destination.old.$(Get-Date -Format 'yyyyMMddHHmmss')"
+                            [System.IO.Directory]::Move($destination, $backupName)
+                            Write-Log "Renamed problematic directory to: $backupName"
+                            Write-Log "Installation will continue. Please manually remove $backupName later."
+                        } catch {
+                            throw "Could not remove or rename existing installation directory. Please manually delete '$destination' and run the installer again."
+                        }
+                    } else {
+                        Write-Log "Successfully removed directory using cmd rmdir"
+                    }
+                }
+            }
+        }
+        
+        return $true
+        
+    } catch {
+        Write-Log "Error during cleanup: $($_.Exception.Message)"
+        
+        # Final attempt: try to create the installation in a different location
+        $alternativeDir = "$destination.new.$(Get-Date -Format 'yyyyMMddHHmmss')"
+        Write-Log "All cleanup attempts failed. Installation will use alternative directory: $alternativeDir"
+        throw "ALTERNATIVE_PATH:$alternativeDir"
+    }
+}
+
 function Initialize-GitRepo {
     param ([string]$repoUrl, [string]$destination, [System.Windows.Forms.Label]$StatusLabel = $null, [System.Windows.Forms.Form]$Form = $null)
     
-    Write-Log "Initializing Git repository at $destination"
-    $maxAttempts = 3
-    $attempt = 0
+    Write-Log "Attempting to download Server Manager from Git repository..."
+    $actualDestination = $destination  # Track the actual destination in case it changes
     
-    while ($attempt -lt $maxAttempts) {
-        $attempt++
-        try {
-            if (Get-Command git -ErrorAction SilentlyContinue) {
-                if (Test-Path $destination) {
-                    Write-Log "Removing existing directory..."
-                    Remove-Item -Path $destination -Recurse -Force
+    try {
+        if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+            Write-Log "Git not found, skipping to website download..."
+            throw "Git not available, using website fallback"
+        }
+        
+        # Use the new removal function
+        if (Test-Path $actualDestination) {
+            Write-Log "Removing existing directory..."
+            try {
+                if (-not (Remove-ExistingInstallation -destination $actualDestination)) {
+                    throw "Failed to remove existing installation"
                 }
-                
-                Write-Log "Cloning repository (attempt $attempt of $maxAttempts)..."
-                
-                # Update status label if provided
-                if ($StatusLabel -and $Form) {
-                    $StatusLabel.Text = "Git download attempt $attempt of $maxAttempts..."
-                    $Form.Refresh()
-                }
-                
-                # Use Start-Process with timeout for better control
-                $gitProcess = Start-Process -FilePath "git" -ArgumentList "clone", "--depth", "1", "--single-branch", $repoUrl, $destination -NoNewWindow -PassThru
-                
-                # Wait for the process to complete with timeout (60 seconds)
-                $timeoutReached = $false
-                if (-not $gitProcess.WaitForExit(60000)) {
-                    Write-Log "Git clone timeout reached (60 seconds), killing process..."
-                    try {
-                        $gitProcess.Kill()
-                        $gitProcess.WaitForExit(5000)
-                    } catch {
-                        Write-Log "Failed to kill git process: $($_.Exception.Message)"
-                    }
-                    $timeoutReached = $true
-                }
-                
-                if ($timeoutReached) {
-                    throw "Git clone operation timed out after 60 seconds"
-                }
-                
-                if ($gitProcess.ExitCode -ne 0) {
-                    throw "Git clone failed with exit code: $($gitProcess.ExitCode)"
-                }
-                
-                # Verify the clone was successful
-                if (Test-Path $destination) {
-                    Write-Log "Git repository successfully cloned."
-                    return
+            } catch {
+                if ($_.Exception.Message -like "ALTERNATIVE_PATH:*") {
+                    $actualDestination = $_.Exception.Message.Split(':')[1]
+                    Write-Log "Using alternative installation path: $actualDestination"
                 } else {
-                    throw "Repository directory not created after clone"
+                    throw
                 }
-            } else {
-                throw "Git is not installed or not found in the PATH"
             }
+        }
+        
+        Write-Log "Testing repository access before full clone..."
+        
+        # Update status label if provided
+        if ($StatusLabel -and $Form) {
+            $StatusLabel.Text = "Testing repository access..."
+            $Form.Refresh()
+        }
+        
+        # First, test if we can access the repository without credentials by doing a lightweight operation
+        Write-Log "Checking if repository is publicly accessible..."
+        $testProcess = Start-Process -FilePath "git" -ArgumentList "ls-remote", "--exit-code", $repoUrl, "HEAD" -NoNewWindow -PassThru -RedirectStandardOutput "NUL" -RedirectStandardError "NUL"
+        
+        # Give it 10 seconds max to respond
+        $testCompleted = $testProcess.WaitForExit(10000)
+        
+        if (-not $testCompleted) {
+            Write-Log "Repository access test timed out - likely requires authentication"
+            try {
+                $testProcess.Kill()
+                $testProcess.WaitForExit(2000)
+            } catch {
+                # Ignore kill errors
+            }
+            throw "Repository requires authentication, using website fallback"
+        }
+        
+        if ($testProcess.ExitCode -ne 0) {
+            Write-Log "Repository access test failed with exit code $($testProcess.ExitCode) - likely private or requires authentication"
+            throw "Repository not publicly accessible, using website fallback"
+        }
+        
+        Write-Log "Repository is publicly accessible, proceeding with clone..."
+        
+        # Update status for actual clone
+        if ($StatusLabel -and $Form) {
+            $StatusLabel.Text = "Cloning repository..."
+            $Form.Refresh()
+        }
+        
+        # Now do the actual clone with a timeout
+        $gitProcess = Start-Process -FilePath "git" -ArgumentList "clone", "--depth", "1", "--single-branch", $repoUrl, $actualDestination -NoNewWindow -PassThru -RedirectStandardOutput "NUL" -RedirectStandardError "NUL"
+        
+        # Wait for the process to complete with timeout (30 seconds for the actual clone)
+        $timeoutReached = $false
+        if (-not $gitProcess.WaitForExit(30000)) {
+            Write-Log "Git clone timed out after 30 seconds"
+            try {
+                $gitProcess.Kill()
+                $gitProcess.WaitForExit(2000)
+            } catch {
+                Write-Log "Failed to kill git process: $($_.Exception.Message)"
+            }
+            $timeoutReached = $true
+        }
+        
+        if ($timeoutReached) {
+            throw "Git clone operation timed out, using website fallback"
+        }
+        
+        if ($gitProcess.ExitCode -ne 0) {
+            throw "Git clone failed with exit code: $($gitProcess.ExitCode), using website fallback"
+        }
+        
+        # Verify the clone was successful
+        if (Test-Path $actualDestination) {
+            Write-Log "Git repository successfully cloned."
+            # Update the original destination variable if it changed
+            if ($actualDestination -ne $destination) {
+                Write-Log "Installation completed in alternative directory: $actualDestination"
+            }
+            return
+        } else {
+            throw "Repository directory not created after clone, using website fallback"
+        }
+        
+    } catch {
+        Write-Log "Git download failed: $($_.Exception.Message)"
+        Write-Log "Falling back to website download..."
+        
+        # Clean up any partial clone
+        if (Test-Path $actualDestination) {
+            try {
+                Force-DeleteDirectory -Path $actualDestination
+            } catch {
+                # Ignore cleanup errors
+            }
+        }
+        
+        # Update status for website fallback
+        if ($StatusLabel -and $Form) {
+            $StatusLabel.Text = "Git failed, downloading from website..."
+            $Form.Refresh()
+        }
+        
+        try {
+            Download-FromWebsite -destination $destination -StatusLabel $StatusLabel -Form $Form
+            Write-Log "Successfully downloaded Server Manager from website"
+            return
         } catch {
-            Write-Log "Git clone attempt $attempt failed: $($_.Exception.Message)"
+            Write-Log "Website download also failed: $($_.Exception.Message)"
             
-            # Clean up failed attempt
-            if (Test-Path $destination) {
-                try {
-                    Remove-Item -Path $destination -Recurse -Force -ErrorAction SilentlyContinue
-                } catch {
-                    Write-Log "Warning: Failed to clean up failed clone directory: $($_.Exception.Message)"
-                }
-            }
-            
-            if ($attempt -eq $maxAttempts) {
-                Write-Log "All Git clone attempts failed. Trying fallback download from website..."
-                
-                # Update status for website fallback
-                if ($StatusLabel -and $Form) {
-                    $StatusLabel.Text = "Git failed, trying website download..."
-                    $Form.Refresh()
-                }
-                
-                try {
-                    Download-FromWebsite -destination $destination -StatusLabel $StatusLabel -Form $Form
-                    return
-                } catch {
-                    Write-Log "Website download also failed: $($_.Exception.Message)"
-                    throw "Both Git clone and website download failed. Git error: $($_.Exception.Message)"
-                }
-            } else {
-                Write-Log "Retrying in 2 seconds..."
-                
-                # Update status for retry
-                if ($StatusLabel -and $Form) {
-                    $StatusLabel.Text = "Git attempt $attempt failed, retrying in 2 seconds..."
-                    $Form.Refresh()
-                }
-                
-                Start-Sleep -Seconds 2
-            }
+            # Final error message
+            $errorMessage = @"
+Both Git repository and website download failed.
+
+This could be because:
+1. The Git repository requires authentication (private repository)
+2. The website is temporarily unavailable  
+3. Network connectivity issues
+
+Please contact the developer for assistance or try again later.
+
+Technical Details:
+- Git Error: Repository access failed or timed out
+- Website Error: $($_.Exception.Message)
+"@
+            throw $errorMessage
         }
     }
 }
@@ -679,9 +933,11 @@ function Download-FromWebsite {
     while ($attempt -lt $maxAttempts) {
         $attempt++
         try {
-            # Clean up destination if it exists
+            # Clean up destination if it exists using the improved method
             if (Test-Path $destination) {
-                Remove-Item -Path $destination -Recurse -Force
+                if (-not (Remove-ExistingInstallation -destination $destination)) {
+                    throw "Failed to remove existing installation"
+                }
             }
             
             Write-Log "Website download attempt $attempt of $maxAttempts..."
@@ -737,11 +993,11 @@ function Download-FromWebsite {
                 Write-Log "Moving files from subdirectory to main directory..."
                 
                 # Move subdirectory contents to temp location
-                Move-Item -Path $subDir -Destination $tempDir
+                Move-Item -Path $subDir -Destination $tempDir -Force -Confirm:$false
                 
                 # Remove original destination and move temp to destination
-                Remove-Item -Path $destination -Recurse -Force
-                Move-Item -Path $tempDir -Destination $destination
+                Remove-Item -Path $destination -Recurse -Force -Confirm:$false
+                Move-Item -Path $tempDir -Destination $destination -Force -Confirm:$false
             }
             
             # Verify extraction
@@ -754,7 +1010,7 @@ function Download-FromWebsite {
             
             # Clean up
             if (Test-Path $tempZip) {
-                Remove-Item -Path $tempZip -Force
+                Remove-Item -Path $tempZip -Force -Confirm:$false
             }
             
             return
@@ -764,10 +1020,10 @@ function Download-FromWebsite {
             
             # Clean up on failure
             if (Test-Path $tempZip) {
-                Remove-Item -Path $tempZip -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path $tempZip -Force -Confirm:$false -ErrorAction SilentlyContinue
             }
             if (Test-Path $destination) {
-                Remove-Item -Path $destination -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path $destination -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
             }
             
             if ($attempt -eq $maxAttempts) {
@@ -1288,6 +1544,12 @@ function Start-Installation {
     )
 
     try {
+        # IMMEDIATELY ensure no console prompts during installation - MAXIMUM SUPPRESSION
+        Set-NoConsolePrompts
+        
+        # Also hide the console window completely during GUI operations
+        Show-Console -Hide
+        
         $totalSteps = 12
         $currentStep = 0
 
@@ -1318,6 +1580,13 @@ function Start-Installation {
             if (-not (Show-StepError "Admin Privilege Check" $_.Exception.Message)) {
                 throw "Installation cancelled by user after admin privilege check failed"
             }
+        }
+
+        Update-Progress "Stopping any running Server Manager instances..."
+        try {
+            Stop-RunningServerManager
+        } catch {
+            Write-Log "Warning: Error stopping running instances: $($_.Exception.Message)"
         }
 
         Update-Progress "Checking Python 3.10+ installation..."
@@ -1373,12 +1642,15 @@ function Start-Installation {
                 'SQLType' = $Settings.SQLType
             }
             
-            # Add database paths for SQLite
-            if ($Settings.SQLType -eq "SQLite") {
-                $registryValues['UsersSQLDatabasePath'] = "$ServerManagerDir\config\servermanager_users.db"
-                $registryValues['SteamSQLDatabasePath'] = "$ServerManagerDir\config\steam_ID.db"
+            # Add database paths (always set these for SQLite compatibility) - using db directory
+            $registryValues['UsersSQLDatabasePath'] = "$ServerManagerDir\db\servermanager_users.db"
+            $registryValues['SteamSQLDatabasePath'] = "$ServerManagerDir\db\steam_ID.db"
+            
+            if ($Settings.SQLType -eq "SQLite" -or [string]::IsNullOrEmpty($Settings.SQLType)) {
+                # SQLite is the default, database paths already set above
+                $registryValues['SQLType'] = "SQLite"
             } else {
-                # For other SQL types, set database names
+                # For other SQL types, also set database names
                 $registryValues['UsersSQLDatabase'] = "servermanager_users"
                 $registryValues['SteamSQLDatabase'] = "steam_apps"
                 if ($Settings.SQLHost) { $registryValues['SQLHost'] = $Settings.SQLHost }
@@ -1394,6 +1666,17 @@ function Start-Installation {
             New-Item -Path $registryPath -Force | Out-Null
             foreach ($key in $registryValues.Keys) {
                 Set-ItemProperty -Path $registryPath -Name $key -Value $registryValues[$key] -Force
+            }
+            
+            # Migrate any existing databases to the new db directory
+            Write-Log "Setting up database directory and migrating existing databases..."
+            $migrationScript = Join-Path $ServerManagerDir "setup-db-directory.ps1"
+            if (Test-Path $migrationScript) {
+                try {
+                    & $migrationScript -ServerManagerDir $ServerManagerDir
+                } catch {
+                    Write-Log "Warning: Database migration script encountered an issue: $($_.Exception.Message)"
+                }
             }
         } catch {
             if (-not (Show-StepError "Registry Configuration" "Failed to create registry entries: $($_.Exception.Message)")) {
@@ -1456,7 +1739,7 @@ function Start-Installation {
                 Write-Log "Downloading SteamCMD from $steamCmdUrl"
                 Invoke-WebRequest -Uri $steamCmdUrl -OutFile $steamCmdZip -TimeoutSec 30
                 Expand-Archive -Path $steamCmdZip -DestinationPath $Settings.SteamCMDPath -Force
-                Remove-Item -Path $steamCmdZip -Force
+            Remove-Item -Path $steamCmdZip -Force -Confirm:$false
             }
         } catch {
             if (-not (Show-StepError "SteamCMD Installation" "Failed to download or extract SteamCMD: $($_.Exception.Message)`n`nYou may need to install SteamCMD manually.")) {
@@ -1470,7 +1753,6 @@ function Start-Installation {
             if (Test-Path $steamCmdExe) {
                 Update-SteamCmd -steamCmdPath $steamCmdExe
             }
-            New-AppIDFile -serverManagerDir $ServerManagerDir
         } catch {
             Write-Log "Warning: SteamCMD update failed: $($_.Exception.Message)"
         }
@@ -1490,18 +1772,7 @@ function Start-Installation {
 
         Update-Progress "Creating configuration files..."
         try {
-            $sqlOptions = @{
-                SQLType = $Settings.SQLType
-                SQLVersion = $Settings.SQLVersion
-                SQLLocation = $Settings.SQLLocation
-            }
-            $hostTypeOptions = @{
-                HostType = $Settings.HostType
-                HostAddress = $Settings.HostAddress
-            }
-            if (-not (New-EnvironmentFile -ServerManagerDir $ServerManagerDir -SQLOptions $sqlOptions -SQLDatabasePath $SQLDatabasePath -HostTypeOptions $hostTypeOptions)) {
-                throw "Failed to create environment configuration file"
-            }
+            # Environment file creation removed - using registry-based configuration only
         } catch {
             if (-not (Show-StepError "Configuration Files" "Failed to create configuration files: $($_.Exception.Message)`n`nYou may need to configure the application manually.")) {
                 throw "Installation cancelled by user after configuration file creation failed"
@@ -1595,17 +1866,6 @@ function Start-Installation {
     }
 }
 
-function New-AppIDFile {
-    param ([string]$serverManagerDir)
-    $appIDFile = Join-Path $serverManagerDir "AppID.txt"
-    if (-Not (Test-Path $appIDFile)) {
-        New-Item -Path $appIDFile -ItemType File
-        Write-Log "Created AppID.txt file."
-    } else {
-        Write-Log "AppID.txt file already exists."
-    }
-}
-
 function Test-Python310 {
     $python = Get-Command python -ErrorAction SilentlyContinue
     if ($python) {
@@ -1630,7 +1890,7 @@ function Install-Python310 {
     Invoke-WebRequest -Uri $pythonInstallerUrl -OutFile $installerPath
     Write-Log "Running Python installer..."
     Start-Process -FilePath $installerPath -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0" -Wait
-    Remove-Item $installerPath -Force
+    Remove-Item $installerPath -Force -Confirm:$false
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
 }
 
@@ -1646,8 +1906,10 @@ function Install-PythonRequirements {
         Write-Log "Python not found in PATH after install. Please restart your shell and try again." -ForegroundColor Red
         return $false
     }
-    $pipInstall = & python -m pip install --upgrade pip
-    $pipReq = & python -m pip install -r $RequirementsPath
+    Write-Log "Upgrading pip..."
+    & python -m pip install --upgrade pip | Out-Null
+    Write-Log "Installing requirements from $RequirementsPath..."
+    & python -m pip install -r $RequirementsPath
     if ($LASTEXITCODE -ne 0) {
         Write-Log "Failed to install Python requirements." -ForegroundColor Red
         return $false
@@ -1702,66 +1964,240 @@ function Set-InitialAuthConfig {
     Write-Log "Starting authentication configuration setup"
     
     try {
-        # First try to create a simple admin user using direct database operations
-        $DataFolder = Join-Path $ServerManagerDir "data"
-        $dbFile = Join-Path $DataFolder "users.db"
+        # Check if user database exists - using db directory
+        $dbFolder = Join-Path $ServerManagerDir "db"
+        $dbFile = Join-Path $dbFolder "servermanager_users.db"
         
         if (Test-Path $dbFile) {
-            Write-Log "Creating default admin user directly in database"
+            # Show GUI for admin user setup
+            Write-Log "Setting up administrator user via GUI"
             
-            # Use Python to create admin user
-            $initScript = @"
+            $adminForm = New-Object System.Windows.Forms.Form
+            $adminForm.Text = "Administrator Account Setup"
+            $adminForm.Size = New-Object System.Drawing.Size(450, 350)
+            $adminForm.StartPosition = "CenterScreen"
+            $adminForm.FormBorderStyle = "FixedDialog"
+            $adminForm.MaximizeBox = $false
+            $adminForm.MinimizeBox = $false
+            
+            # Title
+            $titleLabel = New-Object System.Windows.Forms.Label
+            $titleLabel.Text = "Create Administrator Account"
+            $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+            $titleLabel.Location = New-Object System.Drawing.Point(20, 20)
+            $titleLabel.Size = New-Object System.Drawing.Size(400, 30)
+            $adminForm.Controls.Add($titleLabel)
+            
+            # Description
+            $descLabel = New-Object System.Windows.Forms.Label
+            $descLabel.Text = "Please create an administrator account for Server Manager:"
+            $descLabel.Location = New-Object System.Drawing.Point(20, 60)
+            $descLabel.Size = New-Object System.Drawing.Size(400, 20)
+            $adminForm.Controls.Add($descLabel)
+            
+            # Username field
+            $usernameLabel = New-Object System.Windows.Forms.Label
+            $usernameLabel.Text = "Username:"
+            $usernameLabel.Location = New-Object System.Drawing.Point(20, 100)
+            $usernameLabel.Size = New-Object System.Drawing.Size(100, 20)
+            $adminForm.Controls.Add($usernameLabel)
+            
+            $usernameBox = New-Object System.Windows.Forms.TextBox
+            $usernameBox.Text = "admin"
+            $usernameBox.Location = New-Object System.Drawing.Point(130, 98)
+            $usernameBox.Size = New-Object System.Drawing.Size(280, 22)
+            $adminForm.Controls.Add($usernameBox)
+            
+            # Password field
+            $passwordLabel = New-Object System.Windows.Forms.Label
+            $passwordLabel.Text = "Password:"
+            $passwordLabel.Location = New-Object System.Drawing.Point(20, 140)
+            $passwordLabel.Size = New-Object System.Drawing.Size(100, 20)
+            $adminForm.Controls.Add($passwordLabel)
+            
+            $passwordBox = New-Object System.Windows.Forms.TextBox
+            $passwordBox.UseSystemPasswordChar = $true
+            $passwordBox.Location = New-Object System.Drawing.Point(130, 138)
+            $passwordBox.Size = New-Object System.Drawing.Size(280, 22)
+            $adminForm.Controls.Add($passwordBox)
+            
+            # Confirm Password field
+            $confirmLabel = New-Object System.Windows.Forms.Label
+            $confirmLabel.Text = "Confirm Password:"
+            $confirmLabel.Location = New-Object System.Drawing.Point(20, 180)
+            $confirmLabel.Size = New-Object System.Drawing.Size(100, 20)
+            $adminForm.Controls.Add($confirmLabel)
+            
+            $confirmBox = New-Object System.Windows.Forms.TextBox
+            $confirmBox.UseSystemPasswordChar = $true
+            $confirmBox.Location = New-Object System.Drawing.Point(130, 178)
+            $confirmBox.Size = New-Object System.Drawing.Size(280, 22)
+            $adminForm.Controls.Add($confirmBox)
+            
+            # Email field (optional)
+            $emailLabel = New-Object System.Windows.Forms.Label
+            $emailLabel.Text = "Email (optional):"
+            $emailLabel.Location = New-Object System.Drawing.Point(20, 220)
+            $emailLabel.Size = New-Object System.Drawing.Size(100, 20)
+            $adminForm.Controls.Add($emailLabel)
+            
+            $emailBox = New-Object System.Windows.Forms.TextBox
+            $emailBox.Text = "admin@localhost"
+            $emailBox.Location = New-Object System.Drawing.Point(130, 218)
+            $emailBox.Size = New-Object System.Drawing.Size(280, 22)
+            $adminForm.Controls.Add($emailBox)
+            
+            # Buttons
+            $okButton = New-Object System.Windows.Forms.Button
+            $okButton.Text = "Create Account"
+            $okButton.Location = New-Object System.Drawing.Point(250, 270)
+            $okButton.Size = New-Object System.Drawing.Size(80, 30)
+            $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $adminForm.Controls.Add($okButton)
+            
+            $cancelButton = New-Object System.Windows.Forms.Button
+            $cancelButton.Text = "Skip"
+            $cancelButton.Location = New-Object System.Drawing.Point(340, 270)
+            $cancelButton.Size = New-Object System.Drawing.Size(70, 30)
+            $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+            $adminForm.Controls.Add($cancelButton)
+            
+            # Form validation
+            $okButton.Add_Click({
+                if ([string]::IsNullOrWhiteSpace($usernameBox.Text)) {
+                    [System.Windows.Forms.MessageBox]::Show("Username is required.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+                    return
+                }
+                if ([string]::IsNullOrWhiteSpace($passwordBox.Text)) {
+                    [System.Windows.Forms.MessageBox]::Show("Password is required.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+                    return
+                }
+                if ($passwordBox.Text -ne $confirmBox.Text) {
+                    [System.Windows.Forms.MessageBox]::Show("Passwords do not match.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+                    return
+                }
+                $adminForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            })
+            
+            $adminForm.AcceptButton = $okButton
+            $adminForm.CancelButton = $cancelButton
+            
+            # Show the form
+            $result = $adminForm.ShowDialog()
+            
+            if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+                # Create the admin user
+                $username = $usernameBox.Text.Trim()
+                $password = $passwordBox.Text
+                $email = $emailBox.Text.Trim()
+                
+                $createAdminScript = @"
 import sqlite3
 import hashlib
-import secrets
+import uuid
+from datetime import datetime
 
-def create_admin_user():
-    try:
-        conn = sqlite3.connect(r'$dbFile')
-        cursor = conn.cursor()
-        
-        # Check if admin user already exists
-        cursor.execute('SELECT id FROM users WHERE username = ?', ('admin',))
-        if cursor.fetchone():
-            print('Admin user already exists')
-            return True
-        
-        # Create admin user with default password 'admin'
-        salt = secrets.token_hex(16)
-        password_hash = hashlib.sha256(('admin' + salt).encode()).hexdigest()
+username = '$username'
+password = '$password'
+email = '$email'
+dbfile = r'$dbFile'
+
+try:
+    conn = sqlite3.connect(dbfile)
+    cursor = conn.cursor()
+    
+    # Check if user already exists
+    cursor.execute('SELECT id FROM users WHERE username = ?', (username,))
+    if cursor.fetchone():
+        print(f'ERROR: User {username} already exists')
+    else:
+        # Create admin user
+        admin_password = hashlib.sha256(password.encode()).hexdigest()
+        account_number = str(uuid.uuid4())[:8].upper()
+        created_at = datetime.utcnow().isoformat()
         
         cursor.execute('''
-            INSERT INTO users (username, password, email, is_admin, is_active)
-            VALUES (?, ?, ?, ?, ?)
-        ''', ('admin', password_hash + ':' + salt, 'admin@localhost', 1, 1))
+            INSERT INTO users (username, password, email, first_name, last_name, display_name, account_number, is_admin, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (username, admin_password, email, 'System', 'Administrator', username.title(), account_number, 1, 1, created_at))
         
         conn.commit()
-        conn.close()
-        print('SUCCESS: Admin user created')
-        return True
+        print(f'SUCCESS: Administrator user {username} created')
         
-    except Exception as e:
-        print(f'ERROR: {e}')
-        return False
-
-create_admin_user()
+    conn.close()
+except Exception as e:
+    print(f'ERROR: {e}')
 "@
-            
-            $tempPyFile = [System.IO.Path]::GetTempFileName() + ".py"
-            Set-Content -Path $tempPyFile -Value $initScript
-            
-            try {
-                $result = & python $tempPyFile 2>&1
-                Write-Log "Authentication initialization result: $result"
                 
-                if ($result -match "SUCCESS" -or $result -match "already exists") {
-                    Write-Log "Authentication system initialized successfully"
-                } else {
-                    Write-Log "Warning: Authentication initialization may have failed: $result"
+                $tempAdminPy = [System.IO.Path]::GetTempFileName() + ".py"
+                Set-Content -Path $tempAdminPy -Value $createAdminScript
+                
+                try {
+                    $adminResult = python $tempAdminPy 2>&1
+                    Write-Log "Admin user creation result: $adminResult"
+                    
+                    if ($adminResult -match "SUCCESS") {
+                        Write-Log "Administrator user created successfully"
+                        [System.Windows.Forms.MessageBox]::Show(
+                            "Administrator account '$username' has been created successfully!",
+                            "Account Created",
+                            [System.Windows.Forms.MessageBoxButtons]::OK,
+                            [System.Windows.Forms.MessageBoxIcon]::Information
+                        )
+                    } else {
+                        Write-Log "Warning: Admin user creation may have failed: $adminResult"
+                    }
+                } finally {
+                    Remove-Item $tempAdminPy -Force -Confirm:$false -ErrorAction SilentlyContinue
                 }
-            } finally {
-                Remove-Item $tempPyFile -Force -ErrorAction SilentlyContinue
+            } else {
+                Write-Log "Admin user setup skipped by user"
+                # Create a default admin user
+                $defaultAdminScript = @"
+import sqlite3
+import hashlib
+import uuid
+from datetime import datetime
+
+try:
+    conn = sqlite3.connect(r'$dbFile')
+    cursor = conn.cursor()
+    
+    # Check if any admin user exists
+    cursor.execute('SELECT COUNT(*) FROM users WHERE is_admin = 1')
+    admin_count = cursor.fetchone()[0]
+    
+    if admin_count == 0:
+        # Create default admin user
+        admin_password = hashlib.sha256('admin'.encode()).hexdigest()
+        account_number = str(uuid.uuid4())[:8].upper()
+        created_at = datetime.utcnow().isoformat()
+        
+        cursor.execute('''
+            INSERT INTO users (username, password, email, first_name, last_name, display_name, account_number, is_admin, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', ('admin', admin_password, 'admin@localhost', 'System', 'Administrator', 'Admin', account_number, 1, 1, created_at))
+        
+        conn.commit()
+        print('SUCCESS: Default admin user created (username: admin, password: admin)')
+    
+    conn.close()
+except Exception as e:
+    print(f'ERROR: {e}')
+"@
+                
+                $tempDefaultPy = [System.IO.Path]::GetTempFileName() + ".py"
+                Set-Content -Path $tempDefaultPy -Value $defaultAdminScript
+                
+                try {
+                    $defaultResult = python $tempDefaultPy 2>&1
+                    Write-Log "Default admin creation result: $defaultResult"
+                } finally {
+                    Remove-Item $tempDefaultPy -Force -Confirm:$false -ErrorAction SilentlyContinue
+                }
             }
+            
+            $adminForm.Dispose()
         } else {
             Write-Log "Database file not found, authentication setup will be handled by application startup"
         }
