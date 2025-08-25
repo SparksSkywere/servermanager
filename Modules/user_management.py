@@ -54,6 +54,10 @@ class UserManager:
         # Create tables if they don't exist
         Base.metadata.create_all(engine)
         
+        # Ensure root admin user exists
+        from Modules.Database.user_database import ensure_root_admin
+        ensure_root_admin(engine)
+        
         # Migrate existing database schema
         self._migrate_database_schema()
         
@@ -167,19 +171,19 @@ class UserManager:
             user = self.get_user(username)
             if not user:
                 logger.warning(f"User not found: {username}")
-                return False
+                return None
             
             # Check if user is active
             if not getattr(user, 'is_active', True):
                 logger.warning(f"Inactive user attempted login: {username}")
-                return False
+                return None
             
             # Verify password
             hashed_password = hashlib.sha256(password.encode()).hexdigest()
             stored_password = getattr(user, 'password', None)
             if not stored_password or stored_password != hashed_password:
                 logger.warning(f"Invalid password for user: {username}")
-                return False
+                return None
             
             # Update last login time
             try:
@@ -188,11 +192,11 @@ class UserManager:
                 logger.warning(f"Failed to update last login time: {e}")
             
             logger.info(f"Successfully authenticated user: {username}")
-            return True
+            return user
             
         except Exception as e:
             logger.error(f"Error authenticating user {username}: {e}")
-            return False
+            return None
 
     def verify_2fa(self, username, token, admin_override=False):
         """Verify 2FA token for user"""

@@ -6,7 +6,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from tkinter import messagebox, simpledialog
 from Modules.user_management import UserManager
-from Modules.Database.SQL_Connection import get_engine, ensure_root_admin
+from Modules.Database.user_database import get_user_engine, ensure_root_admin
 
 try:
     import pyotp
@@ -15,12 +15,179 @@ except ImportError:
     PYOTP_AVAILABLE = False
     print("Warning: pyotp not available. 2FA functionality will be disabled.")
 
+def admin_login(user_manager):
+    """
+    Admin login dialog that requires admin privileges
+    Returns authenticated admin user or None if login fails/cancelled
+    """
+    max_attempts = 3
+    attempts = 0
+    
+    while attempts < max_attempts:
+        # Create login dialog
+        login_root = tk.Tk()
+        login_root.withdraw()  # Hide the root window
+        
+        login_dialog = tk.Toplevel(login_root)
+        login_dialog.title("Admin Dashboard - Authentication Required")
+        login_dialog.geometry("450x350")
+        login_dialog.resizable(False, False)
+        login_dialog.grab_set()
+        
+        # Center the dialog
+        login_dialog.update_idletasks()
+        x = (login_dialog.winfo_screenwidth() // 2) - (450 // 2)
+        y = (login_dialog.winfo_screenheight() // 2) - (350 // 2)
+        login_dialog.geometry(f"450x350+{x}+{y}")
+        
+        # Main frame
+        main_frame = tk.Frame(login_dialog, padx=30, pady=30)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title and warning
+        title_label = tk.Label(main_frame, text="Administrator Access Required", 
+                              font=("Segoe UI", 16, "bold"), fg="darkred")
+        title_label.pack(pady=(0, 10))
+        
+        warning_label = tk.Label(main_frame, 
+                                text="This dashboard provides full user management capabilities.\n"
+                                     "Only administrators can access this interface.",
+                                font=("Segoe UI", 10), fg="gray", justify=tk.CENTER)
+        warning_label.pack(pady=(0, 25))
+        
+        # Username field
+        tk.Label(main_frame, text="Username:", font=("Segoe UI", 11, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        username_var = tk.StringVar()
+        username_entry = tk.Entry(main_frame, textvariable=username_var, width=35, font=("Segoe UI", 11))
+        username_entry.pack(pady=(0, 15), fill=tk.X)
+        username_entry.focus_set()
+        
+        # Password field
+        tk.Label(main_frame, text="Password:", font=("Segoe UI", 11, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        password_var = tk.StringVar()
+        password_entry = tk.Entry(main_frame, textvariable=password_var, show="*", width=35, font=("Segoe UI", 11))
+        password_entry.pack(pady=(0, 20), fill=tk.X)
+        
+        # Status label for errors
+        status_var = tk.StringVar()
+        status_label = tk.Label(main_frame, textvariable=status_var, foreground="red", 
+                               font=("Segoe UI", 10), wraplength=350)
+        status_label.pack(pady=(0, 15))
+        
+        # Show attempt counter
+        if attempts > 0:
+            attempts_label = tk.Label(main_frame, 
+                                    text=f"Attempt {attempts + 1} of {max_attempts}", 
+                                    font=("Segoe UI", 9), fg="orange")
+            attempts_label.pack(pady=(0, 10))
+        
+        # Result variables
+        login_result = [None]  # [authenticated_user]
+        dialog_closed = [False]
+        
+        def on_login():
+            username = username_var.get().strip()
+            password = password_var.get()
+            
+            if not username or not password:
+                status_var.set("Please enter both username and password")
+                return
+            
+            try:
+                # Authenticate user
+                user = user_manager.authenticate_user(username, password)
+                if user:
+                    # Check if user is admin
+                    if not getattr(user, 'is_admin', False):
+                        status_var.set("Access denied: Administrator privileges required")
+                        password_var.set("")  # Clear password
+                        return
+                    
+                    # Check if user is active
+                    if not getattr(user, 'is_active', True):
+                        status_var.set("Access denied: Account is inactive")
+                        password_var.set("")  # Clear password
+                        return
+                    
+                    # Successfully authenticated as admin
+                    login_result[0] = user
+                    login_dialog.destroy()
+                    login_root.destroy()
+                else:
+                    status_var.set("Invalid username or password")
+                    password_var.set("")  # Clear password
+                    
+            except Exception as e:
+                status_var.set(f"Authentication error: {str(e)}")
+                password_var.set("")  # Clear password
+        
+        def on_cancel():
+            dialog_closed[0] = True
+            login_dialog.destroy()
+            login_root.destroy()
+        
+        # Button frame
+        button_frame = tk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        cancel_btn = tk.Button(button_frame, text="Cancel", command=on_cancel, 
+                              width=12, font=("Segoe UI", 10))
+        cancel_btn.pack(side=tk.LEFT)
+        
+        login_btn = tk.Button(button_frame, text="Login", command=on_login, 
+                             width=12, font=("Segoe UI", 10, "bold"))
+        login_btn.pack(side=tk.RIGHT)
+        
+        # Bind Enter key
+        def on_enter(event):
+            on_login()
+        
+        username_entry.bind('<Return>', on_enter)
+        password_entry.bind('<Return>', on_enter)
+        
+        # Handle window close button
+        def on_close():
+            dialog_closed[0] = True
+            login_dialog.destroy()
+            login_root.destroy()
+        
+        login_dialog.protocol("WM_DELETE_WINDOW", on_close)
+        
+        # Wait for dialog to close
+        login_root.wait_window(login_dialog)
+        
+        # Check results
+        if dialog_closed[0]:
+            return None  # User cancelled
+        
+        if login_result[0]:
+            return login_result[0]  # Successful login
+        
+        # Failed attempt
+        attempts += 1
+        if attempts >= max_attempts:
+            messagebox.showerror("Access Denied", 
+                               f"Maximum login attempts ({max_attempts}) exceeded.\n"
+                               "Admin dashboard access denied.")
+            return None
+    
+    return None
+
 def main():
     try:
-        engine = get_engine()
+        # Initialize database and user manager
+        engine = get_user_engine()
         ensure_root_admin(engine)
         um = UserManager(engine)
-        app = AdminDashboard(um)
+        
+        # Require admin authentication before opening dashboard
+        authenticated_user = admin_login(um)
+        if not authenticated_user:
+            print("Admin authentication failed or cancelled", file=sys.stderr)
+            sys.exit(0)
+        
+        # Start admin dashboard with authenticated user
+        app = AdminDashboard(um, authenticated_user)
         app.mainloop()
     except Exception as e:
         print(f"Error initializing admin dashboard: {e}", file=sys.stderr)
@@ -28,10 +195,11 @@ def main():
         sys.exit(1)
 
 class AdminDashboard(tk.Tk):
-    def __init__(self, user_manager):
+    def __init__(self, user_manager, authenticated_user):
         super().__init__()
         self.user_manager = user_manager
-        self.title("Admin Dashboard - User Management")
+        self.authenticated_user = authenticated_user
+        self.title(f"Admin Dashboard - User Management (Logged in as: {authenticated_user.username})")
         self.geometry("1000x600")
         self.all_users = []
         self.current_filter = {"column": "account_number", "text": "", "sort_order": "asc"}
@@ -49,6 +217,25 @@ class AdminDashboard(tk.Tk):
         
         self.create_widgets()
         self.refresh_user_list()
+        
+        # Handle window close event
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def logout(self):
+        """Logout and close the admin dashboard"""
+        if messagebox.askyesno("Logout", 
+                             "Are you sure you want to logout and close the Admin Dashboard?", 
+                             parent=self):
+            self.quit()
+            self.destroy()
+    
+    def on_closing(self):
+        """Handle window close event"""
+        if messagebox.askyesno("Exit", 
+                             "Are you sure you want to exit the Admin Dashboard?", 
+                             parent=self):
+            self.quit()
+            self.destroy()
 
     def create_widgets(self):
         main_frame = tk.Frame(self)
@@ -56,7 +243,37 @@ class AdminDashboard(tk.Tk):
         
         title_label = tk.Label(main_frame, text="Server Manager - User Administration", 
                               font=("Arial", 14, "bold"))
-        title_label.pack(pady=(0, 15))
+        title_label.pack(pady=(0, 5))
+        
+        # User info and logout
+        user_info_frame = tk.Frame(main_frame)
+        user_info_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        user_info_text = f"Logged in as: {self.authenticated_user.username}"
+        if getattr(self.authenticated_user, 'display_name', None):
+            user_info_text += f" ({self.authenticated_user.display_name})"
+        
+        # Add last login info if available
+        last_login = getattr(self.authenticated_user, 'last_login', None)
+        if last_login:
+            if isinstance(last_login, str):
+                try:
+                    from datetime import datetime
+                    last_login_dt = datetime.fromisoformat(last_login.replace('Z', '+00:00'))
+                    last_login_text = last_login_dt.strftime("%m/%d/%Y at %I:%M %p")
+                except:
+                    last_login_text = str(last_login)
+            else:
+                last_login_text = last_login.strftime("%m/%d/%Y at %I:%M %p")
+            user_info_text += f" | Last login: {last_login_text}"
+        
+        user_info_label = tk.Label(user_info_frame, text=user_info_text, 
+                                  font=("Arial", 10), fg="blue")
+        user_info_label.pack(side=tk.LEFT)
+        
+        logout_btn = tk.Button(user_info_frame, text="Logout", command=self.logout, 
+                              width=10, font=("Arial", 9), fg="red")
+        logout_btn.pack(side=tk.RIGHT)
         
         filter_frame = tk.LabelFrame(main_frame, text="Filter & Sort Options", font=("Arial", 10, "bold"), padx=10, pady=10)
         filter_frame.pack(fill=tk.X, pady=(0, 15))
@@ -454,6 +671,14 @@ class AdminDashboard(tk.Tk):
             
             def save_changes():
                 try:
+                    # Security check: prevent removing own admin privileges
+                    if username == self.authenticated_user.username and not admin_var.get():
+                        if not messagebox.askyesno("Warning", 
+                                                 "You are about to remove your own administrator privileges.\n"
+                                                 "This will prevent you from accessing this admin dashboard.\n\n"
+                                                 "Are you sure you want to continue?", parent=edit_window):
+                            return
+                    
                     two_factor_secret = getattr(user, "two_factor_secret", None)
                     enable_2fa = twofa_var.get()
                     
@@ -528,6 +753,11 @@ class AdminDashboard(tk.Tk):
                 
             if username.lower() == "admin":
                 messagebox.showerror("Error", "Cannot delete the main admin user.")
+                return
+                
+            # Prevent self-deletion
+            if username == self.authenticated_user.username:
+                messagebox.showerror("Error", "Cannot delete your own account while logged in.")
                 return
             
             if messagebox.askyesno("Confirm Delete", 

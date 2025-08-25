@@ -1439,8 +1439,65 @@ class ServerManagerWebServer(ServerManagerModule):
         try:
             logger.info(f"Starting web server on port {self.web_port}")
             
-            # Get host from environment variable
-            host = os.getenv("WEB_HOST", "0.0.0.0")
+            # Security-first host binding
+            # Default to localhost only for security
+            default_host = "127.0.0.1"  # Secure default - localhost only
+            
+            # Load security configuration
+            security_config = None
+            try:
+                config_path = os.path.join(self.server_manager_dir or "", "config", "security_config.json")
+                if os.path.exists(config_path):
+                    with open(config_path, 'r') as f:
+                        security_config = json.load(f)
+                        logger.info("Loaded security configuration from file")
+            except Exception as e:
+                logger.debug(f"Could not load security config file: {e}")
+            
+            # Check if this is a cluster host that needs external access
+            try:
+                # Import registry constants
+                from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+                key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
+                host_type = winreg.QueryValueEx(key, "HostType")[0]
+                try:
+                    cluster_enabled = winreg.QueryValueEx(key, "ClusterEnabled")[0] == "true"
+                except Exception:
+                    cluster_enabled = False
+                winreg.CloseKey(key)
+                
+                # Override with security config if available
+                if security_config:
+                    cluster_enabled = security_config.get("security", {}).get("cluster_enabled", cluster_enabled)
+                    bind_localhost_only = security_config.get("security", {}).get("bind_localhost_only", True)
+                    
+                    if bind_localhost_only:
+                        logger.info("SECURITY: Security config enforcing localhost-only binding")
+                    elif host_type == "Host" and cluster_enabled:
+                        # For cluster hosts, allow external binding but log security warning
+                        default_host = "0.0.0.0"
+                        logger.warning("SECURITY: Binding to all interfaces (0.0.0.0) for cluster host - ensure firewall is configured!")
+                    else:
+                        logger.info("SECURITY: Using secure default localhost binding (127.0.0.1)")
+                else:
+                    # Legacy behavior - only bind to all interfaces if explicitly configured as cluster host
+                    if host_type == "Host" and cluster_enabled:
+                        # For cluster hosts, allow external binding but log security warning
+                        default_host = "0.0.0.0"
+                        logger.warning("SECURITY: Binding to all interfaces (0.0.0.0) for cluster host - ensure firewall is configured!")
+                    else:
+                        logger.info("SECURITY: Using secure default localhost binding (127.0.0.1)")
+            except Exception as e:
+                logger.debug(f"Could not read cluster config from registry: {e}")
+                if security_config and security_config.get("security", {}).get("bind_localhost_only", True):
+                    logger.info("SECURITY: Security config enforcing localhost-only binding")
+                else:
+                    logger.info("SECURITY: Using secure default localhost binding (127.0.0.1)")
+            
+            # Allow override via environment variable (with security warning)
+            host = os.getenv("WEB_HOST", default_host)
+            if host == "0.0.0.0" and default_host != "0.0.0.0":
+                logger.warning("SECURITY: WEB_HOST environment variable overriding secure default - ensure this is intentional!")
             
             # Prepare server arguments
             server_args = {

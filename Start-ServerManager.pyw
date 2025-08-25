@@ -6,6 +6,9 @@ import json
 import time
 import winreg
 
+# Prevent Python from creating __pycache__ directories
+os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
+
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 

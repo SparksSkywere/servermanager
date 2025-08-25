@@ -69,6 +69,183 @@ from Modules.server_console import ConsoleManager
 # Get dashboard logger
 logger = get_dashboard_logger()
 
+def dashboard_login(user_manager, parent_window=None):
+    """
+    Dashboard login dialog with improved styling
+    Returns (success, authenticated_user) tuple
+    """
+    max_attempts = 3
+    attempts = 0
+    
+    while attempts < max_attempts:
+        # Create login dialog
+        if parent_window:
+            login_dialog = tk.Toplevel(parent_window)
+            login_dialog.transient(parent_window)
+        else:
+            login_root = tk.Tk()
+            login_root.withdraw()  # Hide the root window
+            login_dialog = tk.Toplevel(login_root)
+        
+        login_dialog.title("Server Manager - User Authentication")
+        login_dialog.geometry("400x300")
+        login_dialog.resizable(False, False)
+        login_dialog.grab_set()
+        login_dialog.configure(bg='white')
+        
+        # Center the dialog
+        login_dialog.update_idletasks()
+        x = (login_dialog.winfo_screenwidth() // 2) - (200)
+        y = (login_dialog.winfo_screenheight() // 2) - (150)
+        login_dialog.geometry(f"400x300+{x}+{y}")
+        
+        # Main container frame
+        container = tk.Frame(login_dialog, bg='white', padx=20, pady=20)
+        container.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = tk.Label(container, text="Server Manager Dashboard", 
+                              font=("Segoe UI", 14, "bold"), fg="darkblue", bg='white')
+        title_label.pack(pady=(0, 15))
+        
+        # Username field
+        tk.Label(container, text="Username:", font=("Segoe UI", 10, "bold"), bg='white').pack(anchor=tk.W, pady=(10, 5))
+        username_var = tk.StringVar()
+        username_entry = tk.Entry(container, textvariable=username_var, width=25, font=("Segoe UI", 10))
+        username_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        # Password field
+        tk.Label(container, text="Password:", font=("Segoe UI", 10, "bold"), bg='white').pack(anchor=tk.W, pady=(0, 5))
+        password_var = tk.StringVar()
+        password_entry = tk.Entry(container, textvariable=password_var, show="*", width=25, font=("Segoe UI", 10))
+        password_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        # Status label for errors
+        status_var = tk.StringVar()
+        status_label = tk.Label(container, textvariable=status_var, foreground="red", 
+                               font=("Segoe UI", 9), bg='white', wraplength=350)
+        status_label.pack(pady=(0, 15))
+        
+        # Show attempt counter if not first attempt
+        if attempts > 0:
+            attempts_label = tk.Label(container, 
+                                    text=f"Login attempt {attempts + 1} of {max_attempts}", 
+                                    font=("Segoe UI", 8), fg="orange", bg='white')
+            attempts_label.pack(pady=(0, 15))
+        
+        # Result variables
+        login_result = [False, None]  # [success, user]
+        dialog_closed = [False]
+        
+        def on_login():           
+            # Get values directly from entry widgets
+            username = username_entry.get().strip()
+            password = password_entry.get()
+
+            if not username or not password:
+                status_var.set("Please enter both username and password")
+                return
+            
+            try:
+                print(f"Attempting to authenticate user: {username}")
+                # Authenticate user
+                user = user_manager.authenticate_user(username, password)
+                if user:
+                    print("Authentication successful!")
+                    # Check if user is active
+                    if not getattr(user, 'is_active', True):
+                        status_var.set("Account is inactive. Please contact an administrator.")
+                        password_entry.delete(0, tk.END)
+                        return
+                    
+                    # Successfully authenticated
+                    login_result[0] = True
+                    login_result[1] = user
+                    login_dialog.destroy()
+                    if not parent_window:
+                        login_root.destroy()
+                else:
+                    print("Authentication failed - invalid credentials")
+                    status_var.set("Invalid username or password. Please try again.")
+                    password_entry.delete(0, tk.END)
+                    
+            except Exception as e:
+                print(f"Authentication error: {e}")
+                status_var.set(f"Authentication error: {str(e)}")
+                password_entry.delete(0, tk.END)
+        
+        def on_cancel():
+            print("Cancel")
+            dialog_closed[0] = True
+            login_dialog.destroy()
+            if not parent_window:
+                login_root.destroy()
+        
+        # Button frame at the bottom
+        button_frame = tk.Frame(container, bg='white')
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(20, 0))
+        
+        # Simple, visible buttons
+        cancel_btn = tk.Button(button_frame, text="Cancel", command=on_cancel, 
+                              font=("Segoe UI", 10, "bold"), width=12)
+        cancel_btn.pack(side=tk.LEFT)
+        
+        login_btn = tk.Button(button_frame, text="Sign In", command=on_login, 
+                             font=("Segoe UI", 10, "bold"), width=12)
+        login_btn.pack(side=tk.RIGHT)       
+        
+        # Bind Enter key to both fields
+        def on_enter(event):
+            on_login()
+        
+        username_entry.bind('<Return>', on_enter)
+        password_entry.bind('<Return>', on_enter)
+        
+        # Handle window close button
+        def on_close():
+            dialog_closed[0] = True
+            login_dialog.destroy()
+            if not parent_window:
+                login_root.destroy()
+        
+        login_dialog.protocol("WM_DELETE_WINDOW", on_close)
+        
+        # Focus on username field
+        login_dialog.after(100, username_entry.focus_set)
+        
+        print("Waiting for dialog interaction...")  # Debug
+        
+        # Wait for dialog to close
+        if parent_window:
+            parent_window.wait_window(login_dialog)
+        else:
+            login_root.wait_window(login_dialog)
+        
+        print(f"Dialog closed. Result: success={login_result[0]}, cancelled={dialog_closed[0]}")  # Debug
+        
+        # Check results
+        if dialog_closed[0]:
+            return False, None  # User cancelled
+        
+        if login_result[0]:
+            return True, login_result[1]  # Successful login
+        
+        # Failed attempt
+        attempts += 1
+        if attempts >= max_attempts:
+            if parent_window:
+                messagebox.showerror("Access Denied", 
+                                   f"Maximum login attempts ({max_attempts}) exceeded.\n"
+                                   "Access to the dashboard has been denied.", 
+                                   parent=parent_window)
+            else:
+                messagebox.showerror("Access Denied", 
+                                   f"Maximum login attempts ({max_attempts}) exceeded.\n"
+                                   "Access to the dashboard has been denied.")
+            return False, None
+    
+    return False, None
+
 class ServerManagerDashboard(ServerManagerModule):
     def __init__(self, debug_mode=False):
         super().__init__("ServerManagerDashboard")
@@ -173,14 +350,33 @@ class ServerManagerDashboard(ServerManagerModule):
             logger.error(f"Failed to initialize server console manager: {e}")
             self.console_manager = None
             
-            
         # Configure dashboard logging after paths are initialized
         configure_dashboard_logging(self.debug_mode, self.config)
         
-        # Set up the UI
+        # Create root window (temporarily hidden for login)
         self.root = tk.Tk()
-        self.root.title("Server Manager Dashboard")
+        self.root.withdraw()  # Hide window during login
+        
+        # Prompt for login using improved authentication dialog
+        # Exit if login is cancelled
+        try:
+            success, user = dashboard_login(self.user_manager, None)  # No parent window yet
+            if not success:
+                logger.info("Login cancelled, exiting application")
+                self.root.destroy()
+                sys.exit(0)
+            self.current_user = user
+        except Exception as e:
+            logger.error(f"Error during login: {str(e)}")
+            messagebox.showerror("Login Error", f"Failed to authenticate: {str(e)}\n\nThe application will exit.")
+            self.root.destroy()
+            sys.exit(1)
+        
+        # Now configure the UI with user information
+        username = getattr(self.current_user, 'username', 'Unknown') if self.current_user else 'Unknown'
+        self.root.title(f"Server Manager Dashboard (Logged in as: {username})")
         self.root.minsize(1000, 700)
+        self.root.deiconify()  # Show window after successful login
         
         # Center the main window on screen
         center_window(self.root, 1400, 900)
@@ -223,21 +419,6 @@ class ServerManagerDashboard(ServerManagerModule):
             self.supported_server_types = self.server_manager.get_supported_server_types()
         else:
             self.supported_server_types = ["Steam", "Minecraft", "Other"]
-        
-        # Prompt for login using SQL authentication
-        # Exit if login is cancelled
-        try:
-            success, user = sql_login(self.user_manager, self.root)
-            if not success:
-                logger.info("Login cancelled, exiting application")
-                self.root.destroy()
-                sys.exit(0)
-            self.current_user = user
-        except Exception as e:
-            logger.error(f"Error during login: {str(e)}")
-            messagebox.showerror("Login Error", f"Failed to authenticate: {str(e)}\n\nThe application will exit.")
-            self.root.destroy()
-            sys.exit(1)
 
     def setup_menu_bar(self):
         """Setup the menu bar with update options"""
@@ -1636,7 +1817,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             success = self.console_manager.show_console(server_name, self.root)
             
             if success:
-                logger.info(f"USER_ACTION: {self.current_user.username if self.current_user else 'Unknown'} opened console for server: {server_name}")
+                username = getattr(self.current_user, 'username', 'Unknown') if self.current_user else 'Unknown'
+                logger.info(f"USER_ACTION: {username} opened console for server: {server_name}")
             else:
                 messagebox.showerror("Console Error", f"Failed to open console for {server_name}")
             
@@ -2284,9 +2466,11 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                         actions.append(f"updated AppID to {new_appid}")
                     
                     if actions:
-                        logger.info(f"USER_ACTION: {self.current_user.username if self.current_user else 'Unknown'} - Server '{server_name}' {', '.join(actions)}")
+                        username = getattr(self.current_user, 'username', 'Unknown') if self.current_user else 'Unknown'
+                        logger.info(f"USER_ACTION: {username} - Server '{server_name}' {', '.join(actions)}")
                     
-                    logger.info(f"USER_ACTION: {self.current_user.username if self.current_user else 'Unknown'} updated startup configuration for server '{current_server_name}'")
+                    username = getattr(self.current_user, 'username', 'Unknown') if self.current_user else 'Unknown'
+                    logger.info(f"USER_ACTION: {username} updated startup configuration for server '{current_server_name}'")
                     
                     messagebox.showinfo("Success", "Server configuration saved successfully.")
                     dialog.destroy()
@@ -3048,7 +3232,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                                     # Update local configuration timestamp
                                     server_config['LastSync'] = datetime.datetime.now().isoformat()
                                     if self.current_user and hasattr(self.current_user, 'username'):
-                                        server_config['SyncedBy'] = self.current_user.username
+                                        server_config['SyncedBy'] = getattr(self.current_user, 'username', 'Unknown') if self.current_user else 'Unknown'
                                     else:
                                         server_config['SyncedBy'] = "Unknown"
                                     

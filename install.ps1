@@ -31,6 +31,9 @@ $ProgressPreference = 'SilentlyContinue'
 $InformationPreference = 'SilentlyContinue'
 $DebugPreference = 'SilentlyContinue'
 
+# Prevent Python from creating __pycache__ directories
+$env:PYTHONDONTWRITEBYTECODE = "1"
+
 # Load Windows Forms and Drawing assemblies
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -180,6 +183,9 @@ function Invoke-ServiceManagement {
     # Execute the requested action
     try {
         Write-Host "Executing action: $Action" -ForegroundColor Yellow
+        
+        # Set environment variable to prevent Python cache creation
+        $env:PYTHONDONTWRITEBYTECODE = "1"
         
         $result = & $pythonPath $serviceHelperPath $Action.ToLower() 2>&1
         
@@ -423,6 +429,7 @@ print('SUCCESS: User database created')
 "@
                 $tempPy = [System.IO.Path]::GetTempFileName() + ".py"
                 Set-Content -Path $tempPy -Value $pythonScript
+                $env:PYTHONDONTWRITEBYTECODE = "1"
                 $dbResult = python $tempPy $userDbFile 2>&1
                 Remove-Item $tempPy -Force -Confirm:$false
                 Write-Log "Database creation result: $dbResult"
@@ -471,6 +478,7 @@ print('SUCCESS: Steam database created')
 "@
                 $tempSteamPy = [System.IO.Path]::GetTempFileName() + ".py"
                 Set-Content -Path $tempSteamPy -Value $steamPythonScript
+                $env:PYTHONDONTWRITEBYTECODE = "1"
                 $steamDbResult = python $tempSteamPy $steamDbFile 2>&1
                 Remove-Item $tempSteamPy -Force -Confirm:$false
                 Write-Log "Steam database creation result: $steamDbResult"
@@ -1257,7 +1265,7 @@ Click Next to continue, or Cancel to exit Setup.
 
     $hostAddrLabel = New-Object System.Windows.Forms.Label
     $hostAddrLabel.Text = "Master Host Address:"
-    $hostAddrLabel.Location = New-Object System.Drawing.Point(350, 50)
+    $hostAddrLabel.Location = New-Object System.Drawing.Point(370, 50)
     $hostAddrLabel.Size = New-Object System.Drawing.Size(120, 20)
     $hostAddrLabel.Visible = $false
     $hostGroupBox.Controls.Add($hostAddrLabel)
@@ -1488,6 +1496,86 @@ Click Finish to complete the setup.
             0 { Show-Page 1 }
             1 { Show-Page 2 }
             2 { 
+                # Validate cluster configuration before installation
+                if ($subhostRadio.Checked) {
+                    $hostAddress = $hostAddrBox.Text.Trim()
+                    if ([string]::IsNullOrWhiteSpace($hostAddress)) {
+                        [System.Windows.Forms.MessageBox]::Show(
+                            "Master Host Address is required when configuring as a Subhost.", 
+                            "Validation Error", 
+                            [System.Windows.Forms.MessageBoxButtons]::OK, 
+                            [System.Windows.Forms.MessageBoxIcon]::Warning
+                        )
+                        return
+                    }
+                    
+                    # Validate host address format (basic IP:port or hostname:port validation)
+                    if (-not ($hostAddress -match '^[a-zA-Z0-9.-]+:\d+$') -and -not ($hostAddress -match '^[a-zA-Z0-9.-]+$')) {
+                        [System.Windows.Forms.MessageBox]::Show(
+                            "Invalid Master Host Address format. Use format: 'hostname:port' or 'hostname' (e.g., '192.168.1.100:5001' or 'myhost.local:5001')", 
+                            "Validation Error", 
+                            [System.Windows.Forms.MessageBoxButtons]::OK, 
+                            [System.Windows.Forms.MessageBoxIcon]::Warning
+                        )
+                        return
+                    }
+                    
+                    # Test connectivity to host (optional but recommended)
+                    Write-Log "Testing connection to cluster host: $hostAddress"
+                    try {
+                        $testHost = $hostAddress
+                        $testPort = 5001
+                        if ($hostAddress -match ':(\d+)$') {
+                            $parts = $hostAddress -split ':'
+                            $testHost = $parts[0]
+                            $testPort = [int]$parts[1]
+                        }
+                        
+                        $tcpClient = New-Object System.Net.Sockets.TcpClient
+                        $connectTask = $tcpClient.ConnectAsync($testHost, $testPort)
+                        $timeout = 5000 # 5 seconds
+                        
+                        if ($connectTask.Wait($timeout)) {
+                            if ($tcpClient.Connected) {
+                                $tcpClient.Close()
+                                Write-Log "Successfully connected to cluster host" -ForegroundColor Green
+                            } else {
+                                $result = [System.Windows.Forms.MessageBox]::Show(
+                                    "Could not connect to the cluster host at '$hostAddress'. Do you want to continue with the installation anyway?`n`nNote: The subhost will attempt to connect after installation.", 
+                                    "Connection Test Failed", 
+                                    [System.Windows.Forms.MessageBoxButtons]::YesNo, 
+                                    [System.Windows.Forms.MessageBoxIcon]::Question
+                                )
+                                if ($result -eq [System.Windows.Forms.DialogResult]::No) {
+                                    return
+                                }
+                            }
+                        } else {
+                            $tcpClient.Close()
+                            $result = [System.Windows.Forms.MessageBox]::Show(
+                                "Connection test to cluster host '$hostAddress' timed out. Do you want to continue with the installation anyway?`n`nNote: The subhost will attempt to connect after installation.", 
+                                "Connection Test Timeout", 
+                                [System.Windows.Forms.MessageBoxButtons]::YesNo, 
+                                [System.Windows.Forms.MessageBoxIcon]::Question
+                            )
+                            if ($result -eq [System.Windows.Forms.DialogResult]::No) {
+                                return
+                            }
+                        }
+                    } catch {
+                        Write-Log "Connection test failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                        $result = [System.Windows.Forms.MessageBox]::Show(
+                            "Could not test connection to cluster host '$hostAddress': $($_.Exception.Message)`n`nDo you want to continue with the installation anyway?", 
+                            "Connection Test Error", 
+                            [System.Windows.Forms.MessageBoxButtons]::YesNo, 
+                            [System.Windows.Forms.MessageBoxIcon]::Question
+                        )
+                        if ($result -eq [System.Windows.Forms.DialogResult]::No) {
+                            return
+                        }
+                    }
+                }
+                
                 # Start installation
                 Show-Page 3
                 $cancelButton.Enabled = $false
@@ -1500,7 +1588,7 @@ Click Finish to complete the setup.
                     UserWorkspacePath = $workspaceBox.Text
                     InstallService = $serviceCheckbox.Checked
                     HostType = if ($hostRadio.Checked) { "Host" } else { "Subhost" }
-                    HostAddress = if ($subhostRadio.Checked) { $hostAddrBox.Text } else { $null }
+                    HostAddress = if ($subhostRadio.Checked) { $hostAddrBox.Text.Trim() } else { $null }
                     SQLType = if ($sqlTypeCombo.SelectedIndex -ge 0) { $detected[$sqlTypeCombo.SelectedIndex].Type } else { "SQLite" }
                     SQLLocation = if ($sqlTypeCombo.SelectedIndex -ge 0 -and $detected[$sqlTypeCombo.SelectedIndex].Type -eq "SQLite") { "" } else { $sqlLocationBox.Text }
                     SQLVersion = if ($sqlTypeCombo.SelectedIndex -ge 0) { $detected[$sqlTypeCombo.SelectedIndex].Version } else { "3" }
@@ -2133,6 +2221,7 @@ except Exception as e:
                 Set-Content -Path $tempAdminPy -Value $createAdminScript
                 
                 try {
+                    $env:PYTHONDONTWRITEBYTECODE = "1"
                     $adminResult = python $tempAdminPy 2>&1
                     Write-Log "Admin user creation result: $adminResult"
                     
@@ -2190,6 +2279,7 @@ except Exception as e:
                 Set-Content -Path $tempDefaultPy -Value $defaultAdminScript
                 
                 try {
+                    $env:PYTHONDONTWRITEBYTECODE = "1"
                     $defaultResult = python $tempDefaultPy 2>&1
                     Write-Log "Default admin creation result: $defaultResult"
                 } finally {
