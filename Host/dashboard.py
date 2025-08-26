@@ -550,6 +550,9 @@ class ServerManagerDashboard(ServerManagerModule):
         # Bind left-click to handle deselection on empty space (like Windows Explorer)
         self.server_list.bind("<Button-1>", self.on_server_list_click)
         
+        # Bind double-click to configure server
+        self.server_list.bind("<Double-1>", self.on_server_double_click)
+        
         # System info frame (right side)
         self.system_frame = ttk.LabelFrame(self.main_pane, text="System Information", padding=10)
         self.main_pane.add(self.system_frame, weight=30)
@@ -635,15 +638,11 @@ class ServerManagerDashboard(ServerManagerModule):
         # Add buttons
         row1_buttons = [
             {"text": "Add Server", "command": self.add_server},
-            {"text": "Remove Server", "command": self.remove_server},
             {"text": "Import Server", "command": self.import_server},
-            {"text": "Export Server", "command": self.export_server}
+            {"text": "Sync All", "command": self.sync_all}
         ]
         
         row2_buttons = [
-            {"text": "Configure Java", "command": self.configure_java},
-            {"text": "Configure Server", "command": self.show_server_type_configuration},
-            {"text": "Sync All", "command": self.sync_all},
             {"text": "Add Agent", "command": self.add_agent}
         ]
         
@@ -695,6 +694,16 @@ class ServerManagerDashboard(ServerManagerModule):
             # Clicked on empty space - clear all selections (like Windows Explorer)
             self.server_list.selection_remove(self.server_list.selection())
             logger.debug("Cleared server list selection due to empty space click")
+
+    def on_server_double_click(self, event):
+        """Handle double-click on server list - open configuration dialog"""
+        # Get item under cursor
+        item = self.server_list.identify_row(event.y)
+        
+        if item:
+            # Double-clicked on a server - open configuration
+            self.server_list.selection_set(item)
+            self.configure_server()
 
     def add_server(self):
         """Add a new game server (Steam, Minecraft, or Other)"""
@@ -1873,14 +1882,15 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Configure Server: {server_name}")
+        dialog.geometry("900x850")
         dialog.transient(self.root)
         dialog.grab_set()
         
-        # Create main frame with scrolling
+        # Create main frame with padding
         main_frame = ttk.Frame(dialog, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Create canvas and scrollbar for scrolling
+        # Create scrollable frame for all content
         canvas = tk.Canvas(main_frame)
         scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
@@ -1894,7 +1904,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         canvas.configure(yscrollcommand=scrollbar.set)
         
         # Pack the canvas and scrollbar
-        canvas.pack(side="left", fill="both", expand=True)
+        canvas.pack(side="left", fill="both", expand=True, padx=(0, 5))
         scrollbar.pack(side="right", fill="y")
 
         # Server Identity Section
@@ -2296,7 +2306,108 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         # Initial preview update
         update_preview()
 
-        # Warning section
+        # Server Type-Specific Configuration Sections
+        server_type = server_config.get('Type', 'Other')
+        
+        # Initialize server-type-specific variables
+        java_path_var = ram_var = jvm_args_var = mc_version_var = None
+        auto_update_var = validate_files_var = None
+        notes_var = None
+        
+        # Minecraft-specific configuration section
+        if server_type == "Minecraft":
+            minecraft_section = ttk.LabelFrame(scrollable_frame, text="🎮 Minecraft Settings", padding=10)
+            minecraft_section.pack(fill=tk.X, pady=(15, 0))
+            
+            # Java Configuration
+            java_info_frame = ttk.LabelFrame(minecraft_section, text="Java Configuration", padding=10)
+            java_info_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            ttk.Label(java_info_frame, text="Java Path:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5, padx=10)
+            java_path_var = tk.StringVar(value=server_config.get("JavaPath", "java"))
+            java_entry = ttk.Entry(java_info_frame, textvariable=java_path_var, width=50, font=("Segoe UI", 10))
+            java_entry.grid(row=0, column=1, sticky=tk.EW, padx=10, pady=5)
+            
+            def browse_java():
+                file_types = [("Java Executable", "java.exe"), ("All Files", "*.*")] if os.name == 'nt' else [("All Files", "*")]
+                java_path = filedialog.askopenfilename(title="Select Java Executable", filetypes=file_types)
+                if java_path:
+                    java_path_var.set(java_path)
+            
+            ttk.Button(java_info_frame, text="Browse", command=browse_java).grid(row=0, column=2, padx=5, pady=5)
+            
+            def auto_detect_java():
+                try:
+                    from Modules.minecraft import get_recommended_java_for_minecraft
+                    version = server_config.get("Version", "")
+                    if version:
+                        recommended = get_recommended_java_for_minecraft(version)
+                        if recommended:
+                            java_path_var.set(recommended["path"])
+                            messagebox.showinfo("Auto-Detect", f"Found: {recommended['display_name']}")
+                        else:
+                            messagebox.showwarning("No Java Found", "No compatible Java installation found.")
+                    else:
+                        messagebox.showwarning("No Version", "Minecraft version not specified in server config.")
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to detect Java: {str(e)}")
+            
+            ttk.Button(java_info_frame, text="Auto-Detect", command=auto_detect_java).grid(row=0, column=3, padx=5, pady=5)
+            
+            # Memory Settings in same row
+            ttk.Label(java_info_frame, text="RAM (MB):", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky=tk.W, pady=5, padx=10)
+            ram_var = tk.StringVar(value=str(server_config.get("RAM", 1024)))
+            ttk.Entry(java_info_frame, textvariable=ram_var, width=15, font=("Segoe UI", 10)).grid(row=1, column=1, sticky=tk.W, padx=10, pady=5)
+            
+            ttk.Label(java_info_frame, text="JVM Args:", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, sticky=tk.W, pady=5, padx=10)
+            jvm_args_var = tk.StringVar(value=server_config.get("JVMArgs", ""))
+            ttk.Entry(java_info_frame, textvariable=jvm_args_var, width=50, font=("Segoe UI", 10)).grid(row=2, column=1, columnspan=2, sticky=tk.EW, padx=10, pady=5)
+            
+            # Minecraft Version
+            ttk.Label(java_info_frame, text="MC Version:", font=("Segoe UI", 10, "bold")).grid(row=3, column=0, sticky=tk.W, pady=5, padx=10)
+            mc_version_var = tk.StringVar(value=server_config.get("Version", ""))
+            ttk.Entry(java_info_frame, textvariable=mc_version_var, width=30, font=("Segoe UI", 10)).grid(row=3, column=1, sticky=tk.W, padx=10, pady=5)
+            
+            # Configure grid weights
+            java_info_frame.grid_columnconfigure(1, weight=1)
+        
+        # Steam-specific configuration section
+        elif server_type == "Steam":
+            steam_section = ttk.LabelFrame(scrollable_frame, text="🚂 Steam Settings", padding=10)
+            steam_section.pack(fill=tk.X, pady=(15, 0))
+            
+            # Steam Information
+            steam_info_frame = ttk.LabelFrame(steam_section, text="Steam Configuration", padding=10)
+            steam_info_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            # Update Settings
+            auto_update_var = tk.BooleanVar(value=server_config.get("AutoUpdate", False))
+            ttk.Checkbutton(steam_info_frame, text="Enable automatic updates", variable=auto_update_var).grid(row=0, column=0, sticky=tk.W, pady=5, padx=10)
+            
+            validate_files_var = tk.BooleanVar(value=server_config.get("ValidateFiles", False))
+            ttk.Checkbutton(steam_info_frame, text="Validate files on update", variable=validate_files_var).grid(row=1, column=0, sticky=tk.W, pady=5, padx=10)
+            
+            # Configure grid weights
+            steam_info_frame.grid_columnconfigure(1, weight=1)
+        
+        # Other server type configuration section
+        elif server_type == "Other":
+            other_section = ttk.LabelFrame(scrollable_frame, text="🔧 Custom Server Settings", padding=10)
+            other_section.pack(fill=tk.X, pady=(15, 0))
+            
+            # Custom Settings
+            custom_frame = ttk.LabelFrame(other_section, text="Custom Configuration", padding=10)
+            custom_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            ttk.Label(custom_frame, text="Server Type:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5, padx=10)
+            ttk.Label(custom_frame, text="Other/Custom", font=("Segoe UI", 10)).grid(row=0, column=1, sticky=tk.W, padx=10, pady=5)
+            
+            ttk.Label(custom_frame, text="Configuration Notes:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky=tk.W, pady=5, padx=10)
+            notes_var = tk.StringVar(value=server_config.get("Notes", ""))
+            ttk.Entry(custom_frame, textvariable=notes_var, width=50, font=("Segoe UI", 10)).grid(row=1, column=1, sticky=tk.EW, padx=10, pady=5)
+            
+            # Configure grid weights
+            custom_frame.grid_columnconfigure(1, weight=1)        # Warning section
         if name_var.get() != server_name or type_var.get() != current_server_type:
             warning_frame = ttk.Frame(scrollable_frame)
             warning_frame.pack(fill=tk.X, pady=(0, 15))
@@ -2306,8 +2417,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                                     foreground="orange", font=("Segoe UI", 9, "bold"), wraplength=650)
             warning_label.pack()
 
-        # Button frame
-        button_frame = ttk.Frame(scrollable_frame)
+        # Button frame at bottom of main dialog
+        button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=10)
         
         def validate_inputs():
@@ -2455,6 +2566,52 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                     success = False
                     message = "Server manager not available"
                 
+                # Handle server-type-specific configurations
+                if success and new_type:
+                    try:
+                        # Read the updated configuration
+                        config_file = os.path.join(self.paths["servers"], f"{current_server_name}.json")
+                        with open(config_file, 'r', encoding='utf-8') as f:
+                            updated_config = json.load(f)
+                        
+                        # Update server-type-specific settings
+                        if new_type == "Minecraft":
+                            # Update Minecraft-specific settings if they exist
+                            if java_path_var is not None:
+                                updated_config['JavaPath'] = java_path_var.get()
+                            if ram_var is not None:
+                                try:
+                                    updated_config['RAM'] = int(ram_var.get())
+                                except ValueError:
+                                    pass  # Keep existing value if invalid
+                            if jvm_args_var is not None:
+                                updated_config['JVMArgs'] = jvm_args_var.get()
+                            if mc_version_var is not None:
+                                updated_config['Version'] = mc_version_var.get()
+                        
+                        elif new_type == "Steam":
+                            # Update Steam-specific settings if they exist
+                            # Note: AppID is handled in the main identity section above
+                            if auto_update_var is not None:
+                                updated_config['AutoUpdate'] = auto_update_var.get()
+                            if validate_files_var is not None:
+                                updated_config['ValidateFiles'] = validate_files_var.get()
+                        
+                        elif new_type == "Other":
+                            # Update Other server-specific settings if they exist
+                            if notes_var is not None:
+                                updated_config['Notes'] = notes_var.get()
+                        
+                        # Save the updated configuration with server-specific settings
+                        with open(config_file, 'w', encoding='utf-8') as f:
+                            json.dump(updated_config, f, indent=2, ensure_ascii=False)
+                        
+                        logger.info(f"Updated {new_type}-specific configuration for server '{current_server_name}'")
+                    
+                    except Exception as e:
+                        logger.warning(f"Failed to update server-type-specific settings: {str(e)}")
+                        # Don't fail the entire operation for this
+                
                 if success:
                     # Log the actions
                     actions = []
@@ -2503,7 +2660,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         ttk.Button(button_frame, text="Save Configuration", command=save_configuration).pack(side=tk.RIGHT, padx=5)
 
         # Center dialog relative to parent
-        center_window(dialog, 750, 700, self.root)
+        center_window(dialog, 900, 850, self.root)
 
     def configure_java(self):
         """Open Java configuration dialog for selected server"""
@@ -2538,34 +2695,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             self.update_server_list(force_refresh=True)
     
     def show_server_type_configuration(self):
-        """Show server configuration dialog based on server type"""
-        selected_items = self.server_list.selection()
-        if not selected_items:
-            messagebox.showwarning("No Selection", "Please select a server to configure.")
-            return
-        
-        # Get selected server name
-        item = selected_items[0]
-        server_name = self.server_list.item(item)["values"][0]
-        
-        # Get server configuration
-        server_config = None
-        if hasattr(self, 'server_manager') and self.server_manager:
-            server_config = self.server_manager.get_server_config(server_name)
-        
-        if not server_config:
-            messagebox.showerror("Error", f"Server configuration not found for '{server_name}'")
-            return
-        
-        server_type = server_config.get("Type", "Other")
-        
-        # Show appropriate configuration dialog based on type
-        if server_type == "Minecraft":
-            self.show_minecraft_server_config(server_name, server_config)
-        elif server_type == "Steam":
-            self.show_steam_server_config(server_name, server_config)
-        else:
-            self.show_other_server_config(server_name, server_config)
+        """Show server configuration dialog based on server type - redirects to unified configure_server"""
+        # Redirect to unified configure_server method
+        self.configure_server()
     
     def show_minecraft_server_config(self, server_name, server_config):
         """Show Minecraft-specific configuration dialog"""
