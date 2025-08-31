@@ -31,15 +31,14 @@ logger = get_dashboard_logger()
 
 
 def create_java_selection_dialog(root, minecraft_version=None):
-    """Create a dialog to select Java installation for a server.
-    
-    Args:
-        root: Parent window
-        minecraft_version (str): Minecraft version to check compatibility (optional)
-        
-    Returns:
-        dict: Selected Java installation info, or None if cancelled
-    """
+    # Create a dialog to select Java installation for a server.
+    # 
+    # Args:
+    #     root: Parent window
+    #     minecraft_version (str): Minecraft version to check compatibility (optional)
+    #     
+    # Returns:
+    #     dict: Selected Java installation info, or None if cancelled
     try:
         # Import here to avoid circular imports
         from Modules.minecraft import detect_java_installations, get_minecraft_java_requirement, check_java_compatibility
@@ -239,7 +238,7 @@ def create_java_selection_dialog(root, minecraft_version=None):
 
 
 def load_appid_scanner_list(server_manager_dir):
-    """Load the AppID list from database only (no JSON fallback)"""
+    # Load the AppID list from database only (no JSON fallback)
     try:
         # Load from database only
         dedicated_servers, metadata = load_appid_list_from_database()
@@ -257,7 +256,7 @@ def load_appid_scanner_list(server_manager_dir):
 
 
 def load_appid_list_from_database():
-    """Load AppID list directly from database"""
+    # Load AppID list directly from database
     try:
         # Import database components
         from Modules.Database.steam_database import get_steam_engine
@@ -347,7 +346,7 @@ def load_appid_list_from_database():
 
 
 def check_appid_in_database(appid):
-    """Check if an AppID exists in the Steam database and return server info"""
+    # Check if an AppID exists in the Steam database and return server info
     if not appid:
         return None
     
@@ -422,7 +421,7 @@ def check_appid_in_database(appid):
 
 
 def detect_server_type_from_appid(appid):
-    """Detect server type based on AppID from database"""
+    # Detect server type based on AppID from database
     if not appid:
         return "Other"
     
@@ -435,7 +434,7 @@ def detect_server_type_from_appid(appid):
 
 
 def detect_server_type_from_directory(directory_path):
-    """Detect server type from directory contents and configuration"""
+    # Detect server type from directory contents and configuration
     if not directory_path or not os.path.exists(directory_path):
         return "Other"
     
@@ -495,7 +494,7 @@ def detect_server_type_from_directory(directory_path):
 
 
 def find_appid_in_directory(directory_path):
-    """Find Steam AppID from directory contents"""
+    # Find Steam AppID from directory contents
     if not directory_path or not os.path.exists(directory_path):
         return None
     
@@ -614,7 +613,7 @@ def check_webserver_status(paths, variables):
 
 
 def update_webserver_status(webserver_status_label, offline_var, paths, variables):
-    """Update the web server status display"""
+    # Update the web server status display
     try:
         status = check_webserver_status(paths, variables)
         variables["webserverStatus"] = status
@@ -636,12 +635,12 @@ def update_webserver_status(webserver_status_label, offline_var, paths, variable
 
 
 def api_headers():
-    """Return API headers (currently using direct SQL access)"""
+    # Return API headers (currently using direct SQL access)
     return {}
 
 
 def get_steam_credentials(root):
-    """Open a dialog to get Steam credentials"""
+    # Open a dialog to get Steam credentials
     credentials = {"anonymous": False, "username": "", "password": ""}
     
     # Create dialog window
@@ -1968,7 +1967,7 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
 
 
 def create_server_removal_dialog(root, server_name, server_manager):
-    """Create server removal confirmation dialog"""
+    # Create server removal confirmation dialog
     dialog = tk.Toplevel(root)
     dialog.title("Remove Server")
     dialog.transient(root)
@@ -2988,7 +2987,7 @@ def import_server_from_directory_dialog(parent, server_manager, server_manager_d
 
 
 def import_server_from_export_dialog(parent, paths, server_manager_dir, update_callback=None):
-    """Import server from exported configuration file"""
+    # Import server from exported configuration file
     try:
         # Ask user to select export file
         file_path = filedialog.askopenfilename(
@@ -3202,7 +3201,7 @@ Includes Files: {'Yes' if has_files else 'No'}"""
 
 
 def export_server_dialog(parent, server_list, paths):
-    """Export server configuration for use on other hosts or clusters"""
+    # Export server configuration for use on other hosts or clusters
     selected_items = server_list.selection()
     if not selected_items:
         messagebox.showinfo("No Selection", "Please select a server to export first.")

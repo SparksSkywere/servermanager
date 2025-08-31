@@ -439,6 +439,10 @@ class ServerManagerWebServer(ServerManagerModule):
             
         self._web_port = int(os.getenv("WEB_PORT", str(base_port)))
         logger.info(f"Web port set to: {self._web_port}")
+        
+        # Cluster API port (separate from web port for security)
+        self._cluster_port = int(os.getenv("CLUSTER_PORT", "5001"))
+        logger.info(f"Cluster API port set to: {self._cluster_port}")
         # Read host type and address from environment
         self.host_type = os.getenv("HOST_TYPE", "Unknown")
         self.host_address = os.getenv("HOST_ADDRESS", None)
@@ -513,6 +517,27 @@ class ServerManagerWebServer(ServerManagerModule):
             self.auth = self.create_fallback_auth()
             self.sql_auth = None
 
+        # Initialize cluster database and host status
+        try:
+            from Modules.Database.cluster_database import ClusterDatabase
+            self.cluster_db = ClusterDatabase()
+            
+            # Initialize host status as online with dashboard active
+            self.cluster_db.update_host_status(
+                status="online",
+                dashboard_active=True,
+                maintenance_mode=False,
+                status_message="Web server initialized"
+            )
+            
+            # Start host heartbeat thread
+            self.start_host_heartbeat()
+            
+            logger.info("Cluster database initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize cluster database: {e}")
+            self.cluster_db = None
+
         # Initialize server manager
         try:
             self.server_manager = ServerManager(self.paths["servers"])
@@ -554,6 +579,11 @@ class ServerManagerWebServer(ServerManagerModule):
     def web_port(self):
         """Get the web server port"""
         return self._web_port
+    
+    @property
+    def cluster_port(self):
+        """Get the cluster API port"""
+        return getattr(self, '_cluster_port', 5001)
 
     def check_sql_availability(self):
         try:
@@ -664,7 +694,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 from flask import redirect
                 return redirect('/login.html')
         
-        # Register cluster API blueprint
+        # Register cluster API blueprint on main server
         try:
             # Import the cluster API
             import sys
@@ -681,7 +711,7 @@ class ServerManagerWebServer(ServerManagerModule):
                     cluster_module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(cluster_module)
                     app.register_blueprint(cluster_module.cluster_api)
-                    logger.info("Cluster API registered successfully")
+                    logger.info("Cluster API registered successfully on main server")
                 else:
                     logger.warning("Failed to create module spec for cluster API")
             else:
@@ -1439,6 +1469,27 @@ class ServerManagerWebServer(ServerManagerModule):
         try:
             logger.info(f"Starting web server on port {self.web_port}")
             
+            # Start cluster API server in a separate thread if cluster is enabled
+            cluster_thread = None
+            try:
+                from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+                key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
+                host_type = winreg.QueryValueEx(key, "HostType")[0]
+                winreg.CloseKey(key)
+                
+                if host_type == "Host":
+                    logger.info("Starting cluster API server on port 5001")
+                    cluster_thread = threading.Thread(target=self._run_cluster_server, daemon=True)
+                    cluster_thread.start()
+                    # Give the cluster server a moment to start
+                    import time
+                    time.sleep(2)
+                    logger.info("Cluster API server thread started")
+            except Exception as e:
+                logger.error(f"Cluster API startup failed: {e}")
+                import traceback
+                logger.error(f"Cluster API startup traceback: {traceback.format_exc()}")
+            
             # Security-first host binding
             # Default to localhost only for security
             default_host = "127.0.0.1"  # Secure default - localhost only
@@ -1539,9 +1590,83 @@ class ServerManagerWebServer(ServerManagerModule):
             self.cleanup()
             return False
 
+    def _run_cluster_server(self):
+        """Run a simple HTTP proxy server on port 5001 that forwards cluster API requests to port 8080"""
+        try:
+            import http.server
+            import socketserver
+            import urllib.request
+            import urllib.parse
+            import json
+            
+            class ClusterAPIProxy(http.server.BaseHTTPRequestHandler):
+                def log_message(self, format, *args):
+                    # Use the webserver logger instead of default logging
+                    logger.debug(f"Cluster API Proxy: {format % args}")
+                
+                def do_GET(self):
+                    self.proxy_request()
+                
+                def do_POST(self):
+                    self.proxy_request()
+                
+                def proxy_request(self):
+                    try:
+                        # Forward the request to the main webserver on port 8080
+                        target_url = f"http://127.0.0.1:8080{self.path}"
+                        
+                        # Prepare headers
+                        headers = {}
+                        for header_name, header_value in self.headers.items():
+                            if header_name.lower() not in ['host', 'content-length']:
+                                headers[header_name] = header_value
+                        
+                        # Handle request body for POST requests
+                        data = None
+                        if self.command == 'POST':
+                            content_length = int(self.headers.get('Content-Length', 0))
+                            if content_length > 0:
+                                data = self.rfile.read(content_length)
+                                headers['Content-Type'] = self.headers.get('Content-Type', 'application/json')
+                        
+                        # Create request
+                        req = urllib.request.Request(target_url, data=data, headers=headers, method=self.command)
+                        
+                        # Make the request
+                        with urllib.request.urlopen(req, timeout=30) as response:
+                            # Forward the response
+                            self.send_response(response.getcode())
+                            
+                            # Forward response headers
+                            for header_name, header_value in response.headers.items():
+                                if header_name.lower() not in ['server', 'date']:
+                                    self.send_header(header_name, header_value)
+                            self.end_headers()
+                            
+                            # Forward response body
+                            response_data = response.read()
+                            self.wfile.write(response_data)
+                            
+                    except Exception as e:
+                        logger.error(f"Cluster proxy error: {e}")
+                        self.send_error(502, f"Bad Gateway: {str(e)}")
+            
+            # Start the proxy server on port 5001
+            with socketserver.TCPServer(("0.0.0.0", 5001), ClusterAPIProxy) as httpd:
+                logger.info("Cluster API proxy server started on 0.0.0.0:5001 (forwarding to 127.0.0.1:8080)")
+                httpd.serve_forever()
+                
+        except Exception as e:
+            logger.error(f"Cluster proxy server error: {e}")
+            import traceback
+            logger.error(f"Cluster proxy server traceback: {traceback.format_exc()}")
+
     def cleanup(self):
         """Cleanup resources when shutting down"""
         try:
+            # Update cluster status for shutdown
+            self.shutdown_cluster_status()
+            
             # Stop analytics collection
             if hasattr(self, 'analytics') and self.analytics:
                 logger.info("Stopping analytics collection...")
@@ -1585,6 +1710,36 @@ class ServerManagerWebServer(ServerManagerModule):
             logger.error(f"Error testing authentication modules: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
+    
+    def start_host_heartbeat(self):
+        """Start the host heartbeat thread to maintain cluster status"""
+        def heartbeat_worker():
+            while True:
+                try:
+                    if hasattr(self, 'cluster_db') and self.cluster_db:
+                        self.cluster_db.heartbeat()
+                    time.sleep(30)  # Heartbeat every 30 seconds
+                except Exception as e:
+                    logger.error(f"Host heartbeat error: {e}")
+                    time.sleep(60)  # Wait longer on error
+        
+        heartbeat_thread = threading.Thread(target=heartbeat_worker, daemon=True)
+        heartbeat_thread.start()
+        logger.info("Host heartbeat thread started")
+    
+    def shutdown_cluster_status(self):
+        """Update cluster status on shutdown"""
+        try:
+            if hasattr(self, 'cluster_db') and self.cluster_db:
+                self.cluster_db.update_host_status(
+                    status="offline",
+                    dashboard_active=False,
+                    maintenance_mode=False,
+                    status_message="Web server shutting down"
+                )
+                logger.info("Cluster status updated for shutdown")
+        except Exception as e:
+            logger.error(f"Failed to update cluster status on shutdown: {e}")
 
 def is_admin():
     try:

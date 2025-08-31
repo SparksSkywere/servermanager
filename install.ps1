@@ -285,6 +285,221 @@ function Show-Help {
 # Define global variables first
 $global:logMemory = @()
 $global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Install-Log.txt"
+
+# Firewall Rules Management Functions
+function Add-ServerManagerFirewallRules {
+    param(
+        [string]$HostType = "Host",
+        [bool]$ClusterEnabled = $false
+    )
+    
+    Write-Log "Configuring Windows Firewall rules for Server Manager..."
+    
+    try {
+        # Remove any existing rules first (cleanup from previous installations)
+        Remove-ServerManagerFirewallRules -Quiet
+        
+        # Rule 1: Main web interface (port 8080) - Inbound and Outbound
+        $webRuleInbound = @{
+            DisplayName = "ServerManager_WebInterface_In"
+            Direction = "Inbound"
+            Protocol = "TCP"
+            LocalPort = "8080"
+            Action = "Allow"
+            Description = "Allow inbound access to Server Manager web interface on port 8080"
+        }
+        
+        $webRuleOutbound = @{
+            DisplayName = "ServerManager_WebInterface_Out"
+            Direction = "Outbound"
+            Protocol = "TCP"
+            LocalPort = "8080"
+            Action = "Allow"
+            Description = "Allow outbound access from Server Manager web interface on port 8080"
+        }
+        
+        $pythonPath = (Get-Command python -ErrorAction SilentlyContinue).Source
+        if ($pythonPath) {
+            $webRuleInbound.Program = $pythonPath
+            $webRuleOutbound.Program = $pythonPath
+        }
+        
+        New-NetFirewallRule @webRuleInbound -ErrorAction Stop | Out-Null
+        New-NetFirewallRule @webRuleOutbound -ErrorAction Stop | Out-Null
+        Write-Log "Added firewall rules for web interface (port 8080) - inbound and outbound"
+        
+        # Rule 2: Cluster API (port 8080) - Additional rules for cluster-enabled hosts
+        if ($HostType -eq "Host" -or $ClusterEnabled) {
+            $clusterRuleInbound = @{
+                DisplayName = "ServerManager_ClusterAPI_In"
+                Direction = "Inbound" 
+                Protocol = "TCP"
+                LocalPort = "8080"
+                Action = "Allow"
+                Description = "Allow inbound access to Server Manager cluster API on port 8080"
+            }
+            
+            $clusterRuleOutbound = @{
+                DisplayName = "ServerManager_ClusterAPI_Out"
+                Direction = "Outbound"
+                Protocol = "TCP" 
+                LocalPort = "8080"
+                Action = "Allow"
+                Description = "Allow outbound access from Server Manager cluster API on port 8080"
+            }
+            
+            if ($pythonPath) {
+                $clusterRuleInbound.Program = $pythonPath
+                $clusterRuleOutbound.Program = $pythonPath
+            }
+            
+            New-NetFirewallRule @clusterRuleInbound -ErrorAction Stop | Out-Null
+            New-NetFirewallRule @clusterRuleOutbound -ErrorAction Stop | Out-Null
+            Write-Log "Added additional firewall rules for cluster API (port 8080) - inbound and outbound"
+        }        # Rule 3: Game server ports range (7777-7800) - TCP Inbound and Outbound
+        $gamePortsRuleInbound = @{
+            DisplayName = "ServerManager_GameServers_In"
+            Direction = "Inbound"
+            Protocol = "TCP"
+            LocalPort = "7777-7800"
+            Action = "Allow"
+            Description = "Allow inbound TCP access to game servers managed by Server Manager (ports 7777-7800)"
+        }
+        
+        $gamePortsRuleOutbound = @{
+            DisplayName = "ServerManager_GameServers_Out"
+            Direction = "Outbound"
+            Protocol = "TCP"
+            LocalPort = "7777-7800"
+            Action = "Allow"
+            Description = "Allow outbound TCP access from game servers managed by Server Manager (ports 7777-7800)"
+        }
+        
+        New-NetFirewallRule @gamePortsRuleInbound -ErrorAction Stop | Out-Null
+        New-NetFirewallRule @gamePortsRuleOutbound -ErrorAction Stop | Out-Null
+        Write-Log "Added firewall rules for game servers TCP (ports 7777-7800) - inbound and outbound"
+        
+        # Rule 4: Game server ports range (7777-7800) - UDP Inbound and Outbound
+        $gamePortsUDPRuleInbound = @{
+            DisplayName = "ServerManager_GameServers_UDP_In"
+            Direction = "Inbound"
+            Protocol = "UDP"
+            LocalPort = "7777-7800"
+            Action = "Allow"
+            Description = "Allow inbound UDP access to game servers managed by Server Manager (ports 7777-7800)"
+        }
+        
+        $gamePortsUDPRuleOutbound = @{
+            DisplayName = "ServerManager_GameServers_UDP_Out"
+            Direction = "Outbound"
+            Protocol = "UDP"
+            LocalPort = "7777-7800"
+            Action = "Allow"
+            Description = "Allow outbound UDP access from game servers managed by Server Manager (ports 7777-7800)"
+        }
+        
+        New-NetFirewallRule @gamePortsUDPRuleInbound -ErrorAction Stop | Out-Null
+        New-NetFirewallRule @gamePortsUDPRuleOutbound -ErrorAction Stop | Out-Null
+        Write-Log "Added firewall rules for game servers UDP (ports 7777-7800) - inbound and outbound"
+        
+        # Rule 5: Steam query protocol (ports 27015-27030) - UDP Inbound and Outbound
+        $steamQueryRuleInbound = @{
+            DisplayName = "ServerManager_SteamQuery_In"
+            Direction = "Inbound"
+            Protocol = "UDP"
+            LocalPort = "27015-27030"
+            Action = "Allow"
+            Description = "Allow inbound UDP for Steam query protocol (ports 27015-27030)"
+        }
+        
+        $steamQueryRuleOutbound = @{
+            DisplayName = "ServerManager_SteamQuery_Out"
+            Direction = "Outbound"
+            Protocol = "UDP"
+            LocalPort = "27015-27030"
+            Action = "Allow"
+            Description = "Allow outbound UDP for Steam query protocol (ports 27015-27030)"
+        }
+        
+        New-NetFirewallRule @steamQueryRuleInbound -ErrorAction Stop | Out-Null
+        New-NetFirewallRule @steamQueryRuleOutbound -ErrorAction Stop | Out-Null
+        Write-Log "Added firewall rules for Steam query protocol (ports 27015-27030) - inbound and outbound"
+        
+        Write-Log "All firewall rules configured successfully"
+        
+    } catch {
+        Write-Log "Warning: Failed to configure firewall rules: $($_.Exception.Message)"
+        Write-Log "You may need to manually configure Windows Firewall to allow:"
+        Write-Log "  - Port 8080 (TCP) for web interface (inbound and outbound)"
+        if ($HostType -eq "Host" -or $ClusterEnabled) {
+            Write-Log "  - Port 8080 (TCP) for cluster API (inbound and outbound)"
+        }
+        Write-Log "  - Ports 7777-7800 (TCP/UDP) for game servers (inbound and outbound)"
+        Write-Log "  - Ports 27015-27030 (UDP) for Steam query protocol (inbound and outbound)"
+    }
+}
+
+function Remove-ServerManagerFirewallRules {
+    param([switch]$Quiet)
+    
+    if (-not $Quiet) {
+        Write-Log "Removing Server Manager firewall rules..."
+    }
+    
+    try {
+        $rulesToRemove = @(
+            "ServerManager_WebInterface_In",
+            "ServerManager_WebInterface_Out",
+            "ServerManager_ClusterAPI_In",
+            "ServerManager_ClusterAPI_Out",
+            "ServerManager_GameServers_In",
+            "ServerManager_GameServers_Out",
+            "ServerManager_GameServers_UDP_In",
+            "ServerManager_GameServers_UDP_Out",
+            "ServerManager_SteamQuery_In",
+            "ServerManager_SteamQuery_Out",
+            # Legacy rule names for backward compatibility
+            "ServerManager_WebInterface",
+            "ServerManager_ClusterAPI",
+            "ServerManager_GameServers",
+            "ServerManager_GameServers_UDP",
+            "ServerManager_SteamQuery"
+        )
+        
+        $rulesRemoved = 0
+        foreach ($ruleName in $rulesToRemove) {
+            try {
+                $existingRule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+                if ($existingRule) {
+                    Remove-NetFirewallRule -DisplayName $ruleName -ErrorAction Stop
+                    if (-not $Quiet) {
+                        Write-Log "Removed firewall rule: $ruleName"
+                    }
+                    $rulesRemoved++
+                }
+            } catch {
+                # Ignore errors for non-existent rules
+            }
+        }
+        
+        if (-not $Quiet) {
+            if ($rulesRemoved -eq 0) {
+                Write-Log "No ServerManager firewall rules found to remove"
+            } else {
+                Write-Log "Firewall rules cleanup completed ($rulesRemoved rules removed)"
+            }
+        }
+        
+    } catch {
+        if (-not $Quiet) {
+            Write-Log "Warning: Some firewall rules may not have been removed: $($_.Exception.Message)"
+        }
+    }
+}
+
+# Define global variables first
+$global:logMemory = @()
+$global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Install-Log.txt"
 $CurrentVersion = "0.5"
 $steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
@@ -488,6 +703,93 @@ print('SUCCESS: Steam database created')
                 }
             } catch {
                 Write-Log "Warning: Failed to create Steam database: $($_.Exception.Message)"
+            }
+        }
+        
+        # Create cluster management database
+        $clusterDbFile = Join-Path $dbFolder "servermanager.db"
+        if (-not (Test-Path $clusterDbFile)) {
+            Write-Log "Creating SQLite cluster database at $clusterDbFile"
+            try {
+                $clusterPythonScript = @"
+import sqlite3
+import sys
+from datetime import datetime
+dbfile = sys.argv[1]
+conn = sqlite3.connect(dbfile)
+c = conn.cursor()
+
+# Cluster configuration table
+c.execute('''
+CREATE TABLE IF NOT EXISTS cluster_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    host_type TEXT NOT NULL DEFAULT 'Host',
+    cluster_name TEXT,
+    cluster_secret TEXT,
+    master_ip TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+''')
+
+# Cluster nodes table  
+c.execute('''
+CREATE TABLE IF NOT EXISTS cluster_nodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    ip_address TEXT NOT NULL,
+    port INTEGER DEFAULT 8080,
+    node_type TEXT DEFAULT 'node',
+    status TEXT DEFAULT 'unknown',
+    last_ping DATETIME,
+    cluster_token TEXT,
+    added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+''')
+
+# Cluster authentication tokens table
+c.execute('''
+CREATE TABLE IF NOT EXISTS cluster_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT NOT NULL UNIQUE,
+    node_name TEXT,
+    node_ip TEXT,
+    expires_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    revoked INTEGER DEFAULT 0
+)
+''')
+
+# Cluster communication log
+c.execute('''
+CREATE TABLE IF NOT EXISTS cluster_communication_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_ip TEXT NOT NULL,
+    target_ip TEXT,
+    action TEXT NOT NULL,
+    status TEXT DEFAULT 'success',
+    message TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+''')
+
+conn.commit()
+conn.close()
+print('SUCCESS: Cluster database created')
+"@
+                $tempClusterPy = [System.IO.Path]::GetTempFileName() + ".py"
+                Set-Content -Path $tempClusterPy -Value $clusterPythonScript
+                $env:PYTHONDONTWRITEBYTECODE = "1"
+                $clusterDbResult = python $tempClusterPy $clusterDbFile 2>&1
+                Remove-Item $tempClusterPy -Force -Confirm:$false
+                Write-Log "Cluster database creation result: $clusterDbResult"
+                
+                if (-not (Test-Path $clusterDbFile)) {
+                    throw "Cluster database file was not created successfully"
+                }
+            } catch {
+                Write-Log "Warning: Failed to create cluster database: $($_.Exception.Message)"
             }
         }
         return $userDbFile
@@ -1127,21 +1429,21 @@ function Show-InstallerWizard {
     # Navigation buttons
     $cancelButton = New-Object System.Windows.Forms.Button
     $cancelButton.Text = "Cancel"
-    $cancelButton.Location = New-Object System.Drawing.Point(390, 45)
-    $cancelButton.Size = New-Object System.Drawing.Size(75, 25)
+    $cancelButton.Location = New-Object System.Drawing.Point(370, 45)
+    $cancelButton.Size = New-Object System.Drawing.Size(85, 30)
     $bottomPanel.Controls.Add($cancelButton)
 
     $backButton = New-Object System.Windows.Forms.Button
     $backButton.Text = "< Back"
-    $backButton.Location = New-Object System.Drawing.Point(470, 45)
-    $backButton.Size = New-Object System.Drawing.Size(75, 25)
+    $backButton.Location = New-Object System.Drawing.Point(460, 45)
+    $backButton.Size = New-Object System.Drawing.Size(85, 30)
     $backButton.Enabled = $false
     $bottomPanel.Controls.Add($backButton)
 
     $nextButton = New-Object System.Windows.Forms.Button
     $nextButton.Text = "Next >"
     $nextButton.Location = New-Object System.Drawing.Point(550, 45)
-    $nextButton.Size = New-Object System.Drawing.Size(75, 25)
+    $nextButton.Size = New-Object System.Drawing.Size(85, 30)
     $bottomPanel.Controls.Add($nextButton)
 
     # Create wizard pages
@@ -1206,7 +1508,7 @@ Click Next to continue, or Cancel to exit Setup.
     $steamCmdBrowse = New-Object System.Windows.Forms.Button
     $steamCmdBrowse.Text = "Browse..."
     $steamCmdBrowse.Location = New-Object System.Drawing.Point(480, 85)
-    $steamCmdBrowse.Size = New-Object System.Drawing.Size(80, 23)
+    $steamCmdBrowse.Size = New-Object System.Drawing.Size(85, 28)
     $optionsPage.Controls.Add($steamCmdBrowse)
 
     # User Workspace Path
@@ -1226,7 +1528,7 @@ Click Next to continue, or Cancel to exit Setup.
     $workspaceBrowse = New-Object System.Windows.Forms.Button
     $workspaceBrowse.Text = "Browse..."
     $workspaceBrowse.Location = New-Object System.Drawing.Point(480, 145)
-    $workspaceBrowse.Size = New-Object System.Drawing.Size(80, 23)
+    $workspaceBrowse.Size = New-Object System.Drawing.Size(85, 28)
     $optionsPage.Controls.Add($workspaceBrowse)
 
     # Custom workspace checkbox
@@ -1243,37 +1545,41 @@ Click Next to continue, or Cancel to exit Setup.
     $serviceCheckbox.Size = New-Object System.Drawing.Size(500, 20)
     $optionsPage.Controls.Add($serviceCheckbox)
 
-    # Host type group
+    # Host type group - Simple cluster configuration
     $hostGroupBox = New-Object System.Windows.Forms.GroupBox
-    $hostGroupBox.Text = "Cluster Configuration"
+    $hostGroupBox.Text = "Cluster Type"
     $hostGroupBox.Location = New-Object System.Drawing.Point(20, 240)
     $hostGroupBox.Size = New-Object System.Drawing.Size(540, 100)
     $optionsPage.Controls.Add($hostGroupBox)
 
     $hostRadio = New-Object System.Windows.Forms.RadioButton
-    $hostRadio.Text = "Host (Master) - This will be the main server"
+    $hostRadio.Text = "Master Host - Manage other servers in the cluster"
     $hostRadio.Location = New-Object System.Drawing.Point(15, 25)
-    $hostRadio.Size = New-Object System.Drawing.Size(300, 20)
+    $hostRadio.Size = New-Object System.Drawing.Size(350, 20)
     $hostRadio.Checked = $true
     $hostGroupBox.Controls.Add($hostRadio)
 
     $subhostRadio = New-Object System.Windows.Forms.RadioButton
-    $subhostRadio.Text = "Subhost (Agent) - This will connect to a master server"
+    $subhostRadio.Text = "Cluster Node - Managed by another Master Host"
     $subhostRadio.Location = New-Object System.Drawing.Point(15, 50)
-    $subhostRadio.Size = New-Object System.Drawing.Size(350, 20)
+    $subhostRadio.Size = New-Object System.Drawing.Size(300, 20)
     $hostGroupBox.Controls.Add($subhostRadio)
 
+    # Master Host IP for cluster nodes
     $hostAddrLabel = New-Object System.Windows.Forms.Label
-    $hostAddrLabel.Text = "Master Host Address:"
-    $hostAddrLabel.Location = New-Object System.Drawing.Point(370, 50)
-    $hostAddrLabel.Size = New-Object System.Drawing.Size(120, 20)
+    $hostAddrLabel.Text = "Master Host IP Address:"
+    $hostAddrLabel.Location = New-Object System.Drawing.Point(300, 50)
+    $hostAddrLabel.Size = New-Object System.Drawing.Size(130, 20)
     $hostAddrLabel.Visible = $false
     $hostGroupBox.Controls.Add($hostAddrLabel)
 
     $hostAddrBox = New-Object System.Windows.Forms.TextBox
-    $hostAddrBox.Location = New-Object System.Drawing.Point(350, 70)
-    $hostAddrBox.Size = New-Object System.Drawing.Size(150, 20)
+    $hostAddrBox.Location = New-Object System.Drawing.Point(430, 48)
+    $hostAddrBox.Size = New-Object System.Drawing.Size(100, 20)
     $hostAddrBox.Visible = $false
+    $hostAddrBox.Text = ""
+    $hostAddrBox.ForeColor = [System.Drawing.Color]::Black
+    
     $hostGroupBox.Controls.Add($hostAddrBox)
 
     $pages += $optionsPage
@@ -1474,7 +1780,7 @@ Click Finish to complete the setup.
         }
         
         # Update button states
-        $backButton.Enabled = ($index -gt 0 -and $index -ne 3)
+        $backButton.Enabled = ($index -gt 0 -and $index -ne 3 -and $index -ne 4)
         $nextButton.Enabled = ($index -ne 3)  # Enable for all pages except installation progress
         $cancelButton.Enabled = ($index -ne 3 -and $index -ne 4)
         
@@ -1496,12 +1802,14 @@ Click Finish to complete the setup.
             0 { Show-Page 1 }
             1 { Show-Page 2 }
             2 { 
-                # Validate cluster configuration before installation
+                # Simple validation for cluster nodes
                 if ($subhostRadio.Checked) {
                     $hostAddress = $hostAddrBox.Text.Trim()
+                    
+                    # Validate Master Host IP Address is required
                     if ([string]::IsNullOrWhiteSpace($hostAddress)) {
                         [System.Windows.Forms.MessageBox]::Show(
-                            "Master Host Address is required when configuring as a Subhost.", 
+                            "Master Host IP Address is required for cluster nodes.", 
                             "Validation Error", 
                             [System.Windows.Forms.MessageBoxButtons]::OK, 
                             [System.Windows.Forms.MessageBoxIcon]::Warning
@@ -1509,70 +1817,15 @@ Click Finish to complete the setup.
                         return
                     }
                     
-                    # Validate host address format (basic IP:port or hostname:port validation)
-                    if (-not ($hostAddress -match '^[a-zA-Z0-9.-]+:\d+$') -and -not ($hostAddress -match '^[a-zA-Z0-9.-]+$')) {
+                    # Basic IP format validation
+                    if (-not ($hostAddress -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')) {
                         [System.Windows.Forms.MessageBox]::Show(
-                            "Invalid Master Host Address format. Use format: 'hostname:port' or 'hostname' (e.g., '192.168.1.100:5001' or 'myhost.local:5001')", 
+                            "Please enter a valid IP address format (e.g., 192.168.1.50).", 
                             "Validation Error", 
                             [System.Windows.Forms.MessageBoxButtons]::OK, 
                             [System.Windows.Forms.MessageBoxIcon]::Warning
                         )
                         return
-                    }
-                    
-                    # Test connectivity to host (optional but recommended)
-                    Write-Log "Testing connection to cluster host: $hostAddress"
-                    try {
-                        $testHost = $hostAddress
-                        $testPort = 5001
-                        if ($hostAddress -match ':(\d+)$') {
-                            $parts = $hostAddress -split ':'
-                            $testHost = $parts[0]
-                            $testPort = [int]$parts[1]
-                        }
-                        
-                        $tcpClient = New-Object System.Net.Sockets.TcpClient
-                        $connectTask = $tcpClient.ConnectAsync($testHost, $testPort)
-                        $timeout = 5000 # 5 seconds
-                        
-                        if ($connectTask.Wait($timeout)) {
-                            if ($tcpClient.Connected) {
-                                $tcpClient.Close()
-                                Write-Log "Successfully connected to cluster host" -ForegroundColor Green
-                            } else {
-                                $result = [System.Windows.Forms.MessageBox]::Show(
-                                    "Could not connect to the cluster host at '$hostAddress'. Do you want to continue with the installation anyway?`n`nNote: The subhost will attempt to connect after installation.", 
-                                    "Connection Test Failed", 
-                                    [System.Windows.Forms.MessageBoxButtons]::YesNo, 
-                                    [System.Windows.Forms.MessageBoxIcon]::Question
-                                )
-                                if ($result -eq [System.Windows.Forms.DialogResult]::No) {
-                                    return
-                                }
-                            }
-                        } else {
-                            $tcpClient.Close()
-                            $result = [System.Windows.Forms.MessageBox]::Show(
-                                "Connection test to cluster host '$hostAddress' timed out. Do you want to continue with the installation anyway?`n`nNote: The subhost will attempt to connect after installation.", 
-                                "Connection Test Timeout", 
-                                [System.Windows.Forms.MessageBoxButtons]::YesNo, 
-                                [System.Windows.Forms.MessageBoxIcon]::Question
-                            )
-                            if ($result -eq [System.Windows.Forms.DialogResult]::No) {
-                                return
-                            }
-                        }
-                    } catch {
-                        Write-Log "Connection test failed: $($_.Exception.Message)" -ForegroundColor Yellow
-                        $result = [System.Windows.Forms.MessageBox]::Show(
-                            "Could not test connection to cluster host '$hostAddress': $($_.Exception.Message)`n`nDo you want to continue with the installation anyway?", 
-                            "Connection Test Error", 
-                            [System.Windows.Forms.MessageBoxButtons]::YesNo, 
-                            [System.Windows.Forms.MessageBoxIcon]::Question
-                        )
-                        if ($result -eq [System.Windows.Forms.DialogResult]::No) {
-                            return
-                        }
                     }
                 }
                 
@@ -1583,19 +1836,34 @@ Click Finish to complete the setup.
                 $nextButton.Enabled = $false
                 
                 # Collect settings and start installation
+                $hostAddressValue = if ($subhostRadio.Checked) { 
+                    $addr = $hostAddrBox.Text.Trim()
+                    if ([string]::IsNullOrWhiteSpace($addr)) { $null } else { $addr }
+                } else { 
+                    $null 
+                }
+                
                 $settings = @{
                     SteamCMDPath = $steamCmdBox.Text
                     UserWorkspacePath = $workspaceBox.Text
                     InstallService = $serviceCheckbox.Checked
                     HostType = if ($hostRadio.Checked) { "Host" } else { "Subhost" }
-                    HostAddress = if ($subhostRadio.Checked) { $hostAddrBox.Text.Trim() } else { $null }
+                    HostAddress = $hostAddressValue
                     SQLType = if ($sqlTypeCombo.SelectedIndex -ge 0) { $detected[$sqlTypeCombo.SelectedIndex].Type } else { "SQLite" }
                     SQLLocation = if ($sqlTypeCombo.SelectedIndex -ge 0 -and $detected[$sqlTypeCombo.SelectedIndex].Type -eq "SQLite") { "" } else { $sqlLocationBox.Text }
                     SQLVersion = if ($sqlTypeCombo.SelectedIndex -ge 0) { $detected[$sqlTypeCombo.SelectedIndex].Version } else { "3" }
+                    SubhostID = if ($subhostRadio.Checked) { "$env:COMPUTERNAME-$(Get-Random -Minimum 1000 -Maximum 9999)" } else { $null }
                 }
                 
                 Start-Installation -Settings $settings -ProgressBar $installProgressBar -StatusLabel $installStatusLabel -Form $form -OnComplete {
-                    Show-Page 4
+                    # Handle cluster approval workflow for subhosts
+                    if ($settings.HostType -eq "Subhost" -and $settings.HostAddress) {
+                        Show-ClusterApprovalDialog -Settings $settings -Form $form -OnApproved {
+                            Show-Page 4
+                        }
+                    } else {
+                        Show-Page 4
+                    }
                 }
             }
             4 { 
@@ -1746,14 +2014,61 @@ function Start-Installation {
                 if ($Settings.SQLUsername) { $registryValues['SQLUsername'] = $Settings.SQLUsername }
                 if ($Settings.SQLPassword) { $registryValues['SQLPassword'] = $Settings.SQLPassword }
             }
+            
+            # Add cluster configuration
             if ($Settings.HostType -eq "Subhost" -and $Settings.HostAddress) {
                 $registryValues['HostAddress'] = $Settings.HostAddress
+                # Store master IP for cluster nodes
+                $registryValues['MasterHostIP'] = $Settings.HostAddress
+                # Use the SubhostID generated during settings creation
+                $registryValues['SubhostID'] = $Settings.SubhostID
+                Write-Log "Master Host IP and SubhostID configured for cluster node: $($Settings.SubhostID)"
+            } elseif ($Settings.HostType -eq "Host") {
+                # Generate a new cluster secret for Master Host
+                $ClusterSecret = -join ((1..32) | ForEach-Object {Get-Random -Input ([char[]]([char]'A'..[char]'Z' + [char]'a'..[char]'z' + [char]'0'..[char]'9'))})
+                $registryValues['ClusterSecret'] = $ClusterSecret
+                Write-Log "Generated new cluster secret for Master Host"
+                
+                # Also save to a secure file for reference
+                $tokenFile = Join-Path $ServerManagerDir "cluster-security-token.txt"
+                try {
+                    $tokenContent = @"
+Server Manager Cluster Security Token
+Generated: $(Get-Date -Format 'o')
+Master Host: $ServerManagerDir
+
+SECURITY TOKEN:
+$ClusterSecret
+
+IMPORTANT NOTES:
+- This token provides full access to your Server Manager cluster
+- Store it securely and share only with trusted subhost administrators  
+- This token cannot be recovered if lost - you'll need to generate a new one
+- All existing subhosts will need to update their tokens if regenerated
+
+Provide this token to subhost administrators during their installation process.
+"@
+                    Set-Content -Path $tokenFile -Value $tokenContent -Encoding UTF8
+                    Write-Log "Cluster security token saved to: $tokenFile"
+                } catch {
+                    Write-Log "Warning: Could not save token to file: $($_.Exception.Message)"
+                }
             }
 
             New-Item -Path "HKLM:\Software\SkywereIndustries" -Force | Out-Null
             New-Item -Path $registryPath -Force | Out-Null
             foreach ($key in $registryValues.Keys) {
                 Set-ItemProperty -Path $registryPath -Name $key -Value $registryValues[$key] -Force
+            }
+            
+            # Configure Windows Firewall rules
+            Write-Log "Configuring Windows Firewall rules..."
+            try {
+                $clusterEnabled = ($Settings.HostType -eq "Host" -or ($Settings.HostType -eq "Subhost" -and $Settings.HostAddress))
+                Add-ServerManagerFirewallRules -HostType $Settings.HostType -ClusterEnabled $clusterEnabled
+            } catch {
+                Write-Log "Warning: Firewall configuration failed: $($_.Exception.Message)"
+                # Don't fail installation if firewall rules fail
             }
             
             # Migrate any existing databases to the new db directory
@@ -1858,6 +2173,59 @@ function Start-Installation {
             }
         }
 
+        Update-Progress "Configuring cluster database..."
+        try {
+            # Initialize cluster configuration in database
+            $clusterDbPath = "$ServerManagerDir\db\servermanager.db"
+            if (Test-Path $clusterDbPath) {
+                $initClusterScript = @"
+import sys
+sys.path.insert(0, r'$ServerManagerDir')
+from Modules.Database.cluster_database import ClusterDatabase
+
+try:
+    cluster_db = ClusterDatabase(r'$clusterDbPath')
+    
+    # Set initial cluster configuration based on installation type
+    host_type = '$($Settings.HostType)'
+    master_ip = '$($Settings.HostAddress)' if '$($Settings.HostAddress)' else None
+    cluster_name = 'ServerManager-Cluster'
+    
+    # Generate cluster secret for master hosts
+    cluster_secret = None
+    if host_type == 'Host':
+        import secrets
+        cluster_secret = secrets.token_urlsafe(32)
+    
+    success = cluster_db.set_cluster_config(host_type, cluster_name, cluster_secret, master_ip)
+    if success:
+        print(f'SUCCESS: Cluster database configured as {host_type}')
+        if cluster_secret:
+            print(f'CLUSTER_SECRET: {cluster_secret}')
+    else:
+        print('ERROR: Failed to configure cluster database')
+        
+except Exception as e:
+    print(f'ERROR: {e}')
+"@
+                $tempClusterInitPy = [System.IO.Path]::GetTempFileName() + ".py"
+                Set-Content -Path $tempClusterInitPy -Value $initClusterScript
+                $env:PYTHONDONTWRITEBYTECODE = "1"
+                $clusterInitResult = python $tempClusterInitPy 2>&1
+                Remove-Item $tempClusterInitPy -Force -Confirm:$false
+                Write-Log "Cluster database initialization result: $clusterInitResult"
+                
+                # Extract cluster secret if generated
+                if ($clusterInitResult -match "CLUSTER_SECRET: (.+)") {
+                    $GeneratedClusterSecret = $matches[1]
+                    $registryValues['ClusterSecret'] = $GeneratedClusterSecret
+                    Write-Log "Cluster secret stored in database and registry"
+                }
+            }
+        } catch {
+            Write-Log "Warning: Failed to initialize cluster database configuration: $($_.Exception.Message)"
+        }
+
         Update-Progress "Creating configuration files..."
         try {
             # Environment file creation removed - using registry-based configuration only
@@ -1952,6 +2320,288 @@ function Start-Installation {
         
         # Don't automatically close, let user decide
     }
+}
+
+# Cluster approval dialog for subhosts
+function Show-ClusterApprovalDialog {
+    param(
+        [PSCustomObject]$Settings,
+        [System.Windows.Forms.Form]$Form,
+        [scriptblock]$OnApproved
+    )
+    
+    # Create approval request form
+    $approvalForm = New-Object System.Windows.Forms.Form
+    $approvalForm.Text = "Cluster Join Request - Waiting for Approval"
+    $approvalForm.Size = New-Object System.Drawing.Size(500, 300)
+    $approvalForm.StartPosition = "CenterParent"
+    $approvalForm.FormBorderStyle = "FixedDialog"
+    $approvalForm.MaximizeBox = $false
+    $approvalForm.MinimizeBox = $false
+    $approvalForm.ShowIcon = $false
+    $approvalForm.BackColor = [System.Drawing.Color]::FromArgb(45, 45, 48)
+    $approvalForm.ForeColor = [System.Drawing.Color]::White
+    
+    # Title label
+    $titleLabel = New-Object System.Windows.Forms.Label
+    $titleLabel.Text = "Requesting to Join Cluster"
+    $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
+    $titleLabel.Location = New-Object System.Drawing.Point(20, 20)
+    $titleLabel.Size = New-Object System.Drawing.Size(450, 25)
+    $titleLabel.ForeColor = [System.Drawing.Color]::White
+    $approvalForm.Controls.Add($titleLabel)
+    
+    # Status label
+    $statusLabel = New-Object System.Windows.Forms.Label
+    $statusLabel.Text = "Sending join request to master host...`nPlease wait for approval from the administrator."
+    $statusLabel.Location = New-Object System.Drawing.Point(20, 60)
+    $statusLabel.Size = New-Object System.Drawing.Size(450, 60)
+    $statusLabel.ForeColor = [System.Drawing.Color]::LightGray
+    $statusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $approvalForm.Controls.Add($statusLabel)
+    
+    # Progress indicator
+    $progressBar = New-Object System.Windows.Forms.ProgressBar
+    $progressBar.Location = New-Object System.Drawing.Point(20, 130)
+    $progressBar.Size = New-Object System.Drawing.Size(450, 20)
+    $progressBar.Style = "Marquee"
+    $progressBar.MarqueeAnimationSpeed = 30
+    $approvalForm.Controls.Add($progressBar)
+    
+    # Details label  
+    $detailsLabel = New-Object System.Windows.Forms.Label
+    $detailsLabel.Text = "Master Host: $($Settings.HostAddress)`nHost Name: $env:COMPUTERNAME`nSubhost ID: $($Settings.SubhostID)`n`nTimeout: 5 minutes maximum"
+    $detailsLabel.Location = New-Object System.Drawing.Point(20, 160)
+    $detailsLabel.Size = New-Object System.Drawing.Size(450, 80)
+    $detailsLabel.ForeColor = [System.Drawing.Color]::LightGray
+    $detailsLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8)
+    $approvalForm.Controls.Add($detailsLabel)
+    
+    # Cancel button
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Text = "Cancel Installation"
+    $cancelButton.Location = New-Object System.Drawing.Point(350, 250)
+    $cancelButton.Size = New-Object System.Drawing.Size(120, 25)
+    $cancelButton.BackColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
+    $cancelButton.ForeColor = [System.Drawing.Color]::White
+    $cancelButton.FlatStyle = "Flat"
+    $cancelButton.Add_Click({
+        $approvalForm.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $approvalForm.Close()
+    })
+    $approvalForm.Controls.Add($cancelButton)
+    
+    # Show the approval form
+    $approvalForm.Show()
+    $approvalForm.BringToFront()
+    
+    # Start approval request process
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 5000 # Check every 5 seconds
+    $approvalRequestId = $null
+    $requestSent = $false
+    $attemptCount = 0
+    $maxAttempts = 60  # 5 minutes total (60 * 5 seconds)
+    $lastErrorMessage = ""
+    
+    $timer.Add_Tick({
+        try {
+            $script:attemptCount++
+            
+            # Check for timeout
+            if ($script:attemptCount -gt $script:maxAttempts) {
+                $timer.Stop()
+                $statusLabel.Text = "Timeout waiting for approval. Installation will continue without cluster membership."
+                $progressBar.Style = "Continuous"
+                $progressBar.Value = 0
+                
+                Write-Log "[WARNING] Cluster join request timed out after $($script:maxAttempts * 5) seconds"
+                
+                [System.Windows.Forms.MessageBox]::Show(
+                    "The request to join the cluster has timed out.`n`nPossible causes:`n- Master host is offline`n- Network connectivity issues`n- Administrator has not approved the request`n`nThe installation will complete without cluster membership.",
+                    "Cluster Join Timeout",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                )
+                
+                $approvalForm.Hide()
+                if ($OnApproved) {
+                    & $OnApproved
+                }
+                $approvalForm.Close()
+                return
+            }
+            
+            if (-not $requestSent) {
+                # First check if host is online and available
+                try {
+                    $statusLabel.Text = "Checking host availability..."
+                    $hostStatus = Invoke-RestMethod -Uri "http://$($Settings.HostAddress):8080/api/cluster/status" -Method GET -TimeoutSec 10
+                    
+                    if ($hostStatus.host_status -eq "offline" -or $hostStatus.dashboard_active -eq $false) {
+                        $statusLabel.Text = "Host is currently offline or dashboard is not active. Retrying..."
+                        Write-Log "[WARNING] Host is offline or dashboard inactive. Status: $($hostStatus.host_status), Dashboard Active: $($hostStatus.dashboard_active)"
+                        return  # Wait for next timer tick
+                    }
+                    
+                    if ($hostStatus.maintenance_mode -eq $true) {
+                        $statusLabel.Text = "Host is in maintenance mode. Waiting for maintenance to complete..."
+                        Write-Log "[WARNING] Host is in maintenance mode. Waiting for completion."
+                        return  # Wait for next timer tick
+                    }
+                    
+                    Write-Log "[INFO] Host is online and available. Dashboard active: $($hostStatus.dashboard_active)"
+                    $statusLabel.Text = "Host is online. Sending join request..."
+                    
+                } catch {
+                    $statusLabel.Text = "Unable to connect to host. Retrying in 5 seconds...`nError: $($_.Exception.Message)"
+                    Write-Log "[WARNING] Host status check failed: $($_.Exception.Message). Will retry."
+                    return  # Wait for next timer tick
+                }
+                
+                # Send the join request (host is confirmed online and available)
+                $requestBody = @{
+                    subhost_id = $Settings.SubhostID
+                    info = @{
+                        machine_name = $env:COMPUTERNAME
+                        os = (Get-ComputerInfo).WindowsProductName
+                        install_time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+                        ip_address = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notmatch "Loopback" } | Select-Object -First 1).IPAddress
+                    }
+                } | ConvertTo-Json -Depth 3
+                
+                $response = Invoke-RestMethod -Uri "http://$($Settings.HostAddress):8080/api/cluster/request-join" -Method POST -Body $requestBody -ContentType "application/json" -TimeoutSec 15
+                
+                if ($response.request_id) {
+                    $script:approvalRequestId = $response.request_id
+                    $requestSent = $true
+                    $statusLabel.Text = "Request sent! Waiting for administrator approval...`nRequest ID: $($response.request_id)"
+                    Write-Log "[INFO] Cluster join request sent with ID: $($response.request_id)"
+                } else {
+                    throw "Invalid response from master host"
+                }
+            } else {
+                # Check host status first before checking approval
+                try {
+                    $hostStatus = Invoke-RestMethod -Uri "http://$($Settings.HostAddress):8080/api/cluster/status" -Method GET -TimeoutSec 10
+                    
+                    if ($hostStatus.host_status -eq "offline" -or $hostStatus.dashboard_active -eq $false) {
+                        $statusLabel.Text = "Host appears to be offline. Your request is still pending...`nRequest ID: $script:approvalRequestId`n`nWaiting for host to come back online..."
+                        Write-Log "[WARNING] Host is offline during approval check. Status: $($hostStatus.host_status)"
+                        return  # Wait for next timer tick
+                    }
+                } catch {
+                    $statusLabel.Text = "Unable to contact host. Your request is still pending...`nRequest ID: $script:approvalRequestId`n`nWaiting for host connection..."
+                    Write-Log "[WARNING] Cannot contact host during approval check: $($_.Exception.Message)"
+                    return  # Wait for next timer tick
+                }
+                
+                # Check if our request was approved by getting all pending requests
+                try {
+                    $pendingResponse = Invoke-RestMethod -Uri "http://$($Settings.HostAddress):8080/api/cluster/pending" -Method GET -TimeoutSec 10
+                    
+                    # Check if our request is still pending
+                    $ourRequest = $null
+                    foreach ($requestId in $pendingResponse.pending_requests.PSObject.Properties.Name) {
+                        $request = $pendingResponse.pending_requests.$requestId
+                        if ($request.id -eq $Settings.SubhostID -or $request.request_id -eq $script:approvalRequestId) {
+                            $ourRequest = $request
+                            break
+                        }
+                    }
+                    
+                    if ($ourRequest) {
+                        # Request is still pending
+                        $statusLabel.Text = "Still waiting for approval...`nRequest ID: $script:approvalRequestId`n`nRequest Status: $($ourRequest.status)"
+                        Write-Log "[INFO] Request still pending approval. Status: $($ourRequest.status)"
+                    } else {
+                        # Request no longer in pending list - check if we got approved by checking cluster nodes
+                        try {
+                            $nodesResponse = Invoke-RestMethod -Uri "http://$($Settings.HostAddress):8080/api/cluster/nodes" -Method GET -TimeoutSec 10
+                            
+                            $approved = $false
+                            foreach ($node in $nodesResponse) {
+                                if ($node.subhost_id -eq $Settings.SubhostID -or $node.id -eq $Settings.SubhostID) {
+                                    $approved = $true
+                                    break
+                                }
+                            }
+                            
+                            if ($approved) {
+                                $timer.Stop()
+                                $statusLabel.Text = "Approved! Completing installation..."
+                                $progressBar.Style = "Continuous"
+                                $progressBar.Value = 100
+                                
+                                Write-Log "[INFO] Cluster join request approved - found in nodes list"
+                                
+                                # Close approval dialog and continue
+                                $approvalForm.Hide()
+                                if ($OnApproved) {
+                                    & $OnApproved
+                                }
+                                $approvalForm.Close()
+                            } else {
+                                # Request was rejected
+                                $timer.Stop()
+                                $statusLabel.Text = "Request rejected by administrator"
+                                $progressBar.Style = "Continuous"
+                                $progressBar.Value = 0
+                                
+                                Write-Log "[WARNING] Cluster join request rejected - not found in nodes list"
+                                
+                                [System.Windows.Forms.MessageBox]::Show(
+                                    "Your request to join the cluster was rejected by the administrator.`n`nThe installation is complete but this host will not be part of the cluster.",
+                                    "Cluster Join Rejected",
+                                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                                )
+                                
+                                $approvalForm.Hide()
+                                if ($OnApproved) {
+                                    & $OnApproved
+                                }
+                                $approvalForm.Close()
+                            }
+                        } catch {
+                            Write-Log "[ERROR] Error checking cluster nodes: $($_.Exception.Message)"
+                            $statusLabel.Text = "Error checking approval status. Retrying..."
+                        }
+                    }
+                } catch {
+                    Write-Log "[ERROR] Error checking pending requests: $($_.Exception.Message)"
+                    $statusLabel.Text = "Error checking approval status. Retrying..."
+                }
+            }
+            # If pending, continue waiting
+        }
+        catch {
+            $script:lastErrorMessage = $_.Exception.Message
+            Write-Log "[ERROR] Cluster approval request failed (attempt $script:attemptCount/$script:maxAttempts): $($_.Exception.Message)"
+            
+            if ($script:attemptCount -lt 3) {
+                $statusLabel.Text = "Connection error. Retrying... (attempt $script:attemptCount)"
+            } else {
+                $statusLabel.Text = "Connection issues. Still trying... (attempt $script:attemptCount)`nLast error: $($script:lastErrorMessage)"
+            }
+        }
+    })
+    
+    $timer.Start()
+    
+    # Handle form closing
+    $approvalForm.Add_FormClosing({
+        param($sender, $e)
+        if ($timer) {
+            $timer.Stop()
+            $timer.Dispose()
+        }
+        if ($e.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing -and $approvalForm.DialogResult -eq [System.Windows.Forms.DialogResult]::Cancel) {
+            # User cancelled - close main form too
+            $Form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+            $Form.Close()
+        }
+    })
 }
 
 function Test-Python310 {
@@ -2138,36 +2788,53 @@ function Set-InitialAuthConfig {
             # Buttons
             $okButton = New-Object System.Windows.Forms.Button
             $okButton.Text = "Create Account"
-            $okButton.Location = New-Object System.Drawing.Point(250, 270)
-            $okButton.Size = New-Object System.Drawing.Size(80, 30)
+            $okButton.Location = New-Object System.Drawing.Point(230, 270)
+            $okButton.Size = New-Object System.Drawing.Size(120, 35)
             $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
             $adminForm.Controls.Add($okButton)
             
             $cancelButton = New-Object System.Windows.Forms.Button
             $cancelButton.Text = "Skip"
-            $cancelButton.Location = New-Object System.Drawing.Point(340, 270)
-            $cancelButton.Size = New-Object System.Drawing.Size(70, 30)
+            $cancelButton.Location = New-Object System.Drawing.Point(360, 270)
+            $cancelButton.Size = New-Object System.Drawing.Size(80, 35)
             $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
             $adminForm.Controls.Add($cancelButton)
             
-            # Form validation
-            $okButton.Add_Click({
-                if ([string]::IsNullOrWhiteSpace($usernameBox.Text)) {
-                    [System.Windows.Forms.MessageBox]::Show("Username is required.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-                    return
+            # Form validation using FormClosing event
+            $adminForm.Add_FormClosing({
+                param($sender, $e)
+                
+                # Only validate if OK was clicked (DialogResult is OK)
+                if ($adminForm.DialogResult -eq [System.Windows.Forms.DialogResult]::OK) {
+                    $isValid = $true
+                    
+                    if ([string]::IsNullOrWhiteSpace($usernameBox.Text)) {
+                        [System.Windows.Forms.MessageBox]::Show("Username is required.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+                        $usernameBox.Focus()
+                        $isValid = $false
+                    }
+                    elseif ([string]::IsNullOrWhiteSpace($passwordBox.Text)) {
+                        [System.Windows.Forms.MessageBox]::Show("Password is required.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+                        $passwordBox.Focus()
+                        $isValid = $false
+                    }
+                    elseif ($passwordBox.Text -ne $confirmBox.Text) {
+                        [System.Windows.Forms.MessageBox]::Show("Passwords do not match.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+                        # Clear password fields to force re-entry
+                        $passwordBox.Text = ""
+                        $confirmBox.Text = ""
+                        $passwordBox.Focus()
+                        $isValid = $false
+                    }
+                    
+                    # If validation failed, cancel the form closing
+                    if (-not $isValid) {
+                        $e.Cancel = $true
+                    }
                 }
-                if ([string]::IsNullOrWhiteSpace($passwordBox.Text)) {
-                    [System.Windows.Forms.MessageBox]::Show("Password is required.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-                    return
-                }
-                if ($passwordBox.Text -ne $confirmBox.Text) {
-                    [System.Windows.Forms.MessageBox]::Show("Passwords do not match.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-                    return
-                }
-                $adminForm.DialogResult = [System.Windows.Forms.DialogResult]::OK
             })
             
-            $adminForm.AcceptButton = $okButton
+            $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
             $adminForm.CancelButton = $cancelButton
             
             # Show the form
@@ -2227,12 +2894,6 @@ except Exception as e:
                     
                     if ($adminResult -match "SUCCESS") {
                         Write-Log "Administrator user created successfully"
-                        [System.Windows.Forms.MessageBox]::Show(
-                            "Administrator account '$username' has been created successfully!",
-                            "Account Created",
-                            [System.Windows.Forms.MessageBoxButtons]::OK,
-                            [System.Windows.Forms.MessageBoxIcon]::Information
-                        )
                     } else {
                         Write-Log "Warning: Admin user creation may have failed: $adminResult"
                     }

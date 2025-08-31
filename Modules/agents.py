@@ -1,570 +1,684 @@
 import os
 import sys
-import json
-import socket
+import requests
 import threading
-import time
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Union
-
-# GUI imports
+from typing import Dict, List, Optional
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from Modules.server_logging import get_dashboard_logger
+from Modules.Database.cluster_database import ClusterDatabase
 
-# Get logger
+try:
+    from Modules.cluster_security import SimpleClusterManager
+except ImportError:
+    SimpleClusterManager = None
+
 logger = get_dashboard_logger()
 
 
-class RemoteAgent:
-    """Represents a remote agent connection"""
-    
-    def __init__(self, name: str, host: str, port: int, auth_token: Optional[str] = None):
+class ClusterNode:
+    def __init__(self, name: str, ip: str, status: str = "unknown"):
         self.name = name
-        self.host = host
-        self.port = port
-        self.auth_token = auth_token
-        self.connected = False
+        self.ip = ip
+        self.status = status
         self.last_ping: Optional[datetime] = None
-        self.status = "Disconnected"
         self.server_count = 0
-        self.system_info = {}
-        
-    def to_dict(self) -> dict:
-        """Convert agent to dictionary for serialization"""
-        return {
-            'name': self.name,
-            'host': self.host,
-            'port': self.port,
-            'auth_token': self.auth_token,
-            'status': self.status,
-            'server_count': self.server_count,
-            'last_ping': self.last_ping.isoformat() if self.last_ping else None
-        }
-    
-    @classmethod
-    def from_dict(cls, data: dict):
-        """Create agent from dictionary"""
-        agent = cls(data['name'], data['host'], data['port'], data.get('auth_token'))
-        agent.status = data.get('status', 'Disconnected')
-        agent.server_count = data.get('server_count', 0)
-        if data.get('last_ping'):
-            agent.last_ping = datetime.fromisoformat(data['last_ping'])
-        return agent
+        self.is_online = False
 
 
 class AgentManager:
-    """Manages remote agent connections"""
-    
     def __init__(self, config_path: Optional[str] = None):
-        self.agents: Dict[str, RemoteAgent] = {}
-        self.config_path = config_path or os.path.join(os.path.dirname(__file__), '..', 'data', 'agents.json')
-        self.monitoring_thread = None
-        self.monitoring_active = False
+        self.nodes: Dict[str, ClusterNode] = {}
         
-        # Ensure data directory exists
-        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        # Initialize database instead of JSON file
+        try:
+            self.cluster_db = ClusterDatabase()
+            logger.info("Cluster database initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize cluster database: {e}")
+            self.cluster_db = None
         
-        # Load existing agents
-        self.load_agents()
-    
-    def add_agent(self, name: str, host: str, port: int, auth_token: Optional[str] = None) -> bool:
-        """Add a new remote agent"""
-        try:
-            if name in self.agents:
-                logger.warning(f"Agent '{name}' already exists")
-                return False
-            
-            agent = RemoteAgent(name, host, port, auth_token)
-            self.agents[name] = agent
-            
-            # Save configuration
-            self.save_agents()
-            
-            logger.info(f"Added remote agent '{name}' ({host}:{port})")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error adding agent '{name}': {str(e)}")
-            return False
-    
-    def remove_agent(self, name: str) -> bool:
-        """Remove a remote agent"""
-        try:
-            if name not in self.agents:
-                logger.warning(f"Agent '{name}' not found")
-                return False
-            
-            # Disconnect if connected
-            agent = self.agents[name]
-            if agent.connected:
-                self.disconnect_agent(name)
-            
-            # Remove from list
-            del self.agents[name]
-            
-            # Save configuration
-            self.save_agents()
-            
-            logger.info(f"Removed remote agent '{name}'")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error removing agent '{name}': {str(e)}")
-            return False
-    
-    def connect_agent(self, name: str) -> bool:
-        """Connect to a remote agent"""
-        try:
-            if name not in self.agents:
-                logger.error(f"Agent '{name}' not found")
-                return False
-            
-            agent = self.agents[name]
-            
-            # Test connection
-            if self._test_connection(agent.host, agent.port):
-                agent.connected = True
-                agent.status = "Connected"
-                agent.last_ping = datetime.now()
-                logger.info(f"Connected to agent '{name}'")
-                return True
-            else:
-                agent.status = "Connection Failed"
-                logger.warning(f"Failed to connect to agent '{name}'")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error connecting to agent '{name}': {str(e)}")
-            return False
-    
-    def disconnect_agent(self, name: str) -> bool:
-        """Disconnect from a remote agent"""
-        try:
-            if name not in self.agents:
-                logger.error(f"Agent '{name}' not found")
-                return False
-            
-            agent = self.agents[name]
-            agent.connected = False
-            agent.status = "Disconnected"
-            
-            logger.info(f"Disconnected from agent '{name}'")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error disconnecting from agent '{name}': {str(e)}")
-            return False
-    
-    def get_agent_status(self, name: str) -> Optional[str]:
-        """Get the status of a remote agent"""
-        if name in self.agents:
-            return self.agents[name].status
-        return None
-    
-    def get_all_agents(self) -> List[RemoteAgent]:
-        """Get list of all agents"""
-        return list(self.agents.values())
-    
-    def ping_agent(self, name: str) -> bool:
-        """Ping a remote agent to check connectivity"""
-        try:
-            if name not in self.agents:
-                return False
-            
-            agent = self.agents[name]
-            if self._test_connection(agent.host, agent.port, timeout=5):
-                agent.last_ping = datetime.now()
-                if not agent.connected:
-                    agent.status = "Available"
-                return True
-            else:
-                if agent.connected:
-                    agent.connected = False
-                    agent.status = "Connection Lost"
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error pinging agent '{name}': {str(e)}")
-            return False
-    
-    def start_monitoring(self):
-        """Start monitoring thread for agent connectivity"""
-        if self.monitoring_active:
-            return
-        
-        self.monitoring_active = True
-        self.monitoring_thread = threading.Thread(target=self._monitoring_loop, daemon=True)
-        self.monitoring_thread.start()
-        logger.info("Agent monitoring started")
-    
-    def stop_monitoring(self):
-        """Stop monitoring thread"""
-        self.monitoring_active = False
-        if self.monitoring_thread:
-            self.monitoring_thread.join(timeout=5)
-        logger.info("Agent monitoring stopped")
-    
-    def _monitoring_loop(self):
-        """Background monitoring loop"""
-        while self.monitoring_active:
+        self.cluster_manager = None
+        if SimpleClusterManager:
             try:
-                for name in list(self.agents.keys()):
-                    self.ping_agent(name)
-                
-                # Sleep for 30 seconds between checks
-                for _ in range(30):
-                    if not self.monitoring_active:
-                        break
-                    time.sleep(1)
-                    
+                self.cluster_manager = SimpleClusterManager()
             except Exception as e:
-                logger.error(f"Error in agent monitoring loop: {str(e)}")
-                time.sleep(5)
+                logger.warning(f"Could not initialize cluster manager: {e}")
+        
+        # Load existing nodes from database
+        self.load_nodes()
+        
+        # Migrate from JSON if it exists and database is available
+        if config_path and self.cluster_db:
+            self.migrate_from_json(config_path)
     
-    def _test_connection(self, host: str, port: int, timeout: int = 3) -> bool:
-        """Test connection to a host and port"""
+    def get_cluster_status(self):
+        if not self.cluster_manager:
+            return {'error': 'Cluster manager not available'}
+        
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(timeout)
-            result = sock.connect_ex((host, port))
-            sock.close()
-            return result == 0
-        except Exception:
+            return self.cluster_manager.get_cluster_status()
+        except Exception as e:
+            logger.error(f"Error getting cluster status: {e}")
+            return {'error': str(e)}
+    
+    def is_master_host(self):
+        if not self.cluster_manager:
+            return False
+        return self.cluster_manager.is_master
+    
+    def join_cluster(self, master_ip: str) -> bool:
+        if not self.cluster_manager:
+            return False
+        
+        if self.cluster_manager.is_master:
+            logger.error("Master hosts cannot join clusters")
+            return False
+        
+        try:
+            return self.cluster_manager.join_cluster(master_ip)
+        except Exception as e:
+            logger.error(f"Error joining cluster: {e}")
             return False
     
-    def save_agents(self):
-        """Save agents configuration to file"""
-        try:
-            data = {
-                'agents': {name: agent.to_dict() for name, agent in self.agents.items()},
-                'last_updated': datetime.now().isoformat()
-            }
-            
-            with open(self.config_path, 'w') as f:
-                json.dump(data, f, indent=2)
-                
-            logger.debug(f"Saved {len(self.agents)} agents to {self.config_path}")
-            
-        except Exception as e:
-            logger.error(f"Error saving agents configuration: {str(e)}")
+    def add_node(self, name: str, ip: str) -> bool:
+        if name in self.nodes:
+            return False
+        
+        # Add to database
+        if self.cluster_db and self.cluster_db.add_cluster_node(name, ip):
+            node = ClusterNode(name, ip)
+            self.nodes[name] = node
+            logger.info(f"Added cluster node: {name} ({ip})")
+            return True
+        
+        logger.error(f"Failed to add cluster node to database: {name}")
+        return False
     
-    def load_agents(self):
-        """Load agents configuration from file"""
+    def remove_node(self, name: str) -> bool:
+        if name not in self.nodes:
+            return False
+        
+        # Remove from database
+        if self.cluster_db and self.cluster_db.remove_cluster_node(name):
+            del self.nodes[name]
+            logger.info(f"Removed cluster node: {name}")
+            return True
+        
+        logger.error(f"Failed to remove cluster node from database: {name}")
+        return False
+    
+    def get_all_nodes(self) -> List[ClusterNode]:
+        return list(self.nodes.values())
+    
+    def get_pending_requests(self) -> List[dict]:
+        """Get all pending cluster join requests"""
+        if not self.cluster_db:
+            return []
+        return self.cluster_db.get_pending_requests()
+    
+    def approve_request(self, request_id: int, approved_by: str = "admin") -> bool:
+        """Approve a pending cluster join request"""
+        if not self.cluster_db:
+            return False
+        
         try:
-            if not os.path.exists(self.config_path):
-                logger.info("No agents configuration file found, starting with empty list")
+            # Get the request details
+            request = self.cluster_db.get_request_by_id(request_id)
+            if not request:
+                logger.error(f"Request {request_id} not found")
+                return False
+            
+            # Generate approval token
+            import uuid
+            approval_token = str(uuid.uuid4())
+            
+            # Approve the request in database
+            success = self.cluster_db.approve_request(request_id, approved_by, approval_token)
+            if not success:
+                return False
+            
+            # Add to cluster nodes
+            success = self.cluster_db.add_cluster_node(
+                name=request['node_name'],
+                ip_address=request['ip_address'],
+                port=request['port'],
+                node_type='subhost',
+                cluster_token=approval_token
+            )
+            
+            if success:
+                # Reload nodes to include the new one
+                self.load_nodes()
+                logger.info(f"Approved and registered cluster request: {request['node_name']}")
+                return True
+            else:
+                logger.error(f"Failed to add approved node to cluster")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error approving request {request_id}: {e}")
+            return False
+    
+    def reject_request(self, request_id: int, rejected_by: str = "admin") -> bool:
+        """Reject a pending cluster join request"""
+        if not self.cluster_db:
+            return False
+        
+        try:
+            success = self.cluster_db.reject_request(request_id, rejected_by)
+            if success:
+                logger.info(f"Rejected cluster request: {request_id}")
+            return success
+        except Exception as e:
+            logger.error(f"Error rejecting request {request_id}: {e}")
+            return False
+
+    def ping_node(self, name: str) -> bool:
+        if name not in self.nodes:
+            return False
+        
+        node = self.nodes[name]
+        try:
+            response = requests.get(f"http://{node.ip}:8080/api/status", timeout=5)
+            if response.status_code == 200:
+                node.status = "online"
+                node.is_online = True
+                node.last_ping = datetime.now()
+                data = response.json()
+                node.server_count = len(data.get('servers', []))
+                # Update status in database
+                if self.cluster_db:
+                    self.cluster_db.update_node_status(name, "online", node.last_ping)
+                return True
+        except:
+            pass
+        
+        node.status = "offline"
+        node.is_online = False
+        # Update status in database
+        if self.cluster_db:
+            self.cluster_db.update_node_status(name, "offline", datetime.now())
+        return False
+    
+    def ping_all_nodes(self):
+        for node_name in self.nodes:
+            self.ping_node(node_name)
+    
+    def get_node_servers(self, node_name: str) -> List[dict]:
+        if node_name not in self.nodes:
+            return []
+        
+        node = self.nodes[node_name]
+        try:
+            response = requests.get(f"http://{node.ip}:8080/api/servers", timeout=10)
+            if response.status_code == 200:
+                return response.json().get('servers', [])
+        except Exception as e:
+            logger.error(f"Failed to get servers from node {node_name}: {e}")
+        
+        return []
+    
+    def save_nodes(self):
+        # No longer needed - database operations handle persistence
+        pass
+    
+    def load_nodes(self):
+        """Load cluster nodes from database"""
+        try:
+            if not self.cluster_db:
+                logger.warning("No cluster database available, cannot load nodes")
                 return
             
-            with open(self.config_path, 'r') as f:
-                data = json.load(f)
+            db_nodes = self.cluster_db.get_all_cluster_nodes()
             
-            agents_data = data.get('agents', {})
-            for name, agent_data in agents_data.items():
-                self.agents[name] = RemoteAgent.from_dict(agent_data)
+            for node_data in db_nodes:
+                name = node_data['name']
+                ip = node_data['ip_address']
+                
+                node = ClusterNode(name, ip)
+                node.status = node_data.get('status', 'unknown')
+                if node_data.get('last_ping'):
+                    try:
+                        node.last_ping = datetime.fromisoformat(node_data['last_ping'])
+                        node.is_online = node.status == 'online'
+                    except:
+                        node.last_ping = None
+                        node.is_online = False
+                
+                self.nodes[name] = node
             
-            logger.info(f"Loaded {len(self.agents)} agents from {self.config_path}")
+            logger.info(f"Loaded {len(self.nodes)} cluster nodes from database")
             
         except Exception as e:
-            logger.error(f"Error loading agents configuration: {str(e)}")
-
-
-class AgentDialog:
-    """Dialog for managing remote agents"""
+            logger.error(f"Error loading nodes from database: {str(e)}")
     
+    def migrate_from_json(self, json_path: str):
+        """Migrate existing JSON configuration to database"""
+        try:
+            if not self.cluster_db:
+                return
+                
+            # Try to migrate from the JSON file
+            self.cluster_db.migrate_from_json(json_path)
+            
+            # Reload nodes from database after migration
+            self.load_nodes()
+            
+        except Exception as e:
+            logger.error(f"Error migrating from JSON: {e}")
+
+
+def show_agent_management_dialog(parent, agent_manager: AgentManager):
+    dialog = ClusterManagementDialog(parent, agent_manager)
+    dialog.show_dialog()
+
+
+class ClusterManagementDialog:
     def __init__(self, parent, agent_manager: AgentManager):
         self.parent = parent
         self.agent_manager = agent_manager
         self.dialog: Optional[tk.Toplevel] = None
-        self.agent_tree: Optional[ttk.Treeview] = None
-        self.status_label: Optional[ttk.Label] = None
-    
-    def show_agent_management_dialog(self):
-        """Show the agent management dialog"""
+        self.nodes_tree = None
+        
+    def show_dialog(self):
         try:
-            # Create dialog
             self.dialog = tk.Toplevel(self.parent)
-            self.dialog.title("Remote Agent Management")
+            self.dialog.title("Cluster Management")
             self.dialog.geometry("800x600")
+            self.dialog.resizable(True, True)
             self.dialog.transient(self.parent)
             self.dialog.grab_set()
             
-            # Main frame
             main_frame = ttk.Frame(self.dialog, padding=10)
             main_frame.pack(fill=tk.BOTH, expand=True)
             
-            # Header
-            header_frame = ttk.Frame(main_frame)
-            header_frame.pack(fill=tk.X, pady=(0, 10))
+            # Cluster status section
+            self.create_cluster_status_section(main_frame)
             
-            ttk.Label(header_frame, text="Remote Agent Management", 
-                     font=("Segoe UI", 14, "bold")).pack(side=tk.LEFT)
+            # Pending requests section
+            self.create_pending_requests_section(main_frame)
             
-            # Status label
-            self.status_label = ttk.Label(header_frame, text="Ready", foreground="green")
-            self.status_label.pack(side=tk.RIGHT)
-            
-            # Agent list
-            list_frame = ttk.LabelFrame(main_frame, text="Connected Agents")
-            list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-            
-            # Create treeview
-            columns = ("name", "host", "port", "status", "servers", "last_ping")
-            self.agent_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
-            
-            # Define headings
-            self.agent_tree.heading("name", text="Agent Name")
-            self.agent_tree.heading("host", text="Host")
-            self.agent_tree.heading("port", text="Port")
-            self.agent_tree.heading("status", text="Status")
-            self.agent_tree.heading("servers", text="Servers")
-            self.agent_tree.heading("last_ping", text="Last Ping")
-            
-            # Configure columns
-            self.agent_tree.column("name", width=150)
-            self.agent_tree.column("host", width=120)
-            self.agent_tree.column("port", width=80)
-            self.agent_tree.column("status", width=100)
-            self.agent_tree.column("servers", width=80)
-            self.agent_tree.column("last_ping", width=150)
-            
-            # Scrollbar
-            tree_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.agent_tree.yview)
-            self.agent_tree.configure(yscrollcommand=tree_scroll.set)
-            
-            # Pack tree and scrollbar
-            tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-            self.agent_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            # Nodes management section
+            self.create_nodes_section(main_frame)
             
             # Button frame
             button_frame = ttk.Frame(main_frame)
-            button_frame.pack(fill=tk.X)
+            button_frame.pack(fill=tk.X, pady=(10, 0))
             
-            # Buttons
-            ttk.Button(button_frame, text="Add Agent", command=self.add_agent_dialog).pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Button(button_frame, text="Remove Agent", command=self.remove_selected_agent).pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Button(button_frame, text="Connect", command=self.connect_selected_agent).pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Button(button_frame, text="Disconnect", command=self.disconnect_selected_agent).pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Button(button_frame, text="Refresh", command=self.refresh_agents).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(button_frame, text="Refresh", command=self.refresh_nodes).pack(side=tk.LEFT)
+            ttk.Button(button_frame, text="Ping All", command=self.ping_all_nodes).pack(side=tk.LEFT, padx=(10, 0))
             ttk.Button(button_frame, text="Close", command=self.dialog.destroy).pack(side=tk.RIGHT)
             
-            # Populate agents
-            self.refresh_agents()
+            self.center_dialog()
+            self.refresh_nodes()
             
-            # Center dialog
+        except Exception as e:
+            logger.error(f"Error creating cluster dialog: {str(e)}")
+            messagebox.showerror("Error", f"Failed to create dialog: {str(e)}")
+    
+    def create_cluster_status_section(self, parent):
+        cluster_frame = ttk.LabelFrame(parent, text="Cluster Status", padding=10)
+        cluster_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        cluster_status = self.agent_manager.get_cluster_status()
+        
+        if 'error' in cluster_status:
+            status_text = f"❌ Cluster not configured: {cluster_status['error']}"
+        else:
+            if cluster_status.get('is_master'):
+                status_text = "🏠 Master Host - Managing cluster nodes"
+            elif cluster_status.get('cluster_ready'):
+                status_text = f"🔗 Cluster Node - Connected to master at {cluster_status.get('master_ip')}"
+            else:
+                status_text = "❓ Cluster Node - Not connected to master"
+        
+        status_label = ttk.Label(cluster_frame, text=status_text, font=('Segoe UI', 10))
+        status_label.pack(anchor=tk.W)
+        
+        # Show join cluster option for nodes only
+        if cluster_status.get('is_master') == False and not cluster_status.get('cluster_ready'):
+            join_frame = ttk.Frame(cluster_frame)
+            join_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            ttk.Label(join_frame, text="Join Cluster - Master IP:").pack(side=tk.LEFT)
+            
+            self.master_ip_entry = ttk.Entry(join_frame, width=15)
+            self.master_ip_entry.pack(side=tk.LEFT, padx=(10, 5))
+            
+            ttk.Button(join_frame, text="Join Cluster", 
+                      command=self.join_cluster_action).pack(side=tk.LEFT, padx=5)
+    
+    def create_pending_requests_section(self, parent):
+        """Create section for pending cluster join requests (master hosts only)"""
+        cluster_status = self.agent_manager.get_cluster_status()
+        if not cluster_status.get('is_master'):
+            return  # Only show for master hosts
+            
+        pending_frame = ttk.LabelFrame(parent, text="Pending Join Requests", padding=10)
+        pending_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Create treeview for pending requests
+        columns = ("Host", "IP Address", "Request Time", "Status")
+        self.pending_tree = ttk.Treeview(pending_frame, columns=columns, show="headings", height=6)
+        
+        # Configure column headings and widths
+        self.pending_tree.heading("Host", text="Host Name")
+        self.pending_tree.heading("IP Address", text="IP Address") 
+        self.pending_tree.heading("Request Time", text="Request Time")
+        self.pending_tree.heading("Status", text="Status")
+        
+        self.pending_tree.column("Host", width=150)
+        self.pending_tree.column("IP Address", width=120)
+        self.pending_tree.column("Request Time", width=150)
+        self.pending_tree.column("Status", width=100)
+        
+        self.pending_tree.pack(fill=tk.X, pady=(0, 10))
+        
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(pending_frame, orient=tk.VERTICAL, command=self.pending_tree.yview)
+        self.pending_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Button frame for actions
+        button_frame = ttk.Frame(pending_frame)
+        button_frame.pack(fill=tk.X)
+        
+        ttk.Button(button_frame, text="Approve Selected", 
+                  command=self.approve_selected_request).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(button_frame, text="Reject Selected", 
+                  command=self.reject_selected_request).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Refresh", 
+                  command=self.refresh_pending_requests).pack(side=tk.RIGHT)
+        
+        # Initial load of pending requests
+        self.refresh_pending_requests()
+    
+    def create_nodes_section(self, parent):
+        nodes_frame = ttk.LabelFrame(parent, text="Cluster Nodes", padding=10)
+        nodes_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        # Add node controls (only show for master hosts)
+        cluster_status = self.agent_manager.get_cluster_status()
+        if cluster_status.get('is_master'):
+            add_frame = ttk.Frame(nodes_frame)
+            add_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            ttk.Label(add_frame, text="Add Node - Name:").pack(side=tk.LEFT)
+            self.node_name_entry = ttk.Entry(add_frame, width=15)
+            self.node_name_entry.pack(side=tk.LEFT, padx=(5, 10))
+            
+            ttk.Label(add_frame, text="IP:").pack(side=tk.LEFT)
+            self.node_ip_entry = ttk.Entry(add_frame, width=15)
+            self.node_ip_entry.pack(side=tk.LEFT, padx=(5, 10))
+            
+            ttk.Button(add_frame, text="Add Node", command=self.add_node_action).pack(side=tk.LEFT, padx=5)
+        
+        # Nodes tree
+        tree_frame = ttk.Frame(nodes_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.nodes_tree = ttk.Treeview(tree_frame, columns=("ip", "status", "servers", "last_ping"), show="tree headings")
+        self.nodes_tree.heading("#0", text="Node Name")
+        self.nodes_tree.heading("ip", text="IP Address")
+        self.nodes_tree.heading("status", text="Status")
+        self.nodes_tree.heading("servers", text="Servers")
+        self.nodes_tree.heading("last_ping", text="Last Ping")
+        
+        self.nodes_tree.column("#0", width=150)
+        self.nodes_tree.column("ip", width=120)
+        self.nodes_tree.column("status", width=80)
+        self.nodes_tree.column("servers", width=80)
+        self.nodes_tree.column("last_ping", width=150)
+        
+        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.nodes_tree.yview)
+        self.nodes_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.nodes_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Context menu for nodes
+        if cluster_status.get('is_master'):
+            self.nodes_tree.bind("<Button-3>", self.show_node_context_menu)
+    
+    def add_node_action(self):
+        try:
+            name = self.node_name_entry.get().strip()
+            ip = self.node_ip_entry.get().strip()
+            
+            if not name or not ip:
+                messagebox.showwarning("Warning", "Please enter both node name and IP address")
+                return
+            
+            if self.agent_manager.add_node(name, ip):
+                self.node_name_entry.delete(0, tk.END)
+                self.node_ip_entry.delete(0, tk.END)
+                self.refresh_nodes()
+                messagebox.showinfo("Success", f"Node '{name}' added successfully")
+            else:
+                messagebox.showerror("Error", f"Failed to add node '{name}' (may already exist)")
+                
+        except Exception as e:
+            logger.error(f"Error adding node: {e}")
+            messagebox.showerror("Error", f"Failed to add node: {str(e)}")
+    
+    def join_cluster_action(self):
+        try:
+            master_ip = self.master_ip_entry.get().strip()
+            if not master_ip:
+                messagebox.showwarning("Warning", "Please enter the Master Host IP address")
+                return
+            
+            if self.agent_manager.join_cluster(master_ip):
+                messagebox.showinfo("Success", f"Successfully joined cluster managed by {master_ip}")
+                if self.dialog:
+                    self.dialog.destroy()
+                show_agent_management_dialog(self.parent, self.agent_manager)
+            else:
+                messagebox.showerror("Error", f"Failed to join cluster. Check the Master Host IP address.")
+                
+        except Exception as e:
+            logger.error(f"Error joining cluster: {e}")
+            messagebox.showerror("Error", f"Failed to join cluster: {str(e)}")
+    
+    def refresh_pending_requests(self):
+        """Refresh the pending requests treeview"""
+        if not hasattr(self, 'pending_tree'):
+            return
+            
+        # Clear existing items
+        for item in self.pending_tree.get_children():
+            self.pending_tree.delete(item)
+            
+        try:
+            pending_requests = self.agent_manager.get_pending_requests()
+            for request in pending_requests:
+                # Format request time
+                request_time = request.get('request_time', 'Unknown')
+                if request_time and request_time != 'Unknown':
+                    try:
+                        # Convert timestamp to readable format
+                        import datetime
+                        dt = datetime.datetime.fromisoformat(request_time.replace('Z', '+00:00'))
+                        request_time = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    except:
+                        pass
+                
+                self.pending_tree.insert('', 'end', values=(
+                    request.get('node_name', 'Unknown'),
+                    request.get('ip_address', 'Unknown'), 
+                    request_time,
+                    request.get('status', 'pending')
+                ))
+        except Exception as e:
+            logger.error(f"Error refreshing pending requests: {e}")
+    
+    def approve_selected_request(self):
+        """Approve the selected pending request"""
+        selection = self.pending_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a request to approve")
+            return
+            
+        # Get selected item data
+        item = self.pending_tree.item(selection[0])
+        values = item['values']
+        if not values:
+            return
+            
+        host_name = values[0]
+        host_ip = values[1]
+        
+        try:
+            if self.agent_manager.approve_request(host_ip):
+                messagebox.showinfo("Success", f"Approved cluster join request from {host_name} ({host_ip})")
+                self.refresh_pending_requests()
+                self.refresh_nodes()  # Refresh the nodes list too
+            else:
+                messagebox.showerror("Error", f"Failed to approve request from {host_name}")
+        except Exception as e:
+            logger.error(f"Error approving request: {e}")
+            messagebox.showerror("Error", f"Failed to approve request: {str(e)}")
+    
+    def reject_selected_request(self):
+        """Reject the selected pending request"""
+        selection = self.pending_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a request to reject")
+            return
+            
+        # Get selected item data
+        item = self.pending_tree.item(selection[0])
+        values = item['values']
+        if not values:
+            return
+            
+        host_name = values[0]
+        host_ip = values[1]
+        
+        # Confirm rejection
+        if not messagebox.askyesno("Confirm Rejection", 
+                                  f"Are you sure you want to reject the cluster join request from {host_name} ({host_ip})?"):
+            return
+        
+        try:
+            if self.agent_manager.reject_request(host_ip):
+                messagebox.showinfo("Success", f"Rejected cluster join request from {host_name} ({host_ip})")
+                self.refresh_pending_requests()
+            else:
+                messagebox.showerror("Error", f"Failed to reject request from {host_name}")
+        except Exception as e:
+            logger.error(f"Error rejecting request: {e}")
+            messagebox.showerror("Error", f"Failed to reject request: {str(e)}")
+    
+    def refresh_nodes(self):
+        if not self.nodes_tree:
+            return
+        
+        for item in self.nodes_tree.get_children():
+            self.nodes_tree.delete(item)
+        
+        for node in self.agent_manager.get_all_nodes():
+            last_ping = node.last_ping.strftime("%Y-%m-%d %H:%M:%S") if node.last_ping else "Never"
+            
+            self.nodes_tree.insert("", tk.END, text=node.name, values=(
+                node.ip,
+                node.status,
+                str(node.server_count),
+                last_ping
+            ))
+    
+    def ping_all_nodes(self):
+        try:
+            self.agent_manager.ping_all_nodes()
+            self.refresh_nodes()
+            messagebox.showinfo("Info", "Finished pinging all nodes")
+        except Exception as e:
+            logger.error(f"Error pinging nodes: {e}")
+            messagebox.showerror("Error", f"Failed to ping nodes: {str(e)}")
+    
+    def show_node_context_menu(self, event):
+        if not self.nodes_tree:
+            return
+            
+        item = self.nodes_tree.selection()[0] if self.nodes_tree.selection() else None
+        if not item:
+            return
+        
+        node_name = self.nodes_tree.item(item, "text")
+        
+        context_menu = tk.Menu(self.dialog, tearoff=0)
+        context_menu.add_command(label="Ping Node", command=lambda: self.ping_single_node(node_name))
+        context_menu.add_command(label="View Servers", command=lambda: self.view_node_servers(node_name))
+        context_menu.add_separator()
+        context_menu.add_command(label="Remove Node", command=lambda: self.remove_node(node_name))
+        
+        context_menu.tk_popup(event.x_root, event.y_root)
+    
+    def ping_single_node(self, node_name):
+        try:
+            if self.agent_manager.ping_node(node_name):
+                messagebox.showinfo("Success", f"Node '{node_name}' is online")
+            else:
+                messagebox.showwarning("Warning", f"Node '{node_name}' is offline")
+            self.refresh_nodes()
+        except Exception as e:
+            logger.error(f"Error pinging node: {e}")
+            messagebox.showerror("Error", f"Failed to ping node: {str(e)}")
+    
+    def view_node_servers(self, node_name):
+        try:
+            servers = self.agent_manager.get_node_servers(node_name)
+            
+            info_dialog = tk.Toplevel(self.dialog)
+            info_dialog.title(f"Servers on {node_name}")
+            info_dialog.geometry("500x300")
+            info_dialog.transient(self.dialog)
+            
+            frame = ttk.Frame(info_dialog, padding=10)
+            frame.pack(fill=tk.BOTH, expand=True)
+            
+            if not servers:
+                ttk.Label(frame, text="No servers found on this node").pack()
+            else:
+                tree = ttk.Treeview(frame, columns=("status", "type"), show="tree headings")
+                tree.heading("#0", text="Server Name")
+                tree.heading("status", text="Status")
+                tree.heading("type", text="Type")
+                
+                for server in servers:
+                    tree.insert("", tk.END, text=server.get('name', 'Unknown'), values=(
+                        server.get('status', 'Unknown'),
+                        server.get('type', 'Unknown')
+                    ))
+                
+                tree.pack(fill=tk.BOTH, expand=True)
+            
+            ttk.Button(frame, text="Close", command=info_dialog.destroy).pack(pady=(10, 0))
+            
+        except Exception as e:
+            logger.error(f"Error viewing node servers: {e}")
+            messagebox.showerror("Error", f"Failed to view node servers: {str(e)}")
+    
+    def remove_node(self, node_name):
+        try:
+            if messagebox.askyesno("Confirm", f"Remove node '{node_name}' from cluster?"):
+                if self.agent_manager.remove_node(node_name):
+                    self.refresh_nodes()
+                    messagebox.showinfo("Success", f"Node '{node_name}' removed from cluster")
+                else:
+                    messagebox.showerror("Error", f"Failed to remove node '{node_name}'")
+        except Exception as e:
+            logger.error(f"Error removing node: {e}")
+            messagebox.showerror("Error", f"Failed to remove node: {str(e)}")
+    
+    def center_dialog(self):
+        if self.dialog:
             self.dialog.update_idletasks()
             x = self.parent.winfo_rootx() + (self.parent.winfo_width() - self.dialog.winfo_width()) // 2
             y = self.parent.winfo_rooty() + (self.parent.winfo_height() - self.dialog.winfo_height()) // 2
             self.dialog.geometry(f"+{x}+{y}")
-            
-        except Exception as e:
-            logger.error(f"Error showing agent management dialog: {str(e)}")
-            messagebox.showerror("Error", f"Failed to open agent management: {str(e)}")
-    
-    def add_agent_dialog(self):
-        """Show dialog to add a new agent"""
-        try:
-            # Create add agent dialog
-            add_dialog = tk.Toplevel(self.dialog)
-            add_dialog.title("Add Remote Agent")
-            add_dialog.geometry("400x250")
-            add_dialog.transient(self.dialog)
-            add_dialog.grab_set()
-            
-            # Main frame
-            frame = ttk.Frame(add_dialog, padding=20)
-            frame.pack(fill=tk.BOTH, expand=True)
-            
-            # Agent name
-            ttk.Label(frame, text="Agent Name:").grid(row=0, column=0, sticky=tk.W, pady=5)
-            name_var = tk.StringVar()
-            ttk.Entry(frame, textvariable=name_var, width=30).grid(row=0, column=1, sticky=tk.W, pady=5)
-            
-            # Host
-            ttk.Label(frame, text="Host/IP:").grid(row=1, column=0, sticky=tk.W, pady=5)
-            host_var = tk.StringVar()
-            ttk.Entry(frame, textvariable=host_var, width=30).grid(row=1, column=1, sticky=tk.W, pady=5)
-            
-            # Port
-            ttk.Label(frame, text="Port:").grid(row=2, column=0, sticky=tk.W, pady=5)
-            port_var = tk.StringVar(value="8080")
-            ttk.Entry(frame, textvariable=port_var, width=30).grid(row=2, column=1, sticky=tk.W, pady=5)
-            
-            # Auth token (optional)
-            ttk.Label(frame, text="Auth Token:").grid(row=3, column=0, sticky=tk.W, pady=5)
-            token_var = tk.StringVar()
-            ttk.Entry(frame, textvariable=token_var, width=30, show="*").grid(row=3, column=1, sticky=tk.W, pady=5)
-            ttk.Label(frame, text="(Optional)", foreground="gray").grid(row=3, column=2, sticky=tk.W, pady=5)
-            
-            # Buttons
-            button_frame = ttk.Frame(frame)
-            button_frame.grid(row=4, column=0, columnspan=3, pady=20)
-            
-            def add_agent():
-                try:
-                    name = name_var.get().strip()
-                    host = host_var.get().strip()
-                    port_str = port_var.get().strip()
-                    token = token_var.get().strip() or None
-                    
-                    if not name or not host or not port_str:
-                        messagebox.showerror("Error", "Please fill in all required fields.")
-                        return
-                    
-                    try:
-                        port = int(port_str)
-                        if port < 1 or port > 65535:
-                            raise ValueError("Port must be between 1 and 65535")
-                    except ValueError as e:
-                        messagebox.showerror("Error", f"Invalid port number: {str(e)}")
-                        return
-                    
-                    if self.agent_manager.add_agent(name, host, port, token):
-                        messagebox.showinfo("Success", f"Agent '{name}' added successfully.")
-                        add_dialog.destroy()
-                        self.refresh_agents()
-                    else:
-                        messagebox.showerror("Error", f"Failed to add agent '{name}'. Name may already exist.")
-                        
-                except Exception as e:
-                    logger.error(f"Error adding agent: {str(e)}")
-                    messagebox.showerror("Error", f"Failed to add agent: {str(e)}")
-            
-            ttk.Button(button_frame, text="Add", command=add_agent).pack(side=tk.LEFT, padx=5)
-            ttk.Button(button_frame, text="Cancel", command=add_dialog.destroy).pack(side=tk.LEFT, padx=5)
-            
-            # Center dialog
-            if self.dialog:
-                add_dialog.update_idletasks()
-                x = self.dialog.winfo_rootx() + (self.dialog.winfo_width() - add_dialog.winfo_width()) // 2
-                y = self.dialog.winfo_rooty() + (self.dialog.winfo_height() - add_dialog.winfo_height()) // 2
-                add_dialog.geometry(f"+{x}+{y}")
-            
-        except Exception as e:
-            logger.error(f"Error showing add agent dialog: {str(e)}")
-            messagebox.showerror("Error", f"Failed to show add agent dialog: {str(e)}")
-    
-    def remove_selected_agent(self):
-        """Remove the selected agent"""
-        try:
-            if not self.agent_tree:
-                return
-            
-            selection = self.agent_tree.selection()
-            if not selection:
-                messagebox.showinfo("No Selection", "Please select an agent to remove.")
-                return
-            
-            # Get agent name
-            item = self.agent_tree.item(selection[0])
-            agent_name = item['values'][0]
-            
-            # Confirm removal
-            if messagebox.askyesno("Confirm Removal", f"Remove agent '{agent_name}'?"):
-                if self.agent_manager.remove_agent(agent_name):
-                    messagebox.showinfo("Success", f"Agent '{agent_name}' removed successfully.")
-                    self.refresh_agents()
-                else:
-                    messagebox.showerror("Error", f"Failed to remove agent '{agent_name}'.")
-                    
-        except Exception as e:
-            logger.error(f"Error removing agent: {str(e)}")
-            messagebox.showerror("Error", f"Failed to remove agent: {str(e)}")
-    
-    def connect_selected_agent(self):
-        """Connect to the selected agent"""
-        try:
-            if not self.agent_tree:
-                return
-            
-            selection = self.agent_tree.selection()
-            if not selection:
-                messagebox.showinfo("No Selection", "Please select an agent to connect.")
-                return
-            
-            # Get agent name
-            item = self.agent_tree.item(selection[0])
-            agent_name = item['values'][0]
-            
-            if self.agent_manager.connect_agent(agent_name):
-                messagebox.showinfo("Success", f"Connected to agent '{agent_name}'.")
-                self.refresh_agents()
-            else:
-                messagebox.showerror("Error", f"Failed to connect to agent '{agent_name}'.")
-                
-        except Exception as e:
-            logger.error(f"Error connecting to agent: {str(e)}")
-            messagebox.showerror("Error", f"Failed to connect to agent: {str(e)}")
-    
-    def disconnect_selected_agent(self):
-        """Disconnect from the selected agent"""
-        try:
-            if not self.agent_tree:
-                return
-            
-            selection = self.agent_tree.selection()
-            if not selection:
-                messagebox.showinfo("No Selection", "Please select an agent to disconnect.")
-                return
-            
-            # Get agent name
-            item = self.agent_tree.item(selection[0])
-            agent_name = item['values'][0]
-            
-            if self.agent_manager.disconnect_agent(agent_name):
-                messagebox.showinfo("Success", f"Disconnected from agent '{agent_name}'.")
-                self.refresh_agents()
-            else:
-                messagebox.showerror("Error", f"Failed to disconnect from agent '{agent_name}'.")
-                
-        except Exception as e:
-            logger.error(f"Error disconnecting from agent: {str(e)}")
-            messagebox.showerror("Error", f"Failed to disconnect from agent: {str(e)}")
-    
-    def refresh_agents(self):
-        """Refresh the agent list"""
-        try:
-            if not self.agent_tree:
-                return
-            
-            # Clear existing items
-            for item in self.agent_tree.get_children():
-                self.agent_tree.delete(item)
-            
-            # Add current agents
-            for agent in self.agent_manager.get_all_agents():
-                last_ping = "Never"
-                if agent.last_ping:
-                    last_ping = agent.last_ping.strftime("%Y-%m-%d %H:%M:%S")
-                
-                self.agent_tree.insert("", "end", values=(
-                    agent.name,
-                    agent.host,
-                    agent.port,
-                    agent.status,
-                    agent.server_count,
-                    last_ping
-                ))
-                
-        except Exception as e:
-            logger.error(f"Error refreshing agent list: {str(e)}")
-
-
-def show_agent_management_dialog(parent, agent_manager: AgentManager):
-    """Show the agent management dialog"""
-    dialog = AgentDialog(parent, agent_manager)
-    dialog.show_agent_management_dialog()
-
-
-def add_agent_placeholder(parent):
-    """Placeholder function for add agent functionality"""
-    try:
-        # For now, show a coming soon message
-        messagebox.showinfo("Feature Coming Soon", "Remote agent functionality will be available in a future version.")
-    except Exception as e:
-        logger.error(f"Error in add agent placeholder: {str(e)}")
-        messagebox.showerror("Error", f"Failed to add agent: {str(e)}")

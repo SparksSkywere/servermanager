@@ -58,10 +58,10 @@ INFO = {
     "subhost_version": "1.0.0"
 }
 WEB_API = os.environ.get("WEB_API", "http://localhost:8080/api/tracker/servers")
-AUTH_TOKEN = os.environ.get("WEB_API_TOKEN", "")
+# No authentication tokens needed in simplified cluster system
 
 def get_headers():
-    return {"Authorization": f"Bearer {AUTH_TOKEN}"} if AUTH_TOKEN else {}
+    return {}  # No authorization headers needed in simplified cluster system
 
 def report_status():
     """Report status to host with retries and error handling"""

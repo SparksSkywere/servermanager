@@ -1,5 +1,6 @@
 import ipaddress
 import logging
+from datetime import datetime
 from functools import wraps
 from flask import request, jsonify
 
@@ -83,13 +84,67 @@ def require_allowed_network(security_manager):
             elif real_ip:
                 client_ip = real_ip
                 
+            # Skip network validation for localhost requests (development/debugging)
+            if client_ip in ['127.0.0.1', '::1', 'localhost']:
+                return f(*args, **kwargs)
+                
             if not security_manager.is_ip_allowed(client_ip):
-                logger.warning(f"Access denied for IP address: {client_ip}")
+                logger.warning(f"Access denied for IP address: {client_ip} on endpoint: {request.endpoint}")
                 return jsonify({
                     "error": "Access denied", 
-                    "message": "Your IP address is not allowed to access this resource"
+                    "message": "Your IP address is not allowed to access this resource",
+                    "timestamp": datetime.now().isoformat()
                 }), 403
                 
+            # Additional logging for cluster endpoints
+            if '/api/cluster/' in request.path:
+                logger.info(f"Cluster API access from allowed IP: {client_ip} to {request.endpoint}")
+                
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+def require_cluster_network_security(security_manager):
+    """Enhanced decorator specifically for cluster API endpoints with additional security"""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            client_ip = request.environ.get('REMOTE_ADDR', request.remote_addr)
+            
+            # Handle proxied requests
+            forwarded_for = request.headers.get('X-Forwarded-For')
+            real_ip = request.headers.get('X-Real-IP')
+            
+            if forwarded_for:
+                client_ip = forwarded_for.split(',')[0].strip()
+            elif real_ip:
+                client_ip = real_ip
+            
+            # Log all cluster API access attempts
+            logger.info(f"Cluster API access attempt from {client_ip} to {request.endpoint}")
+            
+            # Skip network validation for localhost requests (development/debugging)
+            if client_ip in ['127.0.0.1', '::1', 'localhost']:
+                logger.debug(f"Allowing localhost cluster access: {request.endpoint}")
+                return f(*args, **kwargs)
+                
+            # Check if IP is in allowed networks
+            if not security_manager.is_ip_allowed(client_ip):
+                logger.warning(f"Cluster API access denied for IP address: {client_ip} on endpoint: {request.endpoint}")
+                return jsonify({
+                    "error": "Cluster access denied", 
+                    "message": "Your IP address is not authorized for cluster communication",
+                    "timestamp": datetime.now().isoformat(),
+                    "client_ip": client_ip
+                }), 403
+            
+            # Additional security checks for cluster endpoints
+            user_agent = request.headers.get('User-Agent', '')
+            if not user_agent or 'ServerManager' not in user_agent:
+                logger.warning(f"Cluster API access with suspicious User-Agent from {client_ip}: {user_agent}")
+                # Don't block entirely, but log for monitoring
+            
+            logger.info(f"Cluster API access granted for IP: {client_ip} to {request.endpoint}")
             return f(*args, **kwargs)
         return decorated_function
     return decorator

@@ -2,7 +2,7 @@ import os
 import sys
 import winreg
 import json
-import datetime
+from datetime import datetime
 from functools import wraps
 from flask import Blueprint, jsonify, request
 
@@ -13,8 +13,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
 
 # Import security managers
-from Modules.cluster_security import ClusterSecurityManager
-from Modules.network_security import NetworkSecurityManager, require_allowed_network
+from Modules.network_security import NetworkSecurityManager, require_cluster_network_security
+
+# Import database for persistent cluster data
+from Modules.Database.cluster_database import ClusterDatabase
 
 # Import standardized logging
 from Modules.server_logging import get_component_logger
@@ -22,36 +24,43 @@ logger = get_component_logger("ClusterAPI")
 
 cluster_api = Blueprint("cluster_api", __name__)
 
-# Initialize security managers
-security_manager = ClusterSecurityManager()
+# Initialize security managers and database
 network_security_manager = NetworkSecurityManager()
+cluster_db = ClusterDatabase()
 
-# In-memory storage for subhost registration (in production, use database)
-registered_subhosts = {}
+def is_subhost_registered(subhost_id):
+    """Check if a subhost is registered in the database"""
+    node = cluster_db.get_cluster_node(subhost_id)
+    return node is not None and node['node_type'] == 'subhost'
+
+def get_subhost_info(subhost_id):
+    """Get subhost information from database"""
+    node = cluster_db.get_cluster_node(subhost_id)
+    if node and node['node_type'] == 'subhost':
+        return {
+            "id": node['name'],
+            "info": {},  # Legacy compatibility - info not stored in new schema
+            "last_seen": node['last_ping'] or node['added_at'],
+            "registered_at": node['added_at'],
+            "ip_address": node['ip_address'],
+            "port": node['port'],
+            "status": node['status']
+        }
+    return None
 
 def require_cluster_auth(f):
     """Decorator to require cluster authentication for API endpoints"""
     @wraps(f)
-    @require_allowed_network(network_security_manager)
+    @require_cluster_network_security(network_security_manager)
     def decorated_function(*args, **kwargs):
         # Allow unauthenticated access to role endpoint for initial setup
         if request.endpoint == 'cluster_api.api_cluster_role':
+            logger.debug("Allowing unauthenticated access to cluster role endpoint")
             return f(*args, **kwargs)
             
-        # Check for authentication token in headers
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            logger.warning(f"Unauthorized cluster API request from {request.remote_addr} - missing token")
-            return jsonify({"error": "Authentication required"}), 401
-            
-        token = auth_header[7:]  # Remove 'Bearer ' prefix
-        
-        # Verify the token
-        token_data = security_manager.verify_cluster_token(token)
-        if not token_data:
-            logger.warning(f"Unauthorized cluster API request from {request.remote_addr} - invalid token")
-            return jsonify({"error": "Invalid authentication token"}), 401
-            
+        # In simplified cluster system, authentication is automatic
+        # Just log the access and allow the request
+        logger.debug(f"Cluster API access from {request.remote_addr}")
         return f(*args, **kwargs)
     return decorated_function
 
@@ -83,9 +92,7 @@ def api_cluster_role():
 @cluster_api.route("/api/cluster/register", methods=["POST"])
 @require_cluster_auth
 def api_register_subhost():
-    """Register a subhost with the host"""
-    global registered_subhosts
-    
+    """Register a subhost with the host - deprecated, use approval workflow instead"""
     try:
         data = request.get_json()
         if not data:
@@ -96,34 +103,285 @@ def api_register_subhost():
         if not subhost_id:
             logger.warning("Register subhost request missing subhost_id")
             return jsonify({"error": "subhost_id is required"}), 400
+        
+        # Check if node is already registered
+        existing_node = cluster_db.get_cluster_node(subhost_id)
+        if existing_node:
+            # Update existing node
+            cluster_db.update_node_status(subhost_id, "active")
+            logger.info(f"Subhost {subhost_id} updated registration")
+            return jsonify({
+                "status": "updated",
+                "subhost_id": subhost_id,
+                "message": f"Subhost {subhost_id} registration updated"
+            })
+        
+        # Add new node (legacy path, should use approval workflow)
+        info = data.get("info", {})
+        success = cluster_db.add_cluster_node(
+            name=subhost_id,
+            ip_address=request.remote_addr or "unknown",
+            node_type="subhost",
+            cluster_token=""  # No token for legacy registration
+        )
+        
+        if success:
+            logger.info(f"Subhost {subhost_id} registered successfully (legacy)")
+            logger.info(f"SUBHOST_REGISTRATION: Subhost {subhost_id} registered (user: system)")
             
-        # Store subhost information
-        registered_subhosts[subhost_id] = {
-            "id": subhost_id,
-            "info": data.get("info", {}),
-            "last_seen": datetime.datetime.now().isoformat(),
-            "registered_at": datetime.datetime.now().isoformat()
-        }
-        
-        logger.info(f"Subhost {subhost_id} registered successfully")
-        logger.info(f"SUBHOST_REGISTRATION: Subhost {subhost_id} registered (user: system)")
-        
-        return jsonify({
-            "status": "registered",
-            "subhost_id": subhost_id,
-            "message": f"Subhost {subhost_id} registered successfully"
-        })
+            return jsonify({
+                "status": "registered",
+                "subhost_id": subhost_id,
+                "message": f"Subhost {subhost_id} registered successfully"
+            })
+        else:
+            return jsonify({"error": "Failed to register subhost"}), 500
         
     except Exception as e:
         logger.error(f"Error registering subhost: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@cluster_api.route("/api/cluster/request-join", methods=["POST"])
+def api_request_join():
+    """Request to join cluster - requires approval"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        subhost_id = data.get("subhost_id")
+        if not subhost_id:
+            return jsonify({"error": "subhost_id is required"}), 400
+        
+        # Extract request information
+        info = data.get("info", {})
+        machine_name = info.get("machine_name", "")
+        os_info = info.get("os", "")
+        
+        # Store pending request in database
+        request_id = cluster_db.add_pending_request(
+            node_name=subhost_id,
+            ip_address=request.remote_addr or "unknown",
+            port=8080,
+            machine_name=machine_name,
+            os_info=os_info,
+            request_data=json.dumps(data)
+        )
+        
+        if request_id is None:
+            return jsonify({"error": "Failed to store join request"}), 500
+        
+        logger.info(f"Subhost {subhost_id} requested to join cluster from {request.remote_addr}")
+        
+        return jsonify({
+            "status": "pending_approval",
+            "subhost_id": subhost_id,
+            "request_id": request_id,
+            "message": "Join request submitted. Awaiting approval from cluster administrator."
+        })
+        
+    except Exception as e:
+        logger.error(f"Error processing join request: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@cluster_api.route("/api/cluster/pending", methods=["GET"])
+@require_cluster_auth
+def api_get_pending():
+    """Get pending cluster join requests"""
+    try:
+        role, _ = get_cluster_role()
+        logger.info(f"api_get_pending called - role: {role}")
+        
+        if role != "Host":
+            logger.warning(f"Pending requests requested from non-host: {role}")
+            return jsonify({"error": "This operation is only available on host instances"}), 403
+        
+        # Get pending requests from database
+        logger.info("Getting pending requests from database...")
+        pending_requests = cluster_db.get_pending_requests()
+        logger.info(f"Database returned {len(pending_requests)} pending requests")
+        
+        if pending_requests:
+            logger.info(f"First request: {pending_requests[0]}")
+        
+        # Convert to legacy format for compatibility
+        pending_dict = {}
+        for req in pending_requests:
+            logger.info(f"Converting request: {req['node_name']} from {req['ip_address']}")
+            pending_dict[req['node_name']] = {
+                "id": req['node_name'],
+                "request_id": req['id'],
+                "info": json.loads(req['request_data']) if req['request_data'] else {},
+                "request_time": req['requested_at'],
+                "ip_address": req['ip_address'],
+                "status": req['status'],
+                "machine_name": req['machine_name'],
+                "os_info": req['os_info']
+            }
+        
+        response_data = {
+            "pending_requests": pending_dict,
+            "count": len(pending_requests)
+        }
+        
+        logger.info(f"Returning response with {response_data['count']} requests")
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error(f"Error getting pending requests: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+@cluster_api.route("/api/cluster/approve/<subhost_id>", methods=["POST"])
+@require_cluster_auth
+def api_approve_subhost(subhost_id):
+    """Approve a pending subhost join request"""
+    try:
+        role, _ = get_cluster_role()
+        if role != "Host":
+            return jsonify({"error": "This operation is only available on host instances"}), 403
+        
+        # Find the pending request in database
+        pending_requests = cluster_db.get_pending_requests()
+        matching_request = None
+        for req in pending_requests:
+            if req['node_name'] == subhost_id:
+                matching_request = req
+                break
+        
+        if not matching_request:
+            return jsonify({"error": f"No pending request found for subhost {subhost_id}"}), 404
+        
+        # Generate approval token
+        import uuid
+        approval_token = str(uuid.uuid4())
+        
+        # Approve the request in database
+        success = cluster_db.approve_request(
+            request_id=matching_request['id'],
+            approved_by="system",
+            approval_token=approval_token
+        )
+        
+        if not success:
+            return jsonify({"error": "Failed to approve request"}), 500
+        
+        # Add to registered nodes
+        cluster_db.add_cluster_node(
+            name=subhost_id,
+            ip_address=matching_request['ip_address'],
+            port=matching_request['port'],
+            node_type='subhost',
+            cluster_token=approval_token
+        )
+        
+        logger.info(f"Subhost {subhost_id} approved and registered")
+        
+        return jsonify({
+            "status": "approved",
+            "subhost_id": subhost_id,
+            "approval_token": approval_token,
+            "message": f"Subhost {subhost_id} approved successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error approving subhost: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@cluster_api.route("/api/cluster/reject/<subhost_id>", methods=["POST"])
+@require_cluster_auth
+def api_reject_subhost(subhost_id):
+    """Reject a pending subhost join request"""
+    try:
+        role, _ = get_cluster_role()
+        if role != "Host":
+            return jsonify({"error": "This operation is only available on host instances"}), 403
+        
+        # Find the pending request in database
+        pending_requests = cluster_db.get_pending_requests()
+        matching_request = None
+        for req in pending_requests:
+            if req['node_name'] == subhost_id:
+                matching_request = req
+                break
+        
+        if not matching_request:
+            return jsonify({"error": f"No pending request found for subhost {subhost_id}"}), 404
+        
+        # Reject the request in database
+        success = cluster_db.reject_request(
+            request_id=matching_request['id'],
+            rejected_by="system"
+        )
+        
+        if not success:
+            return jsonify({"error": "Failed to reject request"}), 500
+        
+        logger.info(f"Subhost {subhost_id} join request rejected")
+        
+        return jsonify({
+            "status": "rejected",
+            "subhost_id": subhost_id,
+            "message": f"Subhost {subhost_id} join request rejected"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error rejecting subhost: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@cluster_api.route("/api/cluster/check-approval/<subhost_id>", methods=["GET"])
+def api_check_approval(subhost_id):
+    """Check if a subhost join request has been approved"""
+    try:
+        # Check if already registered as a node
+        registered_node = cluster_db.get_cluster_node(subhost_id)
+        if registered_node:
+            return jsonify({
+                "status": "approved",
+                "approved": True,
+                "approval_token": registered_node.get('cluster_token'),
+                "message": "Subhost approved and registered"
+            })
+        
+        # Check pending requests
+        pending_requests = cluster_db.get_pending_requests()
+        for req in pending_requests:
+            if req['node_name'] == subhost_id:
+                if req['status'] == 'approved':
+                    return jsonify({
+                        "status": "approved",
+                        "approved": True,
+                        "approval_token": req['approval_token'],
+                        "message": "Subhost approved, completing registration"
+                    })
+                elif req['status'] == 'pending':
+                    return jsonify({
+                        "status": "pending",
+                        "approved": False,
+                        "message": "Join request still pending approval"
+                    })
+                elif req['status'] == 'rejected':
+                    return jsonify({
+                        "status": "rejected",
+                        "approved": False,
+                        "message": "Join request was rejected"
+                    })
+        
+        return jsonify({
+            "status": "not_found",
+                "approved": False,
+                "message": "No join request found"
+            })
+            
+    except Exception as e:
+        logger.error(f"Error checking approval status: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @cluster_api.route("/api/cluster/heartbeat", methods=["POST"])
 @require_cluster_auth
 def api_subhost_heartbeat():
     """Receive heartbeat from subhost"""
-    global registered_subhosts
-    
     try:
         data = request.get_json()
         if not data:
@@ -134,26 +392,40 @@ def api_subhost_heartbeat():
         if not subhost_id:
             logger.warning("Heartbeat request missing subhost_id")
             return jsonify({"error": "subhost_id is required"}), 400
-            
-        # Update last seen timestamp
-        if subhost_id in registered_subhosts:
-            registered_subhosts[subhost_id]["last_seen"] = datetime.datetime.now().isoformat()
-            registered_subhosts[subhost_id]["info"] = data.get("info", {})
+        
+        # Check if subhost is registered
+        existing_node = cluster_db.get_cluster_node(subhost_id)
+        
+        if existing_node:
+            # Update last ping timestamp and status
+            cluster_db.update_node_status(subhost_id, "active", datetime.now())
             logger.debug(f"Heartbeat received from registered subhost: {subhost_id}")
         else:
-            # Auto-register if not already registered
-            registered_subhosts[subhost_id] = {
-                "id": subhost_id,
-                "info": data.get("info", {}),
-                "last_seen": datetime.datetime.now().isoformat(),
-                "registered_at": datetime.datetime.now().isoformat()
-            }
-            logger.info(f"Auto-registered new subhost from heartbeat: {subhost_id}")
-            logger.info(f"SUBHOST_AUTO_REGISTRATION: Subhost {subhost_id} auto-registered via heartbeat (user: system)")
+            # Auto-register if not already registered (for backward compatibility)
+            info = data.get("info", {})
+            machine_name = info.get("machine_name", "")
+            
+            success = cluster_db.add_cluster_node(
+                name=subhost_id,
+                ip_address=request.remote_addr or "unknown",
+                node_type="subhost",
+                cluster_token=""
+            )
+            
+            if success:
+                cluster_db.update_node_status(subhost_id, "active", datetime.now())
+                logger.info(f"Auto-registered new subhost from heartbeat: {subhost_id}")
+                logger.info(f"SUBHOST_AUTO_REGISTRATION: Subhost {subhost_id} auto-registered via heartbeat (user: system)")
+            else:
+                logger.error(f"Failed to auto-register subhost {subhost_id}")
+                return jsonify({"error": "Failed to register subhost"}), 500
+        
+        # Update host heartbeat as well
+        cluster_db.heartbeat()
         
         return jsonify({
             "status": "acknowledged",
-            "timestamp": datetime.datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat()
         })
         
     except Exception as e:
@@ -164,37 +436,79 @@ def api_subhost_heartbeat():
 @require_cluster_auth
 def api_list_subhosts():
     """List all registered subhosts"""
-    global registered_subhosts
-    
     try:
-        # Clean up old subhosts (haven't been seen in 5 minutes)
-        current_time = datetime.datetime.now()
+        # Get all cluster nodes
+        all_nodes = cluster_db.get_all_cluster_nodes()
+        
+        # Filter for subhosts and convert to legacy format
         active_subhosts = {}
         inactive_count = 0
+        current_time = datetime.now()
         
-        for subhost_id, subhost_data in registered_subhosts.items():
-            last_seen = datetime.datetime.fromisoformat(subhost_data["last_seen"])
-            time_diff = current_time - last_seen
-            
-            # Keep subhosts that have been seen in the last 5 minutes
-            if time_diff.total_seconds() < 300:  # 5 minutes
-                subhost_data["status"] = "active"
-                subhost_data["last_seen_ago"] = f"{int(time_diff.total_seconds())} seconds ago"
-                active_subhosts[subhost_id] = subhost_data
-            else:
-                subhost_data["status"] = "inactive"
-                subhost_data["last_seen_ago"] = f"{int(time_diff.total_seconds())} seconds ago"
-                active_subhosts[subhost_id] = subhost_data
-                inactive_count += 1
+        for node in all_nodes:
+            if node['node_type'] == 'subhost':
+                subhost_id = node['name']
+                last_ping = node['last_ping']
                 
-        # Update the global registry
-        # Clean up old entries (older than 1 hour)
-        old_count = len(registered_subhosts)
-        registered_subhosts = {k: v for k, v in registered_subhosts.items() 
-                              if current_time - datetime.datetime.fromisoformat(v["last_seen"]) < datetime.timedelta(hours=1)}
+                # Calculate time since last ping
+                if last_ping:
+                    try:
+                        last_ping_time = datetime.fromisoformat(last_ping)
+                        time_diff = current_time - last_ping_time
+                        seconds_ago = int(time_diff.total_seconds())
+                        
+                        # Mark as active if seen in last 5 minutes
+                        if seconds_ago < 300:  # 5 minutes
+                            status = "active"
+                        else:
+                            status = "inactive"
+                            inactive_count += 1
+                            
+                        last_seen_ago = f"{seconds_ago} seconds ago"
+                    except:
+                        status = "unknown"
+                        last_seen_ago = "unknown"
+                        seconds_ago = 999999
+                else:
+                    status = "unknown"
+                    last_seen_ago = "never"
+                    seconds_ago = 999999
+                
+                # Convert to legacy format
+                active_subhosts[subhost_id] = {
+                    "id": subhost_id,
+                    "info": {},  # Info not stored in new schema
+                    "last_seen": node['last_ping'] or node['added_at'],
+                    "registered_at": node['added_at'],
+                    "status": status,
+                    "last_seen_ago": last_seen_ago,
+                    "ip_address": node['ip_address'],
+                    "port": node['port']
+                }
         
-        if old_count != len(registered_subhosts):
-            logger.info(f"Cleaned up {old_count - len(registered_subhosts)} old subhost entries")
+        # Clean up very old inactive subhosts (over 1 hour inactive)
+        old_count = len(active_subhosts)
+        nodes_to_remove = []
+        for subhost_id, data in active_subhosts.items():
+            if data['status'] == 'inactive':
+                last_ping = data['last_seen']
+                if last_ping and last_ping != 'never':
+                    try:
+                        last_ping_time = datetime.fromisoformat(last_ping)
+                        time_diff = current_time - last_ping_time
+                        if time_diff.total_seconds() > 3600:  # 1 hour
+                            nodes_to_remove.append(subhost_id)
+                    except:
+                        pass
+        
+        # Remove old nodes
+        for subhost_id in nodes_to_remove:
+            cluster_db.remove_cluster_node(subhost_id)
+            active_subhosts.pop(subhost_id, None)
+        
+        cleanup_count = old_count - len(active_subhosts)
+        if cleanup_count > 0:
+            logger.info(f"Cleaned up {cleanup_count} old subhost entries")
         
         logger.debug(f"Listed {len(active_subhosts)} subhosts ({inactive_count} inactive)")
         
@@ -217,21 +531,87 @@ def api_cluster_status():
         cluster_status = {
             "role": role,
             "host_address": host_address,
-            "timestamp": datetime.datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat()
         }
         
         if role == "Host":
             # Include subhost information for hosts
-            cluster_status["subhosts"] = registered_subhosts
-            cluster_status["subhost_count"] = len(registered_subhosts)
+            all_nodes = cluster_db.get_all_cluster_nodes()
+            subhosts = {}
+            subhost_count = 0
             
-        logger.debug(f"Cluster status requested - Role: {role}, Subhosts: {len(registered_subhosts) if role == 'Host' else 'N/A'}")
+            for node in all_nodes:
+                if node['node_type'] == 'subhost':
+                    subhosts[node['name']] = {
+                        "id": node['name'],
+                        "info": {},  # Legacy compatibility
+                        "last_seen": node['last_ping'] or node['added_at'],
+                        "registered_at": node['added_at'],
+                        "ip_address": node['ip_address'],
+                        "port": node['port'],
+                        "status": node['status']
+                    }
+                    subhost_count += 1
+            
+            cluster_status["subhosts"] = subhosts
+            cluster_status["subhost_count"] = subhost_count
+            
+            # Add host status information
+            host_status = cluster_db.get_host_status()
+            if host_status:
+                cluster_status["host_status"] = host_status['status']
+                cluster_status["dashboard_active"] = host_status['dashboard_active']
+                cluster_status["maintenance_mode"] = host_status['maintenance_mode']
+            else:
+                cluster_status["host_status"] = "unknown"
+                cluster_status["dashboard_active"] = True
+                cluster_status["maintenance_mode"] = False
+            
+        logger.debug(f"Cluster status requested - Role: {role}, Subhosts: {subhost_count if role == 'Host' else 'N/A'}")
         
         return jsonify(cluster_status)
         
     except Exception as e:
         logger.error(f"Error getting cluster status: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+@cluster_api.route("/api/cluster/host-status", methods=["GET"])
+def api_get_host_status():
+    """Get current host status for subhosts to check availability"""
+    try:
+        # This endpoint is available without authentication for subhosts to check host status
+        host_status = cluster_db.get_host_status()
+        
+        if host_status:
+            return jsonify({
+                "host_status": host_status['status'],
+                "dashboard_active": host_status['dashboard_active'],
+                "maintenance_mode": host_status['maintenance_mode'],
+                "status_message": host_status.get('status_message', ''),
+                "last_heartbeat": host_status['last_heartbeat'],
+                "timestamp": datetime.now().isoformat()
+            })
+        else:
+            # No status record means host might be starting up or in unknown state
+            return jsonify({
+                "host_status": "unknown",
+                "dashboard_active": False,
+                "maintenance_mode": False,
+                "status_message": "Host status not available",
+                "last_heartbeat": None,
+                "timestamp": datetime.now().isoformat()
+            })
+        
+    except Exception as e:
+        logger.error(f"Error getting host status: {str(e)}")
+        return jsonify({
+            "host_status": "error",
+            "dashboard_active": False,
+            "maintenance_mode": True,
+            "status_message": f"Error retrieving status: {str(e)}",
+            "last_heartbeat": None,
+            "timestamp": datetime.now().isoformat()
+        }), 500
 
 # Remote Server Operations API (Host-only endpoints)
 @cluster_api.route("/api/cluster/subhost/<subhost_id>/servers", methods=["GET"])
@@ -242,11 +622,17 @@ def api_get_subhost_servers(subhost_id):
         if role != "Host":
             return jsonify({"error": "This operation is only available on host instances"}), 403
             
-        if subhost_id not in registered_subhosts:
+        if not is_subhost_registered(subhost_id):
             return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
             
-        subhost_info = registered_subhosts[subhost_id]["info"]
-        subhost_api_url = subhost_info.get("api_url", "http://localhost:8080")
+        subhost_info = get_subhost_info(subhost_id)
+        if not subhost_info:
+            return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
+            
+        # Use subhost IP address from database
+        subhost_ip = subhost_info['ip_address']
+        subhost_port = subhost_info['port']
+        subhost_api_url = f"http://{subhost_ip}:{subhost_port}"
         
         # Make request to subhost API
         import requests
@@ -314,22 +700,26 @@ def api_install_subhost_server(subhost_id):
         if role != "Host":
             return jsonify({"error": "This operation is only available on host instances"}), 403
             
-        if subhost_id not in registered_subhosts:
+        if not is_subhost_registered(subhost_id):
             return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
             
         data = request.get_json()
         if not data:
             return jsonify({"error": "No installation data provided"}), 400
             
-        subhost_info = registered_subhosts[subhost_id]["info"]
-        subhost_api_url = subhost_info.get("api_url", "http://localhost:8080")
+        subhost_info = get_subhost_info(subhost_id)
+        if not subhost_info:
+            return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
+            
+        subhost_ip = subhost_info['ip_address']
+        subhost_port = subhost_info['port']
+        subhost_api_url = f"http://{subhost_ip}:{subhost_port}"
         
         # Forward the installation request to the subhost
         import requests
         try:
             headers = {"Content-Type": "application/json"}
-            if "Authorization" in request.headers:
-                headers["Authorization"] = request.headers["Authorization"]
+            # No authorization headers needed in simplified cluster system
                 
             response = requests.post(f"{subhost_api_url}/api/servers", 
                                    json=data, headers=headers, timeout=30)
@@ -354,18 +744,22 @@ def api_remove_subhost_server(subhost_id, server_name):
         if role != "Host":
             return jsonify({"error": "This operation is only available on host instances"}), 403
             
-        if subhost_id not in registered_subhosts:
+        if not is_subhost_registered(subhost_id):
             return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
             
-        subhost_info = registered_subhosts[subhost_id]["info"]
-        subhost_api_url = subhost_info.get("api_url", "http://localhost:8080")
+        subhost_info = get_subhost_info(subhost_id)
+        if not subhost_info:
+            return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
+            
+        subhost_ip = subhost_info['ip_address']
+        subhost_port = subhost_info['port']
+        subhost_api_url = f"http://{subhost_ip}:{subhost_port}"
         
         # Forward the deletion request to the subhost
         import requests
         try:
             headers = {}
-            if "Authorization" in request.headers:
-                headers["Authorization"] = request.headers["Authorization"]
+            # No authorization headers needed in simplified cluster system
                 
             response = requests.delete(f"{subhost_api_url}/api/servers/{server_name}", 
                                      headers=headers, timeout=15)
@@ -384,18 +778,22 @@ def api_remove_subhost_server(subhost_id, server_name):
 
 def _execute_subhost_server_command(subhost_id, server_name, action):
     """Helper function to execute server commands on subhost"""
-    if subhost_id not in registered_subhosts:
+    if not is_subhost_registered(subhost_id):
         return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
         
-    subhost_info = registered_subhosts[subhost_id]["info"]
-    subhost_api_url = subhost_info.get("api_url", "http://localhost:8080")
+    subhost_info = get_subhost_info(subhost_id)
+    if not subhost_info:
+        return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
+        
+    subhost_ip = subhost_info['ip_address']
+    subhost_port = subhost_info['port']
+    subhost_api_url = f"http://{subhost_ip}:{subhost_port}"
     
     # Make request to subhost API
     import requests
     try:
         headers = {}
-        if "Authorization" in request.headers:
-            headers["Authorization"] = request.headers["Authorization"]
+        # No authorization headers needed in simplified cluster system
             
         response = requests.post(f"{subhost_api_url}/api/servers/{server_name}/{action}", 
                                headers=headers, timeout=15)
@@ -407,3 +805,35 @@ def _execute_subhost_server_command(subhost_id, server_name, action):
     except requests.RequestException as e:
         logger.error(f"Failed to connect to subhost {subhost_id} for {action}: {str(e)}")
         return jsonify({"error": f"Failed to connect to subhost: {str(e)}"}), 503
+
+@cluster_api.route("/api/cluster/nodes", methods=["GET"])
+@require_cluster_auth
+def api_cluster_nodes():
+    """Get all approved cluster nodes"""
+    try:
+        role, _ = get_cluster_role()
+        if role != "Host":
+            return jsonify({"error": "This operation is only available on host instances"}), 403
+            
+        # Get all registered subhosts from database
+        all_nodes = cluster_db.get_all_cluster_nodes()
+        nodes = []
+        
+        for node in all_nodes:
+            if node['node_type'] == 'subhost':
+                nodes.append({
+                    "id": node['name'],
+                    "subhost_id": node['name'],
+                    "hostname": node['name'],  # Use name as hostname for now
+                    "ip_address": node['ip_address'],
+                    "status": node['status'].title() if node['status'] else "Unknown",
+                    "approved_timestamp": node['added_at'],
+                    "last_seen": node['last_ping'] or node['added_at']
+                })
+            
+        logger.debug(f"Returning {len(nodes)} approved cluster nodes")
+        return jsonify(nodes)
+        
+    except Exception as e:
+        logger.error(f"Error getting cluster nodes: {str(e)}")
+        return jsonify({"error": str(e)}), 500

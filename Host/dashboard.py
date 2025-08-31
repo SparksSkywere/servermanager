@@ -54,7 +54,7 @@ from Host.dashboard_functions import (
     batch_update_server_types, update_server_configuration_with_detection
 )
 
-# Import agent management
+# Import cluster management
 from Modules.agents import AgentManager, show_agent_management_dialog
 
 # Import debug functions
@@ -70,10 +70,8 @@ from Modules.server_console import ConsoleManager
 logger = get_dashboard_logger()
 
 def dashboard_login(user_manager, parent_window=None):
-    """
-    Dashboard login dialog with improved styling
-    Returns (success, authenticated_user) tuple
-    """
+    # Dashboard login dialog with improved styling
+    # Returns (success, authenticated_user) tuple
     max_attempts = 3
     attempts = 0
     
@@ -400,14 +398,14 @@ class ServerManagerDashboard(ServerManagerModule):
             logger.error(f"Failed to initialize server update manager: {str(e)}")
             self.update_manager = None
         
-        # Initialize agent manager
+        # Initialize cluster manager
         try:
-            # Now that we added 'data' to paths, we can use it properly
-            agents_config_path = os.path.join(self.paths["data"], "agents.json")
+            # Use database-backed cluster management (no longer using JSON)
+            agents_config_path = os.path.join(self.paths["data"], "cluster_nodes.json")  # For migration only
             self.agent_manager = AgentManager(agents_config_path)
-            logger.info("Agent manager initialized successfully")
+            logger.info("Cluster manager initialized successfully with database backend")
         except Exception as e:
-            logger.error(f"Failed to initialize agent manager: {str(e)}")
+            logger.error(f"Failed to initialize cluster manager: {str(e)}")
             self.agent_manager = None
         
         # Initialize system info and timers
@@ -421,7 +419,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.supported_server_types = ["Steam", "Minecraft", "Other"]
 
     def setup_menu_bar(self):
-        """Setup the menu bar with update options"""
+        # Setup the menu bar with update options
         self.menubar = tk.Menu(self.root)
         self.root.config(menu=self.menubar)
         
@@ -448,7 +446,7 @@ class ServerManagerDashboard(ServerManagerModule):
         tools_menu.add_separator()
         tools_menu.add_command(label="Update Server Types", command=self.batch_update_server_types)
         tools_menu.add_separator()
-        tools_menu.add_command(label="Agents", command=self.add_agent)
+        tools_menu.add_command(label="Cluster", command=self.add_agent)
         
         # Help Menu
         help_menu = tk.Menu(self.menubar, tearoff=0)
@@ -457,7 +455,7 @@ class ServerManagerDashboard(ServerManagerModule):
         help_menu.add_command(label="About", command=self.show_about)
 
     def setup_ui(self):
-        """Setup the main UI components"""
+        # Setup the main UI components
         # Menu bar removed as requested - all functionality is available in buttons
         
         # Create top frame for help and about buttons
@@ -466,10 +464,10 @@ class ServerManagerDashboard(ServerManagerModule):
         
         # Add About and Help buttons to top right
         self.help_button = ttk.Button(self.top_frame, text="Help", command=self.show_help, width=10)
-        self.help_button.pack(side=tk.RIGHT)
+        self.help_button.pack(side=tk.RIGHT, padx=(5, 0))
         
         self.about_button = ttk.Button(self.top_frame, text="About", command=self.show_about, width=10)
-        self.about_button.pack(side=tk.RIGHT, padx=(0, 5))
+        self.about_button.pack(side=tk.RIGHT, padx=(5, 5))
         
         # Add quick update buttons to top left
         self.update_all_button = ttk.Button(self.top_frame, text="Update All", 
@@ -509,13 +507,13 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_list.heading("memory", text="Memory Usage")
         self.server_list.heading("uptime", text="Uptime")
         
-        # Column widths
-        self.server_list.column("name", width=180, minwidth=120)
-        self.server_list.column("status", width=100, minwidth=80)
-        self.server_list.column("pid", width=80, minwidth=60)
-        self.server_list.column("cpu", width=100, minwidth=80)
-        self.server_list.column("memory", width=120, minwidth=100)
-        self.server_list.column("uptime", width=160, minwidth=120)
+        # Column widths - improved for better readability and consistent spacing
+        self.server_list.column("name", width=200, minwidth=150, anchor=tk.W)
+        self.server_list.column("status", width=100, minwidth=80, anchor=tk.CENTER)
+        self.server_list.column("pid", width=80, minwidth=60, anchor=tk.CENTER)
+        self.server_list.column("cpu", width=100, minwidth=80, anchor=tk.CENTER)
+        self.server_list.column("memory", width=120, minwidth=100, anchor=tk.CENTER)
+        self.server_list.column("uptime", width=160, minwidth=120, anchor=tk.CENTER)
         
         # Add scrollbar to server list
         server_scroll = ttk.Scrollbar(self.servers_frame, orient=tk.VERTICAL, command=self.server_list.yview)
@@ -635,25 +633,27 @@ class ServerManagerDashboard(ServerManagerModule):
         self.button_row2 = ttk.Frame(self.button_frame)
         self.button_row2.pack(fill=tk.X)
         
-        # Add buttons
+        # Add buttons with consistent sizing and spacing
         row1_buttons = [
-            {"text": "Add Server", "command": self.add_server},
-            {"text": "Import Server", "command": self.import_server},
-            {"text": "Sync All", "command": self.sync_all}
+            {"text": "Add Server", "command": self.add_server, "width": 15},
+            {"text": "Import Server", "command": self.import_server, "width": 15},
+            {"text": "Sync All", "command": self.sync_all, "width": 15}
         ]
         
         row2_buttons = [
-            {"text": "Add Agent", "command": self.add_agent}
+            {"text": "Cluster", "command": self.add_agent, "width": 15}
         ]
         
         for btn in row1_buttons:
-            ttk.Button(self.button_row1, text=btn["text"], command=btn["command"], width=18).pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(self.button_row1, text=btn["text"], command=btn["command"], 
+                      width=btn["width"]).pack(side=tk.LEFT, padx=(0, 8))
             
         for btn in row2_buttons:
-            ttk.Button(self.button_row2, text=btn["text"], command=btn["command"], width=18).pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(self.button_row2, text=btn["text"], command=btn["command"], 
+                      width=btn["width"]).pack(side=tk.LEFT, padx=(0, 8))
     
     def show_server_context_menu(self, event):
-        """Show context menu on right-click in server list"""
+        # Show context menu on right-click in server list
         # Get item under cursor
         item = self.server_list.identify_row(event.y)
         
@@ -686,7 +686,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_context_menu.tk_popup(event.x_root, event.y_root)
 
     def on_server_list_click(self, event):
-        """Handle left-click on server list - deselect all if clicking on empty space"""
+        # Handle left-click on server list - deselect all if clicking on empty space
         # Get item under cursor
         item = self.server_list.identify_row(event.y)
         
@@ -696,7 +696,7 @@ class ServerManagerDashboard(ServerManagerModule):
             logger.debug("Cleared server list selection due to empty space click")
 
     def on_server_double_click(self, event):
-        """Handle double-click on server list - open configuration dialog"""
+        # Handle double-click on server list - open configuration dialog
         # Get item under cursor
         item = self.server_list.identify_row(event.y)
         
@@ -706,7 +706,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.configure_server()
 
     def add_server(self):
-        """Add a new game server (Steam, Minecraft, or Other)"""
+        # Add a new game server (Steam, Minecraft, or Other)
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
             return
@@ -1224,7 +1224,7 @@ class ServerManagerDashboard(ServerManagerModule):
         center_window(dialog, 900, 700, self.root)
 
     def update_server_list(self, force_refresh=False):
-        """Update server list from configuration files - thread-safe"""
+        # Update server list from configuration files - thread-safe
         def _update():
             try:
                 # Skip update if already refreshing
@@ -1264,13 +1264,13 @@ class ServerManagerDashboard(ServerManagerModule):
             self.root.after(0, _update)
     
     def toggle_offline_mode(self):
-        """Toggle offline mode"""
+        # Toggle offline mode
         self.variables["offlineMode"] = self.offline_var.get()
         self.update_webserver_status()
         logger.info(f"Offline mode set to {self.variables['offlineMode']}")
     
     def update_webserver_status(self):
-        """Update the web server status display - thread-safe"""
+        # Update the web server status display - thread-safe
         def _update():
             try:
                 # Use the imported function from dashboard_functions
@@ -1285,7 +1285,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.root.after(0, _update)
     
     def update_system_info(self):
-        """Update system information in the UI - thread-safe"""
+        # Update system information in the UI - thread-safe
         def _update():
             try:
                 # Update web server status
@@ -1304,7 +1304,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.root.after(0, _update)
     
     def periodic_server_list_refresh(self):
-        """Periodic refresh of server list to clean up orphaned processes and update status"""
+        # Periodic refresh of server list to clean up orphaned processes and update status
         def _refresh():
             try:
                 # Only refresh if not already refreshing and enough time has passed
@@ -1323,7 +1323,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.root.after(0, _refresh)
     
     def run(self):
-        """Run the dashboard application"""
+        # Run the dashboard application
         logger.info("Starting dashboard")
         
         # Initial updates
@@ -1337,7 +1337,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.root.mainloop()
     
     def on_close(self):
-        """Handle window close event"""
+        # Handle window close event
         logger.info("Dashboard closing")
         
         # Clean up resources
@@ -1347,10 +1347,9 @@ class ServerManagerDashboard(ServerManagerModule):
                 self.console_manager.cleanup_all_consoles()
                 logger.debug("Closed all console windows")
             
-            # Stop agent monitoring
+            # Cluster management cleanup (no specific cleanup needed)
             if hasattr(self, 'agent_manager') and self.agent_manager:
-                self.agent_manager.stop_monitoring()
-                logger.debug("Stopped agent monitoring")
+                logger.debug("Cluster manager cleanup completed")
             
             # Remove PID file
             self.remove_pid_file("dashboard")
@@ -1369,7 +1368,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.root.destroy()
 
     def start_server(self):
-        """Start the selected game server (Steam/Minecraft/Other)"""
+        # Start the selected game server (Steam/Minecraft/Other)
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -1408,7 +1407,8 @@ class ServerManagerDashboard(ServerManagerModule):
                 # Update UI on main thread
                 def update_ui():
                     if success:
-                        messagebox.showinfo("Success", message)
+                        # Add a debug if required (removed for now)
+                        pass
                     else:
                         messagebox.showerror("Error", message)
                     # Always refresh the server list to show current status
@@ -1432,7 +1432,7 @@ class ServerManagerDashboard(ServerManagerModule):
         start_thread.start()
 
     def stop_server(self):
-        """Stop the selected game server"""
+        # Stop the selected game server
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -1494,7 +1494,7 @@ class ServerManagerDashboard(ServerManagerModule):
         stop_thread.start()
     
     def restart_server(self):
-        """Restart the selected game server"""
+        # Restart the selected game server
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -1556,7 +1556,7 @@ class ServerManagerDashboard(ServerManagerModule):
         restart_thread.start()
     
     def view_process_details(self):
-        """View detailed process information for a server using debug module"""
+        # View detailed process information for a server using debug module
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -1792,7 +1792,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", f"Failed to get process details: {str(e)}")
     
     def show_server_console(self):
-        """Show console window for the selected server"""
+        # Show console window for the selected server
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -1836,7 +1836,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Console Error", f"Failed to open console:\n{str(e)}")
     
     def update_server_status(self, server_name, status):
-        """Update the status of a server in the UI - thread-safe"""
+        # Update the status of a server in the UI - thread-safe
         def _update():
             try:
                 update_server_status_in_treeview(self.server_list, server_name, status)
@@ -1852,7 +1852,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             self.root.after(0, _update)
     
     def configure_server(self):
-        """Configure server settings including name, type, AppID, and startup configuration"""
+        # Configure server settings including name, type, AppID, and startup configuration
         selected = self.server_list.selection()
         if not selected:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -3042,7 +3042,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         center_window(dialog, 700, 600, self.root)
     
     def show_other_server_config(self, server_name, server_config):
-        """Show generic server configuration dialog"""
+        # Show generic server configuration dialog
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Server Configuration - {server_name}")
         dialog.geometry("600x500")
@@ -3157,7 +3157,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         center_window(dialog, 600, 500, self.root)
 
     def open_server_directory(self):
-        """Open the server's installation directory in file explorer"""
+        # Open the server's installation directory in file explorer
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -3195,7 +3195,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", f"Failed to open server directory: {str(e)}")
 
     def remove_server(self):
-        """Remove the selected server configuration and optionally files"""
+        # Remove the selected server configuration and optionally files
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -3235,7 +3235,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 messagebox.showerror("Error", f"Failed to remove server: {str(e)}")
 
     def import_server(self):
-        """Enhanced import server functionality with support for exported configurations"""
+        # Enhanced import server functionality with support for exported configurations
         try:
             # Choose import type
             import_dialog = tk.Toplevel(self.root)
@@ -3405,19 +3405,18 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", f"Failed to synchronize data: {str(e)}")
 
     def add_agent(self):
-        """Add a remote agent connection"""
         try:
             if self.agent_manager is None:
-                logger.error("Agent manager not initialized")
-                messagebox.showerror("Error", "Agent manager not initialized. Cannot add agents.")
+                logger.error("Cluster manager not initialized")
+                messagebox.showerror("Error", "Cluster manager not initialized. Cannot access cluster management.")
                 return
             
-            # Show the agent management dialog
+            # Show the cluster management dialog
             show_agent_management_dialog(self.root, self.agent_manager)
             
         except Exception as e:
-            logger.error(f"Error in add agent: {str(e)}")
-            messagebox.showerror("Error", f"Failed to add agent: {str(e)}")
+            logger.error(f"Error in cluster management: {str(e)}")
+            messagebox.showerror("Error", f"Failed to open cluster management: {str(e)}")
 
     def check_server_updates(self):
         """Check for updates for the selected server"""
@@ -3864,11 +3863,11 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Update Error", f"Failed to update server types:\n{str(e)}")
 
     def show_help(self):
-        """Show help dialog using the documentation module"""
+        # Show help dialog using the documentation module
         show_help_dialog(self.root, logger)
 
     def show_about(self):
-        """Show about dialog using the documentation module"""
+        # Show about dialog using the documentation module
         show_about_dialog(self.root, logger)
 
 def main():

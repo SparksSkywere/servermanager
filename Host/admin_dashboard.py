@@ -24,121 +24,125 @@ def admin_login(user_manager):
     attempts = 0
     
     while attempts < max_attempts:
-        # Create login dialog
+        # Create login dialog (exactly like dashboard.py)
         login_root = tk.Tk()
         login_root.withdraw()  # Hide the root window
-        
         login_dialog = tk.Toplevel(login_root)
+        
         login_dialog.title("Admin Dashboard - Authentication Required")
-        login_dialog.geometry("450x350")
+        login_dialog.geometry("400x300")
         login_dialog.resizable(False, False)
         login_dialog.grab_set()
+        login_dialog.configure(bg='white')
         
         # Center the dialog
         login_dialog.update_idletasks()
-        x = (login_dialog.winfo_screenwidth() // 2) - (450 // 2)
-        y = (login_dialog.winfo_screenheight() // 2) - (350 // 2)
-        login_dialog.geometry(f"450x350+{x}+{y}")
+        x = (login_dialog.winfo_screenwidth() // 2) - (200)
+        y = (login_dialog.winfo_screenheight() // 2) - (150)
+        login_dialog.geometry(f"400x300+{x}+{y}")
         
-        # Main frame
-        main_frame = tk.Frame(login_dialog, padx=30, pady=30)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        # Main container frame
+        container = tk.Frame(login_dialog, bg='white', padx=20, pady=20)
+        container.pack(fill=tk.BOTH, expand=True)
         
-        # Title and warning
-        title_label = tk.Label(main_frame, text="Administrator Access Required", 
-                              font=("Segoe UI", 16, "bold"), fg="darkred")
-        title_label.pack(pady=(0, 10))
-        
-        warning_label = tk.Label(main_frame, 
-                                text="This dashboard provides full user management capabilities.\n"
-                                     "Only administrators can access this interface.",
-                                font=("Segoe UI", 10), fg="gray", justify=tk.CENTER)
-        warning_label.pack(pady=(0, 25))
+        # Title (modified for admin)
+        title_label = tk.Label(container, text="Administrator Access Required", 
+                              font=("Segoe UI", 14, "bold"), fg="darkred", bg='white')
+        title_label.pack(pady=(0, 15))
         
         # Username field
-        tk.Label(main_frame, text="Username:", font=("Segoe UI", 11, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        tk.Label(container, text="Username:", font=("Segoe UI", 10, "bold"), bg='white').pack(anchor=tk.W, pady=(10, 5))
         username_var = tk.StringVar()
-        username_entry = tk.Entry(main_frame, textvariable=username_var, width=35, font=("Segoe UI", 11))
-        username_entry.pack(pady=(0, 15), fill=tk.X)
-        username_entry.focus_set()
+        username_entry = tk.Entry(container, textvariable=username_var, width=25, font=("Segoe UI", 10))
+        username_entry.pack(fill=tk.X, pady=(0, 15))
         
         # Password field
-        tk.Label(main_frame, text="Password:", font=("Segoe UI", 11, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        tk.Label(container, text="Password:", font=("Segoe UI", 10, "bold"), bg='white').pack(anchor=tk.W, pady=(0, 5))
         password_var = tk.StringVar()
-        password_entry = tk.Entry(main_frame, textvariable=password_var, show="*", width=35, font=("Segoe UI", 11))
-        password_entry.pack(pady=(0, 20), fill=tk.X)
+        password_entry = tk.Entry(container, textvariable=password_var, show="*", width=25, font=("Segoe UI", 10))
+        password_entry.pack(fill=tk.X, pady=(0, 15))
         
         # Status label for errors
         status_var = tk.StringVar()
-        status_label = tk.Label(main_frame, textvariable=status_var, foreground="red", 
-                               font=("Segoe UI", 10), wraplength=350)
+        status_label = tk.Label(container, textvariable=status_var, foreground="red", 
+                               font=("Segoe UI", 9), bg='white', wraplength=350)
         status_label.pack(pady=(0, 15))
         
-        # Show attempt counter
+        # Show attempt counter if not first attempt
         if attempts > 0:
-            attempts_label = tk.Label(main_frame, 
-                                    text=f"Attempt {attempts + 1} of {max_attempts}", 
-                                    font=("Segoe UI", 9), fg="orange")
-            attempts_label.pack(pady=(0, 10))
+            attempts_label = tk.Label(container, 
+                                    text=f"Login attempt {attempts + 1} of {max_attempts}", 
+                                    font=("Segoe UI", 8), fg="orange", bg='white')
+            attempts_label.pack(pady=(0, 15))
         
         # Result variables
-        login_result = [None]  # [authenticated_user]
+        login_result = [False, None]  # [success, user]
         dialog_closed = [False]
         
-        def on_login():
-            username = username_var.get().strip()
-            password = password_var.get()
-            
+        def on_login():           
+            # Get values directly from entry widgets
+            username = username_entry.get().strip()
+            password = password_entry.get()
+
             if not username or not password:
                 status_var.set("Please enter both username and password")
                 return
             
             try:
+                print(f"Attempting to authenticate admin user: {username}")
                 # Authenticate user
                 user = user_manager.authenticate_user(username, password)
                 if user:
-                    # Check if user is admin
+                    print("Authentication successful!")
+                    
+                    # Check if user is admin (admin-specific check)
                     if not getattr(user, 'is_admin', False):
+                        print("Authentication failed - user is not an admin")
                         status_var.set("Access denied: Administrator privileges required")
-                        password_var.set("")  # Clear password
+                        password_entry.delete(0, tk.END)
                         return
                     
                     # Check if user is active
                     if not getattr(user, 'is_active', True):
                         status_var.set("Access denied: Account is inactive")
-                        password_var.set("")  # Clear password
+                        password_entry.delete(0, tk.END)
                         return
                     
                     # Successfully authenticated as admin
-                    login_result[0] = user
+                    login_result[0] = True
+                    login_result[1] = user
                     login_dialog.destroy()
                     login_root.destroy()
                 else:
-                    status_var.set("Invalid username or password")
-                    password_var.set("")  # Clear password
+                    print("Authentication failed - invalid credentials")
+                    status_var.set("Invalid username or password. Please try again.")
+                    password_entry.delete(0, tk.END)
                     
             except Exception as e:
+                print(f"Authentication error: {e}")
                 status_var.set(f"Authentication error: {str(e)}")
-                password_var.set("")  # Clear password
+                password_entry.delete(0, tk.END)
         
         def on_cancel():
+            print("Admin login cancelled")
             dialog_closed[0] = True
             login_dialog.destroy()
             login_root.destroy()
         
-        # Button frame
-        button_frame = tk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
+        # Button frame at the bottom
+        button_frame = tk.Frame(container, bg='white')
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(20, 0))
         
+        # Simple, visible buttons
         cancel_btn = tk.Button(button_frame, text="Cancel", command=on_cancel, 
-                              width=12, font=("Segoe UI", 10))
+                              font=("Segoe UI", 10, "bold"), width=12)
         cancel_btn.pack(side=tk.LEFT)
         
-        login_btn = tk.Button(button_frame, text="Login", command=on_login, 
-                             width=12, font=("Segoe UI", 10, "bold"))
-        login_btn.pack(side=tk.RIGHT)
+        login_btn = tk.Button(button_frame, text="Sign In", command=on_login, 
+                             font=("Segoe UI", 10, "bold"), width=12)
+        login_btn.pack(side=tk.RIGHT)       
         
-        # Bind Enter key
+        # Bind Enter key to both fields
         def on_enter(event):
             on_login()
         
@@ -153,15 +157,22 @@ def admin_login(user_manager):
         
         login_dialog.protocol("WM_DELETE_WINDOW", on_close)
         
+        # Focus on username field
+        login_dialog.after(100, username_entry.focus_set)
+        
+        print("Waiting for admin dialog interaction...")  # Debug
+        
         # Wait for dialog to close
         login_root.wait_window(login_dialog)
+        
+        print(f"Admin dialog closed. Result: success={login_result[0]}, cancelled={dialog_closed[0]}")  # Debug
         
         # Check results
         if dialog_closed[0]:
             return None  # User cancelled
         
         if login_result[0]:
-            return login_result[0]  # Successful login
+            return login_result[1]  # Successful login
         
         # Failed attempt
         attempts += 1

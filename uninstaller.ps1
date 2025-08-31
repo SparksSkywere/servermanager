@@ -119,8 +119,57 @@ try {
 
 # Remove firewall rules
 Write-Host "Removing firewall rules..." -ForegroundColor Yellow
-Get-NetFirewallRule -DisplayName "ServerManager_*" -ErrorAction SilentlyContinue | 
-    Remove-NetFirewallRule -ErrorAction SilentlyContinue
+try {
+    $firewallRulesRemoved = 0
+    $rulesToRemove = @(
+        # New rule names with direction suffixes
+        "ServerManager_WebInterface_In",
+        "ServerManager_WebInterface_Out",
+        "ServerManager_ClusterAPI_In",
+        "ServerManager_ClusterAPI_Out",
+        "ServerManager_GameServers_In",
+        "ServerManager_GameServers_Out",
+        "ServerManager_GameServers_UDP_In",
+        "ServerManager_GameServers_UDP_Out",
+        "ServerManager_SteamQuery_In",
+        "ServerManager_SteamQuery_Out",
+        # Legacy rule names for backward compatibility
+        "ServerManager_WebInterface",
+        "ServerManager_ClusterAPI", 
+        "ServerManager_GameServers",
+        "ServerManager_GameServers_UDP",
+        "ServerManager_SteamQuery"
+    )
+    
+    foreach ($ruleName in $rulesToRemove) {
+        try {
+            $existingRule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+            if ($existingRule) {
+                Remove-NetFirewallRule -DisplayName $ruleName -ErrorAction Stop
+                Write-Host "  ✓ Removed: $ruleName" -ForegroundColor Green
+                $firewallRulesRemoved++
+            }
+        } catch {
+            Write-Host "  ⚠ Could not remove: $ruleName" -ForegroundColor Yellow
+        }
+    }
+    
+    # Also remove any remaining rules with ServerManager_ prefix (cleanup)
+    $remainingRules = Get-NetFirewallRule -DisplayName "ServerManager_*" -ErrorAction SilentlyContinue
+    if ($remainingRules) {
+        $remainingRules | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+        $firewallRulesRemoved += $remainingRules.Count
+        Write-Host "  ✓ Removed $($remainingRules.Count) additional ServerManager firewall rules" -ForegroundColor Green
+    }
+    
+    if ($firewallRulesRemoved -eq 0) {
+        Write-Host "  No ServerManager firewall rules found to remove" -ForegroundColor Cyan
+    } else {
+        Write-Host "  Successfully removed $firewallRulesRemoved firewall rule(s)" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "Warning: Error during firewall rules removal: $($_.Exception.Message)" -ForegroundColor Yellow
+}
 
 # Remove scheduled tasks
 Write-Host "Removing scheduled tasks..." -ForegroundColor Yellow

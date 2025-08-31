@@ -100,6 +100,12 @@ def initialize_registry_values(registry_path):
             except:
                 pass  # HostAddress only exists for subhost installations
                 
+            # Try to get cluster configuration
+            try:
+                registry_values["ClusterCreated"] = winreg.QueryValueEx(key, "ClusterCreated")[0]
+            except:
+                pass  # ClusterCreated only exists for configured clusters
+                
         except Exception as e:
             logger.warning(f"Some registry values could not be read: {str(e)}")
         
