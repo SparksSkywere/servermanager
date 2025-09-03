@@ -1,3 +1,7 @@
+# Automatic Steam Server Update Module
+# Handles automatic updates for Steam game servers using SteamCMD
+# Supports check-only mode, force updates, and process management
+
 import os
 import sys
 import json
@@ -49,6 +53,8 @@ except Exception:
     logger = logging.getLogger("AutoAppUpdate")
 
 class AutoUpdater:
+    # Steam server automatic updater with SteamCMD integration
+    # Handles registry configuration, server process management, and update validation
     def __init__(self):
         self.registry_path = r"Software\SkywereIndustries\Servermanager"
         self.server_manager_dir = None
@@ -89,7 +95,8 @@ class AutoUpdater:
             logger.warning(f"Could not set up file logging: {str(e)}")
         
     def initialize(self):
-        """Initialize paths and configuration from registry"""
+        # Initialize paths and configuration from registry
+        # Validates SteamCMD path and creates required directories
         try:
             # Read registry for paths
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
@@ -127,7 +134,8 @@ class AutoUpdater:
             return False
     
     def get_server_list(self):
-        """Get list of servers to check for updates"""
+        # Get list of servers to check for updates
+        # Supports both specific server targeting and AutoUpdate flag filtering
         try:
             servers_dir = self.paths["servers"]
             servers = []
@@ -169,7 +177,8 @@ class AutoUpdater:
             return []
     
     def check_for_update(self, app_id):
-        """Check if an update is available for the given AppID"""
+        # Check if an update is available for the given AppID
+        # Uses SteamCMD app_info_print to detect available updates
         try:
             logger.info(f"Checking for updates for AppID: {app_id}")
             
@@ -212,7 +221,8 @@ class AutoUpdater:
             return False
     
     def update_server(self, server):
-        """Update a server using SteamCMD"""
+        # Update a server using SteamCMD
+        # Handles server shutdown/restart and validates files during update
         try:
             app_id = server.get("AppId")
             install_path = server.get("InstallPath")
@@ -293,7 +303,8 @@ class AutoUpdater:
             return False
     
     def is_server_running(self, server):
-        """Check if a server is currently running"""
+        # Check if a server is currently running
+        # Uses psutil to verify process existence and status
         if psutil is None:
             logger.warning("psutil not available, cannot check server process status")
             return False
@@ -314,7 +325,7 @@ class AutoUpdater:
         return False
     
     def stop_server(self, server):
-        """Stop a running server"""
+        # Stop a running server using external script
         try:
             server_name = server.get("Name", "Unknown")
             script_path = os.path.join(self.paths["scripts"], "stop_server.py")
@@ -331,7 +342,7 @@ class AutoUpdater:
             return False
     
     def start_server(self, server):
-        """Start a server"""
+        # Start a server using external script
         try:
             server_name = server.get("Name", "Unknown")
             script_path = os.path.join(self.paths["scripts"], "start_server.py")
@@ -348,7 +359,7 @@ class AutoUpdater:
             return False
     
     def save_server_config(self, server):
-        """Save updated server configuration"""
+        # Save updated server configuration with LastUpdateTime timestamp
         try:
             server_name = server.get("Name", "Unknown")
             server_path = os.path.join(self.paths["servers"], f"{server_name}.json")
@@ -363,7 +374,7 @@ class AutoUpdater:
             return False
     
     def run(self):
-        """Run the auto-updater"""
+        # Run the auto-updater with comprehensive update processing
         try:
             logger.info("Starting automatic server update check")
             
@@ -410,6 +421,7 @@ class AutoUpdater:
             return 1
 
 def main():
+    # Main entry point for the auto-updater
     try:
         updater = AutoUpdater()
         return updater.run()

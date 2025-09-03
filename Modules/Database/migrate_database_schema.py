@@ -28,7 +28,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("DatabaseMigration")
 
-# Database models (new schema)
+# SQLAlchemy models for new database schema with subscription tracking
 if SQLALCHEMY_AVAILABLE:
     Base = declarative_base()
     
@@ -40,8 +40,8 @@ if SQLALCHEMY_AVAILABLE:
         type = Column(String(50))
         is_server = Column(Boolean, default=False)
         is_dedicated_server = Column(Boolean, default=False)
-        requires_subscription = Column(Boolean, default=False)  # NEW
-        anonymous_install = Column(Boolean, default=True)  # NEW
+        requires_subscription = Column(Boolean, default=False)  # Migration target
+        anonymous_install = Column(Boolean, default=True)  # Migration target
         publisher = Column(String(255))
         release_date = Column(String(50))
         description = Column(Text)
@@ -53,13 +53,7 @@ if SQLALCHEMY_AVAILABLE:
 
 class DatabaseMigrator:
     def __init__(self, use_database=True, dry_run=False):
-        """
-        Initialize the migrator
-        
-        Args:
-            use_database: Whether to use the main database or SQLite fallback
-            dry_run: If True, only report what would be changed without making changes
-        """
+        # Initialize database migrator with connection and dry-run options
         self.use_database = use_database and SQLALCHEMY_AVAILABLE
         self.dry_run = dry_run
         
@@ -70,7 +64,7 @@ class DatabaseMigrator:
             self.init_sqlite_fallback()
     
     def init_database(self):
-        """Initialize SQLAlchemy database connection"""
+        # Initialize SQLAlchemy database connection
         try:
             self.engine = get_engine()
             Session = sessionmaker(bind=self.engine)
@@ -83,7 +77,7 @@ class DatabaseMigrator:
             self.init_sqlite_fallback()
     
     def init_sqlite_fallback(self):
-        """Initialize SQLite fallback database"""
+        # Initialize SQLite fallback database
         try:
             # Use centralized db directory
             db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
@@ -100,7 +94,7 @@ class DatabaseMigrator:
             raise
     
     def check_current_schema(self):
-        """Check the current database schema and return column information"""
+        # Check the current database schema and return column information
         try:
             if self.use_database:
                 # Check columns in main database
@@ -123,7 +117,7 @@ class DatabaseMigrator:
             return {}
     
     def migrate_schema(self):
-        """Perform the schema migration"""
+        # Perform the schema migration
         logger.info("Starting database schema migration...")
         
         if self.dry_run:
@@ -174,7 +168,7 @@ class DatabaseMigrator:
             return False
     
     def migrate_main_database(self, needs_migration, has_developer):
-        """Migrate the main database schema"""
+        # Migrate the main database schema
         if self.dry_run:
             logger.info("[DRY RUN] Would migrate main database schema")
             return
@@ -192,8 +186,7 @@ class DatabaseMigrator:
                     "ALTER TABLE steam_apps ADD COLUMN anonymous_install BOOLEAN DEFAULT TRUE"
                 ))
         
-        # Note: We don't drop the developer column as it may cause issues
-        # with existing installations. It will just be ignored.
+        # Preserve deprecated developer column for backward compatibility
         if has_developer:
             logger.info("Developer column found - leaving for compatibility (will be ignored)")
         
@@ -201,7 +194,7 @@ class DatabaseMigrator:
         logger.info("Main database migration completed")
     
     def migrate_sqlite_database(self, needs_migration, has_developer):
-        """Migrate the SQLite database schema"""
+        # Migrate the SQLite database schema
         if self.dry_run:
             logger.info("[DRY RUN] Would migrate SQLite database schema")
             return
@@ -226,7 +219,7 @@ class DatabaseMigrator:
         logger.info("SQLite database migration completed")
     
     def populate_subscription_data(self, limit=None):
-        """Populate the new subscription fields with intelligent defaults"""
+        # Populate subscription fields with intelligent defaults based on known free servers
         logger.info("Populating subscription data with intelligent defaults...")
         
         if self.dry_run:
@@ -236,7 +229,7 @@ class DatabaseMigrator:
         updated_count = 0
         
         try:
-            # Well-known free servers that support anonymous install
+            # Curated list of confirmed free dedicated servers that allow anonymous downloads
             free_anonymous_servers = [
                 90,      # Counter-Strike Dedicated Server
                 232330,  # Counter-Strike: Global Offensive - Dedicated Server  
@@ -260,7 +253,7 @@ class DatabaseMigrator:
                             updated_count += rows_affected
                             logger.debug(f"Updated AppID {appid} as free/anonymous")
                 
-                # Set servers with non-empty price as requiring subscription
+                # Mark servers with non-free pricing as requiring subscription
                 with self.engine.begin() as conn:
                     result = conn.execute(text("""
                         UPDATE steam_apps 
@@ -307,7 +300,7 @@ class DatabaseMigrator:
                 self.db_session.rollback()
     
     def get_migration_stats(self):
-        """Get statistics about the migration"""
+        # Get statistics about the migration
         try:
             if self.use_database:
                 total = self.db_session.query(SteamApp).filter(SteamApp.is_dedicated_server == True).count()
@@ -347,7 +340,7 @@ class DatabaseMigrator:
             return None
     
     def close(self):
-        """Close database connections"""
+        # Close database connections
         try:
             if self.use_database and hasattr(self, 'db_session'):
                 self.db_session.close()
@@ -357,6 +350,7 @@ class DatabaseMigrator:
             logger.error(f"Error closing database connections: {e}")
 
 def main():
+    # Command-line interface for database schema migration
     parser = argparse.ArgumentParser(description='Migrate AppID database schema')
     parser.add_argument('--dry-run', action='store_true', help='Only show what would be changed without making changes')
     parser.add_argument('--no-database', action='store_true', help='Use SQLite fallback instead of main database')

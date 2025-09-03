@@ -44,29 +44,6 @@ except ImportError as e:
     WINDOWS_AUTH_AVAILABLE = False
     logger.warning(f"Windows authentication not available: {e}")
 
-# SQL Authentication support
-try:
-    from Modules.Database.SQL_Connection import get_engine, initialize_user_manager
-    from Modules.user_management import UserManager
-    SQL_AVAILABLE = True
-    logger.info("SQL authentication support available")
-except ImportError as e:
-    SQL_AVAILABLE = False
-    logger.warning(f"SQL authentication not available: {e}")
-
-# Windows Authentication support
-try:
-    import win32api
-    import win32security
-    import win32net
-    import win32netcon
-    WINDOWS_AUTH_AVAILABLE = True
-    logger.info("Windows authentication support available")
-except ImportError as e:
-    WINDOWS_AUTH_AVAILABLE = False
-    logger.warning(f"Windows authentication not available: {e}")
-
-# Get the server manager directory from registry
 def get_server_manager_dir():
     try:
         from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
@@ -78,10 +55,10 @@ def get_server_manager_dir():
         logger.error(f"Failed to get server manager directory from registry: {e}")
         return None
 
-# Initialize SQL authentication if available
+# Singleton pattern for UserManager instance
 _user_manager = None
 def get_user_manager():
-    """Get or create UserManager instance"""
+    # Get or create UserManager instance
     global _user_manager
     if _user_manager is None and SQL_AVAILABLE:
         try:
@@ -93,17 +70,7 @@ def get_user_manager():
     return _user_manager
 
 def authenticate_user(username, password, auth_type="auto"):
-    """
-    Authenticate a user with the given credentials
-    
-    Args:
-        username: Username to authenticate
-        password: Password for authentication
-        auth_type: "auto", "sql", or "windows"
-    
-    Returns:
-        bool: True if authentication successful, False otherwise
-    """
+    # Authenticate user with credentials - supports SQL and Windows auth
     if not username or not password:
         logger.warning("Username and password are required")
         return False
@@ -117,7 +84,7 @@ def authenticate_user(username, password, auth_type="auto"):
             if user_manager:
                 user = user_manager.get_user(username)
                 if user and getattr(user, 'is_active', True):
-                    # Hash the provided password and compare
+                    # Hash provided password with SHA256 and compare with stored hash
                     hashed_password = hashlib.sha256(password.encode()).hexdigest()
                     stored_password = getattr(user, 'password', '')
                     if stored_password == hashed_password:
@@ -148,25 +115,16 @@ def authenticate_user(username, password, auth_type="auto"):
     return False
 
 def authenticate_windows_user(username, password):
-    """
-    Authenticate against Windows using win32 API
-    
-    Args:
-        username: Windows username
-        password: Windows password
-    
-    Returns:
-        bool: True if authentication successful
-    """
+    # Authenticate against Windows using win32 API
     if not WINDOWS_AUTH_AVAILABLE:
         logger.error("Windows authentication not available")
         return False
     
     try:
-        # Try to authenticate against local machine
+        # Authenticate against local machine using Windows API
         domain = "."  # Local machine
         
-        # Use LogonUser API to validate credentials
+        # Use LogonUser API to validate credentials securely
         import win32con
         hToken = win32security.LogonUser(
             username,
@@ -190,16 +148,7 @@ def authenticate_windows_user(username, password):
         return False
 
 def is_admin_user(username, auth_type="auto"):
-    """
-    Check if a user has admin privileges
-    
-    Args:
-        username: Username to check
-        auth_type: "auto", "sql", or "windows"
-    
-    Returns:
-        bool: True if user is admin
-    """
+    # Check if user has admin privileges in SQL or Windows
     logger.debug(f"Checking admin status for user: {username} with type: {auth_type}")
     
     # Check SQL user admin status
@@ -228,22 +177,13 @@ def is_admin_user(username, auth_type="auto"):
     return False
 
 def is_windows_admin(username):
-    """
-    Check if a Windows user is in the local Administrators group
-    
-    Args:
-        username: Windows username to check
-    
-    Returns:
-        bool: True if user is in Administrators group
-    """
+    # Check if Windows user is in local Administrators group
     if not WINDOWS_AUTH_AVAILABLE:
         return False
     
     try:
-        # Simple approach - check if user is in Administrators group
+        # Try primary method - get user's group memberships
         try:
-            # Get user groups
             import socket
             hostname = socket.gethostname()
             groups = win32net.NetUserGetGroups(hostname, username)
@@ -271,15 +211,7 @@ def is_windows_admin(username):
         return False
 
 def get_all_users(auth_type="sql"):
-    """
-    Get a list of all users
-    
-    Args:
-        auth_type: "sql" or "windows" (windows returns local users)
-    
-    Returns:
-        list: List of user dictionaries
-    """
+    # Get list of users from SQL or Windows (returns current user only for Windows)
     users = []
     
     if auth_type == "sql" and SQL_AVAILABLE:
@@ -303,8 +235,7 @@ def get_all_users(auth_type="sql"):
     
     elif auth_type == "windows" and WINDOWS_AUTH_AVAILABLE:
         try:
-            # Simplified approach - just return current user for Windows auth
-            # Full user enumeration requires elevated privileges
+            # Windows user enumeration requires admin privileges, return current user only
             import getpass
             current_user = getpass.getuser()
             users.append({
@@ -323,18 +254,7 @@ def get_all_users(auth_type="sql"):
     return users
 
 def create_user(username, password, email="", is_admin=False):
-    """
-    Create a new SQL user (Windows users are managed by the OS)
-    
-    Args:
-        username: Username for new user
-        password: Password for new user
-        email: Email address (optional)
-        is_admin: Whether user should be admin
-    
-    Returns:
-        bool: True if user created successfully
-    """
+    # Create new SQL user (Windows users managed by OS)
     if not SQL_AVAILABLE:
         logger.error("SQL authentication not available - cannot create users")
         return False
@@ -354,16 +274,7 @@ def create_user(username, password, email="", is_admin=False):
         return False
 
 def update_user_password(username, new_password):
-    """
-    Update a user's password (SQL users only)
-    
-    Args:
-        username: Username to update
-        new_password: New password
-    
-    Returns:
-        bool: True if password updated successfully
-    """
+    # Update password for SQL user
     if not SQL_AVAILABLE:
         logger.error("SQL authentication not available - cannot update passwords")
         return False
@@ -383,15 +294,7 @@ def update_user_password(username, new_password):
         return False
 
 def delete_user(username):
-    """
-    Delete a SQL user (Windows users are managed by the OS)
-    
-    Args:
-        username: Username to delete
-    
-    Returns:
-        bool: True if user deleted successfully
-    """
+    # Delete SQL user (Windows users managed by OS)
     if not SQL_AVAILABLE:
         logger.error("SQL authentication not available - cannot delete users")
         return False
@@ -411,16 +314,7 @@ def delete_user(username):
         return False
 
 def set_user_admin_status(username, is_admin):
-    """
-    Set or remove admin status for a SQL user
-    
-    Args:
-        username: Username to update
-        is_admin: Whether user should be admin
-    
-    Returns:
-        bool: True if admin status updated successfully
-    """
+    # Set or remove admin status for SQL user
     if not SQL_AVAILABLE:
         logger.error("SQL authentication not available - cannot update admin status")
         return False

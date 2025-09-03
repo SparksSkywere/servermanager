@@ -1,3 +1,7 @@
+# Simple Cluster Management Module
+# Provides Hyper-V style clustering for server manager instances
+# Handles master/subhost configuration with database and registry persistence
+
 import os
 import sys
 import winreg
@@ -20,7 +24,8 @@ except Exception:
     logger = logging.getLogger("SimpleCluster")
 
 class SimpleClusterManager:
-    """Simple cluster management like Windows Hyper-V clustering"""
+    # Simple cluster management like Windows Hyper-V clustering
+    # Provides master/subhost architecture with database and registry persistence
     
     def __init__(self):
         # Initialize cluster database
@@ -30,12 +35,13 @@ class SimpleClusterManager:
             logger.error(f"Failed to initialize cluster database: {e}")
             self.cluster_db = None
         
+        # Determine role and configuration from registry
         self.is_master = self.get_host_type() == "Host"
         self.master_ip = self.get_master_ip()
         self.load_or_create_cluster()
         
     def get_host_type(self):
-        """Get the host type from registry"""
+        # Get the host type from registry (Host = master, Subhost = node)
         try:
             key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
             host_type = winreg.QueryValueEx(key, "HostType")[0]
@@ -45,7 +51,7 @@ class SimpleClusterManager:
             return "Host"  # Default to master host
     
     def get_master_ip(self):
-        """Get master IP from registry or return None if this is master"""
+        # Get master IP from registry or return None if this is master
         if self.is_master:
             return None
         try:
@@ -57,7 +63,8 @@ class SimpleClusterManager:
             return None
     
     def load_or_create_cluster(self):
-        """Load existing cluster or create new one"""
+        # Load existing cluster or create new one
+        # Checks database first, then registry fallback for configuration
         try:
             # Check database first
             if self.cluster_db:
@@ -81,7 +88,8 @@ class SimpleClusterManager:
                 logger.info("Node waiting for cluster configuration from master")
     
     def create_cluster(self):
-        """Create new cluster (Master Host only)"""
+        # Create new cluster (Master Host only)
+        # Stores configuration in database with registry backup
         if not self.is_master:
             return False
         
@@ -110,7 +118,7 @@ class SimpleClusterManager:
             return False
     
     def join_cluster(self, master_ip):
-        """Join existing cluster (Cluster Node only)"""
+        # Join existing cluster (Cluster Node only)
         if self.is_master:
             return False
         
@@ -142,7 +150,7 @@ class SimpleClusterManager:
         return False
     
     def get_cluster_status(self):
-        """Get current cluster status"""
+        # Get current cluster status
         return {
             "is_master": self.is_master,
             "has_cluster": self.is_master or bool(self.master_ip),

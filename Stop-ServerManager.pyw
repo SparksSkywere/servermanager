@@ -1,3 +1,4 @@
+# Server Manager stop script wrapper that executes the main stop_servermanager.py module
 import os
 import subprocess
 import sys

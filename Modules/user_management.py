@@ -1,3 +1,4 @@
+# User management system with authentication, 2FA, and database operations for Server Manager
 import os
 import sys
 import logging
@@ -62,7 +63,7 @@ class UserManager:
         self._migrate_database_schema()
         
     def get_user(self, username):
-        """Get user by username"""
+        # Get user by username
         try:
             session = self.Session()
             user = session.query(User).filter(User.username == username).first()
@@ -73,7 +74,7 @@ class UserManager:
             return None
     
     def list_users(self):
-        """Get all users"""
+        # Get all users
         try:
             session = self.Session()
             users = session.query(User).all()
@@ -84,7 +85,7 @@ class UserManager:
             return []
     
     def add_user(self, username, password, email="", is_admin=False):
-        """Add a new user"""
+        # Add a new user
         try:
             session = self.Session()
             
@@ -110,7 +111,7 @@ class UserManager:
             return False
     
     def delete_user(self, username):
-        """Delete a user"""
+        # Delete a user
         try:
             session = self.Session()
             user = session.query(User).filter(User.username == username).first()
@@ -132,7 +133,7 @@ class UserManager:
             return False
     
     def update_user(self, username, password=None, email=None, is_admin=None, **kwargs):
-        """Update user information"""
+        # Update user information
         try:
             session = self.Session()
             user = session.query(User).filter(User.username == username).first()
@@ -166,7 +167,7 @@ class UserManager:
             return False
 
     def authenticate_user(self, username, password):
-        """Authenticate a user with username and password"""
+        # Authenticate a user with username and password
         try:
             user = self.get_user(username)
             if not user:
@@ -199,7 +200,7 @@ class UserManager:
             return None
 
     def verify_2fa(self, username, token, admin_override=False):
-        """Verify 2FA token for user"""
+        # Verify 2FA token for user
         try:
             session = self.Session()
             user = session.query(User).filter_by(username=username).first()
@@ -228,7 +229,7 @@ class UserManager:
             return False
 
     def _migrate_database_schema(self):
-        """Migrate database schema to add missing columns"""
+        # Migrate database schema to add missing columns
         try:
             with self.engine.connect() as conn:
                 # Check which columns exist and add missing ones

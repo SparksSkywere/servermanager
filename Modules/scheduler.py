@@ -1,3 +1,5 @@
+# Server update and system task scheduling with unified interface management
+
 # -*- coding: utf-8 -*-
 import os
 import json
@@ -17,15 +19,10 @@ from Modules.server_logging import log_process_monitoring, get_dashboard_logger
 logger = get_dashboard_logger()
 
 class SchedulerManager:
-    """Enhanced scheduler for server updates and system tasks with unified interface"""
+    # Enhanced scheduler for server updates and system tasks with unified interface
     
     def __init__(self, dashboard):
-        """
-        Initialize the SchedulerManager
-        
-        Args:
-            dashboard: Reference to the ServerManagerDashboard instance
-        """
+        # Initialize the SchedulerManager with dashboard reference
         self.dashboard = dashboard
         self.update_manager = None
         self.scheduled_tasks = {}
@@ -33,11 +30,11 @@ class SchedulerManager:
         self.last_update_check = datetime.datetime.min
     
     def set_update_manager(self, update_manager):
-        """Set the server update manager instance"""
+        # Set the server update manager instance
         self.update_manager = update_manager
     
     def start_timers(self):
-        """Start all update timers using configuration values"""
+        # Start all update timers using configuration values
         # Start background CPU monitoring
         self._start_cpu_monitoring()
         
@@ -54,7 +51,7 @@ class SchedulerManager:
         self.dashboard.root.after(update_interval, self.update_check_timer)
     
     def system_info_timer(self):
-        """Timer function for system info updates"""
+        # Timer function for system info updates
         try:
             if self.dashboard and hasattr(self.dashboard, 'update_system_info'):
                 self.dashboard.update_system_info()
@@ -64,7 +61,7 @@ class SchedulerManager:
             logger.error(f"System info timer error: {str(e)}")
     
     def server_list_timer(self):
-        """Timer function for server list updates"""
+        # Timer function for server list updates
         try:
             if self.dashboard and hasattr(self.dashboard, 'periodic_server_list_refresh'):
                 self.dashboard.periodic_server_list_refresh()
@@ -76,7 +73,7 @@ class SchedulerManager:
             logger.error(f"Server list timer error: {str(e)}")
     
     def update_check_timer(self):
-        """Timer function for scheduled update checks"""
+        # Timer function for scheduled update checks
         try:
             current_time = datetime.datetime.now()
             
@@ -95,7 +92,7 @@ class SchedulerManager:
             logger.error(f"Update check timer error: {str(e)}")
     
     def _start_cpu_monitoring(self):
-        """Start background CPU monitoring for servers"""
+        # Start background CPU monitoring for servers
         def monitor_cpu():
             try:
                 if not (self.dashboard and hasattr(self.dashboard, 'server_manager') and self.dashboard.server_manager):
@@ -128,9 +125,7 @@ class SchedulerManager:
         threading.Thread(target=monitor_cpu, daemon=True).start()
 
     def show_schedules_manager(self):
-        """
-        Show unified schedules manager window where users can configure all schedules
-        """
+        # Show unified schedules manager window for configuring all schedules
         if not self.update_manager:
             messagebox.showerror("Error", "Update manager not available")
             return
@@ -258,7 +253,7 @@ class SchedulerManager:
         manager.geometry(f"+{x}+{y}")
     
     def populate_targets_list(self):
-        """Populate the targets tree with current targets and their schedule status"""
+        # Populate the targets tree with current targets and their schedule status
         if not self.update_manager:
             return
             
@@ -293,7 +288,7 @@ class SchedulerManager:
                                         tags=("server", server_name))
     
     def on_target_select(self, event):
-        """Handle target selection"""
+        # Handle target selection in the tree view
         selection = self.targets_tree.selection()
         if not selection:
             return
@@ -311,7 +306,7 @@ class SchedulerManager:
         self.show_target_management(target_type, server_name)
     
     def clear_management_area(self):
-        """Clear the management area"""
+        # Clear the management area interface
         for widget in self.management_frame.winfo_children():
             widget.destroy()
         initial_msg = ttk.Label(self.management_frame, text="Select a target to manage schedules", 
@@ -319,7 +314,7 @@ class SchedulerManager:
         initial_msg.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
     
     def show_target_management(self, target_type, server_name=None):
-        """Show management interface for the selected target"""
+        # Show management interface for the selected target
         if not self.update_manager:
             self.clear_management_area()
             return
@@ -363,7 +358,7 @@ class SchedulerManager:
         
         self.create_schedule_form(restart_frame, "restart", target_type, server_name, restart_schedule)
     def create_schedule_form(self, parent_frame, schedule_type, target_type, server_name, existing_schedule):
-        """Create a form for configuring a schedule"""
+        # Create a form for configuring a schedule
         # Default values if no existing schedule
         if not existing_schedule:
             default_time = "02:00" if schedule_type == "update" else "04:00"
@@ -538,7 +533,7 @@ class SchedulerManager:
         delete_btn.pack(side=tk.LEFT)
     
     def on_schedule_enable_change(self, enabled, schedule_type, target_type, server_name):
-        """Handle immediate enable/disable of schedules"""
+        # Handle immediate enable/disable of schedules
         try:
             if not self.update_manager:
                 return
@@ -578,15 +573,15 @@ class SchedulerManager:
     
     # Legacy method redirects for backward compatibility
     def show_update_schedule_dialog(self, server_name: Optional[str] = None, schedule_type: str = "update"):
-        """Legacy method - redirect to unified manager"""
+        # Legacy method - redirect to unified manager
         self.show_schedules_manager()
 
     def show_restart_schedule_dialog(self, server_name: Optional[str] = None):
-        """Legacy method - redirect to unified manager"""
+        # Legacy method - redirect to unified manager
         self.show_schedules_manager()
         
     def show_update_schedules_overview(self):
-        """Legacy method - redirect to unified manager"""
+        # Legacy method - redirect to unified manager
         self.show_schedules_manager()
 
 

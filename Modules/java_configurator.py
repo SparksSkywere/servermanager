@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Java Configuration utility for Minecraft servers
+# Command-line tool for managing Java installations and server compatibility
 import os
 import sys
 import json
@@ -17,7 +19,7 @@ from Modules.minecraft import (
 
 
 def list_java_installations():
-    """List all detected Java installations."""
+    # List all detected Java installations
     print("Detected Java Installations:")
     print("=" * 50)
     
@@ -35,7 +37,7 @@ def list_java_installations():
 
 
 def list_servers():
-    """List all configured servers."""
+    # List all configured servers
     try:
         servers_dir = Path("D:/SteamCMD/Servermanager/servers")
         if not servers_dir.exists():
@@ -59,7 +61,7 @@ def list_servers():
 
 
 def check_server_java_compatibility(server_config):
-    """Check Java compatibility for a server."""
+    # Check Java compatibility for a server
     server_name = server_config.get("Name", "Unknown")
     version = server_config.get("Version", "Unknown")
     java_path = server_config.get("JavaPath", "java")
@@ -87,7 +89,7 @@ def check_server_java_compatibility(server_config):
 
 
 def configure_server_java(server_name, java_path=None):
-    """Configure Java for a specific server."""
+    # Configure Java for a specific server
     servers_dir = Path("D:/SteamCMD/Servermanager/servers")
     config_file = servers_dir / f"{server_name}.json"
     

@@ -1,3 +1,7 @@
+# Cluster Agent Management Module
+# Manages cluster nodes, handles join requests, provides GUI for cluster administration
+# Supports both master and subhost configurations with database persistence
+
 import os
 import sys
 import requests
@@ -22,6 +26,7 @@ logger = get_dashboard_logger()
 
 class ClusterNode:
     def __init__(self, name: str, ip: str, status: str = "unknown"):
+        # Represents a cluster node with connection status and server tracking
         self.name = name
         self.ip = ip
         self.status = status
@@ -32,6 +37,7 @@ class ClusterNode:
 
 class AgentManager:
     def __init__(self, config_path: Optional[str] = None):
+        # Initialize cluster agent manager with database backend and optional JSON migration
         self.nodes: Dict[str, ClusterNode] = {}
         
         # Initialize database instead of JSON file
@@ -116,13 +122,13 @@ class AgentManager:
         return list(self.nodes.values())
     
     def get_pending_requests(self) -> List[dict]:
-        """Get all pending cluster join requests"""
+        # Get all pending cluster join requests for master host approval
         if not self.cluster_db:
             return []
         return self.cluster_db.get_pending_requests()
     
     def approve_request(self, request_id: int, approved_by: str = "admin") -> bool:
-        """Approve a pending cluster join request"""
+        # Approve a pending cluster join request and generate access token
         if not self.cluster_db:
             return False
         
@@ -165,7 +171,7 @@ class AgentManager:
             return False
     
     def reject_request(self, request_id: int, rejected_by: str = "admin") -> bool:
-        """Reject a pending cluster join request"""
+        # Reject a pending cluster join request
         if not self.cluster_db:
             return False
         
@@ -179,6 +185,7 @@ class AgentManager:
             return False
 
     def ping_node(self, name: str) -> bool:
+        # Ping a specific cluster node and update its status in database
         if name not in self.nodes:
             return False
         
@@ -210,6 +217,7 @@ class AgentManager:
             self.ping_node(node_name)
     
     def get_node_servers(self, node_name: str) -> List[dict]:
+        # Get list of servers running on a specific cluster node
         if node_name not in self.nodes:
             return []
         
@@ -228,7 +236,7 @@ class AgentManager:
         pass
     
     def load_nodes(self):
-        """Load cluster nodes from database"""
+        # Load cluster nodes from database with status and ping history
         try:
             if not self.cluster_db:
                 logger.warning("No cluster database available, cannot load nodes")
@@ -258,7 +266,7 @@ class AgentManager:
             logger.error(f"Error loading nodes from database: {str(e)}")
     
     def migrate_from_json(self, json_path: str):
-        """Migrate existing JSON configuration to database"""
+        # Migrate existing JSON configuration to database
         try:
             if not self.cluster_db:
                 return
@@ -274,12 +282,14 @@ class AgentManager:
 
 
 def show_agent_management_dialog(parent, agent_manager: AgentManager):
+    # Show the cluster management GUI dialog
     dialog = ClusterManagementDialog(parent, agent_manager)
     dialog.show_dialog()
 
 
 class ClusterManagementDialog:
     def __init__(self, parent, agent_manager: AgentManager):
+        # Initialize cluster management GUI with pending requests and node management
         self.parent = parent
         self.agent_manager = agent_manager
         self.dialog: Optional[tk.Toplevel] = None
@@ -354,7 +364,7 @@ class ClusterManagementDialog:
                       command=self.join_cluster_action).pack(side=tk.LEFT, padx=5)
     
     def create_pending_requests_section(self, parent):
-        """Create section for pending cluster join requests (master hosts only)"""
+        # Create section for pending cluster join requests (master hosts only)
         cluster_status = self.agent_manager.get_cluster_status()
         if not cluster_status.get('is_master'):
             return  # Only show for master hosts
@@ -486,7 +496,7 @@ class ClusterManagementDialog:
             messagebox.showerror("Error", f"Failed to join cluster: {str(e)}")
     
     def refresh_pending_requests(self):
-        """Refresh the pending requests treeview"""
+        # Refresh the pending requests treeview
         if not hasattr(self, 'pending_tree'):
             return
             
@@ -518,7 +528,7 @@ class ClusterManagementDialog:
             logger.error(f"Error refreshing pending requests: {e}")
     
     def approve_selected_request(self):
-        """Approve the selected pending request"""
+        # Approve the selected pending request with token generation
         selection = self.pending_tree.selection()
         if not selection:
             messagebox.showwarning("Warning", "Please select a request to approve")
@@ -545,7 +555,7 @@ class ClusterManagementDialog:
             messagebox.showerror("Error", f"Failed to approve request: {str(e)}")
     
     def reject_selected_request(self):
-        """Reject the selected pending request"""
+        # Reject the selected pending request with confirmation dialog
         selection = self.pending_tree.selection()
         if not selection:
             messagebox.showwarning("Warning", "Please select a request to reject")

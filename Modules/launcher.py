@@ -1,3 +1,6 @@
+# Server Manager Launcher - Process manager and startup orchestrator  
+# Manages startup of all Server Manager components with cluster role detection
+# Handles tray icon, web server, and subhost dashboard based on configuration
 import os
 import sys
 import time
@@ -75,7 +78,7 @@ class ServerManagerLauncher(ServerManagerModule):
             sys.exit(0)
     
     def detect_cluster_role(self):
-        """Detect whether this instance is a Host or Subhost"""
+        # Detect whether this instance is a Host or Subhost
         try:
             from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
             key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
@@ -91,7 +94,7 @@ class ServerManagerLauncher(ServerManagerModule):
             self.host_address = None
         
     def check_existing_instance(self):
-        """Check if another instance of Server Manager is already running"""
+        # Check if another instance of Server Manager is already running
         try:
             if not self.paths or not self.paths.get("temp"):
                 # If paths aren't initialized, we can't check
@@ -140,7 +143,7 @@ class ServerManagerLauncher(ServerManagerModule):
             return False
             
     def start_tray_icon(self):
-        """Start the system tray icon process"""
+        # Start the system tray icon process
         try:
             tray_script = os.path.join(self.paths["scripts"], "trayicon.py")
             
@@ -218,7 +221,7 @@ class ServerManagerLauncher(ServerManagerModule):
             return False
             
     def start_web_server(self):
-        """Start the web server process"""
+        # Start the web server process
         try:
             web_script = os.path.join(self.paths["scripts"], "webserver.py")
             
@@ -334,7 +337,7 @@ class ServerManagerLauncher(ServerManagerModule):
             return False
 
     def start_subhost_dashboard(self):
-        """Start the subhost dashboard for connecting to a host server"""
+        # Start the subhost dashboard for connecting to a host server
         try:
             subhost_script = os.path.join(self.paths["project_root"], "Subhost", "dashboard.py")
             
@@ -414,7 +417,7 @@ class ServerManagerLauncher(ServerManagerModule):
             return False
 
     def is_port_open(self, host, port, timeout=1):
-        """Check if a port is open on the specified host"""
+        # Check if a port is open on the specified host
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)
@@ -425,7 +428,7 @@ class ServerManagerLauncher(ServerManagerModule):
             return False
     
     def check_dependencies(self):
-        """Check if required dependencies are installed"""
+        # Check if required dependencies are installed
         try:
             logger.info("Checking for required dependencies...")
             
@@ -460,7 +463,7 @@ class ServerManagerLauncher(ServerManagerModule):
             return False
 
     def install_dependencies(self):
-        """Install missing dependencies"""
+        # Install missing dependencies
         try:
             if not self.server_manager_dir:
                 logger.error("Server manager directory not set")
@@ -506,7 +509,7 @@ class ServerManagerLauncher(ServerManagerModule):
             return False
 
     def start_processes(self):
-        """Start all server manager component processes based on cluster role"""
+        # Start all server manager component processes based on cluster role
         try:
             # Check and install dependencies first
             if not self.check_dependencies():
@@ -568,7 +571,7 @@ class ServerManagerLauncher(ServerManagerModule):
             return False
             
     def monitor_processes(self):
-        """Monitor and restart processes if they crash"""
+        # Monitor and restart processes if they crash
         restart_attempts = {"tray_icon": 0, "web_server": 0, "subhost_dashboard": 0}
         max_restart_attempts = 3  # Maximum number of restart attempts
         
@@ -632,7 +635,7 @@ class ServerManagerLauncher(ServerManagerModule):
                 time.sleep(10)  # Wait longer if there's an error
                 
     def cleanup(self):
-        """Clean up resources and terminate processes"""
+        # Clean up resources and terminate processes
         logger.info("Cleaning up resources...")
         
         # Terminate child processes with more aggressive approach
@@ -667,7 +670,7 @@ class ServerManagerLauncher(ServerManagerModule):
         logger.info("Cleanup complete")
         
     def run(self):
-        """Main execution method"""
+        # Main execution method
         try:
             logger.info("Server Manager launcher starting...")
             
@@ -693,7 +696,7 @@ class ServerManagerLauncher(ServerManagerModule):
             self.cleanup()
             
     def handle_shutdown(self):
-        """Handle shutdown signal"""
+        # Handle shutdown signal
         logger.info("Shutdown signal received")
         self.running = False
         # Make sure we clean up properly
@@ -703,7 +706,7 @@ class ServerManagerLauncher(ServerManagerModule):
         os._exit(0)  # Force immediate exit
 
 def is_admin():
-    """Check if the script is running with administrator privileges"""
+    # Check if the script is running with administrator privileges
     try:
         return ctypes.windll.shell32.IsUserAnAdmin() != 0
     except:

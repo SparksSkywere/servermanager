@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Windows service wrapper for Server Manager with install, start, stop, and debug functionality
 import os
 import sys
 import time
@@ -26,7 +27,7 @@ except ImportError:
 from Modules.launcher import ServerManagerLauncher
 
 class ServerManagerService(win32serviceutil.ServiceFramework):
-    """Windows Service for Server Manager"""
+    # Windows Service for Server Manager
     
     _svc_name_ = "ServerManagerService"
     _svc_display_name_ = "Server Manager Service"
@@ -45,7 +46,7 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
         self.setup_service_logging()
         
     def setup_service_logging(self):
-        """Configure logging for the service"""
+        # Configure logging for the service
         try:
             # Try to use standardized logging
             from Modules.server_logging import get_component_logger
@@ -87,7 +88,7 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
                 self.logger.error(f"Failed to setup service logging: {e2}")
     
     def SvcStop(self):
-        """Called when the service is asked to stop"""
+        # Called when the service is asked to stop
         self.logger.info("Service stop requested")
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         win32event.SetEvent(self.hWaitStop)
@@ -101,7 +102,7 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
                 self.logger.error(f"Error stopping launcher: {e}")
     
     def SvcDoRun(self):
-        """Called when the service is started"""
+        # Called when the service is started
         try:
             self.logger.info("Server Manager Service starting...")
             servicemanager.LogMsg(
@@ -123,7 +124,7 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
             )
     
     def main_loop(self):
-        """Main service loop"""
+        # Main service loop
         try:
             # Initialize and start the launcher in service mode
             self.launcher = ServerManagerLauncher()
@@ -162,7 +163,7 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
             raise
 
 def install_service():
-    """Install the service"""
+    # Install the service
     try:
         # Install the service
         win32serviceutil.InstallService(
@@ -181,7 +182,7 @@ def install_service():
         return False
 
 def uninstall_service():
-    """Uninstall the service"""
+    # Uninstall the service
     try:
         win32serviceutil.RemoveService(ServerManagerService._svc_name_)
         print(f"Service '{ServerManagerService._svc_display_name_}' uninstalled successfully")
@@ -192,7 +193,7 @@ def uninstall_service():
         return False
 
 def start_service():
-    """Start the service"""
+    # Start the service
     try:
         win32serviceutil.StartService(ServerManagerService._svc_name_)
         print(f"Service '{ServerManagerService._svc_display_name_}' started successfully")
@@ -203,7 +204,7 @@ def start_service():
         return False
 
 def stop_service():
-    """Stop the service"""
+    # Stop the service
     try:
         win32serviceutil.StopService(ServerManagerService._svc_name_)
         print(f"Service '{ServerManagerService._svc_display_name_}' stopped successfully")
@@ -214,7 +215,7 @@ def stop_service():
         return False
 
 def main():
-    """Main entry point"""
+    # Main entry point
     if len(sys.argv) == 1:
         # No arguments - run as service
         servicemanager.Initialize()

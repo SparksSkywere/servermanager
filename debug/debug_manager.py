@@ -1,3 +1,5 @@
+# Debug Manager - System diagnostics and debugging tools for Server Manager
+# Provides GUI interface for debugging, system information, and diagnostic functions
 import os
 import sys
 import json
@@ -36,14 +38,14 @@ if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.debug("DebugManager module debug mode enabled via environment")
 
 def is_admin():
-    """Check if the script is running with administrator privileges"""
+    # Check if the script is running with administrator privileges
     try:
         return ctypes.windll.shell32.IsUserAnAdmin() != 0
     except:
         return False
 
 def run_as_admin():
-    """Re-run the script with admin privileges"""
+    # Re-run the script with admin privileges
     ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
     sys.exit()
 
@@ -67,7 +69,7 @@ class DebugManagerGUI:
         self.create_ui()
     
     def initialize(self):
-        """Initialize paths and configuration from registry"""
+        # Initialize paths and configuration from registry
         try:
             from Modules.common import REGISTRY_ROOT
             # Read registry for paths
@@ -104,13 +106,13 @@ class DebugManagerGUI:
             return False
     
     def create_ui(self):
-        """Create the UI elements"""
+        # Create the UI elements
         # Create group boxes for different debug areas
         self.create_system_group()
         self.create_misc_group()
     
     def create_system_group(self):
-        """Create system group box"""
+        # Create system group box
         system_frame = ttk.LabelFrame(self.root, text="System")
         system_frame.grid(row=0, column=0, padx=20, pady=10, sticky="nsew")
         
@@ -130,7 +132,7 @@ class DebugManagerGUI:
         system_logs_btn.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
     
     def create_misc_group(self):
-        """Create miscellaneous group box"""
+        # Create miscellaneous group box
         misc_frame = ttk.LabelFrame(self.root, text="Miscellaneous")
         misc_frame.grid(row=0, column=1, rowspan=2, padx=20, pady=10, sticky="nsew")
         
@@ -157,7 +159,7 @@ class DebugManagerGUI:
         self.root.grid_rowconfigure(1, weight=1)
     
     def toggle_debug(self):
-        """Toggle debug logging mode"""
+        # Toggle debug logging mode
         if debug_manager:
             if self.debug_var.get():
                 debug_manager.set_debug_mode(True)
@@ -167,7 +169,7 @@ class DebugManagerGUI:
                 messagebox.showinfo("Debug Mode", "Debug logging is now disabled.")
     
     def show_system_information(self):
-        """Show system information window"""
+        # Show system information window
         info_window = tk.Toplevel(self.root)
         info_window.title("System Information")
         info_window.geometry("600x500")
@@ -280,7 +282,7 @@ Usage: {disk_usage.percent}%
         close_btn.pack(pady=10)
     
     def update_system_information(self):
-        """Update system information"""
+        # Update system information
         # Create progress window
         progress_window = tk.Toplevel(self.root)
         progress_window.title("Updating System Information")
@@ -309,7 +311,7 @@ Usage: {disk_usage.percent}%
         self.root.after(100, do_update)
     
     def view_system_logs(self):
-        """View system logs"""
+        # View system logs
         # Try to get log directory from registry
         log_path = self.paths["logs"]
         
@@ -326,7 +328,7 @@ Usage: {disk_usage.percent}%
             subprocess.Popen(["xdg-open", log_path])
     
     def run_full_diagnostics(self):
-        """Run full system diagnostics"""
+        # Run full system diagnostics
         # Create progress window
         diag_window = tk.Toplevel(self.root)
         diag_window.title("Running Full Diagnostics")

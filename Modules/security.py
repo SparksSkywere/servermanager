@@ -1,3 +1,5 @@
+# Security operations including authentication, encryption, and privilege management
+
 import os
 import sys
 import json
@@ -23,7 +25,7 @@ if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.debug("Security module debug mode enabled via environment")
 
 class SecurityManager:
-    """Class for security operations"""
+    # Manages security operations including authentication and encryption
     def __init__(self):
         self.registry_path = r"Software\SkywereIndustries\Servermanager"
         self.server_manager_dir = None
@@ -33,7 +35,7 @@ class SecurityManager:
         self.initialize_from_registry()
     
     def initialize_from_registry(self):
-        """Initialize paths from registry settings"""
+        # Initialize paths from registry settings
         try:
             # Read registry for paths
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
@@ -60,18 +62,18 @@ class SecurityManager:
             return False
             
     def is_admin(self):
-        """Check if the current process has administrator privileges"""
+        # Check if the current process has administrator privileges
         try:
             return ctypes.windll.shell32.IsUserAnAdmin() != 0
         except:
             return False
             
     def generate_token(self, length=32):
-        """Generate a secure random token"""
+        # Generate a secure random token
         return secrets.token_hex(length)
         
     def hash_password(self, password, salt=None):
-        """Hash a password with optional salt"""
+        # Hash a password with optional salt
         if salt is None:
             salt = secrets.token_hex(16)
             
@@ -87,7 +89,7 @@ class SecurityManager:
         }
         
     def verify_password(self, password, stored_hash, salt):
-        """Verify a password against a stored hash and salt"""
+        # Verify a password against a stored hash and salt
         password_bytes = password.encode('utf-8')
         salt_bytes = salt.encode('utf-8')
         
@@ -97,7 +99,7 @@ class SecurityManager:
         return calculated_hash == stored_hash
         
     def encrypt_data(self, data, key=None):
-        """Encrypt data with an optional key (simple implementation)"""
+        # Encrypt data with an optional key
         try:
             from cryptography.fernet import Fernet
             
@@ -134,7 +136,7 @@ class SecurityManager:
             return None
             
     def decrypt_data(self, encrypted_data, key):
-        """Decrypt data with the provided key"""
+        # Decrypt data with the provided key
         try:
             from cryptography.fernet import Fernet
             
@@ -158,25 +160,25 @@ security_manager = SecurityManager()
 
 # Export functions for easy module access
 def is_admin():
-    """Check if current process has admin privileges"""
+    # Check if current process has admin privileges
     return security_manager.is_admin()
 
 def generate_token(length=32):
-    """Generate a secure random token"""
+    # Generate a secure random token
     return security_manager.generate_token(length)
 
 def hash_password(password, salt=None):
-    """Hash a password with optional salt"""
+    # Hash a password with optional salt
     return security_manager.hash_password(password, salt)
 
 def verify_password(password, stored_hash, salt):
-    """Verify a password against stored hash and salt"""
+    # Verify a password against stored hash and salt
     return security_manager.verify_password(password, stored_hash, salt)
 
 def encrypt_data(data, key=None):
-    """Encrypt data with optional key"""
+    # Encrypt data with optional key
     return security_manager.encrypt_data(data, key)
 
 def decrypt_data(encrypted_data, key):
-    """Decrypt data with the provided key"""
+    # Decrypt data with the provided key
     return security_manager.decrypt_data(encrypted_data, key)

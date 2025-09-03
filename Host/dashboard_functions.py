@@ -538,7 +538,7 @@ def find_appid_in_directory(directory_path):
 
 
 def load_dashboard_config(server_manager_dir):
-    """Load dashboard configuration from JSON file"""
+    # Load dashboard configuration from JSON file
     try:
         if not server_manager_dir:
             logger.warning("Server manager directory not initialized, using default config")
@@ -559,7 +559,7 @@ def load_dashboard_config(server_manager_dir):
 
 
 def is_process_running(pid):
-    """Check if a process with the given PID is running"""
+    # Check if a process with the given PID is running
     try:
         return psutil.pid_exists(pid)
     except:
@@ -567,7 +567,7 @@ def is_process_running(pid):
 
 
 def is_port_open(host, port, timeout=1):
-    """Check if a port is open on the specified host"""
+    # Check if a port is open on the specified host
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
@@ -579,7 +579,7 @@ def is_port_open(host, port, timeout=1):
 
 
 def check_webserver_status(paths, variables):
-    """Check if the web server is running and return status"""
+    # Check if the web server is running and return status
     if variables.get("offlineMode", False):
         return "Offline Mode"
         
@@ -701,7 +701,7 @@ def get_steam_credentials(root):
 
 
 def update_system_info(metric_labels, system_name, os_info, variables):
-    """Update system information in the UI"""
+    # Update system information in the UI
     try:
         # Computer name and OS info
         computer_name = platform.node()
@@ -785,16 +785,15 @@ def update_system_info(metric_labels, system_name, os_info, variables):
 
 
 def export_server_configuration(server_name, paths, include_files=False):
-    """Export server configuration to a portable format
-    
-    Args:
-        server_name (str): Name of the server to export
-        paths (dict): Application paths dictionary
-        include_files (bool): Whether to include server files in export
-        
-    Returns:
-        dict: Export data containing server configuration and metadata
-    """
+    # Export server configuration to a portable format
+    # 
+    # Args:
+    #     server_name (str): Name of the server to export
+    #     paths (dict): Application paths dictionary
+    #     include_files (bool): Whether to include server files in export
+    #     
+    # Returns:
+    #     dict: Export data containing server configuration and metadata
     try:
         # Find server configuration file
         servers_path = os.path.join(paths["root"], "servers")
@@ -880,17 +879,16 @@ def export_server_configuration(server_name, paths, include_files=False):
 
 
 def import_server_configuration(export_data, paths, install_directory=None, auto_install=False):
-    """Import server configuration from export data
-    
-    Args:
-        export_data (dict): Exported server configuration data
-        paths (dict): Application paths dictionary
-        install_directory (str): Target installation directory (optional)
-        auto_install (bool): Whether to automatically install Steam servers
-        
-    Returns:
-        tuple: (success, message, server_config)
-    """
+    # Import server configuration from export data
+    # 
+    # Args:
+    #     export_data (dict): Exported server configuration data
+    #     paths (dict): Application paths dictionary
+    #     install_directory (str): Target installation directory (optional)
+    #     auto_install (bool): Whether to automatically install Steam servers
+    #     
+    # Returns:
+    #     tuple: (success, message, server_config)
     try:
         # Validate export data
         if not export_data.get("server_configuration"):
@@ -982,7 +980,7 @@ def import_server_configuration(export_data, paths, install_directory=None, auto
 
 
 def generate_unique_server_name(name, paths):
-    """Generate a unique server name by checking existing configurations"""
+    # Generate a unique server name by checking existing configurations
     try:
         servers_path = os.path.join(paths["root"], "servers")
         existing_names = set()
@@ -1014,7 +1012,7 @@ def generate_unique_server_name(name, paths):
 
 
 def get_directory_size(directory):
-    """Get total size of directory in bytes"""
+    # Get total size of directory in bytes
     try:
         total_size = 0
         for dirpath, dirnames, filenames in os.walk(directory):
@@ -1030,7 +1028,7 @@ def get_directory_size(directory):
 
 
 def count_files_in_directory(directory):
-    """Count total number of files in directory"""
+    # Count total number of files in directory
     try:
         file_count = 0
         for dirpath, dirnames, filenames in os.walk(directory):
@@ -1041,16 +1039,15 @@ def count_files_in_directory(directory):
 
 
 def export_server_to_file(export_data, export_path, include_files=False):
-    """Export server configuration to file
-    
-    Args:
-        export_data (dict): Server export data
-        export_path (str): Target file path
-        include_files (bool): Whether to include server files
-        
-    Returns:
-        tuple: (success, message)
-    """
+    # Export server configuration to file
+    # 
+    # Args:
+    #     export_data (dict): Server export data
+    #     export_path (str): Target file path
+    #     include_files (bool): Whether to include server files
+    #     
+    # Returns:
+    #     tuple: (success, message)
     try:
         if include_files:
             # Create zip archive with configuration and files
@@ -1088,14 +1085,13 @@ def export_server_to_file(export_data, export_path, include_files=False):
 
 
 def import_server_from_file(file_path):
-    """Import server configuration from file
-    
-    Args:
-        file_path (str): Path to import file
-        
-    Returns:
-        tuple: (success, export_data, has_files)
-    """
+    # Import server configuration from file
+    # 
+    # Args:
+    #     file_path (str): Path to import file
+    #     
+    # Returns:
+    #     tuple: (success, export_data, has_files)
     try:
         if file_path.endswith('.zip'):
             # Import from zip archive
@@ -1121,15 +1117,14 @@ def import_server_from_file(file_path):
 
 
 def extract_server_files_from_archive(zip_path, extract_to):
-    """Extract server files from zip archive
-    
-    Args:
-        zip_path (str): Path to zip file
-        extract_to (str): Target extraction directory
-        
-    Returns:
-        tuple: (success, message)
-    """
+    # Extract server files from zip archive
+    # 
+    # Args:
+    #     zip_path (str): Path to zip file
+    #     extract_to (str): Target extraction directory
+    #     
+    # Returns:
+    #     tuple: (success, message)
     try:
         os.makedirs(extract_to, exist_ok=True)
         
@@ -1157,7 +1152,7 @@ def extract_server_files_from_archive(zip_path, extract_to):
 
 
 def format_uptime_from_start_time(start_time_str):
-    """Format uptime from start time string"""
+    # Format uptime from start time string
     try:
         start_time = datetime.datetime.fromisoformat(start_time_str)
         uptime_delta = datetime.datetime.now() - start_time
@@ -1174,7 +1169,7 @@ def format_uptime_from_start_time(start_time_str):
 
 
 def center_window(window, width=None, height=None, parent=None):
-    """Center a window on the screen or relative to a parent window"""
+    # Center a window on the screen or relative to a parent window
     window.update_idletasks()
     
     # Get window dimensions
@@ -1206,7 +1201,7 @@ def center_window(window, width=None, height=None, parent=None):
 
 
 def create_server_type_selection_dialog(root, supported_server_types):
-    """Create and show server type selection dialog"""
+    # Create and show server type selection dialog
     type_dialog = tk.Toplevel(root)
     type_dialog.title("Select Server Type")
     type_dialog.transient(root)
@@ -1261,7 +1256,7 @@ def create_server_type_selection_dialog(root, supported_server_types):
 
 
 def update_server_status_in_treeview(server_list, server_name, status):
-    """Update the status of a server in the UI treeview"""
+    # Update the status of a server in the UI treeview
     try:
         # Find the server in the treeview
         for item in server_list.get_children():
@@ -1282,7 +1277,7 @@ def update_server_status_in_treeview(server_list, server_name, status):
 
 
 def validate_server_creation_inputs(server_type, server_name, app_id=None, executable_path=None):
-    """Validate inputs for server creation"""
+    # Validate inputs for server creation
     errors = []
     warnings = []
     
@@ -1312,7 +1307,7 @@ def validate_server_creation_inputs(server_type, server_name, app_id=None, execu
 
 
 def open_directory_in_explorer(directory_path):
-    """Open a directory in the system file explorer"""
+    # Open a directory in the system file explorer
     import subprocess
     try:
         if not os.path.exists(directory_path):
@@ -1334,7 +1329,7 @@ def open_directory_in_explorer(directory_path):
 
 
 def create_confirmation_dialog(parent, title, message, confirm_text="Confirm", cancel_text="Cancel"):
-    """Create a confirmation dialog and return the result"""
+    # Create a confirmation dialog and return the result
     dialog = tk.Toplevel(parent)
     dialog.title(title)
     dialog.transient(parent)
@@ -1376,7 +1371,7 @@ def create_confirmation_dialog(parent, title, message, confirm_text="Confirm", c
 
 
 def show_progress_dialog(parent, title, task_function, *args, **kwargs):
-    """Show a progress dialog while executing a task in a separate thread"""
+    # Show a progress dialog while executing a task in a separate thread
     dialog = tk.Toplevel(parent)
     dialog.title(title)
     dialog.transient(parent)
@@ -1436,7 +1431,7 @@ def show_progress_dialog(parent, title, task_function, *args, **kwargs):
 
 
 def create_server_installation_dialog(root, server_type, supported_server_types, server_manager, paths, steam_cmd_path=None):
-    """Create server installation dialog with Java selection for Minecraft servers"""
+    # Create server installation dialog with Java selection for Minecraft servers
     try:
         # Import here to avoid circular imports
         if server_type == "Minecraft":
@@ -1620,7 +1615,7 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
         logger.error(f"Error creating server installation dialog: {str(e)}")
         messagebox.showerror("Error", f"Failed to create installation dialog: {str(e)}")
         return None
-    """Create server installation dialog with all necessary components"""
+    
     # Get credentials if needed
     credentials = None
     if server_type == "Steam":
@@ -2018,7 +2013,7 @@ def create_server_removal_dialog(root, server_name, server_manager):
 
 def perform_server_installation(server_manager, server_type, form_vars, credentials, paths, 
                                status_callback=None, console_callback=None, cancel_flag=None, steam_cmd_path=None):
-    """Perform server installation with callbacks for progress updates"""
+    # Perform server installation with callbacks for progress updates
     try:
         server_name = form_vars['name'].get().strip()
         app_id = form_vars['app_id'].get().strip() if server_type == "Steam" else ""
@@ -2106,7 +2101,7 @@ def perform_server_installation(server_manager, server_type, form_vars, credenti
 
 
 def update_server_list_from_files(server_list, paths, variables, log_dashboard_event, format_uptime_from_start_time):
-    """Update server list treeview from configuration files"""
+    # Update server list treeview from configuration files
     try:
         # Remember currently selected server(s) to restore selection after refresh
         selected_items = server_list.selection()
@@ -2233,7 +2228,7 @@ def update_server_list_from_files(server_list, paths, variables, log_dashboard_e
 
 
 def create_progress_dialog_with_console(parent, title, width=700, height=650):
-    """Create a progress dialog with console output for long-running operations"""
+    # Create a progress dialog with console output for long-running operations
     dialog = tk.Toplevel(parent)
     dialog.title(title)
     dialog.transient(parent)
@@ -2298,7 +2293,7 @@ def create_progress_dialog_with_console(parent, title, width=700, height=650):
 
 
 def show_java_configuration_dialog(parent, server_name, server_config, server_manager, server_manager_dir, config):
-    """Show Java configuration dialog for a specific server"""
+    # Show Java configuration dialog for a specific server
     try:
         from Modules.minecraft import detect_java_installations, check_java_compatibility, get_recommended_java_for_minecraft
         
@@ -2544,7 +2539,7 @@ def show_java_configuration_dialog(parent, server_name, server_config, server_ma
 
 
 def import_server_from_directory_dialog(parent, server_manager, server_manager_dir, supported_server_types, update_callback=None):
-    """Import an existing server from a directory (legacy method)"""
+    # Import an existing server from a directory (legacy method)
     if server_manager is None:
         messagebox.showerror("Error", "Server manager not initialized.")
         return
@@ -3380,19 +3375,18 @@ def export_server_dialog(parent, server_list, paths):
 
 
 def show_server_rename_dialog(parent, current_server_name, server_config, server_manager, paths, server_manager_dir):
-    """Create a dialog to rename a server and modify its AppID
-    
-    Args:
-        parent: Parent window
-        current_server_name (str): Current name of the server
-        server_config (dict): Current server configuration
-        server_manager: Server manager instance
-        paths (dict): Application paths dictionary
-        server_manager_dir (str): Server manager directory path
-        
-    Returns:
-        dict: Result containing success status, new name, and new AppID
-    """
+    # Create a dialog to rename a server and modify its AppID
+    # 
+    # Args:
+    #     parent: Parent window
+    #     current_server_name (str): Current name of the server
+    #     server_config (dict): Current server configuration
+    #     server_manager: Server manager instance
+    #     paths (dict): Application paths dictionary
+    #     server_manager_dir (str): Server manager directory path
+    #     
+    # Returns:
+    #     dict: Result containing success status, new name, and new AppID
     try:
         dialog = tk.Toplevel(parent)
         dialog.title(f"Rename Server: {current_server_name}")
@@ -3462,7 +3456,7 @@ def show_server_rename_dialog(parent, current_server_name, server_config, server
         result = {"success": False, "new_name": None, "new_appid": None, "cancelled": True}
         
         def validate_inputs():
-            """Validate the input values"""
+            # Validate the input values
             new_name = new_name_var.get().strip()
             errors = []
             
@@ -3490,7 +3484,7 @@ def show_server_rename_dialog(parent, current_server_name, server_config, server
             return errors
         
         def on_rename():
-            """Handle rename button click"""
+            # Handle rename button click
             errors = validate_inputs()
             if errors:
                 messagebox.showerror("Validation Error", "\n".join(errors))
@@ -3514,7 +3508,7 @@ def show_server_rename_dialog(parent, current_server_name, server_config, server
                 dialog.destroy()
         
         def on_cancel():
-            """Handle cancel button click"""
+            # Handle cancel button click
             result["cancelled"] = True
             dialog.destroy()
         
@@ -3547,18 +3541,17 @@ def show_server_rename_dialog(parent, current_server_name, server_config, server
 
 
 def rename_server_configuration(old_name, new_name, new_appid, server_manager, paths):
-    """Rename a server and update its configuration
-    
-    Args:
-        old_name (str): Current server name
-        new_name (str): New server name
-        new_appid (int): New AppID (for Steam servers, None for others)
-        server_manager: Server manager instance
-        paths (dict): Application paths dictionary
-        
-    Returns:
-        tuple: (success, message)
-    """
+    # Rename a server and update its configuration
+    # 
+    # Args:
+    #     old_name (str): Current server name
+    #     new_name (str): New server name
+    #     new_appid (int): New AppID (for Steam servers, None for others)
+    #     server_manager: Server manager instance
+    #     paths (dict): Application paths dictionary
+    #     
+    # Returns:
+    #     tuple: (success, message)
     try:
         if not server_manager:
             return False, "Server manager not available"
@@ -3631,7 +3624,7 @@ def rename_server_configuration(old_name, new_name, new_appid, server_manager, p
 
 
 def re_detect_server_type_from_config(server_config):
-    """Re-detect server type from existing server configuration"""
+    # Re-detect server type from existing server configuration
     if not server_config:
         return "Other"
     
@@ -3680,7 +3673,7 @@ def re_detect_server_type_from_config(server_config):
 
 
 def update_server_configuration_with_detection(server_config_path):
-    """Update server configuration file with improved type detection"""
+    # Update server configuration file with improved type detection
     try:
         if not os.path.exists(server_config_path):
             return False, "Configuration file not found"
@@ -3712,7 +3705,7 @@ def update_server_configuration_with_detection(server_config_path):
 
 
 def batch_update_server_types(paths):
-    """Batch update all server configurations with improved type detection"""
+    # Batch update all server configurations with improved type detection
     try:
         servers_path = os.path.join(paths["root"], "servers")
         if not os.path.exists(servers_path):

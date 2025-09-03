@@ -13,17 +13,17 @@ from Modules.server_logging import get_component_logger
 logger = get_component_logger("ClusterDatabase")
 
 class ClusterDatabase:
-    """Database manager for cluster information"""
+    # Database manager for cluster information
     
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
-            # Try to get the server manager directory from registry first
+            # Auto-discover database path from registry or fallback locations
             try:
                 import winreg
                 from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
                 key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
                 try:
-                    # Try multiple possible registry keys
+                    # Check multiple registry key names for flexibility
                     server_manager_dir = None
                     for key_name in ["ServerManagerDirectory", "InstallPath", "Directory"]:
                         try:
@@ -79,12 +79,12 @@ class ClusterDatabase:
         self.init_database()
     
     def init_database(self):
-        """Initialize the cluster database with required tables"""
+        # Initialize comprehensive cluster database schema with all required tables
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
-                # Cluster configuration table
+                # Core cluster configuration
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS cluster_config (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -178,7 +178,7 @@ class ClusterDatabase:
             raise
     
     def get_cluster_config(self) -> Optional[Dict]:
-        """Get current cluster configuration"""
+        # Get current cluster configuration
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -206,7 +206,7 @@ class ClusterDatabase:
     
     def set_cluster_config(self, host_type: str = 'Host', cluster_name: Optional[str] = None,
                           cluster_secret: Optional[str] = None, master_ip: Optional[str] = None) -> bool:
-        """Set cluster configuration"""
+        # Set cluster configuration
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -229,7 +229,7 @@ class ClusterDatabase:
     
     def add_cluster_node(self, name: str, ip_address: str, port: int = 8080, 
                         node_type: str = 'node', cluster_token: Optional[str] = None) -> bool:
-        """Add a new cluster node"""
+        # Add a new cluster node
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -248,7 +248,7 @@ class ClusterDatabase:
             return False
     
     def remove_cluster_node(self, name: str) -> bool:
-        """Remove a cluster node"""
+        # Remove a cluster node
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -265,7 +265,7 @@ class ClusterDatabase:
             return False
     
     def get_cluster_node(self, name: str) -> Optional[Dict]:
-        """Get a specific cluster node"""
+        # Get a specific cluster node
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -295,7 +295,7 @@ class ClusterDatabase:
             return None
     
     def get_all_cluster_nodes(self) -> List[Dict]:
-        """Get all cluster nodes"""
+        # Get all cluster nodes
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -326,7 +326,7 @@ class ClusterDatabase:
             return []
     
     def update_node_status(self, name: str, status: str, last_ping: Optional[datetime] = None) -> bool:
-        """Update node status and ping time"""
+        # Update node status and ping time
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -349,7 +349,7 @@ class ClusterDatabase:
     
     def add_cluster_token(self, token_hash: str, node_name: Optional[str] = None, 
                          node_ip: Optional[str] = None, expires_at: Optional[datetime] = None) -> bool:
-        """Add a cluster authentication token"""
+        # Add a cluster authentication token
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -369,7 +369,7 @@ class ClusterDatabase:
             return False
     
     def revoke_cluster_token(self, token_hash: str) -> bool:
-        """Revoke a cluster token"""
+        # Revoke a cluster token
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -390,7 +390,7 @@ class ClusterDatabase:
             return False
     
     def validate_cluster_token(self, token_hash: str) -> bool:
-        """Validate a cluster token"""
+        # Validate cluster token - checks if active and not expired
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -409,7 +409,7 @@ class ClusterDatabase:
     def log_cluster_communication(self, source_ip: str, target_ip: Optional[str] = None, 
                                  action: str = '', status: str = 'success', 
                                  message: Optional[str] = None) -> bool:
-        """Log cluster communication events"""
+        # Log cluster communication events
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -427,7 +427,7 @@ class ClusterDatabase:
             return False
     
     def get_cluster_communication_log(self, limit: int = 100) -> List[Dict]:
-        """Get recent cluster communication log entries"""
+        # Get recent cluster communication log entries
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -455,7 +455,7 @@ class ClusterDatabase:
             return []
     
     def migrate_from_json(self, json_file_path: str) -> bool:
-        """Migrate existing JSON cluster data to database"""
+        # Migrate legacy JSON cluster data to SQLite database with backup
         try:
             if not os.path.exists(json_file_path):
                 logger.info("No JSON file to migrate from")
@@ -487,10 +487,11 @@ class ClusterDatabase:
             return False
     
     def cleanup_old_tokens(self, days: int = 30) -> bool:
-        """Clean up expired and old revoked tokens"""
+        # Clean up expired and old revoked tokens
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
+                # Calculate cutoff date for cleanup
                 cutoff_date = datetime.now()
                 cutoff_date = cutoff_date.replace(day=cutoff_date.day - days)
                 
@@ -517,7 +518,7 @@ class ClusterDatabase:
     def add_pending_request(self, node_name: str, ip_address: str, port: int = 8080, 
                            machine_name: Optional[str] = None, os_info: Optional[str] = None,
                            request_data: Optional[str] = None) -> Optional[int]:
-        """Add a pending cluster join request"""
+        # Add a pending cluster join request
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -537,7 +538,7 @@ class ClusterDatabase:
             return None
     
     def get_pending_requests(self) -> List[Dict]:
-        """Get all pending cluster join requests"""
+        # Get all pending cluster join requests
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -573,7 +574,7 @@ class ClusterDatabase:
             return []
     
     def approve_request(self, request_id: int, approved_by: str, approval_token: str) -> bool:
-        """Approve a pending cluster join request"""
+        # Approve a pending cluster join request
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -594,7 +595,7 @@ class ClusterDatabase:
             return False
     
     def reject_request(self, request_id: int, rejected_by: str) -> bool:
-        """Reject a pending cluster join request"""
+        # Reject a pending cluster join request
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -615,7 +616,7 @@ class ClusterDatabase:
             return False
     
     def get_request_by_id(self, request_id: int) -> Optional[Dict]:
-        """Get a specific pending request by ID"""
+        # Get a specific pending request by ID
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -648,7 +649,7 @@ class ClusterDatabase:
             return None
     
     def cleanup_old_requests(self, days: int = 7) -> bool:
-        """Clean up old approved/rejected requests"""
+        # Clean up old approved/rejected requests
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -676,7 +677,7 @@ class ClusterDatabase:
     
     def update_host_status(self, status: str = 'online', dashboard_active: bool = True, 
                           maintenance_mode: bool = False, status_message: Optional[str] = None) -> bool:
-        """Update host status for halt/resume functionality"""
+        # Update host status for halt/resume functionality
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -699,7 +700,7 @@ class ClusterDatabase:
             return False
     
     def get_host_status(self) -> Optional[Dict]:
-        """Get current host status"""
+        # Get current host status
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -726,7 +727,7 @@ class ClusterDatabase:
             return None
     
     def heartbeat(self) -> bool:
-        """Update heartbeat timestamp to show host is alive"""
+        # Update heartbeat timestamp to show host is alive
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -740,7 +741,7 @@ class ClusterDatabase:
                     conn.commit()
                     return True
                 else:
-                    # No status record exists, create one
+                    # Initialize status record if none exists
                     self.update_host_status()
                     return True
                 

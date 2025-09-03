@@ -1,3 +1,4 @@
+# Comprehensive server management including lifecycle, process monitoring, and configuration handling
 import os
 import sys
 import json
@@ -24,15 +25,7 @@ if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.debug("ServerManager module debug mode enabled via environment")
 
 def get_subprocess_creation_flags(hide_window=True, new_process_group=False):
-    """Get appropriate creation flags for subprocess calls on Windows to prevent console windows.
-    
-    Args:
-        hide_window (bool): If True, prevents console window from opening (saves DWM resources)
-        new_process_group (bool): If True, creates a new process group for better process control
-    
-    Returns:
-        int: Creation flags for Windows, 0 for other platforms
-    """
+    # Get appropriate creation flags for subprocess calls on Windows to prevent console windows
     if sys.platform != 'win32':
         return 0
     
@@ -45,14 +38,7 @@ def get_subprocess_creation_flags(hide_window=True, new_process_group=False):
     return flags
 
 def should_hide_server_consoles(config=None):
-    """Check if server consoles should be hidden based on configuration.
-    
-    Args:
-        config (dict): Configuration dictionary (optional)
-        
-    Returns:
-        bool: True if consoles should be hidden, False otherwise
-    """
+    # Check if server consoles should be hidden based on configuration
     if config and 'configuration' in config:
         return config['configuration'].get('hideServerConsoles', True)
     return True  # Default to hiding consoles
@@ -94,7 +80,7 @@ except ImportError:
 from Modules.common import ServerManagerModule
 
 class ServerManager(ServerManagerModule):
-    """Main class for server management"""
+    # Main class for server management
     def __init__(self):
         super().__init__("ServerManager")
         self.servers = {}
@@ -103,7 +89,7 @@ class ServerManager(ServerManagerModule):
         self.load_config()
         self.load_servers()
     def get_server_process(self, server_name):
-        """Get the active process object for a server"""
+        # Get the active process object for a server
         if hasattr(self, 'active_processes') and server_name in self.active_processes:
             process = self.active_processes[server_name]
             # Check if process is still running
@@ -115,11 +101,11 @@ class ServerManager(ServerManagerModule):
         return None
         
     def get_servers(self):
-        """Get dictionary of all servers and their configurations"""
+        # Get dictionary of all servers and their configurations
         return self.servers
         
     def load_config(self):
-        """Load configuration from file"""
+        # Load configuration from file
         try:
             config_file = os.path.join(self.paths["config"], "config.json")
             
@@ -153,7 +139,7 @@ class ServerManager(ServerManagerModule):
             logger.error(f"Error loading configuration: {str(e)}")
             
     def load_servers(self):
-        """Load list of servers from config directory"""
+        # Load list of servers from config directory
         try:
             servers_dir = self.paths["servers"]
             
@@ -179,7 +165,7 @@ class ServerManager(ServerManagerModule):
             logger.error(f"Error loading servers: {str(e)}")
             
     def get_server_config(self, server_name):
-        """Get configuration for a specific server"""
+        # Get configuration for a specific server
         if server_name in self.servers:
             return self.servers[server_name]
             
@@ -199,7 +185,7 @@ class ServerManager(ServerManagerModule):
         return None
         
     def save_server_config(self, server_name, config):
-        """Save configuration for a specific server"""
+        # Save configuration for a specific server
         try:
             config_path = os.path.join(self.paths["servers"], f"{server_name}.json")
             
@@ -216,15 +202,15 @@ class ServerManager(ServerManagerModule):
             return False
             
     def get_server_list(self):
-        """Get list of all configured servers"""
+        # Get list of all configured servers
         return list(self.servers.values())
     
     def get_all_servers(self):
-        """Get all servers as a dictionary with server names as keys"""
+        # Get all servers as a dictionary with server names as keys
         return self.servers.copy()
             
     def start_server(self, server_name):
-        """Start a server using the appropriate script"""
+        # Start a server using the appropriate script
         try:
             script_path = os.path.join(self.paths["scripts"], "start_server.py")
             
@@ -249,7 +235,7 @@ class ServerManager(ServerManagerModule):
             return False
             
     def stop_server(self, server_name, force=False):
-        """Stop a server using the appropriate script"""
+        # Stop a server using the appropriate script
         try:
             script_path = os.path.join(self.paths["scripts"], "stop_server.py")
             
@@ -277,7 +263,7 @@ class ServerManager(ServerManagerModule):
             return False
 
     def start_server_advanced(self, server_name, callback=None):
-        """Start the selected game server (Steam/Minecraft/Other) - Advanced version with proper process management"""
+        # Start the selected game server (Steam/Minecraft/Other) - Advanced version with proper process management
         try:
             config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
             if not os.path.exists(config_file):
@@ -537,7 +523,7 @@ class ServerManager(ServerManagerModule):
             return False, f"Error starting server '{server_name}': {str(e)}"
 
     def stop_server_advanced(self, server_name, callback=None):
-        """Stop the selected game server - Advanced version with proper process management"""
+        # Stop the selected game server - Advanced version with proper process management
         try:
             # Get server config file path
             config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
@@ -689,7 +675,7 @@ class ServerManager(ServerManagerModule):
             return False, f"Failed to stop server: {str(e)}"
 
     def restart_server_advanced(self, server_name, callback=None):
-        """Restart the selected game server - Advanced version with proper process management"""
+        # Restart the selected game server - Advanced version with proper process management
         try:
             # Get server config file path
             config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
@@ -819,7 +805,7 @@ class ServerManager(ServerManagerModule):
             return False, f"Failed to restart server: {str(e)}"
 
     def remove_server_config(self, server_name):
-        """Remove a server configuration"""
+        # Remove a server configuration
         try:
             # Get server config file path
             config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
@@ -853,7 +839,7 @@ class ServerManager(ServerManagerModule):
     def update_server_config(self, server_name, executable_path, startup_args="", stop_command="", 
                            use_config_file=False, config_file_path="", config_argument="--config", 
                            additional_args=""):
-        """Update server configuration with new settings"""
+        # Update server configuration with new settings
         try:
             # Get server config file path
             config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
@@ -889,7 +875,7 @@ class ServerManager(ServerManagerModule):
             return False, f"Failed to update server configuration: {str(e)}"
 
     def import_server_config(self, server_name, server_type, install_dir, executable_path, startup_args="", app_id=""):
-        """Import an existing server from a directory"""
+        # Import an existing server from a directory
         try:
             # Check if server name already exists
             config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
@@ -955,7 +941,7 @@ class ServerManager(ServerManagerModule):
             return False, f"Failed to import server: {str(e)}"
 
     def auto_detect_server_executable(self, install_dir):
-        """Auto-detect server executable in a directory"""
+        # Auto-detect server executable in a directory
         try:
             if not os.path.exists(install_dir):
                 return []
@@ -1011,7 +997,7 @@ class ServerManager(ServerManagerModule):
             return []
 
     def get_server_status(self, server_name):
-        """Get the current status of a server"""
+        # Get the current status of a server
         try:
             server_config = self.get_server_config(server_name)
             if not server_config:
@@ -1031,7 +1017,7 @@ class ServerManager(ServerManagerModule):
             return "Error", None
             
     def get_running_servers(self):
-        """Get list of currently running servers"""
+        # Get list of currently running servers
         try:
             running_servers = []
             for server_name in self.servers.keys():
@@ -1044,7 +1030,7 @@ class ServerManager(ServerManagerModule):
             return []
 
     def validate_server_config(self, server_config, install_dir):
-        """Validate a server configuration"""
+        # Validate a server configuration
         errors = []
         warnings = []
         
@@ -1084,7 +1070,7 @@ class ServerManager(ServerManagerModule):
             return [f"Validation error: {str(e)}"], []
 
     def install_steam_server(self, server_name, app_id, install_dir, steam_cmd_path, credentials, progress_callback=None, cancel_flag=None):
-        """Install a Steam server using SteamCMD"""
+        # Install a Steam server using SteamCMD
         try:
             # Check for cancellation before starting
             if cancel_flag and cancel_flag.get():
@@ -1237,7 +1223,7 @@ class ServerManager(ServerManagerModule):
             return False, f"Installation failed: {str(e)}"
 
     def install_minecraft_server(self, server_name, install_dir, version, modloader="Vanilla", progress_callback=None, cancel_flag=None):
-        """Install a Minecraft server"""
+        # Install a Minecraft server
         try:
             # Check for cancellation before starting
             if cancel_flag and cancel_flag.get():
@@ -1387,7 +1373,7 @@ class ServerManager(ServerManagerModule):
 
     def create_server_config(self, server_name, server_type, install_dir, executable_path, startup_args="", 
                            app_id="", version="", modloader="", additional_config=None):
-        """Create and save a server configuration"""
+        # Create and save a server configuration
         try:
             # Check if server name already exists
             config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
@@ -1430,7 +1416,7 @@ class ServerManager(ServerManagerModule):
     def install_server_complete(self, server_name, server_type, install_dir, executable_path="", 
                                startup_args="", app_id="", version="", modloader="", steam_cmd_path="", 
                                credentials=None, progress_callback=None, cancel_flag=None):
-        """Complete server installation process"""
+        # Complete server installation process
         try:
             installation_success = False
             actual_executable = executable_path
@@ -1542,7 +1528,7 @@ class ServerManager(ServerManagerModule):
             return False, f"Installation failed: {str(e)}"
 
     def get_minecraft_versions(self):
-        """Get available Minecraft versions"""
+        # Get available Minecraft versions
         try:
             return fetch_minecraft_versions()
         except Exception as e:
@@ -1550,11 +1536,11 @@ class ServerManager(ServerManagerModule):
             return []
 
     def get_supported_server_types(self):
-        """Get list of supported server types"""
+        # Get list of supported server types
         return ["Steam", "Minecraft", "Other"]
 
     def uninstall_server(self, server_name, remove_files=False, progress_callback=None):
-        """Uninstall a server (remove config and optionally files)"""
+        # Uninstall a server (remove config and optionally files)
         try:
             config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
             

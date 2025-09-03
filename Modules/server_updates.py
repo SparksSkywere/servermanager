@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Automated server update management with scheduling, restart coordination, and Steam integration
 import os
 import sys
 import json
@@ -18,7 +19,7 @@ from Modules.server_manager import get_subprocess_creation_flags
 logger = get_dashboard_logger()
 
 class ServerUpdateManager(ServerManagerModule):
-    """Manages automatic updates and restarts for servers"""
+    # Manages automatic updates and restarts for servers
     
     def __init__(self, server_manager_dir: Optional[str] = None, config: Optional[Dict] = None):
         super().__init__("ServerUpdateManager")
@@ -36,15 +37,15 @@ class ServerUpdateManager(ServerManagerModule):
         self.load_update_config()
     
     def set_server_manager(self, server_manager):
-        """Set reference to server manager instance"""
+        # Set reference to server manager instance
         self.server_manager = server_manager
     
     def set_steam_cmd_path(self, steam_cmd_path):
-        """Set SteamCMD path"""
+        # Set SteamCMD path
         self.steam_cmd_path = steam_cmd_path
     
     def load_update_config(self):
-        """Load update and restart configuration from file"""
+        # Load update and restart configuration from file
         try:
             server_dir = self.server_manager_dir or os.getcwd()
             config_file = os.path.join(server_dir, "data", "update_config.json")
@@ -64,7 +65,7 @@ class ServerUpdateManager(ServerManagerModule):
             logger.error(f"Error loading update config: {str(e)}")
     
     def save_update_config(self):
-        """Save update and restart configuration to file"""
+        # Save update and restart configuration to file
         try:
             server_dir = self.server_manager_dir or os.getcwd()
             config_file = os.path.join(server_dir, "data", "update_config.json")
@@ -87,18 +88,7 @@ class ServerUpdateManager(ServerManagerModule):
     
     def check_for_updates(self, server_name: str, app_id: str, credentials: Optional[Dict] = None,
                          progress_callback: Optional[Callable] = None) -> Tuple[bool, str, bool]:
-        """
-        Check if a Steam server has updates available
-        
-        Args:
-            server_name: Name of the server
-            app_id: Steam App ID
-            credentials: Steam credentials (optional)
-            progress_callback: Progress callback function
-            
-        Returns:
-            Tuple of (success, message, has_updates)
-        """
+        # Check if a Steam server has updates available
         try:
             if not self.steam_cmd_path:
                 return False, "SteamCMD path not configured", False
@@ -171,10 +161,7 @@ class ServerUpdateManager(ServerManagerModule):
             return False, f"Update check failed: {str(e)}", False
     
     def _parse_update_info(self, steamcmd_output: str, app_id: str) -> bool:
-        """
-        Parse SteamCMD output to determine if updates are available
-        This is a simplified implementation - in practice you'd compare build IDs
-        """
+        # Parse SteamCMD output to determine if updates are available
         try:
             # Look for the app info section
             lines = steamcmd_output.split('\n')
@@ -198,20 +185,7 @@ class ServerUpdateManager(ServerManagerModule):
     def update_server(self, server_name: str, server_config: Dict, credentials: Optional[Dict] = None,
                      progress_callback: Optional[Callable] = None, stop_server: bool = True, 
                      scheduled: bool = False) -> Tuple[bool, str]:
-        """
-        Update a Steam server
-        
-        Args:
-            server_name: Name of the server
-            server_config: Server configuration dictionary
-            credentials: Steam credentials
-            progress_callback: Progress callback function
-            stop_server: Whether to stop the server before updating
-            scheduled: True if this is a scheduled update (runs silently)
-            
-        Returns:
-            Tuple of (success, message)
-        """
+        # Update a Steam server
         try:
             if server_name in self.update_in_progress:
                 return False, f"Update already in progress for {server_name}"
@@ -351,18 +325,7 @@ class ServerUpdateManager(ServerManagerModule):
     
     def update_all_steam_servers(self, credentials: Optional[Dict] = None, progress_callback: Optional[Callable] = None,
                                 stop_servers: bool = True, scheduled: bool = False) -> Dict[str, Tuple[bool, str]]:
-        """
-        Update all Steam servers
-        
-        Args:
-            credentials: Steam credentials
-            progress_callback: Progress callback function
-            stop_servers: Whether to stop servers before updating
-            scheduled: True if this is a scheduled update (runs silently)
-            
-        Returns:
-            Dictionary with server names as keys and (success, message) tuples as values
-        """
+        # Update all Steam servers
         results = {}
         
         if not self.server_manager:
@@ -411,114 +374,74 @@ class ServerUpdateManager(ServerManagerModule):
             return {"error": (False, error_msg)}
     
     def set_server_update_schedule(self, server_name: str, schedule_config: Dict):
-        """
-        Set update schedule for a specific server
-        
-        Args:
-            server_name: Name of the server
-            schedule_config: Schedule configuration
-                - enabled: bool
-                - time: str (HH:MM format)
-                - days: list of weekdays (0=Monday, 6=Sunday)
-                - check_only: bool (only check for updates, don't auto-update)
-        """
+        # Set update schedule for a specific server
         self.update_schedules[server_name] = schedule_config
         self.save_update_config()
         logger.info(f"Set update schedule for {server_name}: {schedule_config}")
     
     def set_global_update_schedule(self, schedule_config: Dict):
-        """
-        Set global update schedule for all Steam servers
-        
-        Args:
-            schedule_config: Global schedule configuration
-        """
+        # Set global update schedule for all Steam servers
         self.global_schedule = schedule_config
         self.save_update_config()
         logger.info(f"Set global update schedule: {schedule_config}")
     
     def get_server_update_schedule(self, server_name: str) -> Optional[Dict]:
-        """Get update schedule for a server"""
+        # Get update schedule for a server
         return self.update_schedules.get(server_name)
     
     def get_global_update_schedule(self) -> Optional[Dict]:
-        """Get global update schedule"""
+        # Get global update schedule
         return self.global_schedule
     
     def remove_server_update_schedule(self, server_name: str):
-        """Remove update schedule for a server"""
+        # Remove update schedule for a server
         if server_name in self.update_schedules:
             del self.update_schedules[server_name]
             self.save_update_config()
             logger.info(f"Removed update schedule for {server_name}")
     
     def remove_global_update_schedule(self):
-        """Remove global update schedule"""
+        # Remove global update schedule
         self.global_schedule = None
         self.save_update_config()
         logger.info("Removed global update schedule")
     
     # Restart schedule methods
     def set_server_restart_schedule(self, server_name: str, schedule_config: Dict):
-        """
-        Set restart schedule for a specific server
-        
-        Args:
-            server_name: Name of the server
-            schedule_config: Schedule configuration
-                - enabled: bool
-                - time: str (HH:MM format)
-                - days: list of weekdays (0=Monday, 6=Sunday)
-                - scattered: bool (scatter restarts across time window)
-                - scatter_window: int (minutes to scatter across)
-        """
+        # Set restart schedule for a specific server
         self.restart_schedules[server_name] = schedule_config
         self.save_update_config()
         logger.info(f"Set restart schedule for {server_name}: {schedule_config}")
     
     def set_global_restart_schedule(self, schedule_config: Dict):
-        """
-        Set global restart schedule for all servers
-        
-        Args:
-            schedule_config: Global restart schedule configuration
-        """
+        # Set global restart schedule for all servers
         self.global_restart_schedule = schedule_config
         self.save_update_config()
         logger.info(f"Set global restart schedule: {schedule_config}")
     
     def get_server_restart_schedule(self, server_name: str) -> Optional[Dict]:
-        """Get restart schedule for a server"""
+        # Get restart schedule for a server
         return self.restart_schedules.get(server_name)
     
     def get_global_restart_schedule(self) -> Optional[Dict]:
-        """Get global restart schedule"""
+        # Get global restart schedule
         return self.global_restart_schedule
     
     def remove_server_restart_schedule(self, server_name: str):
-        """Remove restart schedule for a server"""
+        # Remove restart schedule for a server
         if server_name in self.restart_schedules:
             del self.restart_schedules[server_name]
             self.save_update_config()
             logger.info(f"Removed restart schedule for {server_name}")
     
     def remove_global_restart_schedule(self):
-        """Remove global restart schedule"""
+        # Remove global restart schedule
         self.global_restart_schedule = None
         self.save_update_config()
         logger.info("Removed global restart schedule")
     
     def should_check_for_updates(self, server_name: str, schedule_config: Dict) -> bool:
-        """
-        Check if it's time to check for updates based on schedule
-        
-        Args:
-            server_name: Name of the server
-            schedule_config: Schedule configuration
-            
-        Returns:
-            True if should check for updates now
-        """
+        # Check if it's time to check for updates based on schedule
         try:
             if not schedule_config.get('enabled', False):
                 return False
@@ -560,16 +483,7 @@ class ServerUpdateManager(ServerManagerModule):
             return False
     
     def should_restart_server(self, server_name: str, schedule_config: Dict) -> bool:
-        """
-        Check if it's time to restart a server based on schedule
-        
-        Args:
-            server_name: Name of the server
-            schedule_config: Restart schedule configuration
-            
-        Returns:
-            True if should restart server now
-        """
+        # Check if it's time to restart a server based on schedule
         try:
             if not schedule_config.get('enabled', False):
                 return False
@@ -624,18 +538,7 @@ class ServerUpdateManager(ServerManagerModule):
     
     def restart_server(self, server_name: str, server_config: Dict, 
                       progress_callback: Optional[Callable] = None, scheduled: bool = False) -> Tuple[bool, str]:
-        """
-        Restart a server
-        
-        Args:
-            server_name: Name of the server
-            server_config: Server configuration dictionary
-            progress_callback: Progress callback function
-            scheduled: Whether this is a scheduled restart
-            
-        Returns:
-            Tuple of (success, message)
-        """
+        # Restart a server
         try:
             if not self.server_manager:
                 return False, "Server manager not available"
@@ -675,16 +578,7 @@ class ServerUpdateManager(ServerManagerModule):
             return False, error_msg
     
     def restart_all_servers(self, progress_callback: Optional[Callable] = None, scheduled: bool = False) -> Dict[str, Tuple[bool, str]]:
-        """
-        Restart all servers
-        
-        Args:
-            progress_callback: Progress callback function
-            scheduled: Whether this is a scheduled restart
-            
-        Returns:
-            Dictionary mapping server names to (success, message) tuples
-        """
+        # Restart all servers
         try:
             if not self.server_manager:
                 return {"error": (False, "Server manager not available")}
@@ -728,10 +622,7 @@ class ServerUpdateManager(ServerManagerModule):
             return {"error": (False, error_msg)}
     
     def run_scheduled_updates(self, progress_callback: Optional[Callable] = None):
-        """
-        Run scheduled update checks and restarts for all configured servers
-        This method should be called periodically by the scheduler
-        """
+        # Run scheduled update checks and restarts for all configured servers
         try:
             if not self.server_manager:
                 return

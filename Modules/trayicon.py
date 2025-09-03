@@ -1,3 +1,4 @@
+# System tray icon for Server Manager with web interface, dashboard, and admin controls
 import os
 import sys
 import subprocess
@@ -90,7 +91,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
             self.configure_file_logging()
 
     def configure_file_logging(self, log_path=None):
-        """Set up logging to file"""
+        # Set up logging to file
         try:
             if not log_path:
                 log_path = os.path.join(self.paths["logs"], "trayicon.log")
@@ -108,7 +109,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
             logger.error(f"Failed to configure file logging: {str(e)}")
     
     def create_icon_image(self):
-        """Create icon image for the tray"""
+        # Create icon image for the tray
         # First try to use an existing icon file
         icon_path = os.path.join(self.paths["icons"], "servermanager.ico")
         if os.path.exists(icon_path):
@@ -133,7 +134,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
         return image
     
     def create_menu(self):
-        """Create the tray icon menu"""
+        # Create the tray icon menu
         return pystray.Menu(
             pystray.MenuItem(
                 f"Server Status: {self.server_status}",
@@ -164,7 +165,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
         )
 
     def update_server_status(self):
-        """Update server status in the menu"""
+        # Update server status in the menu
         # In a real implementation, this would query the server status
         if self.server_status == "Running":
             self.server_status = "Stopped"
@@ -186,7 +187,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
         threading.Timer(10.0, self.update_server_status).start()
 
     def check_webserver_status(self):
-        """Check if the web server is running and update status"""
+        # Check if the web server is running and update status
         if self.offline_mode:
             self.webserver_status = "Offline Mode"
             return
@@ -224,14 +225,14 @@ class ServerManagerTrayIcon(ServerManagerModule):
             self.webserver_status = "Error"
 
     def is_process_running(self, pid):
-        """Check if a process with the given PID is running"""
+        # Check if a process with the given PID is running
         try:
             return psutil.pid_exists(pid)
         except:
             return False
 
     def open_web_interface(self):
-        """Open the web interface in a browser, starting the webserver if needed"""
+        # Open the web interface in a browser, starting the webserver if needed
         logger.info("Opening web interface...")
         
         # Check if we're in offline mode
@@ -359,7 +360,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 self.icon.notify(f"Failed to open web interface: {str(e)}", "Server Manager Error")
 
     def open_dashboard(self):
-        """Open the Python dashboard instead of web dashboard"""
+        # Open the Python dashboard instead of web dashboard
         try:
             # First, ensure the web server is running for API calls
             if not self.offline_mode and self.webserver_status != "Connected":
@@ -437,7 +438,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 self.icon.notify(f"Failed to open dashboard: {str(e)}", "Server Manager Error")
 
     def start_webserver_for_dashboard(self):
-        """Start the web server specifically for dashboard API support"""
+        # Start the web server specifically for dashboard API support
         try:
             webserver_script = os.path.join(self.paths["scripts"], "webserver.py")
             if not os.path.exists(webserver_script):
@@ -514,7 +515,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
             return False
 
     def open_admin_dashboard(self):
-        """Open the admin dashboard for user management"""
+        # Open the admin dashboard for user management
         try:
             # Check if admin dashboard is already running
             admin_pid_file = os.path.join(self.paths["temp"], "admin_dashboard.pid")
@@ -610,7 +611,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 self.icon.notify(f"Failed to open admin dashboard: {str(e)}", "Server Manager Error")
 
     def is_port_open(self, host, port, timeout=1):
-        """Check if a port is open on the specified host"""
+        # Check if a port is open on the specified host
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)
@@ -623,7 +624,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
             return False
     
     def exit_app(self):
-        """Exit the application"""
+        # Exit the application
         logger.info("Exiting application")
         
         # First, attempt to stop the launcher process
@@ -728,7 +729,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
         logger.info("Server Manager tray icon terminated")
 
     def run(self):
-        """Run the tray icon application"""
+        # Run the tray icon application
         try:
             # Create icon image
             image = self.create_icon_image()

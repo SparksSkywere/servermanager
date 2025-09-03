@@ -1,3 +1,5 @@
+# Network security management for Server Manager
+# Provides IP filtering, network access control, and cluster security decorators
 import ipaddress
 import logging
 from datetime import datetime
@@ -15,7 +17,7 @@ DEFAULT_ALLOWED_NETWORKS = [
 ]
 
 class NetworkSecurityManager:
-    """Manages network-level security for the Server Manager"""
+    # Manages network-level security for the Server Manager
     
     def __init__(self, allowed_networks=None):
         self.allowed_networks = []
@@ -33,7 +35,7 @@ class NetworkSecurityManager:
         logger.info(f"Network security initialized with {len(self.allowed_networks)} allowed networks")
         
     def is_ip_allowed(self, ip_address):
-        """Check if an IP address is allowed"""
+        # Check if an IP address is allowed
         try:
             client_ip = ipaddress.ip_address(ip_address)
             for network in self.allowed_networks:
@@ -45,7 +47,7 @@ class NetworkSecurityManager:
             return False
             
     def add_allowed_network(self, network):
-        """Add an allowed network"""
+        # Add an allowed network
         try:
             net = ipaddress.ip_network(network, strict=False)
             if net not in self.allowed_networks:
@@ -57,7 +59,7 @@ class NetworkSecurityManager:
         return False
         
     def remove_allowed_network(self, network):
-        """Remove an allowed network"""
+        # Remove an allowed network
         try:
             net = ipaddress.ip_network(network, strict=False)
             if net in self.allowed_networks:
@@ -69,7 +71,7 @@ class NetworkSecurityManager:
         return False
 
 def require_allowed_network(security_manager):
-    """Decorator to check if client IP is from an allowed network"""
+    # Decorator to check if client IP is from an allowed network
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
@@ -105,7 +107,7 @@ def require_allowed_network(security_manager):
     return decorator
 
 def require_cluster_network_security(security_manager):
-    """Enhanced decorator specifically for cluster API endpoints with additional security"""
+    # Enhanced decorator specifically for cluster API endpoints with additional security
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):

@@ -1,3 +1,4 @@
+# Server Manager startup script with process management, cleanup, and administrative privileges
 import os
 import subprocess
 import sys
@@ -16,14 +17,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))
 from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
 
 def is_admin():
-    """Check if the script is running with administrator privileges"""
+    # Check if the script is running with administrator privileges
     try:
         return ctypes.windll.shell32.IsUserAnAdmin() != 0
     except:
         return False
 
 def get_server_manager_dir_from_registry():
-    """Get the server manager directory from registry"""
+    # Get the server manager directory from registry
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
@@ -34,7 +35,7 @@ def get_server_manager_dir_from_registry():
         return None
 
 def check_process_running(pid):
-    """Check if a process with given PID is still running"""
+    # Check if a process with given PID is still running
     if not pid:
         return False
         
@@ -58,7 +59,7 @@ def check_process_running(pid):
         return False
 
 def cleanup_orphaned_pid_files(temp_dir):
-    """Clean up PID files for processes that are no longer running"""
+    # Clean up PID files for processes that are no longer running
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir, exist_ok=True)
         return
@@ -86,7 +87,7 @@ def cleanup_orphaned_pid_files(temp_dir):
                     pass
 
 def prompt_user_restart():
-    """Prompt user if they want to restart after improper shutdown"""
+    # Prompt user if they want to restart after improper shutdown
     if sys.platform == "win32":
         # MB_YESNO = 0x4, MB_ICONQUESTION = 0x20, MB_DEFBUTTON1 = 0x0
         result = ctypes.windll.user32.MessageBoxW(
@@ -102,7 +103,7 @@ def prompt_user_restart():
         return True
 
 def is_already_running():
-    """Check if an instance of Server Manager is already running"""
+    # Check if an instance of Server Manager is already running
     try:
         # Get server manager directory from registry or use script directory
         server_manager_dir = get_server_manager_dir_from_registry()
@@ -145,7 +146,7 @@ def is_already_running():
         return False
 
 def check_for_improper_shutdown():
-    """Check if there are orphaned PID files indicating improper shutdown"""
+    # Check if there are orphaned PID files indicating improper shutdown
     try:
         # Get server manager directory from registry or use script directory
         server_manager_dir = get_server_manager_dir_from_registry()

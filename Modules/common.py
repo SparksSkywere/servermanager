@@ -1,3 +1,5 @@
+# Common utility classes and functions for Server Manager
+# Provides registry management, path handling, process management, and system utilities
 import os
 import sys
 import json
@@ -25,7 +27,7 @@ if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
 
 # Registry utility functions
 def initialize_paths_from_registry(registry_path):
-    """Initialize basic paths from registry"""
+    # Initialize basic paths from registry
     try:
         # Read registry for basic paths
         key = winreg.OpenKey(REGISTRY_ROOT, registry_path)
@@ -59,7 +61,7 @@ def initialize_paths_from_registry(registry_path):
 
 
 def initialize_registry_values(registry_path):
-    """Initialize registry-managed values"""
+    # Initialize registry-managed values
     try:
         # Read registry for all installation-managed values
         key = winreg.OpenKey(REGISTRY_ROOT, registry_path)
@@ -119,7 +121,7 @@ def initialize_registry_values(registry_path):
         return False, None, 8080, {}
 
 class ServerManagerPaths:
-    """Class to handle paths for the server manager"""
+    # Class to handle paths for the server manager
     def __init__(self):
         self.registry_path = REGISTRY_PATH
         self.server_manager_dir = None
@@ -130,7 +132,7 @@ class ServerManagerPaths:
         self.initialize_from_registry()
         
     def initialize_from_registry(self):
-        """Initialize paths from registry settings"""
+        # Initialize paths from registry settings
         try:
             # Read registry for paths
             key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
@@ -177,7 +179,7 @@ class ServerManagerPaths:
                 raise Exception("Failed to initialize paths")
                 
     def initialize_fallback(self):
-        """Initialize with fallback paths if registry fails"""
+        # Initialize with fallback paths if registry fails
         try:
             # Try to use the script directory's parent as the server manager directory
             script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -220,7 +222,7 @@ class ServerManagerPaths:
             return False
             
     def get_path(self, path_key):
-        """Get a specific path by key"""
+        # Get a specific path by key
         if not self.initialized:
             raise Exception("Paths not initialized")
             
@@ -230,7 +232,7 @@ class ServerManagerPaths:
             raise KeyError(f"Path key not found: {path_key}")
             
     def get_pid_file(self, process_type):
-        """Get a specific PID file path by process type"""
+        # Get a specific PID file path by process type
         if not self.initialized:
             raise Exception("Paths not initialized")
             
@@ -241,12 +243,12 @@ class ServerManagerPaths:
 
 # Process and PID file management functions
 class ProcessManager:
-    """Class to manage processes and PID files"""
+    # Class to manage processes and PID files
     def __init__(self, paths_manager):
         self.paths_manager = paths_manager
         
     def write_pid_file(self, process_type, pid):
-        """Write process ID information to a PID file"""
+        # Write process ID information to a PID file
         try:
             pid_file = self.paths_manager.get_pid_file(process_type)
             
@@ -268,7 +270,7 @@ class ProcessManager:
             return False
             
     def read_pid_file(self, process_type):
-        """Read process ID information from a PID file"""
+        # Read process ID information from a PID file
         try:
             pid_file = self.paths_manager.get_pid_file(process_type)
             
@@ -285,7 +287,7 @@ class ProcessManager:
             return None
             
     def remove_pid_file(self, process_type):
-        """Remove a PID file"""
+        # Remove a PID file
         try:
             pid_file = self.paths_manager.get_pid_file(process_type)
             
@@ -301,7 +303,7 @@ class ProcessManager:
             return False
             
     def is_process_running(self, pid):
-        """Check if a process with the given PID is running"""
+        # Check if a process with the given PID is running
         try:
             if not pid:
                 return False
@@ -311,7 +313,7 @@ class ProcessManager:
             return False
             
     def is_component_running(self, process_type):
-        """Check if a server manager component is running"""
+        # Check if a server manager component is running
         pid_info = self.read_pid_file(process_type)
         
         if not pid_info:
@@ -320,7 +322,7 @@ class ProcessManager:
         return self.is_process_running(pid_info.get("ProcessId"))
             
     def kill_process(self, pid, force=False):
-        """Kill a process by PID"""
+        # Kill a process by PID
         try:
             if not pid or not self.is_process_running(pid):
                 return True
@@ -339,7 +341,7 @@ class ProcessManager:
 
 # Configuration management
 class ConfigManager:
-    """Class to manage server manager configuration"""
+    # Class to manage server manager configuration
     def __init__(self, paths_manager):
         self.paths_manager = paths_manager
         self.config = {}
@@ -349,7 +351,7 @@ class ConfigManager:
         self.load_config()
         
     def load_config(self):
-        """Load configuration from file"""
+        # Load configuration from file
         try:
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r') as f:
@@ -379,7 +381,7 @@ class ConfigManager:
             return False
             
     def create_default_config(self):
-        """Create default configuration"""
+        # Create default configuration
         try:
             # Start with default config
             self.config = {
@@ -418,7 +420,7 @@ class ConfigManager:
             return False
             
     def save_config(self):
-        """Save configuration to file"""
+        # Save configuration to file
         try:
             with open(self.config_file, 'w') as f:
                 json.dump(self.config, f, indent=4)
@@ -430,11 +432,11 @@ class ConfigManager:
             return False
             
     def get(self, key, default=None):
-        """Get a configuration value"""
+        # Get a configuration value
         return self.config.get(key, default)
         
     def set(self, key, value):
-        """Set a configuration value and save"""
+        # Set a configuration value and save
         self.config[key] = value
         return self.save_config()
 
@@ -448,10 +450,10 @@ except ImportError:
 
 # System utilities
 class SystemUtils:
-    """Class for system utilities"""
+    # Class for system utilities
     @staticmethod
     def get_system_info():
-        """Get system information"""
+        # Get system information
         try:
             # Try to use debug module first
             try:
@@ -481,7 +483,7 @@ class SystemUtils:
     
     @staticmethod
     def get_process_info(pid):
-        """Get process information by PID"""
+        # Get process information by PID
         try:
             # Try to use debug module first
             try:
@@ -520,7 +522,7 @@ system_utils = SystemUtils()
 
 # Base class for all Server Manager modules
 class ServerManagerModule:
-    """Base class for all Server Manager modules that provides common functionality"""
+    # Base class for all Server Manager modules that provides common functionality
     
     def __init__(self, module_name=None):
         self.module_name = module_name or self.__class__.__name__
@@ -541,59 +543,59 @@ class ServerManagerModule:
     
     @property
     def paths(self):
-        """Get the paths dictionary"""
+        # Get the paths dictionary
         return self._paths_manager.paths
         
     @property 
     def server_manager_dir(self):
-        """Get the server manager directory"""
+        # Get the server manager directory
         return self._paths_manager.server_manager_dir
         
     @property
     def config(self):
-        """Get configuration"""
+        # Get configuration
         return self._config_manager.config
         
     @property
     def web_port(self):
-        """Get the web server port from configuration"""
+        # Get the web server port from configuration
         return self.get_config_value("web_port", 8080)
         
     @web_port.setter
     def web_port(self, value):
-        """Set the web server port in configuration"""
+        # Set the web server port in configuration
         self.set_config_value("web_port", value)
         
     def is_process_running(self, pid):
-        """Check if a process with the given PID is running"""
+        # Check if a process with the given PID is running
         return self._process_manager.is_process_running(pid)
         
     def write_pid_file(self, process_type, pid):
-        """Write process ID information to a PID file"""
+        # Write process ID information to a PID file
         return self._process_manager.write_pid_file(process_type, pid)
         
     def read_pid_file(self, process_type):
-        """Read process ID information from a PID file"""
+        # Read process ID information from a PID file
         return self._process_manager.read_pid_file(process_type)
         
     def remove_pid_file(self, process_type):
-        """Remove a PID file"""
+        # Remove a PID file
         return self._process_manager.remove_pid_file(process_type)
         
     def is_component_running(self, process_type):
-        """Check if a server manager component is running"""
+        # Check if a server manager component is running
         return self._process_manager.is_component_running(process_type)
         
     def get_config_value(self, key, default=None):
-        """Get a configuration value"""
+        # Get a configuration value
         return self._config_manager.get(key, default)
         
     def set_config_value(self, key, value):
-        """Set a configuration value and save"""
+        # Set a configuration value and save
         return self._config_manager.set(key, value)
         
     def get_path(self, path_key):
-        """Get a specific path by key"""
+        # Get a specific path by key
         return self._paths_manager.get_path(path_key)
 
 # Export these instances to make them available to other modules

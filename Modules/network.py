@@ -1,3 +1,5 @@
+# Network management and connectivity operations for server infrastructure
+
 import os
 import sys
 import socket
@@ -24,7 +26,7 @@ if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.debug("Network module debug mode enabled via environment")
 
 class NetworkManager:
-    """Class for network operations and server connectivity"""
+    # Manages network operations and server connectivity
     def __init__(self):
         self.registry_path = r"Software\SkywereIndustries\Servermanager"
         self.server_manager_dir = None
@@ -34,7 +36,7 @@ class NetworkManager:
         self.initialize_from_registry()
     
     def initialize_from_registry(self):
-        """Initialize paths from registry settings"""
+        # Initialize paths from registry settings
         try:
             # Read registry for paths
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
@@ -62,7 +64,7 @@ class NetworkManager:
             return False
     
     def get_local_ip_addresses(self):
-        """Get all local IP addresses"""
+        # Get all local IP addresses from network interfaces
         try:
             ip_list = []
             
@@ -96,7 +98,7 @@ class NetworkManager:
             return []
     
     def get_external_ip(self):
-        """Get external IP address"""
+        # Get external IP address using public services
         try:
             # Try multiple services in case one fails
             services = [
@@ -125,7 +127,7 @@ class NetworkManager:
             return None
     
     def is_port_in_use(self, port, host='0.0.0.0'):
-        """Check if a port is in use"""
+        # Check if a port is in use on the specified host
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(1)
@@ -136,7 +138,7 @@ class NetworkManager:
             return True
     
     def scan_port_range(self, start_port, end_port, host='0.0.0.0'):
-        """Scan a range of ports to check if they are in use"""
+        # Scan a range of ports to check if they are in use
         result = []
         for port in range(start_port, end_port + 1):
             in_use = self.is_port_in_use(port, host)
@@ -144,7 +146,7 @@ class NetworkManager:
         return result
     
     def ping_host(self, host, count=4, timeout=1000):
-        """Ping a host to check connectivity"""
+        # Ping a host to check connectivity
         try:
             # Use different ping command based on OS
             if sys.platform.startswith('win'):
@@ -167,7 +169,7 @@ class NetworkManager:
             }
     
     def traceroute(self, host, max_hops=30):
-        """Perform a traceroute to a host"""
+        # Perform a traceroute to a host
         try:
             # Use different traceroute command based on OS
             if sys.platform.startswith('win'):
@@ -190,7 +192,7 @@ class NetworkManager:
             }
     
     def check_internet_connectivity(self):
-        """Check if internet connection is available"""
+        # Check if internet connection is available
         hosts = ["8.8.8.8", "1.1.1.1", "google.com", "cloudflare.com"]
         
         for host in hosts:
@@ -204,7 +206,7 @@ class NetworkManager:
         return False
     
     def get_network_usage(self):
-        """Get current network usage"""
+        # Get current network usage statistics
         try:
             # Get network usage using psutil
             net_io = psutil.net_io_counters()
@@ -231,7 +233,7 @@ class NetworkManager:
             return {}
     
     def check_dns_resolution(self, hostname):
-        """Check DNS resolution for a hostname"""
+        # Check DNS resolution for a hostname
         try:
             ip_addresses = socket.gethostbyname_ex(hostname)
             return {
@@ -249,7 +251,7 @@ class NetworkManager:
             }
     
     def get_firewall_status(self):
-        """Get Windows firewall status"""
+        # Get Windows firewall status for all profiles
         try:
             if not sys.platform.startswith('win'):
                 return {"error": "Only supported on Windows"}
@@ -294,7 +296,7 @@ class NetworkManager:
             return {"error": str(e)}
     
     def open_firewall_port(self, port, protocol="TCP", name=None, direction="in"):
-        """Open a port in the Windows firewall"""
+        # Open a port in the Windows firewall
         try:
             if not sys.platform.startswith('win'):
                 return {"error": "Only supported on Windows"}
@@ -332,7 +334,7 @@ class NetworkManager:
             }
     
     def close_firewall_port(self, name):
-        """Close a port in the Windows firewall by rule name"""
+        # Close a port in the Windows firewall by rule name
         try:
             if not sys.platform.startswith('win'):
                 return {"error": "Only supported on Windows"}
@@ -359,7 +361,7 @@ class NetworkManager:
             }
     
     def get_network_interfaces(self):
-        """Get information about network interfaces"""
+        # Get information about network interfaces
         try:
             interfaces = []
             
@@ -407,7 +409,7 @@ class NetworkManager:
             return []
     
     def check_port_connectivity(self, host, port, timeout=5):
-        """Check if a remote port is accessible"""
+        # Check if a remote port is accessible
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)

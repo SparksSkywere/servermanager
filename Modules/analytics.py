@@ -1,3 +1,7 @@
+# Analytics and Metrics Collection Module
+# Provides system monitoring, server statistics, and health metrics
+# Supports Prometheus, SNMP, Grafana integration with background collection
+
 import os
 import sys
 import json
@@ -19,10 +23,9 @@ except Exception:
     logger = logging.getLogger("Analytics")
 
 class AnalyticsCollector(ServerManagerModule):
-    """
-    Analytics module for collecting system and server statistics
-    Provides metrics for SNMP, Grafana, and other monitoring tools
-    """
+    # Analytics module for collecting system and server statistics
+    # Provides metrics for SNMP, Grafana, and other monitoring tools
+    # Supports background collection with 24-hour history retention
     
     def __init__(self):
         try:
@@ -57,7 +60,8 @@ class AnalyticsCollector(ServerManagerModule):
         self.initialize_integrations()
 
     def initialize_integrations(self):
-        """Initialize integrations with server manager and dashboard tracker"""
+        # Initialize integrations with server manager and dashboard tracker
+        # Enables collection of server-specific and application metrics
         try:
             # Import server manager
             from Modules.server_manager import ServerManager
@@ -75,7 +79,7 @@ class AnalyticsCollector(ServerManagerModule):
             logger.warning(f"Dashboard tracker integration failed: {e}")
 
     def start_collection(self):
-        """Start background metrics collection"""
+        # Start background metrics collection with 60-second intervals
         if self._thread and self._thread.is_alive():
             logger.warning("Metrics collection already running")
             return
@@ -86,14 +90,14 @@ class AnalyticsCollector(ServerManagerModule):
         logger.info("Metrics collection started")
 
     def stop_collection(self):
-        """Stop background metrics collection"""
+        # Stop background metrics collection
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=5)
         logger.info("Metrics collection stopped")
 
     def _collection_loop(self):
-        """Background collection loop"""
+        # Background collection loop with error recovery
         while not self._stop_event.is_set():
             try:
                 self.collect_all_metrics()
@@ -103,7 +107,7 @@ class AnalyticsCollector(ServerManagerModule):
                 self._stop_event.wait(30)  # Wait longer on error
 
     def collect_all_metrics(self):
-        """Collect all system and server metrics"""
+        # Collect all system and server metrics with thread-safe storage
         timestamp = datetime.now()
         
         with self.lock:
@@ -119,7 +123,7 @@ class AnalyticsCollector(ServerManagerModule):
             self.last_collection = timestamp
 
     def _collect_system_metrics(self, timestamp):
-        """Collect system-level metrics"""
+        # Collect system-level metrics (CPU, memory, disk, network)
         try:
             # CPU metrics
             cpu_percent = psutil.cpu_percent(interval=1)
@@ -235,7 +239,7 @@ class AnalyticsCollector(ServerManagerModule):
             logger.error(f"Error collecting system metrics: {e}")
 
     def _collect_server_metrics(self, timestamp):
-        """Collect server-specific metrics"""
+        # Collect server-specific metrics (process stats, uptime, status)
         try:
             if not self.server_manager:
                 return
@@ -314,7 +318,7 @@ class AnalyticsCollector(ServerManagerModule):
             logger.error(f"Error collecting server metrics: {e}")
 
     def _collect_application_metrics(self, timestamp):
-        """Collect application-specific metrics"""
+        # Collect application-specific metrics (dashboard count, webserver stats)
         try:
             # Dashboard metrics
             if self.dashboard_tracker:
@@ -359,7 +363,7 @@ class AnalyticsCollector(ServerManagerModule):
             logger.error(f"Error collecting application metrics: {e}")
 
     def get_current_metrics(self):
-        """Get current snapshot of all metrics"""
+        # Get current snapshot of all metrics with thread safety
         with self.lock:
             current_metrics = {}
             
@@ -370,7 +374,7 @@ class AnalyticsCollector(ServerManagerModule):
         return current_metrics
 
     def get_metric_history(self, metric_name, hours=24):
-        """Get historical data for a specific metric"""
+        # Get historical data for a specific metric within time window
         with self.lock:
             if metric_name not in self.metrics_history:
                 return []
@@ -386,7 +390,8 @@ class AnalyticsCollector(ServerManagerModule):
             return history
 
     def get_prometheus_metrics(self):
-        """Get metrics in Prometheus format for Grafana integration"""
+        # Get metrics in Prometheus format for Grafana integration
+        # Converts dot notation to underscores for compatibility
         current_metrics = self.get_current_metrics()
         prometheus_output = []
         
@@ -398,7 +403,7 @@ class AnalyticsCollector(ServerManagerModule):
         return '\n'.join(prometheus_output)
 
     def get_json_metrics(self):
-        """Get all metrics in JSON format"""
+        # Get all metrics in JSON format with metadata
         return {
             'timestamp': datetime.now().isoformat(),
             'metrics': self.get_current_metrics(),
@@ -410,7 +415,7 @@ class AnalyticsCollector(ServerManagerModule):
         }
 
     def get_server_summary(self):
-        """Get summary of all server statuses"""
+        # Get summary of all server statuses with performance metrics
         if not self.server_manager:
             return {}
             
@@ -456,7 +461,7 @@ class AnalyticsCollector(ServerManagerModule):
         return summary
 
     def get_system_health(self):
-        """Get overall system health metrics"""
+        # Get overall system health metrics with scoring algorithm
         try:
             cpu_percent = psutil.cpu_percent(interval=1)
             memory = psutil.virtual_memory()
@@ -518,7 +523,7 @@ class AnalyticsCollector(ServerManagerModule):
             }
 
     def get_snmp_metrics(self):
-        """Get metrics formatted for SNMP monitoring"""
+        # Get metrics formatted for SNMP monitoring with OID structure
         current_metrics = self.get_current_metrics()
         health = self.get_system_health()
         server_summary = self.get_server_summary()
@@ -551,14 +556,14 @@ class AnalyticsCollector(ServerManagerModule):
 analytics = AnalyticsCollector()
 
 def get_analytics_instance():
-    """Get the global analytics instance"""
+    # Get the global analytics instance
     return analytics
 
 def start_analytics():
-    """Start analytics collection"""
+    # Start analytics collection
     analytics.start_collection()
     return analytics
 
 def stop_analytics():
-    """Stop analytics collection"""
+    # Stop analytics collection
     analytics.stop_collection()

@@ -29,12 +29,12 @@ network_security_manager = NetworkSecurityManager()
 cluster_db = ClusterDatabase()
 
 def is_subhost_registered(subhost_id):
-    """Check if a subhost is registered in the database"""
+    # Check if a subhost is registered in the database
     node = cluster_db.get_cluster_node(subhost_id)
     return node is not None and node['node_type'] == 'subhost'
 
 def get_subhost_info(subhost_id):
-    """Get subhost information from database"""
+    # Get subhost information from database
     node = cluster_db.get_cluster_node(subhost_id)
     if node and node['node_type'] == 'subhost':
         return {
@@ -49,7 +49,7 @@ def get_subhost_info(subhost_id):
     return None
 
 def require_cluster_auth(f):
-    """Decorator to require cluster authentication for API endpoints"""
+    # Decorator to require cluster authentication for API endpoints
     @wraps(f)
     @require_cluster_network_security(network_security_manager)
     def decorated_function(*args, **kwargs):
@@ -65,7 +65,7 @@ def require_cluster_auth(f):
     return decorated_function
 
 def get_cluster_role():
-    """Get the cluster role and host address from registry"""
+    # Get the cluster role and host address from registry
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         role = winreg.QueryValueEx(key, "HostType")[0]
@@ -82,7 +82,7 @@ def get_cluster_role():
 
 @cluster_api.route("/api/cluster/role", methods=["GET"])
 def api_cluster_role():
-    """Get the cluster role of this instance"""
+    # Get the cluster role of this instance
     role, host_address = get_cluster_role()
     return jsonify({
         "role": role,
@@ -92,7 +92,7 @@ def api_cluster_role():
 @cluster_api.route("/api/cluster/register", methods=["POST"])
 @require_cluster_auth
 def api_register_subhost():
-    """Register a subhost with the host - deprecated, use approval workflow instead"""
+    # Register a subhost with the host - deprecated, use approval workflow instead
     try:
         data = request.get_json()
         if not data:
@@ -143,7 +143,7 @@ def api_register_subhost():
 
 @cluster_api.route("/api/cluster/request-join", methods=["POST"])
 def api_request_join():
-    """Request to join cluster - requires approval"""
+    # Request to join cluster - requires approval
     try:
         data = request.get_json()
         if not data:
@@ -187,7 +187,7 @@ def api_request_join():
 @cluster_api.route("/api/cluster/pending", methods=["GET"])
 @require_cluster_auth
 def api_get_pending():
-    """Get pending cluster join requests"""
+    # Get pending cluster join requests
     try:
         role, _ = get_cluster_role()
         logger.info(f"api_get_pending called - role: {role}")
@@ -236,7 +236,7 @@ def api_get_pending():
 @cluster_api.route("/api/cluster/approve/<subhost_id>", methods=["POST"])
 @require_cluster_auth
 def api_approve_subhost(subhost_id):
-    """Approve a pending subhost join request"""
+    # Approve a pending subhost join request
     try:
         role, _ = get_cluster_role()
         if role != "Host":
@@ -292,7 +292,7 @@ def api_approve_subhost(subhost_id):
 @cluster_api.route("/api/cluster/reject/<subhost_id>", methods=["POST"])
 @require_cluster_auth
 def api_reject_subhost(subhost_id):
-    """Reject a pending subhost join request"""
+    # Reject a pending subhost join request
     try:
         role, _ = get_cluster_role()
         if role != "Host":
@@ -332,7 +332,7 @@ def api_reject_subhost(subhost_id):
 
 @cluster_api.route("/api/cluster/check-approval/<subhost_id>", methods=["GET"])
 def api_check_approval(subhost_id):
-    """Check if a subhost join request has been approved"""
+    # Check if a subhost join request has been approved
     try:
         # Check if already registered as a node
         registered_node = cluster_db.get_cluster_node(subhost_id)
@@ -381,7 +381,7 @@ def api_check_approval(subhost_id):
 @cluster_api.route("/api/cluster/heartbeat", methods=["POST"])
 @require_cluster_auth
 def api_subhost_heartbeat():
-    """Receive heartbeat from subhost"""
+    # Receive heartbeat from subhost
     try:
         data = request.get_json()
         if not data:
@@ -435,7 +435,7 @@ def api_subhost_heartbeat():
 @cluster_api.route("/api/cluster/subhosts", methods=["GET"])
 @require_cluster_auth
 def api_list_subhosts():
-    """List all registered subhosts"""
+    # List all registered subhosts
     try:
         # Get all cluster nodes
         all_nodes = cluster_db.get_all_cluster_nodes()
@@ -524,7 +524,7 @@ def api_list_subhosts():
 @cluster_api.route("/api/cluster/status", methods=["GET"])
 @require_cluster_auth
 def api_cluster_status():
-    """Get overall cluster status"""
+    # Get overall cluster status
     try:
         role, host_address = get_cluster_role()
         
@@ -577,7 +577,7 @@ def api_cluster_status():
 
 @cluster_api.route("/api/cluster/host-status", methods=["GET"])
 def api_get_host_status():
-    """Get current host status for subhosts to check availability"""
+    # Get current host status for subhosts to check availability
     try:
         # This endpoint is available without authentication for subhosts to check host status
         host_status = cluster_db.get_host_status()
@@ -616,7 +616,7 @@ def api_get_host_status():
 # Remote Server Operations API (Host-only endpoints)
 @cluster_api.route("/api/cluster/subhost/<subhost_id>/servers", methods=["GET"])
 def api_get_subhost_servers(subhost_id):
-    """Get servers from a specific subhost"""
+    # Get servers from a specific subhost
     try:
         role, _ = get_cluster_role()
         if role != "Host":
@@ -652,7 +652,7 @@ def api_get_subhost_servers(subhost_id):
 
 @cluster_api.route("/api/cluster/subhost/<subhost_id>/servers/<server_name>/start", methods=["POST"])
 def api_start_subhost_server(subhost_id, server_name):
-    """Start a server on a specific subhost"""
+    # Start a server on a specific subhost
     try:
         role, _ = get_cluster_role()
         if role != "Host":
@@ -666,7 +666,7 @@ def api_start_subhost_server(subhost_id, server_name):
 
 @cluster_api.route("/api/cluster/subhost/<subhost_id>/servers/<server_name>/stop", methods=["POST"])
 def api_stop_subhost_server(subhost_id, server_name):
-    """Stop a server on a specific subhost"""
+    # Stop a server on a specific subhost
     try:
         role, _ = get_cluster_role()
         if role != "Host":
@@ -680,7 +680,7 @@ def api_stop_subhost_server(subhost_id, server_name):
 
 @cluster_api.route("/api/cluster/subhost/<subhost_id>/servers/<server_name>/restart", methods=["POST"])
 def api_restart_subhost_server(subhost_id, server_name):
-    """Restart a server on a specific subhost"""
+    # Restart a server on a specific subhost
     try:
         role, _ = get_cluster_role()
         if role != "Host":
@@ -694,7 +694,7 @@ def api_restart_subhost_server(subhost_id, server_name):
 
 @cluster_api.route("/api/cluster/subhost/<subhost_id>/servers", methods=["POST"])
 def api_install_subhost_server(subhost_id):
-    """Install a new server on a specific subhost"""
+    # Install a new server on a specific subhost
     try:
         role, _ = get_cluster_role()
         if role != "Host":
@@ -738,7 +738,7 @@ def api_install_subhost_server(subhost_id):
 
 @cluster_api.route("/api/cluster/subhost/<subhost_id>/servers/<server_name>", methods=["DELETE"])
 def api_remove_subhost_server(subhost_id, server_name):
-    """Remove a server from a specific subhost"""
+    # Remove a server from a specific subhost
     try:
         role, _ = get_cluster_role()
         if role != "Host":
@@ -777,7 +777,7 @@ def api_remove_subhost_server(subhost_id, server_name):
         return jsonify({"error": str(e)}), 500
 
 def _execute_subhost_server_command(subhost_id, server_name, action):
-    """Helper function to execute server commands on subhost"""
+    # Helper function to execute server commands on subhost
     if not is_subhost_registered(subhost_id):
         return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
         
@@ -809,7 +809,7 @@ def _execute_subhost_server_command(subhost_id, server_name, action):
 @cluster_api.route("/api/cluster/nodes", methods=["GET"])
 @require_cluster_auth
 def api_cluster_nodes():
-    """Get all approved cluster nodes"""
+    # Get all approved cluster nodes
     try:
         role, _ = get_cluster_role()
         if role != "Host":

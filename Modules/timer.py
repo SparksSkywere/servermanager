@@ -1,3 +1,4 @@
+# Timer management for dashboard updates including system info, server list, web server status, and process monitoring
 import os
 import json
 import datetime
@@ -8,19 +9,14 @@ from Modules.server_logging import log_process_monitoring
 
 
 class TimerManager:
-    """Manages all timer functionality for the dashboard"""
+    # Manages all timer functionality for the dashboard
     
     def __init__(self, dashboard):
-        """
-        Initialize the TimerManager with a reference to the dashboard
-        
-        Args:
-            dashboard: Reference to the ServerManagerDashboard instance
-        """
+        # Initialize the TimerManager with a reference to the dashboard
         self.dashboard = dashboard
     
     def start_timers(self):
-        """Start update timers using configuration values"""
+        # Start update timers using configuration values
         # Start background CPU monitoring
         self._start_cpu_monitoring()
         
@@ -41,7 +37,7 @@ class TimerManager:
         self.dashboard.root.after(process_interval, self.process_monitor_timer)
 
     def _start_cpu_monitoring(self):
-        """Start background CPU monitoring to prevent UI blocking"""
+        # Start background CPU monitoring to prevent UI blocking
         def cpu_monitor():
             try:
                 while hasattr(self.dashboard, 'root'):
@@ -64,7 +60,7 @@ class TimerManager:
         cpu_thread.start()
 
     def system_info_timer(self):
-        """Timer callback for system info updates"""
+        # Timer callback for system info updates
         try:
             self.dashboard.update_system_info()
         except Exception as e:
@@ -74,7 +70,7 @@ class TimerManager:
         self.dashboard.root.after(interval, self.system_info_timer)
     
     def server_list_timer(self):
-        """Timer callback for server list updates"""
+        # Timer callback for server list updates
         try:
             self.dashboard.update_server_list()
         except Exception as e:
@@ -84,7 +80,7 @@ class TimerManager:
         self.dashboard.root.after(interval, self.server_list_timer)
     
     def webserver_status_timer(self):
-        """Timer callback for web server status updates"""
+        # Timer callback for web server status updates
         try:
             self.dashboard.update_webserver_status()
         except Exception as e:
@@ -94,7 +90,7 @@ class TimerManager:
         self.dashboard.root.after(interval, self.webserver_status_timer)
     
     def process_monitor_timer(self):
-        """Timer callback for process monitoring"""
+        # Timer callback for process monitoring
         try:
             self.monitor_processes()
         except Exception as e:
@@ -104,7 +100,7 @@ class TimerManager:
         self.dashboard.root.after(interval, self.process_monitor_timer)
     
     def monitor_processes(self):
-        """Monitor running server processes"""
+        # Monitor running server processes
         try:
             # Skip if it's been less than processMonitoringInterval seconds since the last update
             if (self.dashboard.variables["lastProcessUpdate"] != datetime.datetime.min) and \

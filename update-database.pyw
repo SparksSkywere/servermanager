@@ -1,3 +1,4 @@
+# Database schema update GUI tool for Server Manager with automated column creation and migration
 import sys
 import os
 import traceback
@@ -54,7 +55,7 @@ class DatabaseUpdateGUI:
         self.close_button.pack(side=tk.RIGHT, padx=(10, 0))
     
     def log_message(self, message):
-        """Add message to text area"""
+        # Add message to text area
         timestamp = datetime.now().strftime('%H:%M:%S')
         formatted_message = f"[{timestamp}] {message}\n"
         self.text_area.insert(tk.END, formatted_message)
@@ -62,12 +63,12 @@ class DatabaseUpdateGUI:
         self.root.update()
     
     def update_status(self, status):
-        """Update status label"""
+        # Update status label
         self.status_label.config(text=status)
         self.root.update()
     
     def start_update(self):
-        """Start the database update process in a separate thread"""
+        # Start the database update process in a separate thread
         def update_thread():
             try:
                 self.run_database_update()
@@ -82,7 +83,7 @@ class DatabaseUpdateGUI:
         threading.Thread(target=update_thread, daemon=True).start()
     
     def run_database_update(self):
-        """Run the actual database update process"""
+        # Run the actual database update process
         self.log_message("Starting database schema update process")
         self.update_status("Loading modules...")
         

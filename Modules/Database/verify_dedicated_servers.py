@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Dedicated Server Verification Tool
+# Validates Steam dedicated server entries in the database by checking against Steam API
+# Removes invalid entries and maintains data integrity with strict validation criteria
+
 import os
 import sys
 import logging
@@ -61,13 +65,9 @@ if SQLALCHEMY_AVAILABLE:
 
 class DedicatedServerVerifier:
     def __init__(self, use_database=True, dry_run=False):
-        """
-        Initialize the verifier
-        
-        Args:
-            use_database: Whether to use the main database or SQLite fallback
-            dry_run: If True, only report what would be changed without making changes
-        """
+        # Initialize the verifier with database and dry-run options
+        # Args: use_database: Whether to use the main database or SQLite fallback
+        #       dry_run: If True, only report what would be changed without making changes
         self.use_database = use_database and SQLALCHEMY_AVAILABLE
         self.dry_run = dry_run
         
@@ -113,7 +113,7 @@ class DedicatedServerVerifier:
             self.init_sqlite_fallback()
     
     def init_database(self):
-        """Initialize SQLAlchemy database connection"""
+        # Initialize SQLAlchemy database connection with Steam database engine
         try:
             self.engine = get_steam_engine()
             Session = sessionmaker(bind=self.engine)
@@ -126,7 +126,7 @@ class DedicatedServerVerifier:
             self.init_sqlite_fallback()
     
     def init_sqlite_fallback(self):
-        """Initialize SQLite fallback database"""
+        # Initialize SQLite fallback database using centralized db directory
         try:
             # Use centralized db directory
             db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
@@ -138,7 +138,7 @@ class DedicatedServerVerifier:
             raise
     
     def rate_limit(self):
-        """Implement rate limiting for API calls"""
+        # Implement rate limiting for API calls to avoid being blocked by Steam
         current_time = time.time()
         time_since_last = current_time - self.last_request_time
         if time_since_last < self.request_delay:
@@ -147,7 +147,7 @@ class DedicatedServerVerifier:
         self.last_request_time = time.time()
     
     def get_app_details(self, appid):
-        """Get app details from Steam API with rate limiting"""
+        # Get app details from Steam API with rate limiting to avoid API blocks
         try:
             self.rate_limit()
             url = "https://store.steampowered.com/api/appdetails"
@@ -166,16 +166,11 @@ class DedicatedServerVerifier:
             return None
     
     def is_valid_dedicated_server(self, app_name, app_details=None):
-        """
-        Strict validation to determine if an app is a legitimate dedicated server
-        
-        Args:
-            app_name: Name of the application
-            app_details: Detailed app information from Steam API
-            
-        Returns:
-            bool: True if it's a valid dedicated server, False otherwise
-        """
+        # Strict validation to determine if an app is a legitimate dedicated server
+        # Uses keyword matching, pattern recognition, and Steam API data validation
+        # Args: app_name: Name of the application
+        #       app_details: Detailed app information from Steam API
+        # Returns: bool: True if it's a valid dedicated server, False otherwise
         if not app_name:
             return False
         
@@ -239,7 +234,7 @@ class DedicatedServerVerifier:
         return True
     
     def get_all_server_records(self):
-        """Get all records marked as dedicated servers from the database"""
+        # Get all records marked as dedicated servers from the database
         try:
             if self.use_database:
                 # Use SQLAlchemy
@@ -261,7 +256,7 @@ class DedicatedServerVerifier:
             return []
     
     def remove_invalid_record(self, appid, app_name, reason):
-        """Remove an invalid record from the database"""
+        # Remove an invalid record from the database with rollback support
         try:
             if self.dry_run:
                 logger.info(f"[DRY RUN] Would remove AppID {appid} '{app_name}': {reason}")
@@ -289,7 +284,7 @@ class DedicatedServerVerifier:
             return False
     
     def update_record_status(self, appid, app_name, is_server, is_dedicated):
-        """Update the server status of a record"""
+        # Update the server status of a record with timestamp tracking
         try:
             if self.dry_run:
                 logger.info(f"[DRY RUN] Would update AppID {appid} '{app_name}': server={is_server}, dedicated={is_dedicated}")
@@ -323,12 +318,8 @@ class DedicatedServerVerifier:
             return False
     
     def verify_all_servers(self, fetch_details=True):
-        """
-        Verify all records marked as dedicated servers
-        
-        Args:
-            fetch_details: Whether to fetch fresh details from Steam API for verification
-        """
+        # Verify all records marked as dedicated servers with comprehensive validation
+        # Args: fetch_details: Whether to fetch fresh details from Steam API for verification
         logger.info("Starting verification of dedicated server records...")
         
         if self.dry_run:
@@ -398,7 +389,8 @@ class DedicatedServerVerifier:
             logger.info("This was a DRY RUN - no actual changes were made")
     
     def get_statistics(self):
-        """Get current database statistics including subscription information"""
+        # Get current database statistics including subscription information
+        # Handles graceful fallback for missing columns in older database schemas
         try:
             if self.use_database:
                 total_apps = self.db_session.query(SteamApp).count()
@@ -463,7 +455,7 @@ class DedicatedServerVerifier:
             }
     
     def close(self):
-        """Close database connections"""
+        # Close database connections
         try:
             if self.use_database and hasattr(self, 'db_session'):
                 self.db_session.close()

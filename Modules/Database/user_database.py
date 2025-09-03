@@ -1,3 +1,7 @@
+# User Database Management Module
+# Handles user authentication database connections, SQL configuration,
+# login dialogs, and user management system initialization
+
 import os
 import sys
 import winreg
@@ -22,7 +26,8 @@ except Exception:
     logger = logging.getLogger("UserDatabase")
 
 def get_user_sql_config_from_registry():
-    """Get SQL configuration for user database from Windows registry"""
+    # Get SQL configuration for user database from Windows registry
+    # Supports SQLite (default), MySQL, and PostgreSQL configurations
     try:
         from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
@@ -38,7 +43,7 @@ def get_user_sql_config_from_registry():
             try:
                 db_path = winreg.QueryValueEx(key, "UsersSQLDatabasePath")[0]
             except:
-                # Default SQLite path for users database - using db directory
+                # Default SQLite path for users database - separate from Steam apps database
                 try:
                     server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
                     db_path = os.path.join(server_manager_dir, "db", "servermanager_users.db")
@@ -77,7 +82,8 @@ def get_user_sql_config_from_registry():
         }
 
 def build_user_db_url(config):
-    """Build SQLAlchemy database URL from config for user database"""
+    # Build SQLAlchemy database URL from config for user database
+    # Handles SQLite absolute paths and MySQL/PostgreSQL connection strings
     if config["type"] == "sqlite":
         # For SQLite, use absolute path
         db_path = config["db_path"]
@@ -92,7 +98,7 @@ def build_user_db_url(config):
         raise ValueError(f"Unsupported database type: {config['type']}")
 
 def get_user_engine():
-    """Get SQLAlchemy engine for user database"""
+    # Get SQLAlchemy engine for user database with appropriate connection settings
     config = get_user_sql_config_from_registry()
     db_url = build_user_db_url(config)
     
@@ -109,11 +115,12 @@ def get_user_engine():
     return engine
 
 def ensure_root_admin(engine):
-    """Ensure root admin user exists in user database"""
+    # Ensure root admin user exists in user database with complete schema
     try:
         # This is a placeholder - implement based on your user table structure
         with engine.connect() as conn:
             # Check if users table exists and create if needed with all columns
+            # Full user schema includes authentication, profile, and admin capabilities
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY,
@@ -138,7 +145,7 @@ def ensure_root_admin(engine):
             count = result.scalar()
             
             if count == 0:
-                # Create admin user with default password
+                # Create admin user with default password - CHANGE THIS IN PRODUCTION
                 import hashlib
                 from datetime import datetime
                 import uuid
@@ -160,7 +167,7 @@ def ensure_root_admin(engine):
         raise
 
 def initialize_user_manager():
-    """Initialize user management system and return engine and user_manager"""
+    # Initialize user management system and return engine and user_manager
     try:
         engine = get_user_engine()
         # Import here to avoid circular import
@@ -173,11 +180,10 @@ def initialize_user_manager():
         raise
 
 def sql_login(user_manager, parent_window=None):
-    """
-    Prompt for login using SQL database authentication. 
-    Returns (success, user) tuple where success is True if successful, 
-    False if cancelled, and user is the authenticated user object or None
-    """
+    # Prompt for login using SQL database authentication
+    # Returns (success, user) tuple where success is True if successful,
+    # False if cancelled, and user is the authenticated user object or None
+    # Includes retry logic with maximum attempts and comprehensive GUI dialog
     max_attempts = 3
     attempts = 0
     
@@ -297,7 +303,7 @@ def sql_login(user_manager, parent_window=None):
     return False, None
 
 def handle_2fa_authentication(parent_window=None):
-    """Handle 2FA authentication process"""
+    # Handle 2FA authentication process with GUI dialog
     # Create 2FA dialog
     twofa_dialog = tk.Toplevel() if parent_window else tk.Tk()
     if parent_window:

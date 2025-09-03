@@ -1,3 +1,5 @@
+# Real-time server console interface with interactive command support
+
 # -*- coding: utf-8 -*-
 import os
 import sys
@@ -22,7 +24,7 @@ logger = get_dashboard_logger()
 
 
 class RealTimeConsole:
-    """Real-time console for individual server process with interactive command support"""
+    # Real-time console for individual server process with interactive command support
     
     def __init__(self, server_name, server_config):
         self.server_name = server_name
@@ -59,7 +61,7 @@ class RealTimeConsole:
         self.log_file_positions = {}  # Track positions in log files
         
     def attach_to_process(self, process):
-        """Attach console to an existing process object"""
+        # Attach console to an existing process object
         try:
             if not process:
                 logger.error(f"Cannot attach console to {self.server_name}: No process provided")
@@ -86,7 +88,7 @@ class RealTimeConsole:
             return False
     
     def _open_log_files(self):
-        """Open log files for writing"""
+        # Open log files for writing
         try:
             stdout_path = self.server_config.get('LogStdout')
             stderr_path = self.server_config.get('LogStderr')
@@ -100,7 +102,7 @@ class RealTimeConsole:
             logger.error(f"Error opening log files for {self.server_name}: {e}")
     
     def _close_log_files(self):
-        """Close log files"""
+        # Close log files
         try:
             if self.stdout_log:
                 self.stdout_log.close()
@@ -112,7 +114,7 @@ class RealTimeConsole:
             logger.error(f"Error closing log files for {self.server_name}: {e}")
     
     def _start_monitoring_threads(self):
-        """Start all monitoring threads"""
+        # Start all monitoring threads
         try:
             # Start stdout monitoring
             if self.process and hasattr(self.process, 'stdout') and self.process.stdout:
@@ -154,7 +156,7 @@ class RealTimeConsole:
             logger.error(f"Error starting monitoring threads for {self.server_name}: {e}")
     
     def _monitor_stdout(self):
-        """Monitor stdout from server process"""
+        # Monitor stdout from server process
         try:
             logger.debug(f"Started stdout monitoring for {self.server_name}")
             
@@ -227,7 +229,7 @@ class RealTimeConsole:
             logger.debug(f"Stdout monitoring ended for {self.server_name}")
     
     def _monitor_stderr(self):
-        """Monitor stderr from server process"""
+        # Monitor stderr from server process
         try:
             logger.debug(f"Started stderr monitoring for {self.server_name}")
             
@@ -293,7 +295,7 @@ class RealTimeConsole:
             logger.debug(f"Stderr monitoring ended for {self.server_name}")
     
     def _handle_commands(self):
-        """Handle command input to server process"""
+        # Handle command input to server process
         try:
             logger.debug(f"Started command handler for {self.server_name}")
             
@@ -344,7 +346,7 @@ class RealTimeConsole:
             logger.debug(f"Command handler ended for {self.server_name}")
     
     def _discover_server_logs(self):
-        """Discover additional log files that the server might write to"""
+        # Discover additional log files that the server might write to
         try:
             install_dir = self.server_config.get('InstallDir', '')
             if not install_dir or not os.path.exists(install_dir):
@@ -383,7 +385,7 @@ class RealTimeConsole:
             logger.debug(f"Error discovering server logs: {e}")
     
     def _monitor_log_files(self):
-        """Monitor additional server log files for output"""
+        # Monitor additional server log files for output
         try:
             logger.debug(f"Started log file monitoring for {self.server_name}")
             
@@ -433,7 +435,7 @@ class RealTimeConsole:
             logger.debug(f"Log file monitoring ended for {self.server_name}")
     
     def _is_old_log_entry(self, line):
-        """Check if a log entry is from an old session"""
+        # Check if a log entry is from an old session
         try:
             # Skip historical server start entries
             if '--- Server started at' in line:
@@ -455,7 +457,7 @@ class RealTimeConsole:
             return False
     
     def _add_output(self, text, msg_type="info"):
-        """Add output to buffer and update GUI"""
+        # Add output to buffer and update GUI
         try:
             timestamp = datetime.now().strftime("%H:%M:%S")
             formatted_text = f"[{timestamp}] {text}"
@@ -479,7 +481,7 @@ class RealTimeConsole:
             logger.debug(f"Error adding output for {self.server_name}: {e}")
     
     def _update_gui_output(self, text, msg_type):
-        """Update GUI with new output (thread-safe)"""
+        # Update GUI with new output in thread-safe manner
         try:
             def update():
                 if self.text_widget and self.window and self.window.winfo_exists():
@@ -504,7 +506,7 @@ class RealTimeConsole:
             logger.debug(f"Error scheduling GUI update: {e}")
     
     def send_command(self, command):
-        """Send command to server process"""
+        # Send command to server process
         try:
             if self.is_active and command.strip():
                 self.command_queue.put(command.strip())
@@ -515,7 +517,7 @@ class RealTimeConsole:
             return False
     
     def show_window(self, parent=None):
-        """Show the console window"""
+        # Show the console window
         try:
             if self.window and self.window.winfo_exists():
                 self.window.lift()
@@ -593,7 +595,7 @@ class RealTimeConsole:
             logger.error(f"Error showing console window for {self.server_name}: {e}")
     
     def _populate_existing_output(self):
-        """Populate console with existing output buffer"""
+        # Populate console with existing output buffer
         try:
             if not self.text_widget:
                 return
@@ -612,7 +614,7 @@ class RealTimeConsole:
             logger.error(f"Error populating existing output: {e}")
     
     def _send_command_gui(self):
-        """Send command from GUI entry"""
+        # Send command from GUI entry
         try:
             if not self.command_entry:
                 return
@@ -628,7 +630,7 @@ class RealTimeConsole:
             logger.error(f"Error sending command from GUI: {e}")
     
     def _prev_command(self, event):
-        """Navigate to previous command in history"""
+        # Navigate to previous command in history
         try:
             if self.command_history and self.command_entry:
                 if self.history_index == -1:
@@ -642,7 +644,7 @@ class RealTimeConsole:
             logger.debug(f"Error navigating command history: {e}")
     
     def _next_command(self, event):
-        """Navigate to next command in history"""
+        # Navigate to next command in history
         try:
             if self.command_history and self.history_index != -1 and self.command_entry:
                 if self.history_index < len(self.command_history) - 1:
@@ -656,7 +658,7 @@ class RealTimeConsole:
             logger.debug(f"Error navigating command history: {e}")
     
     def _clear_output(self):
-        """Clear console output"""
+        # Clear console output
         try:
             if self.text_widget:
                 self.text_widget.config(state=tk.NORMAL)
@@ -670,7 +672,7 @@ class RealTimeConsole:
             logger.error(f"Error clearing output: {e}")
     
     def _close_window(self):
-        """Close console window"""
+        # Close console window
         try:
             if self.window:
                 self.window.destroy()
@@ -681,7 +683,7 @@ class RealTimeConsole:
             logger.error(f"Error closing console window: {e}")
     
     def detach(self):
-        """Detach from process and cleanup"""
+        # Detach from process and cleanup
         try:
             logger.info(f"Detaching console from {self.server_name}")
             
@@ -708,7 +710,7 @@ class RealTimeConsole:
 
 
 class ConsoleManager:
-    """Manages multiple server consoles"""
+    # Manages multiple server consoles
     
     def __init__(self, server_manager=None):
         self.server_manager = server_manager
@@ -716,7 +718,7 @@ class ConsoleManager:
         self.lock = threading.Lock()
         
     def create_console(self, server_name, server_config):
-        """Create a new console for a server"""
+        # Create a new console for a server
         try:
             with self.lock:
                 if server_name not in self.consoles:
@@ -731,7 +733,7 @@ class ConsoleManager:
             return None
     
     def attach_console_to_process(self, server_name, process, server_config=None):
-        """Attach console to a running process"""
+        # Attach console to a running process
         try:
             with self.lock:
                 # Get or create console
@@ -755,7 +757,7 @@ class ConsoleManager:
             return False
     
     def show_console(self, server_name, parent=None):
-        """Show console window for a server"""
+        # Show console window for a server
         try:
             with self.lock:
                 console = self.consoles.get(server_name)
@@ -785,7 +787,7 @@ class ConsoleManager:
             return False
     
     def send_command(self, server_name, command):
-        """Send command to server console"""
+        # Send command to server console
         try:
             with self.lock:
                 console = self.consoles.get(server_name)
@@ -799,7 +801,7 @@ class ConsoleManager:
             return False
     
     def detach_console(self, server_name):
-        """Detach console from server process"""
+        # Detach console from server process
         try:
             with self.lock:
                 console = self.consoles.get(server_name)
@@ -814,7 +816,7 @@ class ConsoleManager:
             return False
     
     def cleanup_all_consoles(self):
-        """Cleanup all consoles"""
+        # Cleanup all consoles
         try:
             with self.lock:
                 for server_name, console in list(self.consoles.items()):
@@ -830,7 +832,7 @@ class ConsoleManager:
             logger.error(f"Error cleaning up consoles: {e}")
     
     def show_console_manager_window(self, parent=None):
-        """Show console manager window"""
+        # Show console manager window
         try:
             if parent:
                 window = tk.Toplevel(parent)

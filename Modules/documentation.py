@@ -1,3 +1,5 @@
+# Documentation system for Server Manager
+# Provides help dialogs, about dialog, and user documentation interface
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import winreg
@@ -5,7 +7,7 @@ import os
 
 
 def center_window(window, width, height, parent=None):
-    """Center a window on the screen or relative to a parent window"""
+    # Center a window on the screen or relative to a parent window
     window.update_idletasks()
     
     if parent:
@@ -29,13 +31,9 @@ def center_window(window, width, height, parent=None):
 
 
 def show_help_dialog(parent_window, logger=None):
-    """
-    Show help dialog with program information and controls
-    
-    Args:
-        parent_window: The parent tkinter window to center the dialog on
-        logger: Optional logger instance for error logging
-    """
+    # Show help dialog with program information and controls
+    # Args: parent_window: The parent tkinter window to center the dialog on
+    #       logger: Optional logger instance for error logging
     try:
         # Create help dialog
         help_dialog = tk.Toplevel(parent_window)
@@ -79,7 +77,7 @@ def show_help_dialog(parent_window, logger=None):
 
 
 def _add_overview_tab(notebook):
-    """Add the Overview tab to the help notebook"""
+    # Add the Overview tab to the help notebook
     overview_frame = ttk.Frame(notebook)
     notebook.add(overview_frame, text="Overview")
     
@@ -117,7 +115,7 @@ Server Types Supported:
 
 
 def _add_controls_tab(notebook):
-    """Add the Controls & Shortcuts tab to the help notebook"""
+    # Add the Controls & Shortcuts tab to the help notebook
     controls_frame = ttk.Frame(notebook)
     notebook.add(controls_frame, text="Controls & Shortcuts")
     
@@ -169,7 +167,7 @@ Web Server Status:
 
 
 def _add_server_management_tab(notebook):
-    """Add the Server Management tab to the help notebook"""
+    # Add the Server Management tab to the help notebook
     servers_frame = ttk.Frame(notebook)
     notebook.add(servers_frame, text="Server Management")
     
@@ -227,7 +225,7 @@ Import/Export Features:
 
 
 def _add_troubleshooting_tab(notebook):
-    """Add the Troubleshooting tab to the help notebook"""
+    # Add the Troubleshooting tab to the help notebook
     troubleshooting_frame = ttk.Frame(notebook)
     notebook.add(troubleshooting_frame, text="Troubleshooting")
     
@@ -299,12 +297,8 @@ If problems persist:
 
 
 def get_version_from_registry():
-    """
-    Get the current version from Windows registry
-    
-    Returns:
-        str: Version string from registry or 'Unknown' if not found
-    """
+    # Get the current version from Windows registry
+    # Returns: Version string from registry or 'Unknown' if not found
     try:
         from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
@@ -316,12 +310,8 @@ def get_version_from_registry():
 
 
 def get_application_info():
-    """
-    Get basic application information for display
-    
-    Returns:
-        dict: Dictionary containing application information
-    """
+    # Get basic application information for display
+    # Returns: Dictionary containing application information
     return {
         "name": "Server Manager Dashboard",
         "description": "A comprehensive game server management application",
@@ -340,13 +330,9 @@ def get_application_info():
 
 
 def show_about_dialog(parent_window, logger=None):
-    """
-    Show a simple about dialog with application information
-    
-    Args:
-        parent_window: The parent tkinter window
-        logger: Optional logger instance for error logging
-    """
+    # Show a simple about dialog with application information
+    # Args: parent_window: The parent tkinter window
+    #       logger: Optional logger instance for error logging
     try:
         app_info = get_application_info()
         
@@ -392,7 +378,7 @@ def show_about_dialog(parent_window, logger=None):
 
 # Test function for standalone testing
 def test_documentation():
-    """Test function to run the documentation dialogs standalone"""
+    # Test function to run the documentation dialogs standalone
     root = tk.Tk()
     root.title("Documentation Test")
     

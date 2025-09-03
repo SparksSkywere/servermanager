@@ -97,7 +97,7 @@ class AppIDScanner:
             self.init_sqlite_fallback()
     
     def init_database(self):
-        """Initialize SQLAlchemy database connection using Steam database engine"""
+        # Initialize SQLAlchemy database connection using Steam database engine
         try:
             self.engine = get_steam_engine()
             Base.metadata.create_all(self.engine)
@@ -114,7 +114,7 @@ class AppIDScanner:
             self.init_sqlite_fallback()
     
     def migrate_database_schema(self):
-        """Migrate existing database schema to new version with subscription fields"""
+        # Migrate existing database schema to new version with subscription fields
         try:
             if self.use_database:
                 # Check if migration is needed by looking for the new columns
@@ -170,7 +170,7 @@ class AppIDScanner:
             logger.warning(f"Database migration failed (this may be normal for new installations): {e}")
     
     def init_sqlite_fallback(self):
-        """Initialize SQLite fallback database"""
+        # Initialize SQLite fallback database
         try:
             # Create db directory if it doesn't exist - using centralized db directory
             db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
@@ -207,7 +207,7 @@ class AppIDScanner:
             raise
     
     def migrate_json_to_database(self):
-        """Migrate existing JSON data to database if it doesn't exist in DB yet"""
+        # Migrate existing JSON data to database if it doesn't exist in DB yet
         try:
             logger.info("Checking for JSON data to migrate to database...")
             
@@ -270,7 +270,7 @@ class AppIDScanner:
             logger.error(f"Error during JSON to database migration: {e}")
     
     def get_dedicated_servers_from_database(self):
-        """Get all dedicated servers from database (replaces JSON functionality)"""
+        # Get all dedicated servers from database (replaces JSON functionality)
         try:
             if self.use_database:
                 # Use SQLAlchemy
@@ -329,7 +329,7 @@ class AppIDScanner:
             return []
     
     def add_server_to_json(self, server_data):
-        """Add a single dedicated server to the JSON file (live update)"""
+        # Add a single dedicated server to the JSON file (live update)
         try:
             # Load existing data
             appid_data = self.load_appid_json()
@@ -372,7 +372,7 @@ class AppIDScanner:
             return False
     
     def get_json_appid_list(self):
-        """Get the current list of AppIDs from the JSON file for external use"""
+        # Get the current list of AppIDs from the JSON file for external use
         try:
             appid_data = self.load_appid_json()
             return appid_data.get('dedicated_servers', [])
@@ -381,7 +381,7 @@ class AppIDScanner:
             return []
 
     def load_appid_json(self):
-        """JSON functionality disabled - use database instead"""
+        # JSON functionality disabled - use database instead
         logger.warning("JSON functionality has been disabled. Use database methods instead.")
         return {
             "metadata": {
@@ -395,12 +395,12 @@ class AppIDScanner:
         }
     
     def save_appid_json(self, appid_data, force_update=False):
-        """JSON functionality disabled - use database instead"""
+        # JSON functionality disabled - use database instead
         logger.warning("JSON save functionality has been disabled. Use database methods instead.")
         return False
     
     def export_database_to_json(self):
-        """JSON export functionality disabled - use database methods instead"""
+        # JSON export functionality disabled - use database methods instead
         logger.info("Exporting database data to JSON file (dedicated servers only)...")
         
         try:
@@ -468,7 +468,7 @@ class AppIDScanner:
             logger.error(f"Error exporting database to JSON: {e}")
     
     def rate_limit(self, is_api_call=False):
-        """Implement rate limiting to avoid being blocked"""
+        # Implement rate limiting to avoid being blocked
         current_time = time.time()
         
         if is_api_call:
@@ -490,7 +490,7 @@ class AppIDScanner:
             self.last_request_time = time.time()
     
     def make_request(self, url, params=None, retries=3, is_api_call=False):
-        """Make a web request with rate limiting and retry logic"""
+        # Make a web request with rate limiting and retry logic
         self.rate_limit(is_api_call=is_api_call)
         
         current_backoff = self.rate_limit_backoff
@@ -536,7 +536,7 @@ class AppIDScanner:
         return None
     
     def get_steam_api_applist(self):
-        """Get the complete app list from Steam API"""
+        # Get the complete app list from Steam API
         logger.info("Fetching Steam app list from API...")
         
         try:
@@ -556,7 +556,7 @@ class AppIDScanner:
             return []
     
     def get_app_details_steam_api(self, appid):
-        """Get detailed app information from Steam Store API"""
+        # Get detailed app information from Steam Store API
         try:
             url = "https://store.steampowered.com/api/appdetails"
             params = {'appids': appid, 'format': 'json'}
@@ -577,12 +577,8 @@ class AppIDScanner:
             return None
     
     def determine_subscription_requirements(self, app_details, appid):
-        """
-        Determine if a server requires a subscription and supports anonymous install
-        
-        Returns:
-            tuple: (requires_subscription, anonymous_install)
-        """
+        # Determine if a server requires a subscription and supports anonymous install
+        # Returns tuple: (requires_subscription, anonymous_install)
         requires_subscription = False
         anonymous_install = True  # Default to anonymous install support
         
@@ -647,7 +643,7 @@ class AppIDScanner:
         return requires_subscription, anonymous_install
 
     def save_app_to_database(self, app_data):
-        """Save app data to database"""
+        # Save app data to database
         try:
             if self.use_database:
                 # Use SQLAlchemy
@@ -704,7 +700,7 @@ class AppIDScanner:
                 self.sqlite_conn.rollback()
 
     def is_server_application(self, app_name, app_details=None):
-        """Determine if an application is a server/dedicated server with enhanced detection and DLC exclusion"""
+        # Determine if an application is a server/dedicated server with enhanced detection and DLC exclusion
         if not app_name:
             return False, False
         
@@ -810,7 +806,7 @@ class AppIDScanner:
         return is_server, is_dedicated
     
     def scan_steam_apps(self, limit=None, dedicated_only=True):
-        """Scan Steam applications and save only dedicated server apps to database"""
+        # Scan Steam applications and save only dedicated server apps to database
         logger.info("Starting Steam app scan (saving only dedicated servers to database)...")
         logger.info(f"Rate limiting: {self.request_delay}s general, {self.api_request_delay}s API calls")
         
@@ -905,7 +901,7 @@ class AppIDScanner:
         logger.info("Only dedicated server applications are stored in the database")
     
     def search_apps(self, query, server_only=False):
-        """Search for apps in the database"""
+        # Search for apps in the database
         try:
             if self.use_database:
                 # Use SQLAlchemy
@@ -933,7 +929,7 @@ class AppIDScanner:
             return []
     
     def get_server_apps(self, dedicated_only=False):
-        """Get all server applications from the database"""
+        # Get all server applications from the database
         try:
             if self.use_database:
                 # Use SQLAlchemy
@@ -960,15 +956,10 @@ class AppIDScanner:
             return []
     
     def get_servers_by_subscription_type(self, requires_subscription=None, anonymous_install=None):
-        """Get servers filtered by subscription requirements
-        
-        Args:
-            requires_subscription (bool, optional): Filter by subscription requirement
-            anonymous_install (bool, optional): Filter by anonymous install capability
-            
-        Returns:
-            list: List of (appid, name, requires_subscription, anonymous_install) tuples
-        """
+        # Get servers filtered by subscription requirements
+        # Args: requires_subscription (bool, optional): Filter by subscription requirement
+        #       anonymous_install (bool, optional): Filter by anonymous install capability
+        # Returns: list of (appid, name, requires_subscription, anonymous_install) tuples
         try:
             if self.use_database:
                 # Use SQLAlchemy
@@ -1003,15 +994,15 @@ class AppIDScanner:
             return []
     
     def get_free_anonymous_servers(self):
-        """Get all servers that are free and support anonymous installation"""
+        # Get all servers that are free and support anonymous installation
         return self.get_servers_by_subscription_type(requires_subscription=False, anonymous_install=True)
     
     def get_subscription_servers(self):
-        """Get all servers that require a subscription or purchase"""
+        # Get all servers that require a subscription or purchase
         return self.get_servers_by_subscription_type(requires_subscription=True)
 
     def get_database_stats(self):
-        """Get statistics about the database including subscription information"""
+        # Get statistics about the database including subscription information
         try:
             if self.use_database:
                 # Use SQLAlchemy
@@ -1068,7 +1059,7 @@ class AppIDScanner:
             }
     
     def close(self):
-        """Close database connections"""
+        # Close database connections
         try:
             if self.use_database and hasattr(self, 'db_session'):
                 self.db_session.close()

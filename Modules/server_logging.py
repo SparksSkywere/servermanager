@@ -1,3 +1,5 @@
+# Centralized logging management with rotation, compression, and statistics
+
 import os
 import sys
 import traceback
@@ -20,7 +22,7 @@ DEFAULT_MAX_SIZE = 10 * 1024 * 1024
 DEFAULT_BACKUP_COUNT = 3
 
 class LogManager:
-    """Class for managing logs with rotation and compression"""
+    # Manages logs with rotation and compression
     def __init__(self):
         from Modules.common import REGISTRY_PATH
         self.registry_path = REGISTRY_PATH
@@ -43,7 +45,7 @@ class LogManager:
         self.initialize()
     
     def _setup_formatters(self):
-        """Setup different log formatters for various purposes"""
+        # Setup different log formatters for various purposes
         self.formatters = {
             "default": logging.Formatter(DEFAULT_LOG_FORMAT, DEFAULT_DATE_FORMAT),
             "detailed": logging.Formatter(
@@ -57,7 +59,7 @@ class LogManager:
         }
 
     def initialize(self):
-        """Initialize paths and configuration from registry"""
+        # Initialize paths and configuration from registry
         try:
             from Modules.common import REGISTRY_ROOT
             # Read registry for paths
@@ -97,13 +99,13 @@ class LogManager:
             self._setup_main_logger()
 
     def _setup_main_logger(self):
-        """Setup the main application logger"""
+        # Setup the main application logger
         main_log_file = os.path.join(self.paths["logs"], "servermanager.log")
         self.main_logger = self.get_logger("servermanager.main", main_log_file, formatter_name="detailed")
         self.main_logger.info("LogManager initialized successfully")
 
     def set_log_level(self, level_name):
-        """Set the log level based on a string name"""
+        # Set the log level based on a string name
         level_map = {
             "DEBUG": logging.DEBUG,
             "INFO": logging.INFO,
@@ -124,7 +126,7 @@ class LogManager:
 
     def get_logger(self, name, log_file=None, level=None, formatter_name="default", 
                   max_size=DEFAULT_MAX_SIZE, backup_count=DEFAULT_BACKUP_COUNT):
-        """Get or create a logger with the specified configuration"""
+        # Get or create a logger with the specified configuration
         if name in self.loggers:
             return self.loggers[name]
         
@@ -175,7 +177,7 @@ class LogManager:
         return logger
 
     def get_server_logger(self, server_name):
-        """Get a logger specifically for a server"""
+        # Get a logger specifically for a server
         # Create server log directory
         server_log_dir = os.path.join(self.paths["logs"], "servers", server_name)
         os.makedirs(server_log_dir, exist_ok=True)
@@ -187,12 +189,12 @@ class LogManager:
         return self.get_logger(f"server.{server_name}", log_file, formatter_name="detailed")
 
     def get_component_logger(self, component_name):
-        """Get a logger for a specific component"""
+        # Get a logger for a specific component
         log_file = os.path.join(self.paths["logs"], "components", f"{component_name}.log")
         return self.get_logger(f"component.{component_name}", log_file, formatter_name="detailed")
 
     def get_debug_logger(self, debug_module_name="debug"):
-        """Get a logger for debug modules that writes to logs/debug/ directory"""
+        # Get a logger for debug modules that writes to logs/debug/ directory
         # Ensure debug directory exists
         debug_dir = os.path.join(self.paths["logs"], "debug")
         os.makedirs(debug_dir, exist_ok=True)
@@ -201,7 +203,7 @@ class LogManager:
         return self.get_logger(f"debug.{debug_module_name}", log_file, formatter_name="detailed")
 
     def get_error_logger(self):
-        """Get the dedicated error logger"""
+        # Get the dedicated error logger
         if "errors" not in self.loggers:
             # Use main logs directory instead of separate errors directory
             log_file = os.path.join(self.paths["logs"], "errors.log")
@@ -210,14 +212,14 @@ class LogManager:
         return self.loggers["errors"]
 
     def get_dashboard_logger(self):
-        """Get the dashboard logger"""
+        # Get the dashboard logger
         if self._dashboard_logger is None:
             log_file = os.path.join(self.paths["logs"], "dashboard.log")
             self._dashboard_logger = self.get_logger("dashboard", log_file, formatter_name="detailed")
         return self._dashboard_logger
 
     def configure_dashboard_logging(self, debug_mode=False, config=None):
-        """Configure logging specifically for the dashboard"""
+        # Configure logging specifically for the dashboard
         try:
             # Get dashboard logger
             dashboard_logger = self.get_dashboard_logger()
@@ -241,7 +243,7 @@ class LogManager:
             return False
 
     def write_pid_file(self, process_type, pid, temp_path):
-        """Write process ID to file"""
+        # Write process ID to file
         try:
             pid_file = os.path.join(temp_path, f"{process_type}.pid")
             
@@ -266,7 +268,7 @@ class LogManager:
             return False
 
     def log_server_action(self, server_name, action, result="SUCCESS", details=None):
-        """Log server-related actions"""
+        # Log server-related actions
         dashboard_logger = self.get_dashboard_logger()
         
         msg = f"Server: {server_name} | Action: {action} | Result: {result}"
@@ -281,12 +283,12 @@ class LogManager:
             dashboard_logger.error(msg)
 
     def log_installation_progress(self, server_name, stage, message):
-        """Log server installation progress"""
+        # Log server installation progress
         dashboard_logger = self.get_dashboard_logger()
         dashboard_logger.info(f"Installation [{server_name}] {stage}: {message}")
 
     def log_process_monitoring(self, message, level="INFO"):
-        """Log process monitoring events"""
+        # Log process monitoring events
         dashboard_logger = self.get_dashboard_logger()
         
         if level.upper() == "DEBUG":
@@ -299,7 +301,7 @@ class LogManager:
             dashboard_logger.info(f"Process Monitor: {message}")
 
     def log_dashboard_event(self, event_type, message, level="INFO"):
-        """Log general dashboard events"""
+        # Log general dashboard events
         dashboard_logger = self.get_dashboard_logger()
         
         formatted_msg = f"[{event_type}] {message}"
@@ -316,7 +318,7 @@ class LogManager:
             dashboard_logger.info(formatted_msg)
 
     def log_system_state(self, component, state, details=None):
-        """Log system state changes"""
+        # Log system state changes
         if hasattr(self, 'main_logger'):
             msg = f"Component: {component} | State: {state}"
             if details:
@@ -324,7 +326,7 @@ class LogManager:
             self.main_logger.info(msg)
 
     def compress_old_logs(self, max_age_days=7):
-        """Compress log files older than the specified age"""
+        # Compress log files older than the specified age
         try:
             compressed_count = 0
             
@@ -368,7 +370,7 @@ class LogManager:
             return False
 
     def delete_old_logs(self, max_age_days=30):
-        """Delete log files older than the specified age"""
+        # Delete log files older than the specified age
         try:
             deleted_count = 0
             
@@ -403,7 +405,7 @@ class LogManager:
             return False
 
     def log_exception(self, logger, message="An exception occurred", exc_info=None):
-        """Log an exception with traceback"""
+        # Log an exception with traceback
         if exc_info is None:
             exc_info = sys.exc_info()
         
@@ -427,7 +429,7 @@ class LogManager:
             logger.error(message)
 
     def get_log_statistics(self):
-        """Get logging statistics"""
+        # Get logging statistics
         current_time = time.time()
         uptime = current_time - self._log_stats['last_reset']
         
@@ -442,7 +444,7 @@ class LogManager:
         return stats
 
     def reset_log_statistics(self):
-        """Reset logging statistics"""
+        # Reset logging statistics
         self._log_stats = {
             'errors': 0,
             'warnings': 0,
@@ -453,7 +455,7 @@ class LogManager:
             self.main_logger.info("Log statistics reset")
 
     def start_log_maintenance(self, compress_interval=86400, delete_interval=604800):
-        """Start a background thread for log maintenance"""
+        # Start a background thread for log maintenance
         def maintenance_thread():
             if hasattr(self, 'main_logger'):
                 self.main_logger.info("Log maintenance thread started")
@@ -491,7 +493,7 @@ class LogManager:
         return self._maintenance_thread
 
     def shutdown(self):
-        """Gracefully shutdown the log manager"""
+        # Gracefully shutdown the log manager
         if hasattr(self, 'main_logger'):
             self.main_logger.info("LogManager shutting down...")
         

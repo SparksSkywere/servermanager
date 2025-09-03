@@ -4,6 +4,9 @@ import winreg
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+# Steam Apps Database Connection Module
+# Handles SQLAlchemy connections specifically for Steam application data
+
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
@@ -17,7 +20,7 @@ except Exception:
     logger = logging.getLogger("SteamDatabase")
 
 def get_steam_sql_config_from_registry():
-    """Get SQL configuration for Steam apps database from Windows registry"""
+    # Get SQL configuration for Steam apps database from Windows registry
     try:
         from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
@@ -33,7 +36,7 @@ def get_steam_sql_config_from_registry():
             try:
                 db_path = winreg.QueryValueEx(key, "SteamSQLDatabasePath")[0]
             except:
-                # Default SQLite path for Steam apps database - using db directory
+                # Default Steam database path when no registry configuration exists
                 try:
                     server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
                     db_path = os.path.join(server_manager_dir, "db", "steam_ID.db")
@@ -45,7 +48,7 @@ def get_steam_sql_config_from_registry():
                 "db_path": db_path
             }
         else:
-            # For other SQL types (MySQL, PostgreSQL, etc.) - use separate Steam database
+            # Multi-server SQL databases - use dedicated Steam apps database
             try:
                 db_name = winreg.QueryValueEx(key, "SteamSQLDatabase")[0]
             except:
@@ -72,9 +75,9 @@ def get_steam_sql_config_from_registry():
         }
 
 def build_steam_db_url(config):
-    """Build SQLAlchemy database URL from config for Steam apps database"""
+    # Build SQLAlchemy database URL from config for Steam apps database
     if config["type"] == "sqlite":
-        # For SQLite, use absolute path
+        # Ensure absolute path for SQLite database file
         db_path = config["db_path"]
         if not os.path.isabs(db_path):
             db_path = os.path.abspath(db_path)
@@ -87,11 +90,11 @@ def build_steam_db_url(config):
         raise ValueError(f"Unsupported database type: {config['type']}")
 
 def get_steam_engine():
-    """Get SQLAlchemy engine for Steam apps database"""
+    # Get SQLAlchemy engine for Steam apps database
     config = get_steam_sql_config_from_registry()
     db_url = build_steam_db_url(config)
     
-    # Create engine with appropriate settings
+    # Configure engine based on database type
     if config["type"] == "sqlite":
         engine = create_engine(
             db_url,
@@ -104,10 +107,10 @@ def get_steam_engine():
     return engine
 
 def ensure_steam_tables(engine):
-    """Ensure Steam apps tables exist in the Steam database"""
+    # Ensure Steam apps tables exist in the Steam database
     try:
         with engine.connect() as conn:
-            # Create steam_apps table if it doesn't exist
+            # Create comprehensive steam_apps table with subscription tracking
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS steam_apps (
                     appid INTEGER PRIMARY KEY,
@@ -135,7 +138,7 @@ def ensure_steam_tables(engine):
         raise
 
 def initialize_steam_database():
-    """Initialize Steam apps database and return engine"""
+    # Initialize Steam apps database and return engine
     try:
         engine = get_steam_engine()
         ensure_steam_tables(engine)
@@ -145,18 +148,18 @@ def initialize_steam_database():
         logger.error(f"Failed to initialize Steam database: {e}")
         raise
 
-# For backwards compatibility - maintain the old function names but redirect to Steam-specific functions
+# Legacy compatibility layer - redirect old function names to Steam-specific versions
 def get_engine():
-    """Backwards compatibility - redirects to get_steam_engine()"""
+    # Backwards compatibility - redirects to get_steam_engine()
     logger.warning("get_engine() is deprecated, use get_steam_engine() for Steam apps database or get_user_engine() for users")
     return get_steam_engine()
 
 def get_sql_config_from_registry():
-    """Backwards compatibility - redirects to get_steam_sql_config_from_registry()"""
+    # Backwards compatibility - redirects to get_steam_sql_config_from_registry()
     logger.warning("get_sql_config_from_registry() is deprecated, use get_steam_sql_config_from_registry() or get_user_sql_config_from_registry()")
     return get_steam_sql_config_from_registry()
 
 def build_db_url(config):
-    """Backwards compatibility - redirects to build_steam_db_url()"""
+    # Backwards compatibility - redirects to build_steam_db_url()
     logger.warning("build_db_url() is deprecated, use build_steam_db_url() or build_user_db_url()")
     return build_steam_db_url(config)

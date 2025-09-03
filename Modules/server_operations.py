@@ -1,3 +1,4 @@
+# Server operations including start, stop, restart, and status management
 import os
 import sys
 import json
@@ -27,14 +28,7 @@ except ImportError:
 # logging configuration handled by centralized logging module when imported; fallback basicConfig already applied if import failed above
 
 def get_subprocess_creation_flags(hide_window=True):
-    """Get appropriate creation flags for subprocess calls on Windows to prevent console windows.
-    
-    Args:
-        hide_window (bool): If True, prevents console window from opening (saves DWM resources)
-    
-    Returns:
-        int: Creation flags for Windows, 0 for other platforms
-    """
+    # Get appropriate creation flags for subprocess calls on Windows to prevent console windows
     if sys.platform != 'win32':
         return 0
     
@@ -42,7 +36,7 @@ def get_subprocess_creation_flags(hide_window=True):
 logger = logging.getLogger("ServerOperations")
 
 class ServerOperations:
-    """Class for server management operations"""
+    # Class for server management operations
     def __init__(self):
         self.registry_path = r"Software\SkywereIndustries\Servermanager"
         self.server_manager_dir = None
@@ -52,7 +46,7 @@ class ServerOperations:
         self.initialize_from_registry()
     
     def initialize_from_registry(self):
-        """Initialize paths from registry settings"""
+        # Initialize paths from registry settings
         try:
             # Read registry for paths
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
@@ -99,7 +93,7 @@ server_ops = ServerOperations()
 
 # Export functions for module usage
 def get_all_servers():
-    """Get a list of all configured servers"""
+    # Get a list of all configured servers
     servers = []
     servers_dir = server_ops.paths.get("servers")
     
@@ -122,7 +116,7 @@ def get_all_servers():
     return servers
 
 def get_server_status(server_name):
-    """Get status of a specific server"""
+    # Get status of a specific server
     try:
         servers_dir = server_ops.paths.get("servers")
         if not servers_dir:
@@ -168,7 +162,7 @@ def get_server_status(server_name):
         return None
 
 def start_server(server_name):
-    """Start a server"""
+    # Start a server
     try:
         scripts_dir = server_ops.paths.get("scripts")
         if not scripts_dir:
@@ -190,7 +184,7 @@ def start_server(server_name):
         return False
 
 def stop_server(server_name, force=False):
-    """Stop a server"""
+    # Stop a server
     try:
         scripts_dir = server_ops.paths.get("scripts")
         if not scripts_dir:
@@ -216,7 +210,7 @@ def stop_server(server_name, force=False):
         return False
 
 def restart_server(server_name):
-    """Restart a server"""
+    # Restart a server
     if stop_server(server_name):
         # Wait a moment for server to fully stop
         time.sleep(2)
@@ -224,7 +218,7 @@ def restart_server(server_name):
     return False
 
 def install_server(server_name, validate=True):
-    """Install or update a server"""
+    # Install or update a server
     try:
         # This is a placeholder - full implementation would involve SteamCMD
         logger.info(f"Installing/updating server {server_name}")
@@ -234,7 +228,7 @@ def install_server(server_name, validate=True):
         return False
 
 def check_for_updates(server_name):
-    """Check if updates are available for a server"""
+    # Check if updates are available for a server
     try:
         # This is a placeholder - full implementation would involve SteamCMD
         logger.info(f"Checking for updates for server {server_name}")

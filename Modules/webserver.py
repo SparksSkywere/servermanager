@@ -1,3 +1,4 @@
+# Flask web server for Server Manager with API endpoints, authentication, analytics, and cluster support
 import os
 import sys
 import json
@@ -577,12 +578,12 @@ class ServerManagerWebServer(ServerManagerModule):
 
     @property
     def web_port(self):
-        """Get the web server port"""
+        # Get the web server port
         return self._web_port
     
     @property
     def cluster_port(self):
-        """Get the cluster API port"""
+        # Get the cluster API port
         return getattr(self, '_cluster_port', 5001)
 
     def check_sql_availability(self):
@@ -1314,7 +1315,7 @@ class ServerManagerWebServer(ServerManagerModule):
         # Analytics API routes
         @app.route('/api/analytics/metrics', methods=['GET'])
         def api_analytics_metrics():
-            """Get current system and server metrics"""
+            # Get current system and server metrics
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
@@ -1334,7 +1335,7 @@ class ServerManagerWebServer(ServerManagerModule):
 
         @app.route('/api/analytics/metrics/<metric_name>', methods=['GET'])
         def api_analytics_metric_history(metric_name):
-            """Get historical data for a specific metric"""
+            # Get historical data for a specific metric
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
@@ -1354,7 +1355,7 @@ class ServerManagerWebServer(ServerManagerModule):
 
         @app.route('/api/analytics/servers', methods=['GET'])
         def api_analytics_servers():
-            """Get server summary with performance metrics"""
+            # Get server summary with performance metrics
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
@@ -1367,7 +1368,7 @@ class ServerManagerWebServer(ServerManagerModule):
 
         @app.route('/api/analytics/health', methods=['GET'])
         def api_analytics_health():
-            """Get overall system health metrics"""
+            # Get overall system health metrics
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
@@ -1381,7 +1382,7 @@ class ServerManagerWebServer(ServerManagerModule):
         @limit_decorator("10 per minute")
         @app.route('/api/analytics/snmp', methods=['GET'])
         def api_analytics_snmp():
-            """SNMP-compatible metrics endpoint"""
+            # SNMP-compatible metrics endpoint
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
@@ -1405,7 +1406,7 @@ class ServerManagerWebServer(ServerManagerModule):
         # Prometheus metrics endpoint (commonly used path)
         @app.route('/metrics', methods=['GET'])
         def prometheus_metrics():
-            """Standard Prometheus metrics endpoint"""
+            # Standard Prometheus metrics endpoint
             try:
                 if not self.analytics:
                     return "# Analytics not available\n", 503, {'Content-Type': 'text/plain'}
@@ -1433,7 +1434,7 @@ class ServerManagerWebServer(ServerManagerModule):
         # Static file serving routes
         @app.route('/<path:filename>')
         def serve_static_files(filename):
-            """Serve static files from the www directory"""
+            # Serve static files from the www directory
             try:
                 # Try multiple possible www directory locations
                 www_paths = [
@@ -1591,7 +1592,7 @@ class ServerManagerWebServer(ServerManagerModule):
             return False
 
     def _run_cluster_server(self):
-        """Run a simple HTTP proxy server on port 5001 that forwards cluster API requests to port 8080"""
+        # Run a simple HTTP proxy server on port 5001 that forwards cluster API requests to port 8080
         try:
             import http.server
             import socketserver
@@ -1662,7 +1663,7 @@ class ServerManagerWebServer(ServerManagerModule):
             logger.error(f"Cluster proxy server traceback: {traceback.format_exc()}")
 
     def cleanup(self):
-        """Cleanup resources when shutting down"""
+        # Cleanup resources when shutting down
         try:
             # Update cluster status for shutdown
             self.shutdown_cluster_status()
@@ -1685,7 +1686,7 @@ class ServerManagerWebServer(ServerManagerModule):
             logger.error(f"Error during cleanup: {e}")
 
     def test_auth_modules(self):
-        """Test available authentication modules"""
+        # Test available authentication modules
         try:
             logger.info("Testing authentication modules...")
             
@@ -1712,7 +1713,7 @@ class ServerManagerWebServer(ServerManagerModule):
             logger.error(f"Traceback: {traceback.format_exc()}")
     
     def start_host_heartbeat(self):
-        """Start the host heartbeat thread to maintain cluster status"""
+        # Start the host heartbeat thread to maintain cluster status
         def heartbeat_worker():
             while True:
                 try:
@@ -1728,7 +1729,7 @@ class ServerManagerWebServer(ServerManagerModule):
         logger.info("Host heartbeat thread started")
     
     def shutdown_cluster_status(self):
-        """Update cluster status on shutdown"""
+        # Update cluster status on shutdown
         try:
             if hasattr(self, 'cluster_db') and self.cluster_db:
                 self.cluster_db.update_host_status(

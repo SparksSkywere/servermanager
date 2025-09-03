@@ -2121,7 +2121,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         identity_frame.grid_columnconfigure(3, weight=0)
         
         def toggle_appid_field():
-            """Enable/disable AppID field based on server type"""
+            # Enable/disable AppID field based on server type
             if type_var.get() == "Steam":
                 appid_entry.config(state=tk.NORMAL)
                 appid_browse_btn.config(state=tk.NORMAL)
@@ -2253,7 +2253,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         preview_text.pack(fill=tk.X, padx=5, pady=5)
         
         def update_preview():
-            """Update the command preview"""
+            # Update the command preview
             try:
                 exe = exe_var.get().strip()
                 mode = startup_mode_var.get()
@@ -2422,7 +2422,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         button_frame.pack(fill=tk.X, pady=10)
         
         def validate_inputs():
-            """Validate all input fields"""
+            # Validate all input fields
             errors = []
             
             new_name = name_var.get().strip()
@@ -2456,7 +2456,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             return errors
         
         def save_configuration():
-            """Save the server configuration"""
+            # Save the server configuration
             errors = validate_inputs()
             if errors:
                 messagebox.showerror("Validation Error", "\n".join(errors))
@@ -2642,7 +2642,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 messagebox.showerror("Error", f"Failed to save configuration: {str(e)}")
         
         def test_executable():
-            """Test if the executable path exists"""
+            # Test if the executable path exists
             exe_path = exe_var.get().strip()
             if not exe_path:
                 messagebox.showwarning("Test", "Please specify an executable path first.")
@@ -2663,7 +2663,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         center_window(dialog, 900, 850, self.root)
 
     def configure_java(self):
-        """Open Java configuration dialog for selected server"""
+        # Open Java configuration dialog for selected server
         selected_items = self.server_list.selection()
         if not selected_items:
             messagebox.showwarning("No Selection", "Please select a server to configure Java for.")
@@ -2695,12 +2695,12 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             self.update_server_list(force_refresh=True)
     
     def show_server_type_configuration(self):
-        """Show server configuration dialog based on server type - redirects to unified configure_server"""
+        # Show server configuration dialog based on server type - redirects to unified configure_server
         # Redirect to unified configure_server method
         self.configure_server()
     
     def show_minecraft_server_config(self, server_name, server_config):
-        """Show Minecraft-specific configuration dialog"""
+        # Show Minecraft-specific configuration dialog
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Minecraft Server Configuration - {server_name}")
         dialog.geometry("800x700")
@@ -2890,7 +2890,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         center_window(dialog, 800, 700, self.root)
     
     def show_steam_server_config(self, server_name, server_config):
-        """Show Steam-specific configuration dialog"""
+        # Show Steam-specific configuration dialog
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Steam Server Configuration - {server_name}")
         dialog.geometry("700x600")
@@ -3281,7 +3281,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", f"Failed to open import dialog: {str(e)}")
 
     def import_server_from_directory(self):
-        """Import an existing server from a directory (legacy method)"""
+        # Import an existing server from a directory (legacy method)
         result = import_server_from_directory_dialog(
             self.root, self.server_manager, self.server_manager_dir, 
             self.supported_server_types, 
@@ -3289,18 +3289,18 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         )
 
     def import_server_from_export(self):
-        """Import server from exported configuration file"""
+        # Import server from exported configuration file
         result = import_server_from_export_dialog(
             self.root, self.paths, self.server_manager_dir,
             update_callback=lambda: self.update_server_list(force_refresh=True)
         )
 
     def export_server(self):
-        """Export server configuration for use on other hosts or clusters"""
+        # Export server configuration for use on other hosts or clusters
         result = export_server_dialog(self.root, self.server_list, self.paths)
 
     def refresh_all(self):
-        """Refresh all dashboard data"""
+        # Refresh all dashboard data
         try:
             logger.info("Refreshing all dashboard data")
             
@@ -3320,7 +3320,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", f"Failed to refresh dashboard: {str(e)}")
 
     def sync_all(self):
-        """Synchronize all server data with the database"""
+        # Synchronize all server data with the database
         try:
             if self.variables["offlineMode"]:
                 messagebox.showinfo("Offline Mode", "Cannot sync while in offline mode.")
@@ -3419,7 +3419,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", f"Failed to open cluster management: {str(e)}")
 
     def check_server_updates(self):
-        """Check for updates for the selected server"""
+        # Check for updates for the selected server
         selected = self.server_list.selection()
         if not selected:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -3499,7 +3499,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         check_thread.start()
     
     def update_server(self):
-        """Update the selected server"""
+        # Update the selected server
         selected = self.server_list.selection()
         if not selected:
             messagebox.showinfo("No Selection", "Please select a server first.")
@@ -3531,7 +3531,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             self.update_server_now(server_name, server_config)
     
     def update_server_now(self, server_name, server_config):
-        """Perform server update with progress dialog"""
+        # Perform server update with progress dialog
         if not self.update_manager:
             messagebox.showerror("Error", "Update manager not available.")
             return
@@ -3586,21 +3586,21 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         update_thread.start()
     
     def show_schedule_manager(self):
-        """Show unified schedule manager"""
+        # Show unified schedule manager
         if not self.timer_manager:
             messagebox.showerror("Error", "Scheduler not available.")
             return
         self.timer_manager.show_schedules_manager()
     
     def show_server_schedule(self):
-        """Show schedule manager for the selected server"""
+        # Show schedule manager for the selected server
         if not self.timer_manager:
             messagebox.showerror("Error", "Scheduler not available.")
             return
         self.timer_manager.show_schedules_manager()
     
     def update_all_servers(self):
-        """Update all Steam servers"""
+        # Update all Steam servers
         if not self.update_manager:
             messagebox.showerror("Error", "Update manager not available.")
             return
@@ -3675,7 +3675,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         update_thread.start()
 
     def restart_all_servers(self):
-        """Restart all servers"""
+        # Restart all servers
         if not self.update_manager:
             messagebox.showerror("Error", "Update manager not available.")
             return
@@ -3760,7 +3760,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         restart_thread.start()
 
     def show_console_manager(self):
-        """Show console manager dialog with list of active consoles"""
+        # Show console manager dialog with list of active consoles
         try:
             if not self.console_manager:
                 messagebox.showinfo("Console Manager", "Console manager not available.")
@@ -3774,7 +3774,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Console Manager Error", f"Failed to show console manager:\n{str(e)}")
 
     def batch_update_server_types(self):
-        """Batch update all server types using database-based detection"""
+        # Batch update all server types using database-based detection
         try:
             # Show confirmation dialog first
             response = messagebox.askyesno(

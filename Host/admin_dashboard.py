@@ -16,10 +16,6 @@ except ImportError:
     print("Warning: pyotp not available. 2FA functionality will be disabled.")
 
 def admin_login(user_manager):
-    """
-    Admin login dialog that requires admin privileges
-    Returns authenticated admin user or None if login fails/cancelled
-    """
     max_attempts = 3
     attempts = 0
     
@@ -233,7 +229,6 @@ class AdminDashboard(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def logout(self):
-        """Logout and close the admin dashboard"""
         if messagebox.askyesno("Logout", 
                              "Are you sure you want to logout and close the Admin Dashboard?", 
                              parent=self):
@@ -241,7 +236,6 @@ class AdminDashboard(tk.Tk):
             self.destroy()
     
     def on_closing(self):
-        """Handle window close event"""
         if messagebox.askyesno("Exit", 
                              "Are you sure you want to exit the Admin Dashboard?", 
                              parent=self):
@@ -417,11 +411,11 @@ class AdminDashboard(tk.Tk):
         self.status_label.pack(fill=tk.X)
 
     def on_filter_change(self, *args):
-        """Called when filter settings change"""
+        #Called when filter settings change
         self.apply_filter()
 
     def clear_filter(self):
-        """Clear all filters and show all users"""
+        #Clear all filters and show all users
         self.filter_column.set("account_number")
         self.filter_text.set("")
         self.sort_order.set("asc")
@@ -429,7 +423,7 @@ class AdminDashboard(tk.Tk):
         self.apply_filter()
 
     def get_user_display_data(self, user):
-        """Extract display data from user object"""
+        #Extract display data from user object
         first_name = getattr(user, "first_name", "") or ""
         last_name = getattr(user, "last_name", "") or ""
         display_name = getattr(user, "display_name", "") or ""
@@ -477,7 +471,7 @@ class AdminDashboard(tk.Tk):
         }
 
     def set_filter_column(self, column):
-        """Set the filter column and toggle sort order if same column clicked"""
+        #Set the filter column and toggle sort order if same column clicked
         current_column = self.filter_column.get()
         
         if current_column == column:
@@ -494,7 +488,7 @@ class AdminDashboard(tk.Tk):
         self.apply_filter()
 
     def update_header_appearance(self):
-        """Update header button appearance to show selected column"""
+        #Update header button appearance to show selected column
         selected_column = self.filter_column.get()
         sort_order = self.sort_order.get()
         
@@ -518,7 +512,7 @@ class AdminDashboard(tk.Tk):
                 button.config(text=base_text)
 
     def apply_filter(self):
-        """Apply current filter and sort settings"""
+        #Apply current filter and sort settings
         try:
             if not self.all_users:
                 return
@@ -602,7 +596,7 @@ class AdminDashboard(tk.Tk):
             self.status_label.config(text="Error loading users")
 
     def get_selected_username(self):
-        """Get username from selected listbox item"""
+        #Get username from selected listbox item
         selection = self.user_listbox.curselection()
         if not selection:
             return None
@@ -812,7 +806,7 @@ class AdminDashboard(tk.Tk):
             messagebox.showerror("Error", f"Failed to reset password: {str(e)}")
 
     def add_user(self):
-        """Add a new user"""
+        #Add a new user
         try:
             add_window = tk.Toplevel(self)
             add_window.title("Add New User")

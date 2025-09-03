@@ -1,3 +1,5 @@
+# Minecraft server management and Java compatibility utilities
+# Provides Java detection, version management, and Minecraft server operations
 import json
 import os
 import urllib.request
@@ -15,14 +17,9 @@ except Exception:
 
 
 def get_java_version(java_path="java"):
-    """Get the installed Java version for a specific Java executable.
-    
-    Args:
-        java_path (str): Path to the Java executable (default: "java" from PATH)
-    
-    Returns:
-        tuple: (major_version, full_version_string) or (None, None) if Java not found
-    """
+    # Get the installed Java version for a specific Java executable
+    # Args: java_path (str): Path to the Java executable (default: "java" from PATH)
+    # Returns: tuple: (major_version, full_version_string) or (None, None) if Java not found
     try:
         result = subprocess.run([java_path, '-version'], capture_output=True, text=True, timeout=10)
         # Java version output goes to stderr
@@ -50,12 +47,9 @@ def get_java_version(java_path="java"):
 
 
 def detect_java_installations():
-    """Detect available Java installations on the system.
-    
-    Returns:
-        list: List of dictionaries with Java installation info
-              [{"path": "java_path", "version": "version_string", "major": major_version}]
-    """
+    # Detect available Java installations on the system
+    # Returns: list of dictionaries with Java installation info
+    #          [{"path": "java_path", "version": "version_string", "major": major_version}]
     java_installations = []
     
     # Check default Java in PATH
@@ -124,14 +118,9 @@ def detect_java_installations():
 
 
 def get_recommended_java_for_minecraft(version_id):
-    """Get the recommended Java installation for a specific Minecraft version.
-    
-    Args:
-        version_id (str): Minecraft version ID
-        
-    Returns:
-        dict: Recommended Java installation info, or None if none suitable
-    """
+    # Get the recommended Java installation for a specific Minecraft version
+    # Args: version_id (str): Minecraft version ID
+    # Returns: dict: Recommended Java installation info, or None if none suitable
     required_java = get_minecraft_java_requirement(version_id)
     available_javas = detect_java_installations()
     
@@ -147,14 +136,9 @@ def get_recommended_java_for_minecraft(version_id):
 
 
 def get_minecraft_java_requirement(version_id):
-    """Get the minimum Java version required for a Minecraft version.
-    
-    Args:
-        version_id (str): Minecraft version ID
-        
-    Returns:
-        int: Minimum Java version required
-    """
+    # Get the minimum Java version required for a Minecraft version
+    # Args: version_id (str): Minecraft version ID
+    # Returns: int: Minimum Java version required
     try:
         # Parse version to determine Java requirements
         # These are based on Minecraft's official requirements
@@ -185,15 +169,10 @@ def get_minecraft_java_requirement(version_id):
 
 
 def check_java_compatibility(version_id, java_path="java"):
-    """Check if a specific Java installation can run the specified Minecraft version.
-    
-    Args:
-        version_id (str): Minecraft version ID
-        java_path (str): Path to the Java executable (default: "java" from PATH)
-        
-    Returns:
-        tuple: (is_compatible, java_version, required_version, message)
-    """
+    # Check if a specific Java installation can run the specified Minecraft version
+    # Args: version_id (str): Minecraft version ID
+    #       java_path (str): Path to the Java executable (default: "java" from PATH)
+    # Returns: tuple: (is_compatible, java_version, required_version, message)
     java_major, java_full = get_java_version(java_path)
     required_java = get_minecraft_java_requirement(version_id)
     
@@ -211,7 +190,7 @@ def check_java_compatibility(version_id, java_path="java"):
 
 
 def fetch_minecraft_versions():
-    """Fetch available Minecraft server versions from Mojang's manifest."""
+    # Fetch available Minecraft server versions from Mojang's manifest
     try:
         manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest.json"
         with urllib.request.urlopen(manifest_url, timeout=10) as resp:
@@ -231,7 +210,7 @@ def fetch_minecraft_versions():
 
 
 def get_minecraft_server_jar_url(version_id, versions_list):
-    """Get the download URL for the server jar for a given version."""
+    # Get the download URL for the server jar for a given version
     try:
         for v in versions_list:
             if v["id"] == version_id:
@@ -244,7 +223,7 @@ def get_minecraft_server_jar_url(version_id, versions_list):
 
 
 def fetch_fabric_installer_url(mc_version):
-    """Fetch Fabric installer URL for a given Minecraft version."""
+    # Fetch Fabric installer URL for a given Minecraft version
     try:
         meta_url = "https://meta.fabricmc.net/v2/versions/installer"
         with urllib.request.urlopen(meta_url, timeout=10) as resp:
@@ -257,7 +236,7 @@ def fetch_fabric_installer_url(mc_version):
 
 
 def fetch_forge_installer_url(mc_version):
-    """Fetch Forge installer URL for a given Minecraft version."""
+    # Fetch Forge installer URL for a given Minecraft version
     try:
         meta_url = f"https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json"
         with urllib.request.urlopen(meta_url, timeout=10) as resp:
@@ -273,7 +252,7 @@ def fetch_forge_installer_url(mc_version):
 
 
 def fetch_neoforge_installer_url(mc_version):
-    """Fetch NeoForge installer URL for a given Minecraft version."""
+    # Fetch NeoForge installer URL for a given Minecraft version
     try:
         meta_url = f"https://api.neoforged.net/v1/projects/neoforge/versions?game_versions={mc_version}"
         with urllib.request.urlopen(meta_url, timeout=10) as resp:
@@ -290,36 +269,25 @@ def fetch_neoforge_installer_url(mc_version):
 
 
 class MinecraftServerManager:
-    """Class to manage Minecraft server operations and installations."""
+    # Class to manage Minecraft server operations and installations
     
     def __init__(self, server_manager_dir, config=None):
-        """Initialize the Minecraft server manager.
-        
-        Args:
-            server_manager_dir (str): Base directory for server manager
-            config (dict): Configuration dictionary
-        """
+        # Initialize the Minecraft server manager
+        # Args: server_manager_dir (str): Base directory for server manager
+        #       config (dict): Configuration dictionary
         self.server_manager_dir = server_manager_dir
         self.config = config or {}
     
     def get_minecraft_install_path(self, server_name):
-        """Get the installation path for a Minecraft server.
-        
-        Args:
-            server_name (str): Name of the server
-            
-        Returns:
-            str: Full path to the server installation directory
-        """
+        # Get the installation path for a Minecraft server
+        # Args: server_name (str): Name of the server
+        # Returns: str: Full path to the server installation directory
         minecraft_path = self.config.get("defaults", {}).get("minecraftServersPath", "minecraft_servers")
         return os.path.join(self.server_manager_dir, minecraft_path, server_name)
     
     def create_eula_file(self, install_dir):
-        """Create EULA acceptance file for Minecraft server.
-        
-        Args:
-            install_dir (str): Directory where the server is installed
-        """
+        # Create EULA acceptance file for Minecraft server
+        # Args: install_dir (str): Directory where the server is installed
         import os
         eula_path = os.path.join(install_dir, "eula.txt")
         with open(eula_path, "w") as f:
@@ -327,18 +295,13 @@ class MinecraftServerManager:
         logger.info(f"Created EULA file at: {eula_path}")
     
     def create_launch_script(self, install_dir, jar_file, memory_mb=1024, additional_args="", java_path="java"):
-        """Create a launch script for the Minecraft server.
-        
-        Args:
-            install_dir (str): Directory where the server is installed
-            jar_file (str): Name of the server JAR file
-            memory_mb (int): Memory allocation in MB
-            additional_args (str): Additional JVM or server arguments
-            java_path (str): Path to the Java executable
-            
-        Returns:
-            str: Path to the created launch script
-        """
+        # Create a launch script for the Minecraft server
+        # Args: install_dir (str): Directory where the server is installed
+        #       jar_file (str): Name of the server JAR file
+        #       memory_mb (int): Memory allocation in MB
+        #       additional_args (str): Additional JVM or server arguments
+        #       java_path (str): Path to the Java executable
+        # Returns: str: Path to the created launch script
         import os
         
         if os.name == 'nt':  # Windows
@@ -362,14 +325,9 @@ class MinecraftServerManager:
         return script_path
     
     def detect_server_executable(self, install_dir):
-        """Detect the server executable in an installation directory.
-        
-        Args:
-            install_dir (str): Directory to search for server executables
-            
-        Returns:
-            tuple: (executable_type, executable_path) where type is 'jar', 'bat', or 'sh'
-        """
+        # Detect the server executable in an installation directory
+        # Args: install_dir (str): Directory to search for server executables
+        # Returns: tuple: (executable_type, executable_path) where type is 'jar', 'bat', or 'sh'
         import os
         
         if not os.path.exists(install_dir):
@@ -419,17 +377,12 @@ class MinecraftServerManager:
         return None, None
     
     def download_server_jar(self, version_id, versions_list, install_dir, jar_name=None):
-        """Download Minecraft server jar file.
-        
-        Args:
-            version_id (str): Minecraft version ID
-            versions_list (list): List of available versions
-            install_dir (str): Directory to download the jar to
-            jar_name (str): Optional custom jar filename
-            
-        Returns:
-            str: Path to the downloaded jar file
-        """
+        # Download Minecraft server jar file
+        # Args: version_id (str): Minecraft version ID
+        #       versions_list (list): List of available versions
+        #       install_dir (str): Directory to download the jar to
+        #       jar_name (str): Optional custom jar filename
+        # Returns: str: Path to the downloaded jar file
         import os
         
         # Check Java compatibility before downloading
@@ -455,15 +408,10 @@ class MinecraftServerManager:
         return jar_path
     
     def validate_server_startup(self, install_dir, jar_file):
-        """Validate that a Minecraft server can start with the current Java version.
-        
-        Args:
-            install_dir (str): Server installation directory
-            jar_file (str): Server JAR filename
-            
-        Returns:
-            tuple: (is_valid, message)
-        """
+        # Validate that a Minecraft server can start with the current Java version
+        # Args: install_dir (str): Server installation directory
+        #       jar_file (str): Server JAR filename
+        # Returns: tuple: (is_valid, message)
         jar_path = os.path.join(install_dir, jar_file)
         
         if not os.path.exists(jar_path):

@@ -1,3 +1,4 @@
+# Server Manager shutdown utility with process termination and cleanup functionality
 import os
 import sys
 import json
@@ -28,14 +29,14 @@ except Exception:
     logger = logging.getLogger("StopServerManager")
 
 def is_admin():
-    """Check if the script is running with administrator privileges"""
+    # Check if the script is running with administrator privileges
     try:
         return ctypes.windll.shell32.IsUserAnAdmin() != 0
     except:
         return False
 
 def run_as_admin():
-    """Re-run the script with admin privileges"""
+    # Re-run the script with admin privileges
     # Use hidden window when restarting as admin
     if sys.platform == 'win32':
         ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 0)  # 0 = SW_HIDE
@@ -69,7 +70,7 @@ class ServerManagerStopper(ServerManagerModule):
         logger.addHandler(file_handler)
         
     def stop_process_by_pid(self, pid, process_name=None):
-        """Stop a process by PID"""
+        # Stop a process by PID
         try:
             if not psutil.pid_exists(pid):
                 logger.debug(f"Process {pid} ({process_name or 'unknown'}) is not running")
@@ -120,7 +121,7 @@ class ServerManagerStopper(ServerManagerModule):
             return False
             
     def stop_processes_from_pid_files(self):
-        """Stop processes using PID files"""
+        # Stop processes using PID files
         pid_files = [
             "launcher.pid",
             "webserver.pid",
@@ -153,7 +154,7 @@ class ServerManagerStopper(ServerManagerModule):
         return stopped_count
             
     def stop_processes_by_name(self):
-        """Stop Server Manager processes by name"""
+        # Stop Server Manager processes by name
         process_names = [
             "servermanager",
             "trayicon",
@@ -207,7 +208,7 @@ class ServerManagerStopper(ServerManagerModule):
         return stopped_count
     
     def stop_all_game_servers(self):
-        """Stop all running game servers"""
+        # Stop all running game servers
         try:
             # First check if the stop_all_servers.py script exists
             stop_all_script = os.path.join(self.paths["scripts"], "stop_all_servers.py")
@@ -261,7 +262,7 @@ class ServerManagerStopper(ServerManagerModule):
             return False
     
     def run(self):
-        """Main execution method"""
+        # Main execution method
         try:
             logger.info("Starting Server Manager shutdown process")
             
