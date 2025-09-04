@@ -16,8 +16,7 @@ from tkinter import ttk, messagebox, filedialog, scrolledtext
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import user management system
-from Modules.Database.user_database import get_user_engine, initialize_user_manager
-from Modules.Database.SQL_Connection import sql_login
+from Modules.Database.user_database import initialize_user_manager
 from Modules.server_manager import ServerManager
 
 # Import Minecraft server functions
@@ -39,7 +38,7 @@ from Modules.server_updates import ServerUpdateManager
 from Modules.documentation import show_help_dialog, show_about_dialog
 
 # Import common module infrastructure
-from Modules.common import ServerManagerModule, initialize_paths_from_registry, initialize_registry_values
+from Modules.common import ServerManagerModule, initialize_registry_values
 
 # Import dashboard functions
 from Host.dashboard_functions import (
@@ -59,8 +58,7 @@ from Modules.agents import AgentManager, show_agent_management_dialog
 
 # Import debug functions
 from debug.debug import (
-    get_detailed_process_info, get_server_process_details, check_port_status,
-    is_debug_enabled, log_exception, monitor_process_resources
+    get_server_process_details, log_exception, monitor_process_resources
 )
 
 # Import server console functions

@@ -58,11 +58,39 @@
         .back-link:hover {
             text-decoration: underline;
         }
+        .nav-menu {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .nav-menu a {
+            display: inline-block;
+            margin: 0 10px;
+            padding: 8px 16px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        .nav-menu a:hover, .nav-menu a.active {
+            background: #5a67d8;
+        }
     </style>
 </head>
 <body>
     <div class="status-container">
         <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
+        
+        <div class="nav-menu">
+            <a href="dashboard.html">Dashboard</a>
+            <a href="status.html" class="active">Server Status</a>
+            <a href="create-server.html">Create Server</a>
+            <a href="admin.html" id="adminLink" style="display: none;">Admin Panel</a>
+        </div>
         
         <div class="header">
             <h1>Server Status</h1>
@@ -109,7 +137,13 @@
 
                 // Display username
                 const username = sessionStorage.getItem('username');
+                const isAdmin = sessionStorage.getItem('isAdmin') === 'true';
                 document.getElementById('username').textContent = username || 'User';
+
+                // Show admin link if user is admin
+                if (isAdmin) {
+                    document.getElementById('adminLink').style.display = 'inline-block';
+                }
 
                 // Load servers
                 await loadServers();

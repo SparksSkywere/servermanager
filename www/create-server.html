@@ -5,8 +5,75 @@
     <meta charset="UTF-8">
     <link rel="stylesheet" href="css/theme.css">
     <link rel="stylesheet" href="css/style.css">
+    <style>
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            margin: 0;
+        }
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .logout-btn {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .logout-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        .nav-menu {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .nav-menu a {
+            display: inline-block;
+            margin: 0 10px;
+            padding: 8px 16px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        .nav-menu a:hover, .nav-menu a.active {
+            background: #5a67d8;
+        }
+    </style>
 </head>
 <body>
+    <div class="header">
+        <h1>Server Manager</h1>
+        <div class="user-info">
+            <span>Welcome, <span id="username">User</span></span>
+            <a href="#" class="logout-btn" onclick="logout()">Logout</a>
+        </div>
+    </div>
+
+    <div class="nav-menu">
+        <a href="dashboard.html">Dashboard</a>
+        <a href="status.html">Server Status</a>
+        <a href="create-server.html" class="active">Create Server</a>
+        <a href="admin.html" id="adminLink" style="display: none;">Admin Panel</a>
+    </div>
+
     <div class="container">
         <div class="card">
             <h2>Create New Server</h2>
@@ -51,12 +118,16 @@
                     return;
                 }
 
-                // Verify token is still valid
-                const isAuthenticated = await checkAuth();
-                if (!isAuthenticated) {
-                    sessionStorage.clear();
-                    window.location.replace('login.html');
-                    return;
+                // Get user info
+                const username = sessionStorage.getItem('username');
+                const isAdmin = sessionStorage.getItem('isAdmin') === 'true';
+                
+                // Display user info
+                document.getElementById('username').textContent = username || 'User';
+
+                // Show admin link if user is admin
+                if (isAdmin) {
+                    document.getElementById('adminLink').style.display = 'inline-block';
                 }
 
                 // Set up form handler
@@ -83,6 +154,9 @@
                 window.location.replace('login.html');
             }
         }
+
+        // Make logout available globally
+        window.logout = logout;
 
         // Initialize when DOM is ready
         if (document.readyState === 'loading') {

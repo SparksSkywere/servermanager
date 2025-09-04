@@ -122,6 +122,7 @@
             <a href="status.html">Server Status</a>
             <a href="create-server.html">Create Server</a>
             <a href="cluster.html">Cluster Management</a>
+            <a href="admin.html" id="adminLink" style="display: none;">Admin Panel</a>
         </div>
 
         <div class="welcome-card">
@@ -193,9 +194,15 @@
 
                 // Get user info
                 const username = sessionStorage.getItem('username');
+                const isAdmin = sessionStorage.getItem('isAdmin') === 'true';
                 
                 // Display user info
                 document.getElementById('username').textContent = username || 'User';
+
+                // Show admin link if user is admin
+                if (isAdmin) {
+                    document.getElementById('adminLink').style.display = 'inline-block';
+                }
 
                 // Load initial data
                 await loadServerStatus();

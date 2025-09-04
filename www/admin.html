@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Server Manager</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/theme.css">
+    <style>
+        .admin-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .admin-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        .user-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .user-table th, .user-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        .user-table th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+        }
+        .admin-badge {
+            background: #e74c3c;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .user-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            margin: 10% auto;
+            padding: 20px;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 500px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <div class="admin-header">
+            <h1>Admin Panel - User Management</h1>
+            <div class="user-info">
+                <span>Welcome, <span id="username">Admin</span></span>
+                <button class="btn" onclick="logout()">Logout</button>
+            </div>
+        </div>
+
+        <div class="nav-menu">
+            <a href="dashboard.html">Dashboard</a>
+            <a href="status.html">Server Status</a>
+            <a href="create-server.html">Create Server</a>
+            <a href="admin.html" class="active">Admin Panel</a>
+        </div>
+
+        <div class="card">
+            <h2>User Management</h2>
+            <button class="btn btn-primary" onclick="showCreateUserModal()">Add New User</button>
+            <table class="user-table" id="userTable">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Admin</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="userTableBody">
+                    <!-- Users will be loaded here -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Create User Modal -->
+    <div id="createUserModal" class="modal">
+        <div class="modal-content">
+            <h3>Create New User</h3>
+            <form id="createUserForm">
+                <div class="form-group">
+                    <label for="newUsername">Username:</label>
+                    <input type="text" id="newUsername" required>
+                </div>
+                <div class="form-group">
+                    <label for="newPassword">Password:</label>
+                    <input type="password" id="newPassword" required>
+                </div>
+                <div class="form-group">
+                    <label for="newIsAdmin">
+                        <input type="checkbox" id="newIsAdmin"> Administrator
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="button" onclick="hideCreateUserModal()" class="btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Notification System -->
+    <div id="notification" class="notification"></div>
+
+    <script type="module">
+        import { checkAuth, logout } from './js/auth.js';
+        import { showNotification } from './js/utils.js';
+        import API from './js/api.js';
+
+        // Make logout available globally
+        window.logout = logout;
+
+        let users = [];
+
+        async function initAdminPanel() {
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                if (!token) {
+                    window.location.replace('login.html');
+                    return;
+                }
+
+                // Check if user is admin
+                const isAdmin = sessionStorage.getItem('isAdmin') === 'true';
+                if (!isAdmin) {
+                    showNotification('Access denied. Admin privileges required.', 'error');
+                    window.location.replace('dashboard.html');
+                    return;
+                }
+
+                // Verify authentication
+                const isAuthenticated = await checkAuth();
+                if (!isAuthenticated) {
+                    sessionStorage.clear();
+                    window.location.replace('login.html');
+                    return;
+                }
+
+                // Display username
+                const username = sessionStorage.getItem('username');
+                document.getElementById('username').textContent = username || 'Admin';
+
+                // Load users
+                await loadUsers();
+
+            } catch (error) {
+                console.error('Admin panel initialization error:', error);
+                showNotification('Failed to initialize admin panel', 'error');
+            }
+        }
+
+        async function loadUsers() {
+            try {
+                users = await API.getUsers();
+                displayUsers();
+            } catch (error) {
+                console.error('Error loading users:', error);
+                showNotification('Failed to load users', 'error');
+            }
+        }
+
+        function displayUsers() {
+            const tbody = document.getElementById('userTableBody');
+            tbody.innerHTML = users.map(user => `
+                <tr>
+                    <td>${user.username}</td>
+                    <td>${user.isAdmin ? '<span class="admin-badge">ADMIN</span>' : ''}</td>
+                    <td class="user-actions">
+                        <button class="btn btn-small" onclick="resetPassword('${user.username}')">Reset Password</button>
+                        <button class="btn btn-small btn-danger" onclick="deleteUser('${user.username}')">Delete</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        window.showCreateUserModal = function() {
+            document.getElementById('createUserModal').style.display = 'block';
+        };
+
+        window.hideCreateUserModal = function() {
+            document.getElementById('createUserModal').style.display = 'none';
+            document.getElementById('createUserForm').reset();
+        };
+
+        window.resetPassword = async function(username) {
+            if (!confirm(`Reset password for ${username}?`)) return;
+
+            try {
+                const newPassword = prompt('Enter new password:');
+                if (!newPassword) return;
+
+                await API.resetUserPassword(username, newPassword);
+                showNotification('Password reset successfully', 'success');
+            } catch (error) {
+                showNotification(error.message, 'error');
+            }
+        };
+
+        window.deleteUser = async function(username) {
+            if (!confirm(`Delete user ${username}? This action cannot be undone.`)) return;
+
+            try {
+                await API.deleteUser(username);
+                showNotification('User deleted successfully', 'success');
+                await loadUsers(); // Reload users list
+            } catch (error) {
+                showNotification(error.message, 'error');
+            }
+        };
+
+        // Handle create user form
+        document.getElementById('createUserForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const userData = {
+                username: document.getElementById('newUsername').value,
+                password: document.getElementById('newPassword').value,
+                is_admin: document.getElementById('newIsAdmin').checked
+            };
+
+            try {
+                await API.createUser(userData);
+                showNotification('User created successfully', 'success');
+                hideCreateUserModal();
+                await loadUsers(); // Reload users list
+            } catch (error) {
+                showNotification(error.message, 'error');
+            }
+        });
+
+        // Initialize when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initAdminPanel);
+        } else {
+            initAdminPanel();
+        }
+    </script>
+</body>
+</html>

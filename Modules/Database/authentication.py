@@ -84,11 +84,27 @@ def authenticate_user(username, password, auth_type="auto"):
             if user_manager:
                 user = user_manager.get_user(username)
                 if user and getattr(user, 'is_active', True):
-                    # Hash provided password with SHA256 and compare with stored hash
-                    hashed_password = hashlib.sha256(password.encode()).hexdigest()
+                    # Check password - try bcrypt first, then fallback to SHA256 for compatibility
                     stored_password = getattr(user, 'password', '')
+                    
+                    # Try bcrypt verification first
+                    try:
+                        import bcrypt
+                        if bcrypt.checkpw(password.encode(), stored_password.encode()):
+                            logger.info(f"SQL authentication successful for user: {username} (bcrypt)")
+                            # Update last login
+                            try:
+                                user_manager.update_user(username, last_login=datetime.now())
+                            except Exception as e:
+                                logger.warning(f"Failed to update last login: {e}")
+                            return True
+                    except Exception as e:
+                        logger.debug(f"Bcrypt verification failed, trying SHA256: {e}")
+                    
+                    # Fallback to SHA256 for backward compatibility
+                    hashed_password = hashlib.sha256(password.encode()).hexdigest()
                     if stored_password == hashed_password:
-                        logger.info(f"SQL authentication successful for user: {username}")
+                        logger.info(f"SQL authentication successful for user: {username} (SHA256)")
                         # Update last login
                         try:
                             user_manager.update_user(username, last_login=datetime.now())

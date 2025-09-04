@@ -251,7 +251,14 @@ class SQLAuthentication:
         return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
     def _check_password(self, password, hashed):
-        return bcrypt.checkpw(password.encode(), hashed.encode())
+        # Try bcrypt first, fallback to SHA256 for backward compatibility
+        try:
+            return bcrypt.checkpw(password.encode(), hashed.encode())
+        except Exception:
+            # Fallback to SHA256 for backward compatibility
+            import hashlib
+            hashed_password = hashlib.sha256(password.encode()).hexdigest()
+            return hashed == hashed_password
 
     def authenticate(self, username, password):
         if self.user_manager is None:
@@ -260,13 +267,28 @@ class SQLAuthentication:
         if not user or not getattr(user, 'is_active', True):
             return None
         if self._check_password(password, user.password):
+            # Check if password was SHA256 and upgrade to bcrypt
+            try:
+                bcrypt.checkpw(password.encode(), user.password.encode())
+            except Exception:
+                # Password was SHA256, upgrade to bcrypt
+                try:
+                    self.user_manager.update_user(username, password=password)
+                    logger.info(f"Upgraded password hash to bcrypt for user: {username}")
+                except Exception as e:
+                    logger.warning(f"Failed to upgrade password hash: {e}")
+            
             token = str(uuid.uuid4())
             self.tokens[token] = {
                 "username": username,
                 "created": datetime.datetime.now().isoformat(),
                 "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat()
             }
-            return {"token": token, "username": username}
+            return {
+                "token": token, 
+                "username": username,
+                "isAdmin": getattr(user, 'is_admin', False)
+            }
         return None
 
     def verify_token(self, token):

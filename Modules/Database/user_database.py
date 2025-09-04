@@ -146,10 +146,10 @@ def ensure_root_admin(engine):
             
             if count == 0:
                 # Create admin user with default password - CHANGE THIS IN PRODUCTION
-                import hashlib
+                import bcrypt
                 from datetime import datetime
                 import uuid
-                admin_password = hashlib.sha256("admin".encode()).hexdigest()
+                admin_password = bcrypt.hashpw("admin".encode(), bcrypt.gensalt()).decode()
                 account_number = str(uuid.uuid4())[:8].upper()
                 conn.execute(text("""
                     INSERT INTO users (username, password, is_admin, is_active, created_at, email, first_name, last_name, display_name, account_number) 

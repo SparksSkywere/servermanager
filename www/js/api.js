@@ -48,7 +48,17 @@ class API {
                     throw new Error('Authentication expired');
                 }
 
-                const errorData = await response.json();
+                let errorData;
+                try {
+                    const responseText = await response.text();
+                    try {
+                        errorData = JSON.parse(responseText);
+                    } catch (jsonError) {
+                        errorData = { error: 'Server returned invalid response format' };
+                    }
+                } catch (parseError) {
+                    errorData = { error: 'Failed to read server response' };
+                }
                 throw new Error(errorData.error || 'API request failed');
             }
 
@@ -108,6 +118,42 @@ class API {
      */
     static async getUsers() {
         return this.request('/users');
+    }
+
+    /**
+     * Create a new user (admin only)
+     * @param {Object} userData - User data
+     * @returns {Promise<Object>} Operation result
+     */
+    static async createUser(userData) {
+        return this.request('/users', {
+            method: 'POST',
+            body: JSON.stringify(userData)
+        });
+    }
+
+    /**
+     * Delete a user (admin only)
+     * @param {string} username - Username to delete
+     * @returns {Promise<Object>} Operation result
+     */
+    static async deleteUser(username) {
+        return this.request(`/users/${username}`, {
+            method: 'DELETE'
+        });
+    }
+
+    /**
+     * Reset user password (admin only)
+     * @param {string} username - Username
+     * @param {string} newPassword - New password
+     * @returns {Promise<Object>} Operation result
+     */
+    static async resetUserPassword(username, newPassword) {
+        return this.request(`/users/${username}/password`, {
+            method: 'PUT',
+            body: JSON.stringify({ password: newPassword })
+        });
     }
 
     /**

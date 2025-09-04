@@ -8,8 +8,6 @@ import winreg
 import time
 from datetime import datetime
 
-import logging
-
 try:
     from Modules.server_logging import get_component_logger, log_server_action
     logger = get_component_logger("ServerOperations")

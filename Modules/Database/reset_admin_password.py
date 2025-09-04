@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Emergency admin password reset utility - resets to "admin"/"admin"
-# WARNING: This resets admin credentials to insecure defaults
+# WARNING: This resets admin credentials to insecure default!
 import os
 import sys
 import hashlib
@@ -8,7 +8,7 @@ import hashlib
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-from Modules.Database.user_database import initialize_user_manager
+from user_database import initialize_user_manager
 
 def reset_admin_password():
     # Reset admin password to default 'admin' credentials

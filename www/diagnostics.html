@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authentication Diagnostics</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .success { color: green; }
+        .error { color: red; }
+        .warning { color: orange; }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #0056b3; }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Authentication Diagnostics</h1>
+        <p>Use this page to test and troubleshoot authentication issues.</p>
+
+        <div class="test-section">
+            <h3>1. Server Connectivity Test</h3>
+            <button onclick="testServerConnection()">Test Server Connection</button>
+            <div id="serverResult" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>2. Authentication Test</h3>
+            <input type="text" id="testUsername" placeholder="Username" value="admin">
+            <input type="password" id="testPassword" placeholder="Password" value="admin">
+            <button onclick="testAuthentication()">Test Login</button>
+            <div id="authResult" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>3. Session Storage Test</h3>
+            <button onclick="checkSessionStorage()">Check Session Data</button>
+            <div id="sessionResult" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>4. API Endpoint Test</h3>
+            <button onclick="testAPIEndpoint()">Test API Endpoint</button>
+            <div id="apiResult" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>5. Clear Session & Go to Login</h3>
+            <button onclick="clearAndLogin()">Clear Session & Login</button>
+        </div>
+    </div>
+
+    <script type="module">
+        window.testServerConnection = async function() {
+            const resultDiv = document.getElementById('serverResult');
+            resultDiv.innerHTML = 'Testing...';
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'OPTIONS'
+                });
+
+                if (response.status === 200 || response.status === 404) {
+                    resultDiv.innerHTML = '<span class="success">✓ Server is responding</span>';
+                } else {
+                    resultDiv.innerHTML = `<span class="warning">⚠ Server responded with status ${response.status}</span>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<span class="error">✗ Cannot connect to server: ${error.message}</span>`;
+            }
+        };
+
+        window.testAuthentication = async function() {
+            const resultDiv = document.getElementById('authResult');
+            const username = document.getElementById('testUsername').value;
+            const password = document.getElementById('testPassword').value;
+
+            resultDiv.innerHTML = 'Testing authentication...';
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.token) {
+                    resultDiv.innerHTML = `<span class="success">✓ Authentication successful</span><br>
+                        Username: ${data.username}<br>
+                        Admin: ${data.isAdmin}<br>
+                        Token: ${data.token.substring(0, 20)}...`;
+                } else {
+                    resultDiv.innerHTML = `<span class="error">✗ Authentication failed</span><br>
+                        Status: ${response.status}<br>
+                        Error: ${data.error || 'Unknown error'}`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<span class="error">✗ Network error: ${error.message}</span>`;
+            }
+        };
+
+        window.checkSessionStorage = function() {
+            const resultDiv = document.getElementById('sessionResult');
+            const token = sessionStorage.getItem('auth_token');
+            const username = sessionStorage.getItem('username');
+            const isAdmin = sessionStorage.getItem('isAdmin');
+
+            resultDiv.innerHTML = `
+                Token: ${token ? token.substring(0, 20) + '...' : 'Not set'}<br>
+                Username: ${username || 'Not set'}<br>
+                Is Admin: ${isAdmin || 'Not set'}
+            `;
+        };
+
+        window.testAPIEndpoint = async function() {
+            const resultDiv = document.getElementById('apiResult');
+            const token = sessionStorage.getItem('auth_token');
+
+            if (!token) {
+                resultDiv.innerHTML = '<span class="error">✗ No authentication token found</span>';
+                return;
+            }
+
+            resultDiv.innerHTML = 'Testing API endpoint...';
+
+            try {
+                const response = await fetch('/api/auth/verify', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.authenticated) {
+                    resultDiv.innerHTML = `<span class="success">✓ API endpoint working</span><br>
+                        Authenticated: ${data.authenticated}<br>
+                        Username: ${data.username}<br>
+                        Admin: ${data.isAdmin}`;
+                } else {
+                    resultDiv.innerHTML = `<span class="error">✗ API endpoint failed</span><br>
+                        Status: ${response.status}<br>
+                        Error: ${data.error || 'Unknown error'}`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<span class="error">✗ API error: ${error.message}</span>`;
+            }
+        };
+
+        window.clearAndLogin = function() {
+            sessionStorage.clear();
+            window.location.href = 'login.html';
+        };
+
+        // Auto-check session on load
+        window.addEventListener('load', function() {
+            checkSessionStorage();
+        });
+    </script>
+</body>
+</html>

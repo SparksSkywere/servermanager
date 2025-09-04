@@ -89,8 +89,9 @@ class UserManager:
         try:
             session = self.Session()
             
-            # Hash password
-            hashed_password = hashlib.sha256(password.encode()).hexdigest()
+            # Hash password with bcrypt
+            import bcrypt
+            hashed_password = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
             
             user = User(
                 username=username,
@@ -140,7 +141,8 @@ class UserManager:
             
             if user:
                 if password is not None:
-                    hashed_password = hashlib.sha256(password.encode()).hexdigest()
+                    import bcrypt
+                    hashed_password = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
                     setattr(user, 'password', hashed_password)
                 if email is not None:
                     setattr(user, 'email', email)
@@ -179,10 +181,32 @@ class UserManager:
                 logger.warning(f"Inactive user attempted login: {username}")
                 return None
             
-            # Verify password
-            hashed_password = hashlib.sha256(password.encode()).hexdigest()
+            # Verify password - try bcrypt first, fallback to SHA256 for backward compatibility
             stored_password = getattr(user, 'password', None)
-            if not stored_password or stored_password != hashed_password:
+            if not stored_password:
+                logger.warning(f"No password stored for user: {username}")
+                return None
+            
+            authenticated = False
+            
+            # Try bcrypt first
+            try:
+                import bcrypt
+                if bcrypt.checkpw(password.encode(), stored_password.encode()):
+                    authenticated = True
+            except Exception:
+                # If bcrypt fails, try SHA256 for backward compatibility
+                hashed_password = hashlib.sha256(password.encode()).hexdigest()
+                if stored_password == hashed_password:
+                    authenticated = True
+                    # Optionally update to bcrypt on successful login
+                    try:
+                        self.update_user(username, password=password)
+                        logger.info(f"Updated password hash to bcrypt for user: {username}")
+                    except Exception as e:
+                        logger.warning(f"Failed to update password hash: {e}")
+            
+            if not authenticated:
                 logger.warning(f"Invalid password for user: {username}")
                 return None
             

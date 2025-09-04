@@ -10,8 +10,6 @@ import hashlib
 import secrets
 import base64
 from datetime import datetime
-import os
-import logging
 
 try:
     from Modules.server_logging import get_component_logger

@@ -38,12 +38,6 @@ $env:PYTHONDONTWRITEBYTECODE = "1"
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Show help if requested
-if ($Help) {
-    Show-Help
-    exit
-}
-
 # Check if this is a service management call
 if ($ServiceAction -or $ServiceOnly) {
     # Service management mode
@@ -141,48 +135,43 @@ function Invoke-ServiceManagement {
     
     # Check for admin rights and self-elevate if needed
     if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Host "Administrator rights required. Attempting to restart with elevated privileges..." -ForegroundColor Yellow
+        Write-Log "Administrator rights required. Attempting to restart with elevated privileges..."
         Start-Process PowerShell -Verb RunAs -ArgumentList ("-ExecutionPolicy Bypass -File `"{0}`" -ServiceAction {1} -ServiceOnly" -f $PSCommandPath, $Action)
         exit
     }
-
-    Write-Host "Server Manager Service Manager" -ForegroundColor Cyan
-    Write-Host "================================" -ForegroundColor Cyan
 
     # Get Server Manager directory from registry
     try {
         $regPath = "HKLM:\Software\SkywereIndustries\Servermanager"
         $serverManagerDir = (Get-ItemProperty -Path $regPath -Name "ServerManagerPath").ServerManagerPath
-        Write-Host "Server Manager directory: $serverManagerDir" -ForegroundColor Green
+        Write-Log "Server Manager directory: $serverManagerDir"
     } catch {
-        Write-Host "Error: Server Manager installation not found in registry." -ForegroundColor Red
-        Write-Host "Please run the installer first." -ForegroundColor Red
-        Read-Host "Press Enter to exit"
+        Write-Log "Error: Server Manager installation not found in registry."
+        [System.Windows.Forms.MessageBox]::Show("Error: Server Manager installation not found in registry. Please run the installer first.", "Service Manager Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
         exit 1
     }
 
     # Check if service helper exists
     $serviceHelperPath = Join-Path $serverManagerDir "service_helper.py"
     if (-not (Test-Path $serviceHelperPath)) {
-        Write-Host "Error: Service helper script not found at: $serviceHelperPath" -ForegroundColor Red
-        Read-Host "Press Enter to exit"
+        Write-Log "Error: Service helper script not found at: $serviceHelperPath"
+        [System.Windows.Forms.MessageBox]::Show("Error: Service helper script not found at: $serviceHelperPath", "Service Manager Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
         exit 1
     }
 
     # Find Python executable
     $pythonPath = Find-PythonExecutable
     if (-not $pythonPath) {
-        Write-Host "Error: Python executable not found." -ForegroundColor Red
-        Write-Host "Please ensure Python is installed and added to PATH." -ForegroundColor Red
-        Read-Host "Press Enter to exit"
+        Write-Log "Error: Python executable not found."
+        [System.Windows.Forms.MessageBox]::Show("Error: Python executable not found. Please ensure Python is installed and added to PATH.", "Service Manager Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
         exit 1
     }
 
-    Write-Host "Using Python: $pythonPath" -ForegroundColor Green
+    Write-Log "Using Python: $pythonPath"
 
     # Execute the requested action
     try {
-        Write-Host "Executing action: $Action" -ForegroundColor Yellow
+        Write-Log "Executing action: $Action"
         
         # Set environment variable to prevent Python cache creation
         $env:PYTHONDONTWRITEBYTECODE = "1"
@@ -190,43 +179,31 @@ function Invoke-ServiceManagement {
         $result = & $pythonPath $serviceHelperPath $Action.ToLower() 2>&1
         
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "Action completed successfully!" -ForegroundColor Green
-            Write-Host $result -ForegroundColor White
+            Write-Log "Action completed successfully!"
+            Write-Log $result
+            [System.Windows.Forms.MessageBox]::Show("Action completed successfully!`n`n$result", "Service Manager", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
         } else {
-            Write-Host "Action failed!" -ForegroundColor Red
-            Write-Host $result -ForegroundColor Red
+            Write-Log "Action failed!"
+            Write-Log $result
+            [System.Windows.Forms.MessageBox]::Show("Action failed!`n`n$result", "Service Manager Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
         }
     } catch {
-        Write-Host "Error executing action: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Log "Error executing action: $($_.Exception.Message)"
+        [System.Windows.Forms.MessageBox]::Show("Error executing action: $($_.Exception.Message)", "Service Manager Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
     }
 
     # Additional information based on action
     switch ($Action.ToLower()) {
         "install" {
-            Write-Host ""
-            Write-Host "If installation was successful:" -ForegroundColor Cyan
-            Write-Host "- The service is now installed and running" -ForegroundColor White
-            Write-Host "- Server Manager will start automatically with Windows" -ForegroundColor White
-            Write-Host "- You can access the web interface at http://localhost:8080" -ForegroundColor White
+            [System.Windows.Forms.MessageBox]::Show("If installation was successful:`n- The service is now installed and running`n- Server Manager will start automatically with Windows`n- You can access the web interface at http://localhost:8080", "Service Installation Complete", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
         }
         "uninstall" {
-            Write-Host ""
-            Write-Host "If uninstallation was successful:" -ForegroundColor Cyan
-            Write-Host "- The service has been removed" -ForegroundColor White
-            Write-Host "- Server Manager will no longer start automatically" -ForegroundColor White
-            Write-Host "- You can still start it manually using Start-ServerManager.pyw" -ForegroundColor White
+            [System.Windows.Forms.MessageBox]::Show("If uninstallation was successful:`n- The service has been removed`n- Server Manager will no longer start automatically`n- You can still start it manually using Start-ServerManager.pyw", "Service Uninstallation Complete", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
         }
         "status" {
-            Write-Host ""
-            Write-Host "Service management commands:" -ForegroundColor Cyan
-            Write-Host "- To start:   .\install.ps1 -ServiceAction Start" -ForegroundColor White
-            Write-Host "- To stop:    .\install.ps1 -ServiceAction Stop" -ForegroundColor White
-            Write-Host "- To restart: .\install.ps1 -ServiceAction Restart" -ForegroundColor White
+            [System.Windows.Forms.MessageBox]::Show("Service management commands:`n- To start:   .\install.ps1 -ServiceAction Start`n- To stop:    .\install.ps1 -ServiceAction Stop`n- To restart: .\install.ps1 -ServiceAction Restart", "Service Status", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
         }
     }
-
-    Write-Host ""
-    Read-Host "Press Enter to exit"
 }
 
 function Find-PythonExecutable {
@@ -246,39 +223,6 @@ function Find-PythonExecutable {
         }
     }
     return $null
-}
-
-function Show-Help {
-    Write-Host "Server Manager Installer and Service Manager" -ForegroundColor Cyan
-    Write-Host "=============================================" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "Usage:" -ForegroundColor Yellow
-    Write-Host "  install.ps1                           # Run the installation wizard"
-    Write-Host "  install.ps1 -Help                     # Show this help"
-    Write-Host ""
-    Write-Host "Service Management:" -ForegroundColor Yellow
-    Write-Host "  install.ps1 -ServiceAction Install    # Install and start the service"
-    Write-Host "  install.ps1 -ServiceAction Uninstall  # Uninstall the service"
-    Write-Host "  install.ps1 -ServiceAction Start      # Start the service"
-    Write-Host "  install.ps1 -ServiceAction Stop       # Stop the service"
-    Write-Host "  install.ps1 -ServiceAction Restart    # Restart the service"
-    Write-Host "  install.ps1 -ServiceAction Status     # Show service status"
-    Write-Host ""
-    Write-Host "Examples:" -ForegroundColor Green
-    Write-Host "  # Install Server Manager (GUI wizard)"
-    Write-Host "  .\install.ps1"
-    Write-Host ""
-    Write-Host "  # Install as Windows service after installation"
-    Write-Host "  .\install.ps1 -ServiceAction Install"
-    Write-Host ""
-    Write-Host "  # Check service status"
-    Write-Host "  .\install.ps1 -ServiceAction Status"
-    Write-Host ""
-    Write-Host "Notes:" -ForegroundColor Cyan
-    Write-Host "  - Admin privileges are required for installation and service management"
-    Write-Host "  - The installer will automatically elevate if needed"
-    Write-Host "  - Service actions require an existing Server Manager installation"
-    Write-Host ""
 }
 
 # --- Main installer script ---
@@ -1429,20 +1373,20 @@ function Show-InstallerWizard {
     # Navigation buttons
     $cancelButton = New-Object System.Windows.Forms.Button
     $cancelButton.Text = "Cancel"
-    $cancelButton.Location = New-Object System.Drawing.Point(370, 45)
+    $cancelButton.Location = New-Object System.Drawing.Point(365, 35)
     $cancelButton.Size = New-Object System.Drawing.Size(85, 30)
     $bottomPanel.Controls.Add($cancelButton)
 
     $backButton = New-Object System.Windows.Forms.Button
     $backButton.Text = "< Back"
-    $backButton.Location = New-Object System.Drawing.Point(460, 45)
+    $backButton.Location = New-Object System.Drawing.Point(450, 35)
     $backButton.Size = New-Object System.Drawing.Size(85, 30)
     $backButton.Enabled = $false
     $bottomPanel.Controls.Add($backButton)
 
     $nextButton = New-Object System.Windows.Forms.Button
     $nextButton.Text = "Next >"
-    $nextButton.Location = New-Object System.Drawing.Point(550, 45)
+    $nextButton.Location = New-Object System.Drawing.Point(545, 35)
     $nextButton.Size = New-Object System.Drawing.Size(85, 30)
     $bottomPanel.Controls.Add($nextButton)
 
@@ -1496,7 +1440,7 @@ Click Next to continue, or Cancel to exit Setup.
     $steamCmdLabel = New-Object System.Windows.Forms.Label
     $steamCmdLabel.Text = "SteamCMD Installation Directory:"
     $steamCmdLabel.Location = New-Object System.Drawing.Point(20, 60)
-    $steamCmdLabel.Size = New-Object System.Drawing.Size(200, 20)
+    $steamCmdLabel.Size = New-Object System.Drawing.Size(220, 20)
     $optionsPage.Controls.Add($steamCmdLabel)
 
     $steamCmdBox = New-Object System.Windows.Forms.TextBox
@@ -1515,7 +1459,7 @@ Click Next to continue, or Cancel to exit Setup.
     $workspaceLabel = New-Object System.Windows.Forms.Label
     $workspaceLabel.Text = "User Workspace Directory:"
     $workspaceLabel.Location = New-Object System.Drawing.Point(20, 120)
-    $workspaceLabel.Size = New-Object System.Drawing.Size(200, 20)
+    $workspaceLabel.Size = New-Object System.Drawing.Size(220, 20)
     $optionsPage.Controls.Add($workspaceLabel)
 
     $workspaceBox = New-Object System.Windows.Forms.TextBox
@@ -1569,12 +1513,12 @@ Click Next to continue, or Cancel to exit Setup.
     $hostAddrLabel = New-Object System.Windows.Forms.Label
     $hostAddrLabel.Text = "Master Host IP Address:"
     $hostAddrLabel.Location = New-Object System.Drawing.Point(300, 50)
-    $hostAddrLabel.Size = New-Object System.Drawing.Size(130, 20)
+    $hostAddrLabel.Size = New-Object System.Drawing.Size(150, 20)
     $hostAddrLabel.Visible = $false
     $hostGroupBox.Controls.Add($hostAddrLabel)
 
     $hostAddrBox = New-Object System.Windows.Forms.TextBox
-    $hostAddrBox.Location = New-Object System.Drawing.Point(430, 48)
+    $hostAddrBox.Location = New-Object System.Drawing.Point(450, 48)
     $hostAddrBox.Size = New-Object System.Drawing.Size(100, 20)
     $hostAddrBox.Visible = $false
     $hostAddrBox.Text = ""

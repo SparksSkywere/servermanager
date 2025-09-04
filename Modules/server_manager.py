@@ -10,8 +10,6 @@ import psutil
 import urllib.request
 import threading
 from datetime import datetime
-import os
-import logging
 
 try:
     from Modules.server_logging import get_component_logger, log_server_action, log_exception
