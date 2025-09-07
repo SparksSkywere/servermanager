@@ -90,6 +90,35 @@ class ServerManagerTrayIcon(ServerManagerModule):
             # Set up file logging with default path
             self.configure_file_logging()
 
+    def _find_window_by_title(self, partial_title):
+        """Find a window by partial title match"""
+        try:
+            import ctypes
+            
+            # Callback function for EnumWindows
+            def enum_callback(hwnd, result_list):
+                length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    title = ctypes.create_unicode_buffer(length + 1)
+                    ctypes.windll.user32.GetWindowTextW(hwnd, title, length + 1)
+                    if partial_title.lower() in title.value.lower():
+                        result_list.append((hwnd, title.value))
+                return True
+            
+            # Enumerate all windows
+            result_list = []
+            enum_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.POINTER(ctypes.c_int))
+            callback = enum_proc(enum_callback)
+            
+            ctypes.windll.user32.EnumWindows(callback, ctypes.byref(ctypes.c_int(id(result_list))))
+            
+            # Return the first matching window handle
+            if result_list:
+                return result_list[0][0]
+        except Exception as e:
+            logger.warning(f"Error finding window by title: {e}")
+        return None
+
     def configure_file_logging(self, log_path=None):
         # Set up logging to file
         try:
@@ -362,10 +391,11 @@ class ServerManagerTrayIcon(ServerManagerModule):
     def open_dashboard(self):
         # Open the Python dashboard instead of web dashboard
         try:
-            # First, ensure the web server is running for API calls
             if not self.offline_mode and self.webserver_status != "Connected":
                 logger.info("Web server not running, starting it for dashboard API support...")
-                self.start_webserver_for_dashboard()
+                import threading
+                webserver_thread = threading.Thread(target=self.start_webserver_for_dashboard, daemon=True)
+                webserver_thread.start()
             
             # Check if dashboard is already running
             dashboard_pid_file = os.path.join(self.paths["temp"], "dashboard.pid")
@@ -377,6 +407,17 @@ class ServerManagerTrayIcon(ServerManagerModule):
                     pid = pid_info.get("ProcessId")
                     if pid and self.is_process_running(pid):
                         logger.info("Dashboard already running, bringing to front")
+                        try:
+                            import ctypes
+                            hwnd = self._find_window_by_title("Server Manager Dashboard")
+                            if hwnd:
+                                logger.info(f"Found dashboard window (hwnd: {hwnd}), bringing to front")
+                                ctypes.windll.user32.ShowWindow(hwnd, 9)
+                                ctypes.windll.user32.SetForegroundWindow(hwnd)
+                            else:
+                                logger.warning("Could not find dashboard window to bring to front")
+                        except Exception as e:
+                            logger.warning(f"Could not bring dashboard window to front: {e}")
                         return
                 except Exception as e:
                     logger.error(f"Error checking dashboard PID file: {str(e)}")
@@ -397,22 +438,22 @@ class ServerManagerTrayIcon(ServerManagerModule):
             if self.debug_mode:
                 cmd.append("--debug")
             
-            # Launch dashboard process with hidden console
+            # Launch dashboard process - don't hide console for GUI apps
             logger.info(f"Starting dashboard: {' '.join(cmd)}")
             
             if sys.platform == 'win32':
-                # On Windows, use CREATE_NO_WINDOW to hide console
+                # For GUI applications like dashboard, don't use CREATE_NO_WINDOW
+                # as it can interfere with Tkinter window creation and event loop
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = 0  # SW_HIDE
+                startupinfo.wShowWindow = 1  # SW_SHOWNORMAL - Show window normally
+                logger.info("Launching dashboard with SW_SHOWNORMAL")
                 
                 self.dashboard_process = subprocess.Popen(
                     cmd, 
-                    creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                    creationflags=subprocess.DETACHED_PROCESS,
                     startupinfo=startupinfo,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    stdin=subprocess.PIPE,
+                    # Don't redirect stdout/stderr for GUI apps to prevent blocking
                     close_fds=True
                 )
             else:
@@ -460,28 +501,24 @@ class ServerManagerTrayIcon(ServerManagerModule):
                     cwd=self.server_manager_dir,  # Set working directory
                     creationflags=subprocess.CREATE_NO_WINDOW,
                     startupinfo=startupinfo,
-                    shell=False,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    stdin=subprocess.PIPE
+                    shell=False
+                    # Don't redirect pipes to prevent blocking
                 )
             else:
                 proc = subprocess.Popen(
                     cmd,
                     cwd=self.server_manager_dir,  # Set working directory
                     start_new_session=True,
-                    shell=False,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    stdin=subprocess.PIPE
+                    shell=False
+                    # Don't redirect pipes to prevent blocking
                 )
 
-            # Wait for web server to start
+            # Wait for web server to start (reduced timeout since it's background)
             connected = False
             logger.info(f"Waiting for web server to start on port {self.web_port}...")
-            for attempt in range(20):  # Increased timeout to 20 seconds
+            for attempt in range(5):  # Reduced to 5 seconds
                 time.sleep(1)
-                logger.debug(f"Connection attempt {attempt+1}/20...")
+                logger.debug(f"Connection attempt {attempt+1}/5...")
                 if self.is_port_open('localhost', self.web_port):
                     connected = True
                     self.webserver_status = "Connected"
@@ -489,19 +526,11 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 # Check if process exited
                 if proc.poll() is not None:
                     logger.error(f"Web server process exited with code {proc.returncode}")
-                    # Read output for debugging
-                    try:
-                        stdout, stderr = proc.communicate(timeout=2)
-                        if stderr:
-                            logger.error(f"Web server stderr: {stderr.decode(errors='replace')}")
-                        if stdout:
-                            logger.info(f"Web server stdout: {stdout.decode(errors='replace')}")
-                    except:
-                        pass
+                    # Can't read output since pipes were removed to prevent blocking
                     break
 
             if not connected:
-                logger.error(f"Failed to connect to web server after 20 seconds")
+                logger.error(f"Failed to connect to web server after 5 seconds")
                 if self.icon and self.notifications_enabled:
                     self.icon.notify("Failed to start web server", "Server Manager Error")
                 return False
@@ -527,6 +556,16 @@ class ServerManagerTrayIcon(ServerManagerModule):
                     pid = pid_info.get("ProcessId")
                     if pid and self.is_process_running(pid):
                         logger.info("Admin dashboard already running, bringing to front")
+                        # Try to bring the existing window to the front
+                        try:
+                            import ctypes
+                            # Find and bring the admin dashboard window to front
+                            hwnd = self._find_window_by_title("Admin Dashboard")
+                            if hwnd:
+                                ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                                ctypes.windll.user32.SetForegroundWindow(hwnd)
+                        except Exception as e:
+                            logger.warning(f"Could not bring admin dashboard window to front: {e}")
                         if self.icon and self.notifications_enabled:
                             self.icon.notify("Admin dashboard already running", "Server Manager")
                         return
@@ -536,7 +575,10 @@ class ServerManagerTrayIcon(ServerManagerModule):
             # First, ensure the web server is running for SQL connection
             if not self.offline_mode and self.webserver_status != "Connected":
                 logger.info("Web server not running, starting it for admin dashboard SQL support...")
-                self.start_webserver_for_dashboard()
+                # Start webserver in background without waiting
+                import threading
+                webserver_thread = threading.Thread(target=self.start_webserver_for_dashboard, daemon=True)
+                webserver_thread.start()
             
             # Launch the admin dashboard script
             admin_script = os.path.join(self.paths["scripts"], "..", "Host", "admin_dashboard.py")
@@ -554,22 +596,22 @@ class ServerManagerTrayIcon(ServerManagerModule):
             if self.debug_mode:
                 cmd.append("--debug")
             
-            # Launch admin dashboard process with hidden console
+            # Launch admin dashboard process - don't hide console for GUI apps
             logger.info(f"Starting admin dashboard: {' '.join(cmd)}")
             
             if sys.platform == 'win32':
-                # On Windows, use CREATE_NO_WINDOW to hide console
+                # For GUI applications like admin dashboard, don't use CREATE_NO_WINDOW
+                # as it can interfere with Tkinter window creation and event loop
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = 0  # SW_HIDE
+                startupinfo.wShowWindow = 1  # SW_SHOWNORMAL - Show window normally
+                logger.info("Launching admin dashboard with SW_SHOWNORMAL")
                 
                 self.admin_dashboard_process = subprocess.Popen(
                     cmd, 
-                    creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                    creationflags=subprocess.DETACHED_PROCESS,  # Keep detached but allow console
                     startupinfo=startupinfo,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    stdin=subprocess.PIPE,
+                    # Don't redirect stdout/stderr for GUI apps to prevent blocking
                     close_fds=True
                 )
             else:

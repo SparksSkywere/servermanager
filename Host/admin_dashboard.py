@@ -108,7 +108,9 @@ def admin_login(user_manager):
                     login_result[0] = True
                     login_result[1] = user
                     login_dialog.destroy()
-                    login_root.destroy()
+                    # Don't destroy login_root - it's the main dashboard window!
+                    # Deiconify it to show the main window again
+                    login_root.deiconify()
                 else:
                     print("Authentication failed - invalid credentials")
                     status_var.set("Invalid username or password. Please try again.")
@@ -123,7 +125,7 @@ def admin_login(user_manager):
             print("Admin login cancelled")
             dialog_closed[0] = True
             login_dialog.destroy()
-            login_root.destroy()
+            # Don't destroy login_root - it's the main dashboard window!
         
         # Button frame at the bottom
         button_frame = tk.Frame(container, bg='white')
@@ -149,7 +151,7 @@ def admin_login(user_manager):
         def on_close():
             dialog_closed[0] = True
             login_dialog.destroy()
-            login_root.destroy()
+            # Don't destroy login_root - it's the main dashboard window!
         
         login_dialog.protocol("WM_DELETE_WINDOW", on_close)
         
@@ -176,6 +178,175 @@ def admin_login(user_manager):
             messagebox.showerror("Access Denied", 
                                f"Maximum login attempts ({max_attempts}) exceeded.\n"
                                "Admin dashboard access denied.")
+            return None
+    
+    return None
+
+def admin_login_with_root(login_root, user_manager):
+    """Admin login function that uses an existing Tkinter root window to avoid conflicts"""
+    max_attempts = 3
+    attempts = 0
+    
+    while attempts < max_attempts:
+        # Withdraw the main window during login
+        login_root.withdraw()
+        
+        # Create login dialog using the existing root window
+        login_dialog = tk.Toplevel(login_root)
+        
+        login_dialog.title("Server Manager - Authentication Required")
+        login_dialog.geometry("400x300")
+        login_dialog.resizable(False, False)
+        login_dialog.grab_set()
+        login_dialog.configure(bg='white')
+        
+        # Center the dialog
+        login_dialog.update_idletasks()
+        x = (login_dialog.winfo_screenwidth() // 2) - (200)
+        y = (login_dialog.winfo_screenheight() // 2) - (150)
+        login_dialog.geometry(f"400x300+{x}+{y}")
+        
+        # Main container frame
+        container = tk.Frame(login_dialog, bg='white', padx=20, pady=20)
+        container.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = tk.Label(container, text="Administrator Access Required", 
+                              font=("Segoe UI", 14, "bold"), fg="darkred", bg='white')
+        title_label.pack(pady=(0, 15))
+        
+        # Username field
+        tk.Label(container, text="Username:", font=("Segoe UI", 10, "bold"), bg='white').pack(anchor=tk.W, pady=(10, 5))
+        username_var = tk.StringVar()
+        username_entry = tk.Entry(container, textvariable=username_var, width=25, font=("Segoe UI", 10))
+        username_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        # Password field
+        tk.Label(container, text="Password:", font=("Segoe UI", 10, "bold"), bg='white').pack(anchor=tk.W, pady=(0, 5))
+        password_var = tk.StringVar()
+        password_entry = tk.Entry(container, textvariable=password_var, show="*", width=25, font=("Segoe UI", 10))
+        password_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        # Status label for errors
+        status_var = tk.StringVar()
+        status_label = tk.Label(container, textvariable=status_var, foreground="red", 
+                               font=("Segoe UI", 9), bg='white', wraplength=350)
+        status_label.pack(pady=(0, 15))
+        
+        # Show attempt counter if not first attempt
+        if attempts > 0:
+            attempts_label = tk.Label(container, 
+                                    text=f"Login attempt {attempts + 1} of {max_attempts}", 
+                                    font=("Segoe UI", 8), fg="orange", bg='white')
+            attempts_label.pack(pady=(0, 15))
+        
+        # Result variables
+        login_result = [False, None]  # [success, user]
+        dialog_closed = [False]
+        
+        def on_login():           
+            # Get values directly from entry widgets
+            username = username_entry.get().strip()
+            password = password_entry.get()
+
+            if not username or not password:
+                status_var.set("Please enter both username and password")
+                return
+            
+            try:
+                print(f"Attempting to authenticate admin user: {username}")
+                # Authenticate user
+                user = user_manager.authenticate_user(username, password)
+                if user:
+                    print("Authentication successful!")
+                    
+                    # Check if user is admin
+                    if not getattr(user, 'is_admin', False):
+                        print("Authentication failed - user is not an admin")
+                        status_var.set("Access denied: Administrator privileges required")
+                        password_entry.delete(0, tk.END)
+                        return
+                    
+                    # Check if user is active
+                    if not getattr(user, 'is_active', True):
+                        status_var.set("Access denied: Account is inactive")
+                        password_entry.delete(0, tk.END)
+                        return
+                    
+                    # Successfully authenticated as admin
+                    login_result[0] = True
+                    login_result[1] = user
+                    login_dialog.destroy()
+                else:
+                    print("Authentication failed - invalid credentials")
+                    status_var.set("Invalid username or password. Please try again.")
+                    password_entry.delete(0, tk.END)
+                    
+            except Exception as e:
+                print(f"Authentication error: {e}")
+                status_var.set(f"Authentication error: {str(e)}")
+                password_entry.delete(0, tk.END)
+        
+        def on_cancel():
+            print("Admin login cancelled")
+            dialog_closed[0] = True
+            login_dialog.destroy()
+        
+        # Button frame at the bottom
+        button_frame = tk.Frame(container, bg='white')
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(20, 0))
+        
+        # Simple, visible buttons
+        cancel_btn = tk.Button(button_frame, text="Cancel", command=on_cancel, 
+                              font=("Segoe UI", 10, "bold"), width=12)
+        cancel_btn.pack(side=tk.LEFT)
+        
+        login_btn = tk.Button(button_frame, text="Sign In", command=on_login, 
+                             font=("Segoe UI", 10, "bold"), width=12)
+        login_btn.pack(side=tk.RIGHT)       
+        
+        # Bind Enter key to both fields
+        def on_enter(event):
+            on_login()
+        
+        username_entry.bind('<Return>', on_enter)
+        password_entry.bind('<Return>', on_enter)
+        
+        # Handle window close button
+        def on_close():
+            dialog_closed[0] = True
+            login_dialog.destroy()
+        
+        login_dialog.protocol("WM_DELETE_WINDOW", on_close)
+        
+        # Focus on username field
+        login_dialog.after(100, username_entry.focus_set)
+        
+        print("Waiting for admin dialog interaction...")  # Debug
+        
+        # Wait for dialog to close
+        login_root.wait_window(login_dialog)
+        
+        print(f"Admin dialog closed. Result: success={login_result[0]}, cancelled={dialog_closed[0]}")  # Debug
+        
+        # Check results
+        if dialog_closed[0]:
+            return None  # User cancelled
+        
+        if login_result[0]:
+            return login_result[1]  # Successful login
+        
+        # Failed attempt
+        attempts += 1
+        if attempts >= max_attempts:
+            # Use existing root for error message
+            try:
+                messagebox.showerror("Access Denied", 
+                                   f"Maximum login attempts ({max_attempts}) exceeded.\n"
+                                   "Admin dashboard access denied.")
+            except:
+                print("Failed to show error message")
+            login_root.deiconify()  # Show main window again
             return None
     
     return None

@@ -179,11 +179,28 @@ class ServerManagerDashboard(ServerManagerModule):
         
         # Create root window (temporarily hidden for login)
         self.root = tk.Tk()
-        self.root.withdraw()
+        
+        # On Windows, when launched from trayicon (detached process), ensure proper window handling
+        if os.name == 'nt' and '--debug' not in sys.argv:
+            try:
+                # Force the window to be properly initialized
+                self.root.update_idletasks()
+                # Don't withdraw initially - let the login dialog handle visibility
+            except Exception as e:
+                logger.warning(f"Window initialization issue (likely from trayicon launch): {e}")
+                # Continue anyway
+        
+        # Don't withdraw the main window initially - let login handle it
         
         # Prompt for login using admin authentication dialog (using admin_dashboard)
+        # Pass our existing root window to avoid multiple Tkinter root windows
         try:
-            user = admin_login(self.user_manager)
+            # Import the login function
+            from Host.admin_dashboard import admin_login_with_root, admin_login
+            
+            # Use the version that accepts existing root to avoid conflicts
+            user = admin_login_with_root(self.root, self.user_manager)
+                
             if not user:
                 logger.info("Login cancelled or failed, exiting application")
                 self.root.destroy()
@@ -199,10 +216,21 @@ class ServerManagerDashboard(ServerManagerModule):
         username = getattr(self.current_user, 'username', 'Unknown') if self.current_user else 'Unknown'
         self.root.title(f"Server Manager Dashboard (Logged in as: {username})")
         self.root.minsize(1000, 700)
+        
+        # Ensure the main window is properly visible
         self.root.deiconify()
+        logger.info("Dashboard window deiconified")
+        
+        # Bring window to front and give it focus
+        self.root.lift()
+        self.root.focus_force()
+        self.root.attributes('-topmost', True)
+        self.root.after(100, lambda: self.root.attributes('-topmost', False))
+        logger.info("Dashboard window brought to front and focused")
         
         # Center the main window on screen
         center_window(self.root, 1400, 900)
+        logger.info("Dashboard window centered on screen")
         
         self.setup_ui()
         
@@ -233,8 +261,8 @@ class ServerManagerDashboard(ServerManagerModule):
             logger.error(f"Failed to initialize cluster manager: {str(e)}")
             self.agent_manager = None
         
-        # Initialize system info and timers
-        self.update_system_info()
+        # Initialize system info and timers - defer UI updates until after mainloop starts
+        # self.update_system_info()  # Defer this to avoid Tkinter issues before mainloop
         self.timer_manager.start_timers()
         
         # Get supported server types from server manager
@@ -1163,17 +1191,40 @@ class ServerManagerDashboard(ServerManagerModule):
     
     def run(self):
         """Run the dashboard application"""
-        logger.info("Starting dashboard")
+        logger.info("Starting dashboard run method")
 
-        # Initial updates
-        self.update_server_list(force_refresh=True)
+        try:
+            # Show the window first
+            logger.info("Setting up window protocol and showing window")
+            self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+            self.variables["formDisplayed"] = True
 
-        # Show the window
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.variables["formDisplayed"] = True
+            # Schedule initial updates after mainloop starts
+            # This prevents Tkinter widget updates before the event loop is running
+            def delayed_initial_update():
+                try:
+                    logger.info("Starting delayed initial updates")
+                    self.update_system_info()
+                    self.update_server_list(force_refresh=True)
+                    logger.info("Delayed initial updates completed")
+                except Exception as e:
+                    logger.error(f"Error in delayed initial update: {str(e)}")
 
-        # Start main loop
-        self.root.mainloop()
+            logger.info("Scheduling delayed initial update")
+            self.root.after(100, delayed_initial_update)  # 100ms delay
+
+            # Start main loop
+            logger.info("Starting Tkinter mainloop")
+            self.root.mainloop()
+            logger.info("Tkinter mainloop exited")
+        except Exception as e:
+            logger.error(f"Error starting dashboard: {str(e)}")
+            # Try to show error and exit gracefully
+            try:
+                messagebox.showerror("Dashboard Error", f"Failed to start dashboard: {str(e)}")
+            except:
+                pass  # Messagebox might fail if Tkinter is in bad state
+            self.on_close()
     
     def on_close(self):
         """Handle window close event"""
