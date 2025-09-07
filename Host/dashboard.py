@@ -566,7 +566,7 @@ class ServerManagerDashboard(ServerManagerModule):
         paned_window.add(top_frame, weight=1)
         
         # Scrollable form
-        canvas = tk.Canvas(top_frame)
+        canvas = tk.Canvas(top_frame, highlightthickness=0)
         scrollbar = ttk.Scrollbar(top_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
         
@@ -578,12 +578,24 @@ class ServerManagerDashboard(ServerManagerModule):
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
         
-        canvas.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        # Pack scrollbar first, then canvas
         scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
         
-        # Configure scrollable frame grid
-        for i in range(3):
-            scrollable_frame.columnconfigure(i, weight=1 if i == 1 else 0)
+        # Update canvas window width when the canvas changes size
+        def update_canvas_width(event=None):
+            try:
+                if canvas.winfo_width() > 1:
+                    canvas.itemconfig(1, width=canvas.winfo_width())
+            except:
+                pass
+        
+        canvas.bind("<Configure>", update_canvas_width)
+        
+        # Configure scrollable frame grid with proper column weights
+        scrollable_frame.columnconfigure(0, weight=0, minsize=150)
+        scrollable_frame.columnconfigure(1, weight=1, minsize=200)
+        scrollable_frame.columnconfigure(2, weight=0, minsize=100)
 
         # Form variables
         form_vars = {
@@ -598,7 +610,7 @@ class ServerManagerDashboard(ServerManagerModule):
 
         # Server name
         ttk.Label(scrollable_frame, text="Server Name:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, padx=15, pady=15, sticky=tk.W)
-        name_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['name'], width=40, font=("Segoe UI", 10))
+        name_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['name'], width=35, font=("Segoe UI", 10))
         name_entry.grid(row=0, column=1, columnspan=2, padx=15, pady=15, sticky=tk.EW)
 
         # Server type (readonly)
@@ -626,7 +638,7 @@ class ServerManagerDashboard(ServerManagerModule):
             
             # Minecraft version dropdown
             ttk.Label(scrollable_frame, text="Minecraft Version:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-            version_combo = ttk.Combobox(scrollable_frame, textvariable=form_vars['minecraft_version'], values=[v["id"] for v in mc_versions], state="readonly", width=37, font=("Segoe UI", 10))
+            version_combo = ttk.Combobox(scrollable_frame, textvariable=form_vars['minecraft_version'], values=[v["id"] for v in mc_versions], state="readonly", width=32, font=("Segoe UI", 10))
             version_combo.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
             current_row += 1
             
@@ -634,15 +646,18 @@ class ServerManagerDashboard(ServerManagerModule):
             ttk.Label(scrollable_frame, text="Modloader:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
             modloader_frame = ttk.Frame(scrollable_frame)
             modloader_frame.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
+            for i in range(4):
+                modloader_frame.columnconfigure(i, weight=1)
+            
             modloaders = ["Vanilla", "Fabric", "Forge", "NeoForge"]
             for i, modloader in enumerate(modloaders):
-                ttk.Radiobutton(modloader_frame, text=modloader, variable=form_vars['modloader'], value=modloader).grid(row=0, column=i, padx=10, pady=5, sticky=tk.W)
+                ttk.Radiobutton(modloader_frame, text=modloader, variable=form_vars['modloader'], value=modloader).grid(row=0, column=i, padx=8, pady=5, sticky=tk.W)
             current_row += 1
 
         # App ID (Steam only)
         if server_type == "Steam":
             ttk.Label(scrollable_frame, text="App ID:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-            app_id_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['app_id'], width=30, font=("Segoe UI", 10))
+            app_id_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['app_id'], width=25, font=("Segoe UI", 10))
             app_id_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
             
             def browse_appid():
@@ -832,7 +847,7 @@ class ServerManagerDashboard(ServerManagerModule):
 
         # Install directory
         ttk.Label(scrollable_frame, text="Install Directory:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-        install_dir_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['install_dir'], width=30, font=("Segoe UI", 10))
+        install_dir_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['install_dir'], width=25, font=("Segoe UI", 10))
         install_dir_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
         
         def browse_directory():
@@ -855,7 +870,7 @@ class ServerManagerDashboard(ServerManagerModule):
         # Executable (Minecraft/Other)
         if server_type in ("Minecraft", "Other"):
             ttk.Label(scrollable_frame, text="Executable Path:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-            exe_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['exe_path'], width=30, font=("Segoe UI", 10))
+            exe_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['exe_path'], width=25, font=("Segoe UI", 10))
             exe_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
             
             def browse_exe():
@@ -868,7 +883,7 @@ class ServerManagerDashboard(ServerManagerModule):
 
         # Startup Args (all)
         ttk.Label(scrollable_frame, text="Startup Args:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-        args_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['startup_args'], width=40, font=("Segoe UI", 10))
+        args_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['startup_args'], width=35, font=("Segoe UI", 10))
         args_entry.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
         
         # Create button frame in top section (below the scrollable form)
@@ -904,7 +919,7 @@ class ServerManagerDashboard(ServerManagerModule):
         console_container = ttk.LabelFrame(bottom_frame, text="Installation Log", padding=10)
         console_container.pack(fill=tk.BOTH, expand=True)
         
-        console_output = scrolledtext.ScrolledText(console_container, width=70, height=12, 
+        console_output = scrolledtext.ScrolledText(console_container, width=60, height=12, 
                                                  background="black", foreground="white", 
                                                  font=("Consolas", 9))
         console_output.pack(fill=tk.BOTH, expand=True)
@@ -1044,7 +1059,7 @@ class ServerManagerDashboard(ServerManagerModule):
         dialog.protocol("WM_DELETE_WINDOW", on_close)
         
         # Center dialog relative to parent with proper size for new layout
-        center_window(dialog, 900, 700, self.root)
+        center_window(dialog, 950, 700, self.root)
 
     def update_server_list(self, force_refresh=False):
         """Update server list from configuration files - thread-safe"""
@@ -1946,6 +1961,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         
         # Configure grid
         identity_frame.grid_columnconfigure(1, weight=1)
+        identity_frame.grid_columnconfigure(2, weight=0)
         identity_frame.grid_columnconfigure(3, weight=0)
         
         def toggle_appid_field():
@@ -2052,6 +2068,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         args_frame.grid_columnconfigure(1, weight=1)
         manual_frame.grid_columnconfigure(1, weight=1)
         config_frame.grid_columnconfigure(1, weight=1)
+        config_frame.grid_columnconfigure(2, weight=0)
         
         # Function to enable/disable widgets based on selection
         def toggle_startup_mode():
@@ -2198,6 +2215,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             
             # Configure grid weights
             java_info_frame.grid_columnconfigure(1, weight=1)
+            java_info_frame.grid_columnconfigure(2, weight=0)
+            java_info_frame.grid_columnconfigure(3, weight=0)
         
         # Steam-specific configuration section
         elif server_type == "Steam":
