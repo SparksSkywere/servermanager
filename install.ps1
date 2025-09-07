@@ -444,7 +444,7 @@ function Remove-ServerManagerFirewallRules {
 # Define global variables first
 $global:logMemory = @()
 $global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Install-Log.txt"
-$CurrentVersion = "0.5"
+$CurrentVersion = "0.6"
 $steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
 $gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"
