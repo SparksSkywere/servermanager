@@ -756,12 +756,35 @@ class ServerManagerWebServer(ServerManagerModule):
 
         # Helper function to safely call auth methods
         def safe_auth_call(method_name, *args, **kwargs):
-            if self.auth and hasattr(self.auth, method_name):
-                method = getattr(self.auth, method_name)
-                return method(*args, **kwargs)
-            return None
-
-        @limit_decorator("5 per minute")
+            if method_name == 'verify_token':
+                token = args[0] if args else None
+                if not token:
+                    return None
+                
+                # Unified token verification for verify_token
+                if self.sql_auth:
+                    token_data = self.sql_auth.verify_token(token)
+                    if token_data:
+                        return token_data
+                if self.auth:
+                    token_data = self.auth.verify_token(token)
+                    if token_data:
+                        return token_data
+                if hasattr(self, 'auth_tokens') and token in self.auth_tokens:
+                    token_info = self.auth_tokens[token]
+                    expires = datetime.datetime.fromisoformat(token_info["expires"])
+                    if datetime.datetime.now() < expires:
+                        return token_info
+                    else:
+                        del self.auth_tokens[token]
+                return None
+            else:
+                # For other methods, use the original logic
+                auth_instance = kwargs.get('auth_instance', self.auth)
+                if auth_instance and hasattr(auth_instance, method_name):
+                    method = getattr(auth_instance, method_name)
+                    return method(*args, **kwargs)
+                return None
         @app.route('/api/auth/login', methods=['POST'])
         def api_login():
             try:
@@ -857,6 +880,7 @@ class ServerManagerWebServer(ServerManagerModule):
 
                 token = auth_header.split(' ')[1]
 
+                # Try SQL auth first
                 if self.sql_auth:
                     token_data = self.sql_auth.verify_token(token)
                     if token_data:
@@ -866,6 +890,17 @@ class ServerManagerWebServer(ServerManagerModule):
                             "isAdmin": self.sql_auth.is_admin(token_data["username"])
                         })
 
+                # Try file/SQL auth via self.auth
+                if self.auth:
+                    token_data = self.auth.verify_token(token)
+                    if token_data:
+                        return jsonify({
+                            "authenticated": True,
+                            "username": token_data["username"],
+                            "isAdmin": self.auth.is_admin(token_data["username"])
+                        })
+
+                # Try Windows auth tokens
                 if hasattr(self, 'auth_tokens') and token in self.auth_tokens:
                     token_data = self.auth_tokens[token]
                     expires = datetime.datetime.fromisoformat(token_data["expires"])
@@ -875,7 +910,8 @@ class ServerManagerWebServer(ServerManagerModule):
                             "username": token_data["username"],
                             "isAdmin": token_data.get("isAdmin", False)
                         })
-                    del self.auth_tokens[token]
+                    else:
+                        del self.auth_tokens[token]
 
                 return jsonify({"authenticated": False}), 401
             except Exception as e:
