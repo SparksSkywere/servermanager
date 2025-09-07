@@ -47,10 +47,6 @@ pip install -r requirements.txt
 
 Configure database connections and server settings through the GUI or web interface. Supports SQLite, MySQL, and PostgreSQL.
 
-## Contributing
-
-Contributions are welcome! Please submit issues and pull requests.
-
 ## License
 
 GNU General Public License v3.0
