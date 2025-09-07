@@ -1781,7 +1781,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Create scrollable frame for all content
-        canvas = tk.Canvas(main_frame)
+        canvas = tk.Canvas(main_frame, highlightthickness=0)
         scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
         
@@ -1793,9 +1793,25 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
         
-        # Pack the canvas and scrollbar
-        canvas.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        # Pack scrollbar first, then canvas
         scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        
+        # Update canvas window width when the canvas changes size
+        def update_canvas_width(event=None):
+            try:
+                if canvas.winfo_width() > 1:  # Only update if canvas has a valid width
+                    canvas.itemconfig(1, width=canvas.winfo_width())  # Item ID 1 is the scrollable_frame
+            except:
+                pass
+        
+        canvas.bind("<Configure>", update_canvas_width)
+
+        # Configure scrollable_frame columns
+        scrollable_frame.columnconfigure(0, weight=1, minsize=200)
+        scrollable_frame.columnconfigure(1, weight=1, minsize=200)
+        scrollable_frame.columnconfigure(2, weight=1, minsize=200)
+        scrollable_frame.columnconfigure(3, weight=1, minsize=200)
 
         # Server Identity Section
         identity_frame = ttk.LabelFrame(scrollable_frame, text="Server Identity", padding=10)
@@ -2037,7 +2053,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         # Executable
         ttk.Label(startup_frame, text="Executable:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, padx=10, pady=5, sticky=tk.W)
         exe_var = tk.StringVar(value=server_config.get('ExecutablePath',''))
-        exe_entry = ttk.Entry(startup_frame, textvariable=exe_var, width=35, font=("Segoe UI", 10))
+        exe_entry = ttk.Entry(startup_frame, textvariable=exe_var, width=25, font=("Segoe UI", 10))
         exe_entry.grid(row=0, column=1, padx=10, pady=5, sticky=tk.EW)
         
         def browse_exe():
@@ -2051,7 +2067,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         # Stop command
         ttk.Label(startup_frame, text="Stop Command:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
         stop_var = tk.StringVar(value=server_config.get('StopCommand',''))
-        ttk.Entry(startup_frame, textvariable=stop_var, width=35, font=("Segoe UI", 10)).grid(row=1, column=1, padx=10, pady=5, sticky=tk.EW)
+        ttk.Entry(startup_frame, textvariable=stop_var, width=25, font=("Segoe UI", 10)).grid(row=1, column=1, padx=10, pady=5, sticky=tk.EW)
         
         # Startup arguments section with radio button choice
         args_frame = ttk.LabelFrame(startup_frame, text="Startup Arguments", padding=5)
@@ -2072,7 +2088,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         
         ttk.Label(manual_frame, text="Startup Args:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         args_var = tk.StringVar(value=server_config.get('StartupArgs',''))
-        args_entry = ttk.Entry(manual_frame, textvariable=args_var, width=50)
+        args_entry = ttk.Entry(manual_frame, textvariable=args_var, width=35)
         args_entry.grid(row=0, column=1, padx=5, pady=2, sticky="ew")
         
         # Config file section
@@ -2082,7 +2098,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         # Config file path
         ttk.Label(config_frame, text="Config File:").grid(row=0, column=0, padx=5, pady=2, sticky=tk.W)
         config_file_var = tk.StringVar(value=server_config.get('ConfigFilePath',''))
-        config_file_entry = ttk.Entry(config_frame, textvariable=config_file_var, width=35)
+        config_file_entry = ttk.Entry(config_frame, textvariable=config_file_var, width=25)
         config_file_entry.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
         
         def browse_config():
@@ -2102,21 +2118,24 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         # Config file argument format
         ttk.Label(config_frame, text="Config Argument:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         config_arg_var = tk.StringVar(value=server_config.get('ConfigArgument', '--config'))
-        config_arg_entry = ttk.Entry(config_frame, textvariable=config_arg_var, width=20)
+        config_arg_entry = ttk.Entry(config_frame, textvariable=config_arg_var, width=15)
         config_arg_entry.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W)
         ttk.Label(config_frame, text="(e.g., --config, -c, +exec)", foreground="gray").grid(row=1, column=2, padx=5, pady=2, sticky=tk.W)
         
         # Additional args for config mode
         ttk.Label(config_frame, text="Additional Args:").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
         additional_args_var = tk.StringVar(value=server_config.get('AdditionalArgs',''))
-        additional_args_entry = ttk.Entry(config_frame, textvariable=additional_args_var, width=35)
+        additional_args_entry = ttk.Entry(config_frame, textvariable=additional_args_var, width=25)
         additional_args_entry.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
         ttk.Label(config_frame, text="(optional)", foreground="gray").grid(row=2, column=2, padx=5, pady=2, sticky=tk.W)
         
         # Configure grid weights
-        startup_frame.grid_columnconfigure(1, weight=1)
+        startup_frame.grid_columnconfigure(0, weight=0, minsize=120)
+        startup_frame.grid_columnconfigure(1, weight=1, minsize=200)
+        startup_frame.grid_columnconfigure(2, weight=0, minsize=80)
         args_frame.grid_columnconfigure(0, weight=1)
         args_frame.grid_columnconfigure(1, weight=1)
+        args_frame.grid_columnconfigure(2, weight=0)
         manual_frame.grid_columnconfigure(1, weight=1)
         config_frame.grid_columnconfigure(1, weight=1)
         config_frame.grid_columnconfigure(2, weight=0)
@@ -2221,7 +2240,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             
             ttk.Label(java_info_frame, text="Java Path:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5, padx=10)
             java_path_var = tk.StringVar(value=server_config.get("JavaPath", "java"))
-            java_entry = ttk.Entry(java_info_frame, textvariable=java_path_var, width=50, font=("Segoe UI", 10))
+            java_entry = ttk.Entry(java_info_frame, textvariable=java_path_var, width=30, font=("Segoe UI", 10))
             java_entry.grid(row=0, column=1, sticky=tk.EW, padx=10, pady=5)
             
             def browse_java():
@@ -2257,17 +2276,18 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             
             ttk.Label(java_info_frame, text="JVM Args:", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, sticky=tk.W, pady=5, padx=10)
             jvm_args_var = tk.StringVar(value=server_config.get("JVMArgs", ""))
-            ttk.Entry(java_info_frame, textvariable=jvm_args_var, width=50, font=("Segoe UI", 10)).grid(row=2, column=1, columnspan=2, sticky=tk.EW, padx=10, pady=5)
+            ttk.Entry(java_info_frame, textvariable=jvm_args_var, width=30, font=("Segoe UI", 10)).grid(row=2, column=1, columnspan=2, sticky=tk.EW, padx=10, pady=5)
             
             # Minecraft Version
             ttk.Label(java_info_frame, text="MC Version:", font=("Segoe UI", 10, "bold")).grid(row=3, column=0, sticky=tk.W, pady=5, padx=10)
             mc_version_var = tk.StringVar(value=server_config.get("Version", ""))
-            ttk.Entry(java_info_frame, textvariable=mc_version_var, width=30, font=("Segoe UI", 10)).grid(row=3, column=1, sticky=tk.W, padx=10, pady=5)
+            ttk.Entry(java_info_frame, textvariable=mc_version_var, width=25, font=("Segoe UI", 10)).grid(row=3, column=1, sticky=tk.W, padx=10, pady=5)
             
             # Configure grid weights
-            java_info_frame.grid_columnconfigure(1, weight=1)
-            java_info_frame.grid_columnconfigure(2, weight=0)
-            java_info_frame.grid_columnconfigure(3, weight=0)
+            java_info_frame.grid_columnconfigure(0, weight=0, minsize=100)
+            java_info_frame.grid_columnconfigure(1, weight=1, minsize=150)
+            java_info_frame.grid_columnconfigure(2, weight=0, minsize=80)
+            java_info_frame.grid_columnconfigure(3, weight=0, minsize=100)
         
         # Steam-specific configuration section
         elif server_type == "Steam":
@@ -2286,7 +2306,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             ttk.Checkbutton(steam_info_frame, text="Validate files on update", variable=validate_files_var).grid(row=1, column=0, sticky=tk.W, pady=5, padx=10)
             
             # Configure grid weights
-            steam_info_frame.grid_columnconfigure(1, weight=1)
+            steam_info_frame.grid_columnconfigure(0, weight=1)
+            steam_info_frame.grid_columnconfigure(1, weight=0)
         
         # Other server type configuration section
         elif server_type == "Other":
@@ -2302,10 +2323,11 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             
             ttk.Label(custom_frame, text="Configuration Notes:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky=tk.W, pady=5, padx=10)
             notes_var = tk.StringVar(value=server_config.get("Notes", ""))
-            ttk.Entry(custom_frame, textvariable=notes_var, width=50, font=("Segoe UI", 10)).grid(row=1, column=1, sticky=tk.EW, padx=10, pady=5)
+            ttk.Entry(custom_frame, textvariable=notes_var, width=35, font=("Segoe UI", 10)).grid(row=1, column=1, sticky=tk.EW, padx=10, pady=5)
             
             # Configure grid weights
-            custom_frame.grid_columnconfigure(1, weight=1)        # Allow notes entry to expand
+            custom_frame.grid_columnconfigure(0, weight=0, minsize=140)
+            custom_frame.grid_columnconfigure(1, weight=1, minsize=200)
         if name_var.get() != server_name or type_var.get() != current_server_type:
             warning_frame = ttk.Frame(scrollable_frame)
             warning_frame.pack(fill=tk.X, pady=(0, 15))
@@ -2558,7 +2580,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         ttk.Button(button_frame, text="Save Configuration", command=save_configuration).pack(side=tk.RIGHT, padx=5)
 
         # Center dialog relative to parent
-        center_window(dialog, 900, 850, self.root)
+        center_window(dialog, 950, 850, self.root)
 
     def configure_java(self):
         # Open Java configuration dialog for selected server
@@ -2785,7 +2807,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         ttk.Button(button_frame, text="Save", command=on_save, width=12).pack(side=tk.RIGHT)
         
         # Center dialog
-        center_window(dialog, 800, 700, self.root)
+        center_window(dialog, 950, 750, self.root)
     
     def show_steam_server_config(self, server_name, server_config):
         # Show Steam-specific configuration dialog

@@ -162,30 +162,47 @@ class ServerManagerTrayIcon(ServerManagerModule):
         
         return image
     
+    def get_running_server_count(self):
+        # Get the count of running servers
+        try:
+            if hasattr(self, 'server_manager') and self.server_manager:
+                running_servers = self.server_manager.get_running_servers()
+                return len(running_servers) if running_servers else 0
+            return 0
+        except Exception as e:
+            logger.error(f"Error getting running server count: {str(e)}")
+            return 0
+
     def create_menu(self):
         # Create the tray icon menu
         return pystray.Menu(
             pystray.MenuItem(
-                f"Server Status: {self.server_status}",
+                f"Running servers ({self.get_running_server_count()})",
                 lambda: None,
                 enabled=False
             ),
             pystray.MenuItem(
-                f"Web Server: {self.webserver_status}",
+                f"Webserver ({self.webserver_status})",
                 lambda: None,
                 enabled=False
             ),
-            pystray.MenuItem(
-                "Open Dashboard",
-                self.open_dashboard
-            ),
-            pystray.MenuItem(
-                "Open Web Interface",
-                self.open_web_interface
-            ),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Open Admin Dashboard",
                 self.open_admin_dashboard
+            ),
+            pystray.MenuItem(
+                "Open Server Dashboard",
+                self.open_dashboard
+            ),
+            pystray.MenuItem(
+                "Open Web Dashboard",
+                self.open_web_interface
+            ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                "Restart Servermanager",
+                self.restart_servermanager
             ),
             pystray.MenuItem(
                 "Exit",
@@ -193,27 +210,127 @@ class ServerManagerTrayIcon(ServerManagerModule):
             )
         )
 
+    def restart_servermanager(self):
+        # Restart the server manager by stopping all processes and restarting them
+        logger.info("Restarting Server Manager...")
+        
+        try:
+            # First, try to stop all running servers gracefully
+            if hasattr(self, 'server_manager') and self.server_manager:
+                try:
+                    running_servers = self.server_manager.get_running_servers()
+                    for server_name in running_servers:
+                        logger.info(f"Stopping server: {server_name}")
+                        self.server_manager.stop_server(server_name)
+                except Exception as e:
+                    logger.error(f"Error stopping servers: {str(e)}")
+            
+            # Stop webserver if running
+            try:
+                webserver_pid_file = os.path.join(self.paths["temp"], "webserver.pid")
+                if os.path.exists(webserver_pid_file):
+                    with open(webserver_pid_file, 'r') as f:
+                        pid_info = json.load(f)
+                        pid = pid_info.get("ProcessId")
+                        if pid and self.is_process_running(pid):
+                            logger.info("Stopping webserver...")
+                            os.kill(pid, signal.SIGTERM)
+                            time.sleep(2)  # Wait for graceful shutdown
+            except Exception as e:
+                logger.error(f"Error stopping webserver: {str(e)}")
+            
+            # Stop dashboard if running
+            try:
+                dashboard_pid_file = os.path.join(self.paths["temp"], "dashboard.pid")
+                if os.path.exists(dashboard_pid_file):
+                    with open(dashboard_pid_file, 'r') as f:
+                        pid_info = json.load(f)
+                        pid = pid_info.get("ProcessId")
+                        if pid and self.is_process_running(pid):
+                            logger.info("Stopping dashboard...")
+                            os.kill(pid, signal.SIGTERM)
+                            time.sleep(1)
+            except Exception as e:
+                logger.error(f"Error stopping dashboard: {str(e)}")
+            
+            # Restart the services
+            logger.info("Starting services...")
+            
+            # Start webserver
+            try:
+                webserver_script = os.path.join(self.paths["scripts"], "start_webserver.py")
+                if os.path.exists(webserver_script):
+                    subprocess.Popen([sys.executable, webserver_script], 
+                                   creationflags=subprocess.DETACHED_PROCESS if os.name == 'nt' else 0,
+                                   start_new_session=True)
+                    logger.info("Webserver restarted")
+            except Exception as e:
+                logger.error(f"Error restarting webserver: {str(e)}")
+            
+            # Show notification
+            if self.notifications_enabled and self.icon:
+                self.icon.notify("Server Manager restarted", "Server Manager")
+                
+        except Exception as e:
+            logger.error(f"Error during restart: {str(e)}")
+            if self.notifications_enabled and self.icon:
+                self.icon.notify(f"Restart failed: {str(e)}", "Server Manager Error")
+
     def update_server_status(self):
         # Update server status in the menu
-        # In a real implementation, this would query the server status
-        if self.server_status == "Running":
-            self.server_status = "Stopped"
-        else:
-            self.server_status = "Running"
-        
-        # Check web server status
-        self.check_webserver_status()
-        
-        if self.icon:
-            # Update with status
-            status_text = f"Server: {self.server_status} | Web: {self.webserver_status}"
-            self.icon.title = f"Server Manager - {status_text}"
+        try:
+            # Initialize server manager if not already done
+            if not hasattr(self, 'server_manager') or self.server_manager is None:
+                try:
+                    from Modules.server_manager import ServerManager
+                    self.server_manager = ServerManager()
+                    logger.info("ServerManager initialized for trayicon status updates")
+                except Exception as e:
+                    logger.error(f"Failed to initialize ServerManager: {str(e)}")
+                    self.server_status = "Error"
+                    return
             
-            # Recreate the entire menu with updated status
-            self.icon.menu = self.create_menu()
+            # Get running servers from server manager
+            try:
+                running_servers = self.server_manager.get_running_servers()
+                running_count = len(running_servers) if running_servers else 0
+            except Exception as e:
+                logger.error(f"Error getting running servers: {str(e)}")
+                running_count = 0
+            
+            # Check web server status
+            self.check_webserver_status()
+            
+            if self.icon:
+                # Check if icon is still valid
+                try:
+                    # Try to access icon properties to check if it's still valid
+                    _ = self.icon.title
+                    # Update with status
+                    status_text = f"Running servers ({running_count}) | Webserver ({self.webserver_status})"
+                    self.icon.title = f"Server Manager - {status_text}"
+                    
+                    # Recreate the entire menu with updated status
+                    self.icon.menu = self.create_menu()
+                    logger.debug(f"Updated tray icon menu: {status_text}")
+                except Exception as icon_error:
+                    logger.error(f"Tray icon is invalid, cannot update: {str(icon_error)}")
+                    # Try to recreate the icon
+                    try:
+                        self.icon = pystray.Icon("Server Manager", self.create_icon_image(), menu=self.create_menu())
+                        logger.info("Recreated tray icon")
+                    except Exception as recreate_error:
+                        logger.error(f"Failed to recreate tray icon: {str(recreate_error)}")
+            else:
+                logger.warning("Tray icon is None, cannot update menu")
+        except Exception as e:
+            logger.error(f"Error updating server status: {str(e)}")
         
-        # Schedule next update
-        threading.Timer(10.0, self.update_server_status).start()
+        # Schedule next update - always reschedule even if there's an error
+        try:
+            threading.Timer(10.0, self.update_server_status).start()
+        except Exception as e:
+            logger.error(f"Error scheduling next status update: {str(e)}")
 
     def check_webserver_status(self):
         # Check if the web server is running and update status
@@ -442,16 +559,16 @@ class ServerManagerTrayIcon(ServerManagerModule):
             logger.info(f"Starting dashboard: {' '.join(cmd)}")
             
             if sys.platform == 'win32':
-                # For GUI applications like dashboard, don't use CREATE_NO_WINDOW
-                # as it can interfere with Tkinter window creation and event loop
+                # For GUI applications like dashboard, use CREATE_NEW_PROCESS_GROUP and DETACHED_PROCESS
+                # to ensure it's fully detached from the parent process
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 1  # SW_SHOWNORMAL - Show window normally
-                logger.info("Launching dashboard with SW_SHOWNORMAL")
+                logger.info("Launching dashboard with SW_SHOWNORMAL and detached process")
                 
                 self.dashboard_process = subprocess.Popen(
                     cmd, 
-                    creationflags=subprocess.DETACHED_PROCESS,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
                     startupinfo=startupinfo,
                     # Don't redirect stdout/stderr for GUI apps to prevent blocking
                     close_fds=True
