@@ -11,6 +11,14 @@ import urllib.request
 import threading
 from datetime import datetime
 
+# GUI imports for error dialogs
+try:
+    import tkinter as tk
+    from tkinter import messagebox
+    GUI_AVAILABLE = True
+except ImportError:
+    GUI_AVAILABLE = False
+
 try:
     from Modules.server_logging import get_component_logger, log_server_action, log_exception
     logger = get_component_logger("ServerManager")
@@ -1067,6 +1075,54 @@ class ServerManager(ServerManagerModule):
             logger.error(f"Error validating server config: {str(e)}")
             return [f"Validation error: {str(e)}"], []
 
+    def get_steamcmd_error_description(self, exit_code):
+        # Get human-readable description for SteamCMD exit codes
+        error_codes = {
+            0: "Success - No error occurred",
+            1: "Unknown error - General failure",
+            2: "Invalid arguments - Command line arguments were invalid",
+            3: "Network error - Connection or download failed",
+            4: "Disk space error - Not enough disk space for installation",
+            5: "Authentication failed - Login credentials are incorrect",
+            6: "License error - Steam license validation failed",
+            7: "No subscription - App is not owned or subscription expired",
+            8: "Password required - Password authentication is required but not provided",
+            9: "Two-factor authentication required - Steam Guard code needed",
+            10: "Access denied - Insufficient permissions",
+            11: "Service unavailable - Steam service is temporarily unavailable",
+            12: "Connection timeout - Network connection timed out",
+            13: "Disk write error - Unable to write to disk",
+            14: "Steam client not found - SteamCMD executable not found or corrupted",
+            15: "App not found - The specified App ID does not exist",
+            16: "App not available - App is not available for download",
+            17: "Corrupted download - Downloaded files are corrupted",
+            18: "App already installed - App is already up to date",
+            19: "SteamCMD busy - Another SteamCMD process is running",
+            20: "Rate limited - Too many requests, rate limit exceeded",
+            21: "Region restricted - App not available in your region",
+            22: "Parental controls - Parental controls blocking download",
+            23: "Purchase required - App requires purchase",
+            24: "Beta access required - Beta branch access required",
+            25: "Invalid platform - App not available for this platform",
+            26: "Depot not found - Required depot not found",
+            27: "Missing executable - Required executable not found",
+            28: "SteamCMD version too old - SteamCMD needs to be updated",
+            29: "Content servers busy - All content servers are busy",
+            30: "Disk read error - Unable to read from disk",
+            31: "App manifest error - App manifest is corrupted or invalid",
+            32: "App not compatible - App not compatible with this version of SteamCMD",
+            33: "Workshop item not found - Workshop item does not exist",
+            34: "Workshop quota exceeded - Workshop upload/download quota exceeded",
+            35: "Workshop access denied - No permission to access workshop item",
+            36: "Workshop file corrupted - Workshop file is corrupted",
+            37: "Workshop dependency missing - Required workshop dependency not found",
+            38: "Workshop item private - Workshop item is private",
+            39: "Workshop item removed - Workshop item has been removed",
+            40: "Workshop service unavailable - Workshop service is down"
+        }
+        
+        return error_codes.get(exit_code, f"Unknown error code {exit_code} - Check SteamCMD documentation for details")
+
     def install_steam_server(self, server_name, app_id, install_dir, steam_cmd_path, credentials, progress_callback=None, cancel_flag=None):
         # Install a Steam server using SteamCMD
         try:
@@ -1212,7 +1268,12 @@ class ServerManager(ServerManagerModule):
                 progress_callback(f"[INFO] SteamCMD process completed with exit code: {exit_code}")
             
             if exit_code != 0 and not installation_success:
-                raise Exception(f"SteamCMD failed with exit code: {exit_code}")
+                error_description = self.get_steamcmd_error_description(exit_code)
+                
+                # Log detailed error information
+                logger.error(f"SteamCMD installation failed with exit code {exit_code}: {error_description}")
+                
+                raise Exception(f"SteamCMD failed with exit code {exit_code}: {error_description}")
             
             return True, "Steam server installed successfully"
             

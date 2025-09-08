@@ -265,11 +265,59 @@ class ServerManagerDashboard(ServerManagerModule):
         # self.update_system_info()  # Defer this to avoid Tkinter issues before mainloop
         self.timer_manager.start_timers()
         
+        # Detect and reattach to running server processes
+        self._reattach_to_running_servers()
+        
         # Get supported server types from server manager
         if self.server_manager:
             self.supported_server_types = self.server_manager.get_supported_server_types()
         else:
             self.supported_server_types = ["Steam", "Minecraft", "Other"]
+
+    def _reattach_to_running_servers(self):
+        # Detect and reattach to running server processes
+        try:
+            if not self.server_manager or not self.console_manager:
+                return
+                
+            logger.info("Detecting running server processes for console reattachment...")
+            
+            # Get all configured servers
+            server_configs = self.server_manager.get_servers()
+            
+            for server_name, server_config in server_configs.items():
+                try:
+                    # Check if server process is running
+                    pid = server_config.get('ProcessId') or server_config.get('PID')
+                    if pid:
+                        try:
+                            import psutil
+                            if psutil.pid_exists(pid):
+                                process = psutil.Process(pid)
+                                if process.is_running():
+                                    logger.info(f"Found running server process for {server_name} (PID: {pid})")
+                                    
+                                    # Reattach console to the running process
+                                    success = self.console_manager.attach_console_to_process(
+                                        server_name, process, server_config
+                                    )
+                                    
+                                    if success:
+                                        logger.info(f"Successfully reattached console to {server_name}")
+                                    else:
+                                        logger.warning(f"Failed to reattach console to {server_name}")
+                        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                            logger.debug(f"Process {pid} for {server_name} is not accessible: {e}")
+                        except Exception as e:
+                            logger.error(f"Error checking process {pid} for {server_name}: {e}")
+                            
+                except Exception as e:
+                    logger.error(f"Error processing server {server_name} for reattachment: {e}")
+                    
+            logger.info("Finished detecting running server processes")
+            
+        except Exception as e:
+            logger.error(f"Error during server reattachment: {e}")
 
     def setup_menu_bar(self):
         """Setup the menu bar with update options"""
@@ -1017,6 +1065,16 @@ class ServerManagerDashboard(ServerManagerModule):
                 else:
                     append_console(f"[ERROR] {message}")
                     status_var.set("Installation failed!")
+                    
+                    # Show detailed error dialog for installation failures
+                    try:
+                        messagebox.showerror("Installation Failed", 
+                                           f"Server installation failed:\n\n{message}\n\n"
+                                           "Please check the console output for more details.")
+                    except tk.TclError:
+                        # Dialog might be destroyed
+                        pass
+                    
                     create_button.config(state=tk.NORMAL)
                     cancel_button.config(state=tk.DISABLED)
                     
@@ -1360,7 +1418,8 @@ class ServerManagerDashboard(ServerManagerModule):
                 # Update UI on main thread
                 def update_ui():
                     if success:
-                        messagebox.showinfo("Success", message)
+                        # Server stopped successfully - no dialog popup
+                        pass
                     else:
                         messagebox.showinfo("Info", message)
                     # Always refresh the server list to show current status

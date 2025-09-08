@@ -61,7 +61,7 @@ class RealTimeConsole:
         self.log_file_positions = {}  # Track positions in log files
         
     def attach_to_process(self, process):
-        # Attach console to an existing process object
+        # Attach console to an existing process object (subprocess.Popen or psutil.Process)
         try:
             if not process:
                 logger.error(f"Cannot attach console to {self.server_name}: No process provided")
@@ -74,13 +74,17 @@ class RealTimeConsole:
             # Open log files if specified
             self._open_log_files()
             
-            # Add session start message
-            self._add_output(f"=== Console attached to {self.server_name} (PID: {process.pid}) ===", "system")
+            # Load historical output from log files before starting new monitoring
+            self._load_historical_output()
             
-            # Start monitoring threads
+            # Add session start message
+            pid = process.pid if hasattr(process, 'pid') else 'Unknown'
+            self._add_output(f"=== Console attached to {self.server_name} (PID: {pid}) ===", "system")
+            
+            # Start monitoring threads (only if process has stdout/stderr)
             self._start_monitoring_threads()
             
-            logger.info(f"Console attached to {self.server_name} (PID: {process.pid})")
+            logger.info(f"Console attached to {self.server_name} (PID: {pid})")
             return True
             
         except Exception as e:
@@ -113,10 +117,51 @@ class RealTimeConsole:
         except Exception as e:
             logger.error(f"Error closing log files for {self.server_name}: {e}")
     
+    def _handle_process_termination(self):
+        # Handle when the attached process has ended
+        try:
+            if self.is_active:
+                self.is_active = False
+                pid = self.process.pid if self.process and hasattr(self.process, 'pid') else 'Unknown'
+                self._add_output(f"=== Process {self.server_name} (PID: {pid}) has ended ===", "system")
+                logger.info(f"Process {self.server_name} (PID: {pid}) has ended")
+                
+                # Close log files
+                self._close_log_files()
+                
+                # Stop monitoring threads
+                self.stop_event.set()
+                
+        except Exception as e:
+            logger.error(f"Error handling process termination for {self.server_name}: {e}")
+    
+    def _is_process_running(self):
+        # Check if the attached process is still running
+        try:
+            if not self.process:
+                return False
+                
+            # For subprocess.Popen objects
+            if hasattr(self.process, 'poll'):
+                return self.process.poll() is None
+            # For psutil.Process objects
+            elif hasattr(self.process, 'is_running'):
+                return self.process.is_running()
+            else:
+                # Fallback - try to get process info
+                try:
+                    self.process.pid
+                    return True
+                except:
+                    return False
+        except Exception as e:
+            logger.debug(f"Error checking if process is running: {e}")
+            return False
+    
     def _start_monitoring_threads(self):
         # Start all monitoring threads
         try:
-            # Start stdout monitoring
+            # Start stdout monitoring if process has stdout (subprocess.Popen style)
             if self.process and hasattr(self.process, 'stdout') and self.process.stdout:
                 self.output_thread = threading.Thread(
                     target=self._monitor_stdout,
@@ -125,8 +170,9 @@ class RealTimeConsole:
                 )
                 self.output_thread.start()
             
-            # Start stderr monitoring (only if not redirected to stdout)
-            if self.process and hasattr(self.process, 'stderr') and self.process.stderr and self.process.stderr != self.process.stdout:
+            # Start stderr monitoring (only if not redirected to stdout and has stderr)
+            if (self.process and hasattr(self.process, 'stderr') and self.process.stderr and 
+                self.process.stderr != self.process.stdout):
                 self.error_thread = threading.Thread(
                     target=self._monitor_stderr,
                     daemon=True,
@@ -134,13 +180,14 @@ class RealTimeConsole:
                 )
                 self.error_thread.start()
             
-            # Start command input handler
-            self.input_thread = threading.Thread(
-                target=self._handle_commands,
-                daemon=True,
-                name=f"Console-{self.server_name}-Input"
-            )
-            self.input_thread.start()
+            # Start command input handler (only if process has stdin)
+            if self.process and hasattr(self.process, 'stdin') and self.process.stdin:
+                self.input_thread = threading.Thread(
+                    target=self._handle_commands,
+                    daemon=True,
+                    name=f"Console-{self.server_name}-Input"
+                )
+                self.input_thread.start()
             
             # Start log file monitoring for additional output capture
             self._discover_server_logs()
@@ -175,8 +222,9 @@ class RealTimeConsole:
                                         if self.stdout_log:
                                             self.stdout_log.write(f"{datetime.now().isoformat()} {line}\n")
                                             self.stdout_log.flush()
-                                elif self.process.poll() is not None:
+                                elif not self._is_process_running():
                                     # Process has ended
+                                    self._handle_process_termination()
                                     break
                                 else:
                                     # Small sleep to prevent excessive CPU usage
@@ -200,7 +248,8 @@ class RealTimeConsole:
                                                 self.stdout_log.flush()
                                 else:
                                     # Check if process ended
-                                    if self.process.poll() is not None:
+                                    if not self._is_process_running():
+                                        self._handle_process_termination()
                                         break
                             except ImportError:
                                 # Fallback without select
@@ -212,7 +261,8 @@ class RealTimeConsole:
                                         if self.stdout_log:
                                             self.stdout_log.write(f"{datetime.now().isoformat()} {line}\n")
                                             self.stdout_log.flush()
-                                elif self.process.poll() is not None:
+                                elif not self._is_process_running():
+                                    self._handle_process_termination()
                                     break
                                 else:
                                     time.sleep(0.05)
@@ -252,7 +302,8 @@ class RealTimeConsole:
                                                 self.stderr_log.flush()
                                 else:
                                     # Check if process ended
-                                    if self.process.poll() is not None:
+                                    if not self._is_process_running():
+                                        self._handle_process_termination()
                                         break
                             else:
                                 # Fallback for Windows
@@ -264,7 +315,8 @@ class RealTimeConsole:
                                         if self.stderr_log:
                                             self.stderr_log.write(f"{datetime.now().isoformat()} {line}\n")
                                             self.stderr_log.flush()
-                                elif self.process.poll() is not None:
+                                elif not self._is_process_running():
+                                    self._handle_process_termination()
                                     break
                                 else:
                                     time.sleep(0.05)  # Shorter sleep for more responsive output
@@ -278,7 +330,8 @@ class RealTimeConsole:
                                     if self.stderr_log:
                                         self.stderr_log.write(f"{datetime.now().isoformat()} {line}\n")
                                         self.stderr_log.flush()
-                            elif self.process.poll() is not None:
+                            elif not self._is_process_running():
+                                self._handle_process_termination()
                                 break
                             else:
                                 time.sleep(0.05)
@@ -348,6 +401,14 @@ class RealTimeConsole:
     def _discover_server_logs(self):
         # Discover additional log files that the server might write to
         try:
+            # First, add the log files specified in the server config
+            stdout_path = self.server_config.get('LogStdout')
+            stderr_path = self.server_config.get('LogStderr')
+            
+            # Note: Config log files are handled separately in _load_historical_output
+            # We don't add them to server_log_paths to avoid duplication
+            
+            # Then discover additional log files in the install directory
             install_dir = self.server_config.get('InstallDir', '')
             if not install_dir or not os.path.exists(install_dir):
                 return
@@ -371,15 +432,11 @@ class RealTimeConsole:
                 full_pattern = os.path.join(install_dir, pattern)
                 for log_file in glob.glob(full_pattern):
                     if os.path.isfile(log_file) and log_file not in self.server_log_paths:
+                        # Skip config log files to avoid duplication
+                        if log_file == stdout_path or log_file == stderr_path:
+                            continue
                         self.server_log_paths.append(log_file)
-                        # Start from END of file to only show new content from current session
-                        try:
-                            with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
-                                f.seek(0, 2)  # Seek to end of file
-                                self.log_file_positions[log_file] = f.tell()
-                        except:
-                            self.log_file_positions[log_file] = 0
-                        logger.debug(f"Found server log file: {log_file} (starting from end)")
+                        logger.debug(f"Found server log file: {log_file}")
             
         except Exception as e:
             logger.debug(f"Error discovering server logs: {e}")
@@ -391,6 +448,12 @@ class RealTimeConsole:
             
             while self.is_active and not self.stop_event.is_set():
                 try:
+                    # For subprocess.Popen objects, stop monitoring if process has ended
+                    if hasattr(self.process, 'poll') and not self._is_process_running():
+                        logger.debug(f"Process {self.server_name} has ended, stopping log file monitoring")
+                        self._handle_process_termination()
+                        break
+                    
                     for log_file in self.server_log_paths:
                         try:
                             if os.path.exists(log_file):
@@ -595,7 +658,7 @@ class RealTimeConsole:
             logger.error(f"Error showing console window for {self.server_name}: {e}")
     
     def _populate_existing_output(self):
-        # Populate console with existing output buffer
+        # Populate console with existing output buffer and historical log data
         try:
             if not self.text_widget:
                 return
@@ -603,6 +666,12 @@ class RealTimeConsole:
             self.text_widget.config(state=tk.NORMAL)
             self.text_widget.delete(1.0, tk.END)
             
+            # Only load historical output if buffer is empty (first time)
+            with self.buffer_lock:
+                if not self.output_buffer:
+                    self._load_historical_output()
+            
+            # Add current buffer output
             with self.buffer_lock:
                 for entry in self.output_buffer:
                     self.text_widget.insert(tk.END, entry['text'] + "\n", entry['type'])
@@ -612,6 +681,73 @@ class RealTimeConsole:
             
         except Exception as e:
             logger.error(f"Error populating existing output: {e}")
+    
+    def _load_historical_output(self):
+        # Load historical output from log files
+        try:
+            # Load from stdout log file specified in config
+            stdout_path = self.server_config.get('LogStdout')
+            if stdout_path and os.path.exists(stdout_path):
+                self._load_log_file(stdout_path, "stdout")
+            
+            # Load from stderr log file specified in config
+            stderr_path = self.server_config.get('LogStderr')
+            if stderr_path and os.path.exists(stderr_path):
+                self._load_log_file(stderr_path, "stderr")
+            
+            # Load from additional server log files (discovered in install directory)
+            for log_file in self.server_log_paths:
+                if os.path.exists(log_file):
+                    self._load_log_file(log_file, "stdout")
+                    
+        except Exception as e:
+            logger.debug(f"Error loading historical output: {e}")
+    
+    def _load_log_file(self, log_file_path, msg_type):
+        # Load output from a specific log file
+        try:
+            with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+                
+                # Only load the last 500 lines to avoid overwhelming the console
+                # but ensure we get recent output
+                if len(lines) > 500:
+                    lines = lines[-500:]
+                
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        # Skip repetitive startup messages and old entries
+                        if self._is_old_log_entry(line):
+                            continue
+                            
+                        # Format as historical entry
+                        timestamp = datetime.now().strftime("%H:%M:%S")
+                        formatted_text = f"[{timestamp}] [HISTORY] {line}"
+                        
+                        # Add to buffer
+                        with self.buffer_lock:
+                            self.output_buffer.append({
+                                'text': formatted_text,
+                                'type': msg_type,
+                                'timestamp': timestamp
+                            })
+                            
+                            # Maintain buffer size
+                            if len(self.output_buffer) > self.max_buffer_size:
+                                self.output_buffer.pop(0)
+                        
+                        # Update GUI if available
+                        if self.text_widget and self.window and self.window.winfo_exists():
+                            self.text_widget.insert(tk.END, formatted_text + "\n", msg_type)
+                            
+                # Update the log file position to the end of the file for future monitoring
+                # This ensures we don't re-read the historical data
+                f.seek(0, 2)  # Seek to end
+                self.log_file_positions[log_file_path] = f.tell()
+                            
+        except Exception as e:
+            logger.debug(f"Error loading log file {log_file_path}: {e}")
     
     def _send_command_gui(self):
         # Send command from GUI entry

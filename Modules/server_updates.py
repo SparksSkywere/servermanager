@@ -147,9 +147,16 @@ class ServerUpdateManager(ServerManagerModule):
                 
                 return True, "Update check completed successfully", has_updates
             else:
-                error_msg = f"SteamCMD failed with return code {process.returncode}"
+                exit_code = process.returncode
+                error_description = "Unknown error"
+                
+                # Get detailed error description if server_manager is available
+                if self.server_manager and hasattr(self.server_manager, 'get_steamcmd_error_description'):
+                    error_description = self.server_manager.get_steamcmd_error_description(exit_code)
+                
+                error_msg = f"SteamCMD failed with exit code {exit_code}: {error_description}"
                 if stderr:
-                    error_msg += f": {stderr.strip()}"
+                    error_msg += f" (Details: {stderr.strip()})"
                 return False, error_msg, False
                 
         except subprocess.TimeoutExpired:
