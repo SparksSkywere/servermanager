@@ -420,6 +420,34 @@ class ServerManager:
             return True
         return False
 
+    def create_server_config(self, server_name, server_type, install_dir, executable_path="", startup_args="", app_id="", version="", modloader=""):
+        try:
+            config_file = os.path.join(self.servers_path, f"{server_name}.json")
+            if os.path.exists(config_file):
+                return False, "Server already exists"
+            
+            server_config = {
+                "Name": server_name,
+                "Type": server_type,
+                "InstallDir": install_dir,
+                "ExecutablePath": executable_path,
+                "StartupArgs": startup_args,
+                "AppId": app_id,
+                "Version": version,
+                "Modloader": modloader,
+                "Created": datetime.datetime.now().isoformat(),
+                "LastUpdate": datetime.datetime.now().isoformat()
+            }
+            
+            os.makedirs(self.servers_path, exist_ok=True)
+            with open(config_file, 'w') as f:
+                json.dump(server_config, f, indent=4)
+            
+            return True, "Server configuration created successfully"
+        except Exception as e:
+            logger.error(f"Error creating server config: {e}")
+            return False, f"Failed to create server config: {str(e)}"
+
 # Import common module
 from Modules.common import ServerManagerModule
 
@@ -918,8 +946,8 @@ class ServerManagerWebServer(ServerManagerModule):
                 logger.error(f"Auth verification error: {e}")
                 return jsonify({"error": "Authentication verification error"}), 500
 
-        @app.route('/api/servers', methods=['GET'])
-        def api_get_servers():
+        @app.route('/api/servers', methods=['GET', 'POST'])
+        def api_servers():
             try:
                 auth_header = request.headers.get('Authorization')
                 if not auth_header or not auth_header.startswith('Bearer '):
@@ -931,14 +959,94 @@ class ServerManagerWebServer(ServerManagerModule):
                 if not token_data:
                     return jsonify({"error": "Invalid or expired token"}), 401
 
-                if self.server_manager is None:
-                    return jsonify({"error": "Server manager not available"}), 500
-                    
-                servers = self.server_manager.get_all_servers()
-                return jsonify(servers)
+                if request.method == 'GET':
+                    if self.server_manager is None:
+                        return jsonify({"error": "Server manager not available"}), 500
+                        
+                    servers = self.server_manager.get_all_servers()
+                    return jsonify(servers), 200
+
+                elif request.method == 'POST':
+                    if self.server_manager is None:
+                        return jsonify({"error": "Server manager not available"}), 500
+
+                    data = request.get_json()
+                    if not data:
+                        return jsonify({"error": "No data provided"}), 400
+
+                    # Extract server data
+                    server_name = data.get('name', '').strip()
+                    server_type = data.get('type', '').strip()
+                    server_path = data.get('path', '').strip()
+
+                    if not server_name:
+                        return jsonify({"error": "Server name is required"}), 400
+
+                    if not server_type:
+                        return jsonify({"error": "Server type is required"}), 400
+
+                    if not server_path:
+                        return jsonify({"error": "Server path is required"}), 400
+
+                    # Create server configuration
+                    try:
+                        if hasattr(self.server_manager, 'create_server_config'):
+                            success, message = self.server_manager.create_server_config(
+                                server_name=server_name,
+                                server_type=server_type,
+                                install_dir=server_path,
+                                executable_path="",  # Empty executable path - will be set later
+                                startup_args="",
+                                app_id="",
+                                version="",
+                                modloader=""
+                            )
+                        else:
+                            # Fallback: create config file directly
+                            # Get server manager directory from registry
+                            try:
+                                import winreg
+                                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\SkywereIndustries\ServerManager")
+                                server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
+                                winreg.CloseKey(key)
+                                servers_dir = os.path.join(server_manager_dir, "servers")
+                            except:
+                                # Ultimate fallback
+                                servers_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "servers")
+                            
+                            config_file = os.path.join(servers_dir, f"{server_name}.json")
+                            if os.path.exists(config_file):
+                                return jsonify({"error": "Server already exists"}), 409
+                            
+                            server_config = {
+                                "Name": server_name,
+                                "Type": server_type,
+                                "InstallDir": server_path,
+                                "ExecutablePath": "",
+                                "StartupArgs": "",
+                                "Created": datetime.datetime.now().isoformat(),
+                                "LastUpdate": datetime.datetime.now().isoformat()
+                            }
+                            
+                            os.makedirs(servers_dir, exist_ok=True)
+                            with open(config_file, 'w') as f:
+                                json.dump(server_config, f, indent=4)
+                            
+                            success, message = True, "Server configuration created successfully"
+
+                        if success:
+                            return jsonify({"success": True, "message": message}), 200
+                        else:
+                            return jsonify({"error": message}), 400
+                    except AttributeError:
+                        return jsonify({"error": "Server creation not available"}), 500
+
             except Exception as e:
-                logger.error(f"Get servers error: {e}")
-                return jsonify({"error": "Failed to get servers"}), 500
+                logger.error(f"Servers API error: {e}")
+                return jsonify({"error": "Internal server error"}), 500
+
+            # This should not be reached due to method restriction, but for type safety
+            return jsonify({"error": "Method not allowed"}), 405
 
         @app.route('/api/servers/<server_id>/start', methods=['POST'])
         def api_start_server(server_id):

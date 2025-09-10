@@ -305,7 +305,7 @@ class ServerManager(ServerManagerModule):
             
             if not executable_path:
                 logger.error("No executable specified. Please configure the server startup settings.")
-                return False, "No executable specified. Please configure the server startup settings."
+                return False, "No executable specified. Please configure the server startup settings in the server configuration dialog."
                 
             # Resolve executable path
             exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
@@ -1041,14 +1041,14 @@ class ServerManager(ServerManagerModule):
         warnings = []
         
         try:
-            # Check executable path
-            executable_path = server_config.get('ExecutablePath', '')
-            if not executable_path:
-                errors.append("Executable path is required")
-            else:
-                exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
-                if not os.path.exists(exe_full):
-                    warnings.append(f"Executable not found: {exe_full}")
+            # Check executable path - REMOVED: Executable path is no longer required during initial setup
+            # executable_path = server_config.get('ExecutablePath', '')
+            # if not executable_path:
+            #     errors.append("Executable path is required")
+            # else:
+            #     exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
+            #     if not os.path.exists(exe_full):
+            #         warnings.append(f"Executable not found: {exe_full}")
             
             # Check install directory
             if not install_dir or not os.path.exists(install_dir):

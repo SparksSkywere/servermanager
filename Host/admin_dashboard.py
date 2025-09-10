@@ -108,9 +108,7 @@ def admin_login(user_manager):
                     login_result[0] = True
                     login_result[1] = user
                     login_dialog.destroy()
-                    # Don't destroy login_root - it's the main dashboard window!
-                    # Deiconify it to show the main window again
-                    login_root.deiconify()
+                    login_root.destroy()
                 else:
                     print("Authentication failed - invalid credentials")
                     status_var.set("Invalid username or password. Please try again.")
@@ -125,7 +123,7 @@ def admin_login(user_manager):
             print("Admin login cancelled")
             dialog_closed[0] = True
             login_dialog.destroy()
-            # Don't destroy login_root - it's the main dashboard window!
+            login_root.destroy()
         
         # Button frame at the bottom
         button_frame = tk.Frame(container, bg='white')
@@ -151,7 +149,7 @@ def admin_login(user_manager):
         def on_close():
             dialog_closed[0] = True
             login_dialog.destroy()
-            # Don't destroy login_root - it's the main dashboard window!
+            login_root.destroy()
         
         login_dialog.protocol("WM_DELETE_WINDOW", on_close)
         
@@ -178,6 +176,7 @@ def admin_login(user_manager):
             messagebox.showerror("Access Denied", 
                                f"Maximum login attempts ({max_attempts}) exceeded.\n"
                                "Admin dashboard access denied.")
+            login_root.destroy()
             return None
     
     return None

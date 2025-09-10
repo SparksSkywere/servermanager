@@ -428,6 +428,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_context_menu.add_separator()
         self.server_context_menu.add_command(label="Start Server", command=self.start_server)
         self.server_context_menu.add_command(label="Stop Server", command=self.stop_server)
+        self.server_context_menu.add_command(label="Kill Process", command=self.kill_server_process)
         self.server_context_menu.add_command(label="Restart Server", command=self.restart_server)
         self.server_context_menu.add_command(label="View Process Details", command=self.view_process_details)
         self.server_context_menu.add_command(label="Show Console", command=self.show_server_console)
@@ -678,7 +679,7 @@ class ServerManagerDashboard(ServerManagerModule):
             'name': tk.StringVar(),
             'app_id': tk.StringVar(),
             'install_dir': tk.StringVar(),
-            'exe_path': tk.StringVar(),
+            # 'exe_path': tk.StringVar(),  # REMOVED: No longer required during installation
             'startup_args': tk.StringVar(),
             'minecraft_version': tk.StringVar(),
             'modloader': tk.StringVar(value="Vanilla")
@@ -943,24 +944,24 @@ class ServerManagerDashboard(ServerManagerModule):
         ttk.Label(scrollable_frame, text=help_text, foreground="gray", font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
         current_row += 1
 
-        # Executable (Minecraft/Other)
-        if server_type in ("Minecraft", "Other"):
-            ttk.Label(scrollable_frame, text="Executable Path:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-            exe_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['exe_path'], width=25, font=("Segoe UI", 10))
-            exe_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
-            
-            def browse_exe():
-                fp = filedialog.askopenfilename(title="Select Executable",
-                    filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd;*.ps1"),("All","*.*")])
-                if fp:
-                    form_vars['exe_path'].set(fp)
-            ttk.Button(scrollable_frame, text="Browse", command=browse_exe, width=12).grid(row=current_row, column=2, padx=15, pady=10)
-            current_row += 1
+        # Executable (Minecraft/Other) - REMOVED: No longer required during installation
+        # if server_type in ("Minecraft", "Other"):
+        #     ttk.Label(scrollable_frame, text="Executable Path:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
+        #     exe_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['exe_path'], width=25, font=("Segoe UI", 10))
+        #     exe_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
+        #     
+        #     def browse_exe():
+        #         fp = filedialog.askopenfilename(title="Select Executable",
+        #             filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd;*.ps1"),("All","*.*")])
+        #         if fp:
+        #             form_vars['exe_path'].set(fp)
+        #     ttk.Button(scrollable_frame, text="Browse", command=browse_exe, width=12).grid(row=current_row, column=2, padx=15, pady=10)
+        #     current_row += 1
 
-        # Startup Args (all)
-        ttk.Label(scrollable_frame, text="Startup Args:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-        args_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['startup_args'], width=35, font=("Segoe UI", 10))
-        args_entry.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
+        # Startup Args (all) - REMOVED: No longer required during installation
+        # ttk.Label(scrollable_frame, text="Startup Args:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
+        # args_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['startup_args'], width=35, font=("Segoe UI", 10))
+        # args_entry.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
         
         # Create button frame in top section (below the scrollable form)
         button_container = ttk.Frame(top_frame)
@@ -1481,7 +1482,8 @@ class ServerManagerDashboard(ServerManagerModule):
                 # Update UI on main thread
                 def update_ui():
                     if success:
-                        messagebox.showinfo("Success", message)
+                        # Server restarted successfully - no dialog popup
+                        pass
                     else:
                         messagebox.showerror("Error", message)
                     # Always refresh the server list to show current status
@@ -2429,8 +2431,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                     errors.append("AppID must contain only numbers")
             
             # Validate executable
-            if not exe_path:
-                errors.append("Executable path is required")
+            # REMOVED: Executable path is no longer required
+            # if not exe_path:
+            #     errors.append("Executable path is required")
             
             return errors
         
@@ -2624,7 +2627,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             # Test if the executable path exists
             exe_path = exe_var.get().strip()
             if not exe_path:
-                messagebox.showwarning("Test", "Please specify an executable path first.")
+                messagebox.showinfo("Test", "No executable path specified. You can set this later after the server files are downloaded.")
                 return
                 
             exe_abs = exe_path if os.path.isabs(exe_path) else os.path.join(install_dir, exe_path)
@@ -3840,6 +3843,62 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         except Exception as e:
             log_exception(e, "Error in batch update server types")
             messagebox.showerror("Update Error", f"Failed to update server types:\n{str(e)}")
+
+    def kill_server_process(self):
+        """Kill the process for the selected server"""
+        selected = self.server_list.selection()
+        if not selected:
+            messagebox.showinfo("No Selection", "Please select a server first.")
+            return
+        
+        server_name = self.server_list.item(selected[0])['values'][0]
+        
+        # Confirm action
+        if not messagebox.askyesno("Kill Process", 
+                                 f"Are you sure you want to forcefully kill the process for '{server_name}'?\n\nThis action cannot be undone and may cause data loss.",
+                                 parent=self.root):
+            return
+        
+        # Try to kill via console manager first
+        if self.console_manager and hasattr(self.console_manager, 'kill_process'):
+            if self.console_manager.kill_process(server_name):
+                messagebox.showinfo("Success", f"Process for '{server_name}' has been killed.", parent=self.root)
+                self.update_server_list()
+                return
+        
+        # Fallback: try to find and kill the process directly
+        try:
+            # Get server configuration
+            if self.server_manager:
+                server_config = self.server_manager.get_server_config(server_name)
+                if server_config:
+                    # Try to find process by executable path
+                    exe_path = server_config.get('ExecutablePath', '')
+                    if exe_path and os.path.exists(exe_path):
+                        import psutil
+                        exe_name = os.path.basename(exe_path)
+                        
+                        # Look for processes with matching executable name
+                        killed = False
+                        for proc in psutil.process_iter(['pid', 'name', 'exe']):
+                            try:
+                                if proc.info['name'] == exe_name or (proc.info['exe'] and os.path.basename(proc.info['exe']) == exe_name):
+                                    logger.info(f"Killing process {proc.info['pid']} for {server_name}")
+                                    proc.kill()
+                                    killed = True
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                continue
+                        
+                        if killed:
+                            messagebox.showinfo("Success", f"Process for '{server_name}' has been killed.", parent=self.root)
+                            self.update_server_list()
+                            return
+            
+            messagebox.showerror("Error", f"Could not find or kill process for '{server_name}'.", parent=self.root)
+            
+        except Exception as e:
+            logger.error(f"Error killing process for {server_name}: {e}")
+            messagebox.showerror("Error", f"Failed to kill process: {str(e)}", parent=self.root)
 
     def show_help(self):
         """Show help dialog using the documentation module"""

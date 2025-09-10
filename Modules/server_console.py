@@ -8,6 +8,9 @@ import threading
 import time
 import queue
 import logging
+import signal
+import glob
+import select
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
@@ -235,7 +238,6 @@ class RealTimeConsole:
                         else:
                             # Unix systems - use select for non-blocking reads
                             try:
-                                import select
                                 ready, _, _ = select.select([self.process.stdout], [], [], 0.1)
                                 if ready:
                                     line = self.process.stdout.readline()
@@ -288,7 +290,6 @@ class RealTimeConsole:
                     if self.process and hasattr(self.process, 'stderr') and self.process.stderr:
                         # Use select/poll for non-blocking reads if available
                         try:
-                            import select
                             if hasattr(select, 'select'):
                                 ready, _, _ = select.select([self.process.stderr], [], [], 0.1)
                                 if ready:
@@ -427,7 +428,6 @@ class RealTimeConsole:
                 'addons/sourcemod/logs/*.log'  # SourceMod logs
             ]
             
-            import glob
             for pattern in log_patterns:
                 full_pattern = os.path.join(install_dir, pattern)
                 for log_file in glob.glob(full_pattern):
@@ -640,6 +640,7 @@ class RealTimeConsole:
             btn_frame.pack(fill=tk.X)
             
             ttk.Button(btn_frame, text="Clear", command=self._clear_output).pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(btn_frame, text="Kill Process", command=self._kill_process_gui).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(btn_frame, text="Close", command=self._close_window).pack(side=tk.RIGHT)
             
             # Bind events
@@ -793,6 +794,38 @@ class RealTimeConsole:
         except Exception as e:
             logger.debug(f"Error navigating command history: {e}")
     
+    def _kill_process_gui(self):
+        # Kill process from GUI with confirmation
+        try:
+            if not self.process:
+                messagebox.showwarning("No Process", f"No process is currently attached to {self.server_name}.")
+                return
+            
+            parent_window = self.window if self.window else None
+            if parent_window:
+                result = messagebox.askyesno("Kill Process", 
+                                           f"Are you sure you want to forcefully kill the process for '{self.server_name}'?\n\nThis action cannot be undone and may cause data loss.",
+                                           parent=parent_window)
+            else:
+                result = messagebox.askyesno("Kill Process", 
+                                           f"Are you sure you want to forcefully kill the process for '{self.server_name}'?\n\nThis action cannot be undone and may cause data loss.")
+            
+            if result:
+                if self.kill_process():
+                    if parent_window:
+                        messagebox.showinfo("Success", f"Process for '{self.server_name}' has been killed.", parent=parent_window)
+                    else:
+                        messagebox.showinfo("Success", f"Process for '{self.server_name}' has been killed.")
+                else:
+                    if parent_window:
+                        messagebox.showerror("Error", f"Failed to kill process for '{self.server_name}'.", parent=parent_window)
+                    else:
+                        messagebox.showerror("Error", f"Failed to kill process for '{self.server_name}'.")
+        except Exception as e:
+            logger.error(f"Error in kill process GUI for {self.server_name}: {e}")
+            if self.window:
+                messagebox.showerror("Error", f"Failed to kill process: {str(e)}", parent=self.window)
+    
     def _clear_output(self):
         # Clear console output
         try:
@@ -818,31 +851,76 @@ class RealTimeConsole:
         except Exception as e:
             logger.error(f"Error closing console window: {e}")
     
-    def detach(self):
-        # Detach from process and cleanup
+    def kill_process(self):
+        # Forcefully kill the attached process
         try:
-            logger.info(f"Detaching console from {self.server_name}")
+            if not self.process:
+                logger.warning(f"No process attached to console for {self.server_name}")
+                return False
             
-            self.is_active = False
-            self.stop_event.set()
+            pid = None
+            if hasattr(self.process, 'pid'):
+                pid = self.process.pid
+            elif isinstance(self.process, int):
+                pid = self.process
+            else:
+                logger.error(f"Cannot determine PID for process attached to {self.server_name}")
+                return False
             
-            # Add session end message
-            self._add_output(f"=== Console detached from {self.server_name} ===", "system")
+            if not pid:
+                logger.error(f"Invalid PID for process attached to {self.server_name}")
+                return False
             
-            # Close log files
-            self._close_log_files()
+            logger.info(f"Forcefully killing process {pid} for {self.server_name}")
             
-            # Wait for threads to finish
-            threads = [self.output_thread, self.error_thread, self.input_thread, self.log_monitor_thread]
-            for thread in threads:
-                if thread and thread.is_alive():
-                    thread.join(timeout=2.0)
+            # Try graceful termination first
+            try:
+                # Check if process object has terminate method (subprocess.Popen)
+                if hasattr(self.process, 'terminate') and callable(getattr(self.process, 'terminate')) and not isinstance(self.process, int):
+                    self.process.terminate()
+                    logger.info(f"Sent terminate signal to process {pid}")
+                else:
+                    # Fallback to os.kill with SIGTERM
+                    os.kill(pid, signal.SIGTERM)
+                    logger.info(f"Sent SIGTERM to process {pid}")
+                
+                # Wait a moment for graceful shutdown
+                time.sleep(2)
+                
+                # Check if process is still running
+                if self._is_process_running():
+                    logger.warning(f"Process {pid} still running after terminate, forcing kill")
+                    # Check if process object has kill method
+                    if hasattr(self.process, 'kill') and callable(getattr(self.process, 'kill')) and not isinstance(self.process, int):
+                        self.process.kill()
+                    else:
+                        # Force kill with os.kill - use SIGKILL on Unix, SIGTERM on Windows
+                        try:
+                            if os.name == 'nt':
+                                # On Windows, SIGKILL doesn't exist, use SIGTERM again
+                                os.kill(pid, signal.SIGTERM)
+                            else:
+                                os.kill(pid, signal.SIGKILL)
+                        except (OSError, ProcessLookupError):
+                            # Process might have already exited
+                            pass
+                    
+                    logger.info(f"Force killed process {pid}")
             
-            # Clear process reference
-            self.process = None
+            except (OSError, ProcessLookupError) as e:
+                logger.warning(f"Process {pid} may have already exited: {e}")
+            
+            # Handle process termination in console
+            self._handle_process_termination()
+            
+            # Add kill message to console
+            self._add_output(f"=== Process {self.server_name} (PID: {pid}) was forcefully killed ===", "system")
+            
+            return True
             
         except Exception as e:
-            logger.error(f"Error detaching console from {self.server_name}: {e}")
+            logger.error(f"Error killing process for {self.server_name}: {e}")
+            return False
 
 
 class ConsoleManager:
@@ -936,19 +1014,18 @@ class ConsoleManager:
             logger.error(f"Error sending command to {server_name}: {e}")
             return False
     
-    def detach_console(self, server_name):
-        # Detach console from server process
+    def kill_process(self, server_name):
+        # Kill the process for a specific server console
         try:
             with self.lock:
                 console = self.consoles.get(server_name)
                 if console:
-                    console.detach()
-                    del self.consoles[server_name]
-                    logger.info(f"Detached console from {server_name}")
-                    return True
-                return False
+                    return console.kill_process()
+                else:
+                    logger.warning(f"No console available for {server_name} to kill process")
+                    return False
         except Exception as e:
-            logger.error(f"Error detaching console from {server_name}: {e}")
+            logger.error(f"Error killing process for {server_name}: {e}")
             return False
     
     def cleanup_all_consoles(self):
@@ -1008,6 +1085,21 @@ class ConsoleManager:
                     server_name = tree.item(selection[0])['values'][0]
                     self.show_console(server_name, window)
             
+            def kill_selected():
+                selection = tree.selection()
+                if selection:
+                    server_name = tree.item(selection[0])['values'][0]
+                    if messagebox.askyesno("Kill Process", 
+                                         f"Are you sure you want to forcefully kill the process for '{server_name}'?\n\nThis action cannot be undone and may cause data loss.",
+                                         parent=window):
+                        if self.kill_process(server_name):
+                            messagebox.showinfo("Success", f"Process for '{server_name}' has been killed.", parent=window)
+                            refresh_list()
+                        else:
+                            messagebox.showerror("Error", f"Failed to kill process for '{server_name}'.", parent=window)
+                else:
+                    messagebox.showwarning("No Selection", "Please select a console from the list.", parent=window)
+            
             def refresh_list():
                 tree.delete(*tree.get_children())
                 with self.lock:
@@ -1017,6 +1109,7 @@ class ConsoleManager:
                         tree.insert("", "end", values=(server_name, status, pid))
             
             ttk.Button(btn_frame, text="Show Console", command=show_selected).pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(btn_frame, text="Kill Process", command=kill_selected).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(btn_frame, text="Refresh", command=refresh_list).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(btn_frame, text="Close", command=window.destroy).pack(side=tk.RIGHT)
             

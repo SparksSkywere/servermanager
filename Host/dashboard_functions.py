@@ -1293,8 +1293,10 @@ def validate_server_creation_inputs(server_type, server_name, app_id=None, execu
                 warnings.append(f"Warning: AppID {app_id.strip()} ({app_info.get('name', 'Unknown')}) is not marked as a dedicated server.")
     
     if server_type == "Other":
-        if not executable_path or not executable_path.strip():
-            errors.append("Executable path is required for Other server types.")
+        # REMOVED: Executable path is no longer required during installation
+        # if not executable_path or not executable_path.strip():
+        #     errors.append("Executable path is required for Other server types.")
+        pass
     
     # Combine errors and warnings
     all_messages = errors + warnings
@@ -1824,26 +1826,7 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
     
     ttk.Label(scrollable_frame, text=help_text, foreground="gray", font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
     current_row += 1
-
-    # Executable (Minecraft/Other)
-    if server_type in ("Minecraft", "Other"):
-        ttk.Label(scrollable_frame, text="Executable Path:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-        exe_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['exe_path'], width=30, font=("Segoe UI", 10))
-        exe_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
-        
-        def browse_exe():
-            fp = filedialog.askopenfilename(title="Select Executable",
-                filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd;*.ps1"),("All","*.*")])
-            if fp:
-                form_vars['exe_path'].set(fp)
-        ttk.Button(scrollable_frame, text="Browse", command=browse_exe, width=12).grid(row=current_row, column=2, padx=15, pady=10)
-        current_row += 1
-
-    # Startup Args (all)
-    ttk.Label(scrollable_frame, text="Startup Args:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-    args_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['startup_args'], width=40, font=("Segoe UI", 10))
-    args_entry.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
-
+    
     # Return the dialog components for further setup
     return {
         'dialog': dialog,
@@ -1911,8 +1894,8 @@ def perform_server_installation(server_manager, server_type, form_vars, credenti
         server_name = form_vars['name'].get().strip()
         app_id = form_vars['app_id'].get().strip() if server_type == "Steam" else ""
         install_dir = form_vars['install_dir'].get().strip()
-        executable_path = form_vars['exe_path'].get().strip() if server_type in ("Minecraft", "Other") else ""
-        startup_args = form_vars['startup_args'].get().strip()
+        executable_path = form_vars['exe_path'].get().strip() if server_type in ("Minecraft", "Other") and 'exe_path' in form_vars else ""
+        startup_args = form_vars['startup_args'].get().strip() if 'startup_args' in form_vars else ""
 
         # Validate inputs
         validation_errors = validate_server_creation_inputs(server_type, server_name, app_id, executable_path)
@@ -2724,12 +2707,12 @@ def import_server_from_directory_dialog(parent, server_manager, server_manager_d
         
         ttk.Button(main_frame, text="Browse", command=browse_exe, width=10).grid(row=exe_row, column=2, padx=5, pady=10)
         
-        # Startup arguments
-        args_row = exe_row + 1
-        ttk.Label(main_frame, text="Startup Args:").grid(row=args_row, column=0, padx=10, pady=10, sticky=tk.W)
-        args_var = tk.StringVar()
-        args_entry = ttk.Entry(main_frame, textvariable=args_var, width=35)
-        args_entry.grid(row=args_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
+        # Startup arguments - REMOVED: No longer required during import
+        # args_row = exe_row + 1
+        # ttk.Label(main_frame, text="Startup Args:").grid(row=args_row, column=0, padx=10, pady=10, sticky=tk.W)
+        # args_var = tk.StringVar()
+        # args_entry = ttk.Entry(main_frame, textvariable=args_var, width=35)
+        # args_entry.grid(row=args_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
         
         # Auto-detect common server files
         def auto_detect():
@@ -2774,7 +2757,7 @@ def import_server_from_directory_dialog(parent, server_manager, server_manager_d
                 logger.error(f"Error during auto-detect: {str(e)}")
                 messagebox.showerror("Error", f"Auto-detection failed: {str(e)}")
         
-        detect_row = args_row + 1
+        detect_row = exe_row + 1
         ttk.Button(main_frame, text="Auto-detect", command=auto_detect, width=15).grid(row=detect_row, column=1, pady=10)
         
         # Return result variable
@@ -2789,7 +2772,7 @@ def import_server_from_directory_dialog(parent, server_manager, server_manager_d
                 server_name = name_var.get().strip()
                 server_type = type_var.get()
                 executable_path = exe_var.get().strip()
-                startup_args = args_var.get().strip()
+                startup_args = ""  # No longer required during import
                 steam_appid = appid_var.get().strip()
                 
                 if not server_name:
@@ -2797,8 +2780,9 @@ def import_server_from_directory_dialog(parent, server_manager, server_manager_d
                     return
                     
                 if not executable_path:
-                    messagebox.showerror("Validation Error", "Executable path is required.")
-                    return
+                    # REMOVED: Executable path is no longer required during import
+                    # Allow import without executable - user can set it later
+                    pass
                 
                 # Validate Steam AppID if server type is Steam
                 if server_type == "Steam":
