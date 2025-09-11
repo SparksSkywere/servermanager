@@ -4,7 +4,34 @@ import sys
 import logging
 from datetime import datetime
 import hashlib
-import pyotp
+# Check if pyotp is available
+try:
+    import pyotp as _pyotp
+    PYOTP_AVAILABLE = True
+except ImportError:
+    _pyotp = None  # type: ignore
+    PYOTP_AVAILABLE = False
+
+def create_totp(secret: str):
+    """Safe wrapper for creating TOTP objects"""
+    if not PYOTP_AVAILABLE or _pyotp is None:
+        raise ImportError("pyotp library not available")
+    return _pyotp.TOTP(str(secret))
+
+def generate_secret():
+    """Safe wrapper for generating secrets"""
+    if not PYOTP_AVAILABLE or _pyotp is None:
+        raise ImportError("pyotp library not available")
+    return _pyotp.random_base32()
+
+def create_provisioning_uri(secret: str, username: str, issuer: str):
+    """Safe wrapper for creating provisioning URIs"""
+    if not PYOTP_AVAILABLE or _pyotp is None:
+        raise ImportError("pyotp library not available")
+    return _pyotp.totp.TOTP(secret).provisioning_uri(
+        name=username,
+        issuer_name=issuer
+    )
 
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -102,6 +129,16 @@ class UserManager:
             
             session.add(user)
             session.commit()
+            
+            # Send welcome email if email is provided
+            if email and email.strip():
+                try:
+                    from Modules.SMTP.notifications import notification_manager
+                    user_obj = session.query(User).filter(User.username == username).first()
+                    notification_manager.send_welcome_email(user_obj)
+                except Exception as email_error:
+                    logger.warning(f"Failed to send welcome email to {username}: {email_error}")
+            
             session.close()
             
             logger.info(f"Added user: {username}")
@@ -168,6 +205,52 @@ class UserManager:
             logger.error(f"Error updating user {username}: {e}")
             return False
 
+    def initiate_password_reset(self, username):
+        # Initiate password reset for a user
+        try:
+            user = self.get_user(username)
+            if not user:
+                logger.warning(f"User not found for password reset: {username}")
+                return False, "User not found"
+            
+            if not getattr(user, 'email', None) or not str(getattr(user, 'email', '')).strip():
+                logger.warning(f"No email address for user: {username}")
+                return False, "No email address configured"
+            
+            # Generate temporary password
+            import secrets
+            import string
+            temp_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
+            
+            # Update user with temporary password
+            import bcrypt
+            hashed_temp = bcrypt.hashpw(temp_password.encode(), bcrypt.gensalt()).decode()
+            
+            session = self.Session()
+            db_user = session.query(User).filter(User.username == username).first()
+            if db_user:
+                setattr(db_user, 'password', hashed_temp)
+                session.commit()
+                
+                # Send password reset email
+                try:
+                    from Modules.SMTP.notifications import notification_manager
+                    notification_manager.send_password_reset_email(db_user, temp_password)
+                    logger.info(f"Password reset email sent to: {username}")
+                    session.close()
+                    return True, "Password reset email sent"
+                except Exception as email_error:
+                    logger.error(f"Failed to send password reset email to {username}: {email_error}")
+                    session.close()
+                    return False, "Failed to send email"
+            else:
+                session.close()
+                return False, "User not found"
+                
+        except Exception as e:
+            logger.error(f"Error initiating password reset for {username}: {e}")
+            return False, "Internal error"
+
     def authenticate_user(self, username, password):
         # Authenticate a user with username and password
         try:
@@ -224,7 +307,11 @@ class UserManager:
             return None
 
     def verify_2fa(self, username, token, admin_override=False):
-        # Verify 2FA token for user
+        """Verify 2FA token for user"""
+        if not PYOTP_AVAILABLE:
+            logger.warning("pyotp library not available, cannot verify 2FA")
+            return False
+            
         try:
             session = self.Session()
             user = session.query(User).filter_by(username=username).first()
@@ -246,7 +333,12 @@ class UserManager:
             if not two_factor_secret:
                 return False
                 
-            totp = pyotp.TOTP(str(two_factor_secret))
+            # Check if pyotp is available
+            if not PYOTP_AVAILABLE:
+                logger.error("pyotp library not available for 2FA verification")
+                return False
+                
+            totp = create_totp(str(two_factor_secret))
             return totp.verify(token)
         except Exception as e:
             logger.error(f"Error verifying 2FA for {username}: {e}")
@@ -293,3 +385,95 @@ class UserManager:
                 
         except Exception as e:
             logger.error(f"Error migrating database schema: {e}")
+            # Continue execution even if migration fails
+    
+    def setup_2fa(self, username):
+        """Setup 2FA for a user and return the secret and QR code URL"""
+        if not PYOTP_AVAILABLE:
+            return False, "pyotp library not available"
+            
+        try:
+            user = self.get_user(username)
+            if not user:
+                return False, "User not found"
+            
+            # Generate new secret
+            secret = generate_secret()
+            
+            # Update user with 2FA secret
+            session = self.Session()
+            db_user = session.query(User).filter(User.username == username).first()
+            if db_user:
+                setattr(db_user, 'two_factor_secret', secret)
+                setattr(db_user, 'two_factor_enabled', False)  # Will be enabled after verification
+                session.commit()
+                session.close()
+                
+                # Generate provisioning URI for QR code
+                provisioning_uri = create_provisioning_uri(secret, username, "Server Manager")
+                
+                return True, {
+                    'secret': secret,
+                    'provisioning_uri': provisioning_uri
+                }
+            else:
+                session.close()
+                return False, "User not found"
+                
+        except Exception as e:
+            logger.error(f"Error setting up 2FA for {username}: {e}")
+            return False, str(e)
+    
+    def enable_2fa(self, username, token):
+        """Enable 2FA for a user after verifying the token"""
+        if not PYOTP_AVAILABLE:
+            return False, "pyotp library not available"
+            
+        try:
+            user = self.get_user(username)
+            if not user:
+                return False, "User not found"
+            
+            two_factor_secret = getattr(user, 'two_factor_secret', None)
+            if not two_factor_secret:
+                return False, "2FA not set up for this user"
+            
+            # Verify the token
+            totp = create_totp(str(two_factor_secret))
+            if not totp.verify(token):
+                return False, "Invalid token"
+            
+            # Enable 2FA
+            session = self.Session()
+            db_user = session.query(User).filter(User.username == username).first()
+            if db_user:
+                setattr(db_user, 'two_factor_enabled', True)
+                session.commit()
+                session.close()
+                return True, "2FA enabled successfully"
+            else:
+                session.close()
+                return False, "User not found"
+                
+        except Exception as e:
+            logger.error(f"Error enabling 2FA for {username}: {e}")
+            return False, str(e)
+    
+    def disable_2fa(self, username):
+        """Disable 2FA for a user"""
+        try:
+            session = self.Session()
+            db_user = session.query(User).filter(User.username == username).first()
+            if db_user:
+                setattr(db_user, 'two_factor_enabled', False)
+                setattr(db_user, 'two_factor_secret', None)
+                session.commit()
+                session.close()
+                return True, "2FA disabled successfully"
+            else:
+                session.close()
+                return False, "User not found"
+                
+        except Exception as e:
+            logger.error(f"Error disabling 2FA for {username}: {e}")
+            return False, str(e)

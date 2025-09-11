@@ -17,3 +17,6 @@ pyotp
 vdf
 waitress
 bcrypt
+secure-smtplib
+msal
+requests-oauthlib

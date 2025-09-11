@@ -1,6 +1,7 @@
 import os
 import sys
 import tkinter as tk
+from tkinter import ttk
 from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -14,6 +15,109 @@ try:
 except ImportError:
     PYOTP_AVAILABLE = False
     print("Warning: pyotp not available. 2FA functionality will be disabled.")
+
+def handle_2fa_login_admin(user_manager, username, parent_window=None):
+    """Handle 2FA verification during admin login process"""
+    try:
+        # Create 2FA dialog
+        twofa_dialog = tk.Toplevel() if parent_window else tk.Tk()
+        if parent_window:
+            twofa_dialog.transient(parent_window)
+        
+        twofa_dialog.title("Administrator 2FA Verification")
+        twofa_dialog.geometry("380x200")
+        twofa_dialog.resizable(False, False)
+        twofa_dialog.grab_set()
+        twofa_dialog.configure(bg='white')
+        
+        # Center the dialog
+        twofa_dialog.update_idletasks()
+        x = (twofa_dialog.winfo_screenwidth() // 2) - (190)
+        y = (twofa_dialog.winfo_screenheight() // 2) - (100)
+        twofa_dialog.geometry(f"+{x}+{y}")
+        
+        # Main frame
+        main_frame = tk.Frame(twofa_dialog, bg='white', padx=20, pady=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = tk.Label(main_frame, text="Administrator Verification", 
+                              font=("Segoe UI", 14, "bold"), fg="darkred", bg='white')
+        title_label.pack(pady=(0, 15))
+        
+        # Instructions
+        instructions = tk.Label(main_frame, text="Enter the 6-digit code from your authenticator app:", 
+                               font=("Segoe UI", 10), bg='white')
+        instructions.pack(pady=(0, 15))
+        
+        # Code entry
+        code_var = tk.StringVar()
+        code_entry = tk.Entry(main_frame, textvariable=code_var, width=20, 
+                             font=("Courier", 14), justify="center")
+        code_entry.pack(pady=(0, 15))
+        
+        # Status label
+        status_var = tk.StringVar()
+        status_label = tk.Label(main_frame, textvariable=status_var, foreground="red", 
+                               font=("Segoe UI", 9), bg='white')
+        status_label.pack(pady=(0, 15))
+        
+        # Result variable
+        result = [False]
+        
+        def on_verify():
+            token = code_var.get().strip()
+            if not token:
+                status_var.set("Please enter the 6-digit code")
+                return
+            
+            if len(token) != 6 or not token.isdigit():
+                status_var.set("Code must be 6 digits")
+                return
+            
+            # Verify the token
+            if user_manager.verify_2fa(username, token):
+                result[0] = True
+                twofa_dialog.destroy()
+            else:
+                status_var.set("Invalid code. Please try again.")
+                code_var.set("")
+        
+        def on_cancel():
+            result[0] = False
+            twofa_dialog.destroy()
+        
+        def on_key_press(event):
+            if event.keysym == 'Return':
+                on_verify()
+            elif event.keysym == 'Escape':
+                on_cancel()
+        
+        # Buttons
+        button_frame = tk.Frame(main_frame, bg='white')
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        verify_button = tk.Button(button_frame, text="Verify", command=on_verify, 
+                                 font=("Segoe UI", 10, "bold"), width=12)
+        verify_button.pack(side=tk.RIGHT, padx=(5, 0))
+        
+        cancel_button = tk.Button(button_frame, text="Cancel", command=on_cancel, 
+                                 font=("Segoe UI", 10, "bold"), width=12)
+        cancel_button.pack(side=tk.RIGHT)
+        
+        # Bind keyboard events
+        twofa_dialog.bind('<Key>', on_key_press)
+        code_entry.bind('<Return>', lambda e: on_verify())
+        code_entry.focus_set()
+        
+        # Show dialog and wait
+        twofa_dialog.wait_window()
+        
+        return result[0]
+        
+    except Exception as e:
+        print(f"Error in admin 2FA login: {e}")
+        return False
 
 def admin_login(user_manager):
     max_attempts = 3
@@ -103,6 +207,188 @@ def admin_login(user_manager):
                         status_var.set("Access denied: Account is inactive")
                         password_entry.delete(0, tk.END)
                         return
+                    
+                    # Check if 2FA is enabled for this user
+                    two_factor_enabled = getattr(user, 'two_factor_enabled', False)
+                    if two_factor_enabled:
+                        # Show 2FA dialog
+                        if not handle_2fa_login_admin(user_manager, username, login_dialog):
+                            status_var.set("2FA verification failed")
+                            password_entry.delete(0, tk.END)
+                            return
+                    
+                    # Successfully authenticated as admin
+                    login_result[0] = True
+                    login_result[1] = user
+                    login_dialog.destroy()
+                    login_root.destroy()
+                else:
+                    print("Authentication failed - invalid credentials")
+                    status_var.set("Invalid username or password. Please try again.")
+                    password_entry.delete(0, tk.END)
+                    
+            except Exception as e:
+                print(f"Authentication error: {e}")
+                status_var.set(f"Authentication error: {str(e)}")
+                password_entry.delete(0, tk.END)
+        
+        def on_cancel():
+            print("Admin login cancelled")
+            dialog_closed[0] = True
+            login_dialog.destroy()
+            login_root.destroy()
+        
+        # Button frame at the bottom
+        button_frame = tk.Frame(container, bg='white')
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(20, 0))
+        
+        # Simple, visible buttons
+        cancel_btn = tk.Button(button_frame, text="Cancel", command=on_cancel, 
+                              font=("Segoe UI", 10, "bold"), width=12)
+        cancel_btn.pack(side=tk.LEFT)
+        
+        login_btn = tk.Button(button_frame, text="Sign In", command=on_login, 
+                             font=("Segoe UI", 10, "bold"), width=12)
+        login_btn.pack(side=tk.RIGHT)       
+        
+        # Bind Enter key to both fields
+        def on_enter(event):
+            on_login()
+        
+        username_entry.bind('<Return>', on_enter)
+        password_entry.bind('<Return>', on_enter)
+        
+        # Handle window close button
+        def on_close():
+            dialog_closed[0] = True
+            login_dialog.destroy()
+            login_root.destroy()
+        
+        login_dialog.protocol("WM_DELETE_WINDOW", on_close)
+        
+        # Focus on username field
+        login_dialog.after(100, username_entry.focus_set)
+        
+        print("Waiting for admin dialog interaction...")  # Debug
+        
+        # Wait for dialog to close
+        login_root.wait_window(login_dialog)
+        
+        print(f"Admin dialog closed. Result: success={login_result[0]}, cancelled={dialog_closed[0]}")  # Debug
+        
+        # Check results
+        if dialog_closed[0]:
+            return None  # User cancelled
+        
+        if login_result[0]:
+            return login_result[1]  # Successful login
+        
+        # Failed attempt
+        attempts += 1
+        if attempts >= max_attempts:
+            messagebox.showerror("Access Denied", 
+                               f"Maximum login attempts ({max_attempts}) exceeded.\n"
+                               "Admin dashboard access denied.")
+            login_root.destroy()
+            return None
+    
+    return None
+    max_attempts = 3
+    attempts = 0
+    
+    while attempts < max_attempts:
+        # Create login dialog (exactly like dashboard.py)
+        login_root = tk.Tk()
+        login_root.withdraw()  # Hide the root window
+        login_dialog = tk.Toplevel(login_root)
+        
+        login_dialog.title("Admin Dashboard - Authentication Required")
+        login_dialog.geometry("400x300")
+        login_dialog.resizable(False, False)
+        login_dialog.grab_set()
+        login_dialog.configure(bg='white')
+        
+        # Center the dialog
+        login_dialog.update_idletasks()
+        x = (login_dialog.winfo_screenwidth() // 2) - (200)
+        y = (login_dialog.winfo_screenheight() // 2) - (150)
+        login_dialog.geometry(f"400x300+{x}+{y}")
+        
+        # Main container frame
+        container = tk.Frame(login_dialog, bg='white', padx=20, pady=20)
+        container.pack(fill=tk.BOTH, expand=True)
+        
+        # Title (modified for admin)
+        title_label = tk.Label(container, text="Administrator Access Required", 
+                              font=("Segoe UI", 14, "bold"), fg="darkred", bg='white')
+        title_label.pack(pady=(0, 15))
+        
+        # Username field
+        tk.Label(container, text="Username:", font=("Segoe UI", 10, "bold"), bg='white').pack(anchor=tk.W, pady=(10, 5))
+        username_var = tk.StringVar()
+        username_entry = tk.Entry(container, textvariable=username_var, width=25, font=("Segoe UI", 10))
+        username_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        # Password field
+        tk.Label(container, text="Password:", font=("Segoe UI", 10, "bold"), bg='white').pack(anchor=tk.W, pady=(0, 5))
+        password_var = tk.StringVar()
+        password_entry = tk.Entry(container, textvariable=password_var, show="*", width=25, font=("Segoe UI", 10))
+        password_entry.pack(fill=tk.X, pady=(0, 15))
+        
+        # Status label for errors
+        status_var = tk.StringVar()
+        status_label = tk.Label(container, textvariable=status_var, foreground="red", 
+                               font=("Segoe UI", 9), bg='white', wraplength=350)
+        status_label.pack(pady=(0, 15))
+        
+        # Show attempt counter if not first attempt
+        if attempts > 0:
+            attempts_label = tk.Label(container, 
+                                    text=f"Login attempt {attempts + 1} of {max_attempts}", 
+                                    font=("Segoe UI", 8), fg="orange", bg='white')
+            attempts_label.pack(pady=(0, 15))
+        
+        # Result variables
+        login_result = [False, None]  # [success, user]
+        dialog_closed = [False]
+        
+        def on_login():           
+            # Get values directly from entry widgets
+            username = username_entry.get().strip()
+            password = password_entry.get()
+
+            if not username or not password:
+                status_var.set("Please enter both username and password")
+                return
+            
+            try:
+                print(f"Attempting to authenticate admin user: {username}")
+                # Authenticate user
+                user = user_manager.authenticate_user(username, password)
+                if user:
+                    print("Authentication successful!")
+                    
+                    # Check if user is admin (admin-specific check)
+                    if not getattr(user, 'is_admin', False):
+                        print("Authentication failed - user is not an admin")
+                        status_var.set("Access denied: Administrator privileges required")
+                        password_entry.delete(0, tk.END)
+                        return
+                    
+                    # Check if user is active
+                    if not getattr(user, 'is_active', True):
+                        status_var.set("Access denied: Account is inactive")
+                        password_entry.delete(0, tk.END)
+                        return
+                    
+                    # Check if 2FA is enabled for this user
+                    two_factor_enabled = getattr(user, 'two_factor_enabled', False)
+                    if two_factor_enabled:
+                        # Show 2FA dialog
+                        if not handle_2fa_login_admin(user_manager, username, login_dialog):
+                            status_var.set("2FA verification failed")
+                            password_entry.delete(0, tk.END)
+                            return
                     
                     # Successfully authenticated as admin
                     login_result[0] = True
@@ -559,7 +845,7 @@ class AdminDashboard(tk.Tk):
         self.user_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.user_listbox.yview)
         
-        actions_frame = tk.LabelFrame(main_frame, text="User Actions", font=("Arial", 10, "bold"), padx=10, pady=10)
+        actions_frame = tk.LabelFrame(main_frame, text="Admin Actions", font=("Arial", 10, "bold"), padx=10, pady=10)
         actions_frame.pack(fill=tk.X, pady=(0, 10))
         
         btn_row1 = tk.Frame(actions_frame)
@@ -574,7 +860,14 @@ class AdminDashboard(tk.Tk):
         btn_row2.pack(fill=tk.X)
         
         tk.Button(btn_row2, text="Reset Password", command=self.reset_password, width=15, font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 10))
-        tk.Button(btn_row2, text="Reset 2FA", command=self.reset_2fa, width=15, font=("Arial", 9)).pack(side=tk.LEFT)
+        tk.Button(btn_row2, text="Reset 2FA", command=self.reset_2fa, width=15, font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Button(btn_row2, text="Setup 2FA", command=self.setup_user_2fa, width=15, font=("Arial", 9)).pack(side=tk.LEFT)
+        
+        btn_row3 = tk.Frame(actions_frame)
+        btn_row3.pack(fill=tk.X, pady=(5, 0))
+        
+        tk.Button(btn_row3, text="Email Settings", command=self.manage_email_settings, width=15, font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Button(btn_row3, text="Send Bulk Email", command=self.send_bulk_email, width=15, font=("Arial", 9)).pack(side=tk.LEFT)
         
         self.status_label = tk.Label(main_frame, text="Ready", relief=tk.SUNKEN, anchor=tk.W, 
                                     font=("Arial", 9), bg="white")
@@ -1111,6 +1404,453 @@ class AdminDashboard(tk.Tk):
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open add user dialog: {str(e)}")
+
+    def manage_email_settings(self):
+        """Open email settings management dialog"""
+        try:
+            settings_window = tk.Toplevel(self)
+            settings_window.title("Email Settings - Server Manager")
+            settings_window.geometry("700x600")
+            settings_window.resizable(True, True)
+            settings_window.grab_set()
+
+            # Import mail server and notifications
+            from Modules.SMTP.mailserver import mail_server
+            from Modules.SMTP.notifications import notification_manager
+
+            # Create notebook for tabs
+            notebook = ttk.Notebook(settings_window)
+            notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+            # SMTP Settings Tab
+            smtp_frame = ttk.Frame(notebook)
+            notebook.add(smtp_frame, text="SMTP Settings")
+
+            # Mail Server Configuration
+            config_frame = ttk.LabelFrame(smtp_frame, text="Mail Server Configuration", padding=10)
+            config_frame.pack(fill=tk.X, pady=(0, 10))
+
+            # Provider selection
+            ttk.Label(config_frame, text="Provider:").grid(row=0, column=0, sticky="w", pady=2)
+            provider_var = tk.StringVar(value=mail_server.config.get('provider', 'custom'))
+            provider_combo = ttk.Combobox(config_frame, textvariable=provider_var,
+                                        values=['gmail', 'outlook', 'office365', 'yahoo', 'custom'],
+                                        state='readonly', width=15)
+            provider_combo.grid(row=0, column=1, sticky="w", pady=2, padx=(10, 0))
+            provider_combo.bind('<<ComboboxSelected>>', lambda e: self._update_smtp_fields(provider_var.get(), entries))
+
+            # Server settings
+            entries = {}
+            row = 1
+            for label, key, default in [
+                ("SMTP Server:", 'server', ''),
+                ("Port:", 'port', '587'),
+                ("Username:", 'username', ''),
+                ("Password:", 'password', ''),
+                ("From Email:", 'from_email', ''),
+                ("From Name:", 'from_name', 'Server Manager')
+            ]:
+                ttk.Label(config_frame, text=label).grid(row=row, column=0, sticky="w", pady=2)
+                var = tk.StringVar(value=str(mail_server.config.get(key, default)))
+                if 'password' in key.lower():
+                    entry = ttk.Entry(config_frame, textvariable=var, show="*", width=30)
+                else:
+                    entry = ttk.Entry(config_frame, textvariable=var, width=30)
+                entry.grid(row=row, column=1, sticky="ew", pady=2, padx=(10, 0))
+                entries[key] = var
+                row += 1
+
+            # TLS/SSL options
+            options_frame = ttk.Frame(config_frame)
+            options_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=5)
+
+            use_tls_var = tk.BooleanVar(value=mail_server.config.get('use_tls', True))
+            ttk.Checkbutton(options_frame, text="Use TLS", variable=use_tls_var).pack(side=tk.LEFT, padx=(0, 10))
+
+            use_ssl_var = tk.BooleanVar(value=mail_server.config.get('use_ssl', False))
+            ttk.Checkbutton(options_frame, text="Use SSL", variable=use_ssl_var).pack(side=tk.LEFT, padx=(0, 10))
+
+            enabled_var = tk.BooleanVar(value=mail_server.config.get('enabled', False))
+            ttk.Checkbutton(options_frame, text="Enable Mail Server", variable=enabled_var).pack(side=tk.LEFT)
+
+            # Test connection button
+            test_frame = ttk.Frame(config_frame)
+            test_frame.grid(row=row+1, column=0, columnspan=2, sticky="ew", pady=5)
+
+            def test_connection():
+                config = {
+                    'provider': provider_var.get(),
+                    'server': entries['server'].get(),
+                    'port': int(entries['port'].get()) if entries['port'].get().isdigit() else 587,
+                    'username': entries['username'].get(),
+                    'password': entries['password'].get(),
+                    'from_email': entries['from_email'].get(),
+                    'from_name': entries['from_name'].get(),
+                    'use_tls': use_tls_var.get(),
+                    'use_ssl': use_ssl_var.get(),
+                    'enabled': True
+                }
+
+                # Create a temporary mail server instance for testing
+                from Modules.SMTP.mailserver import MailServer
+                test_server = MailServer(config)
+                success, message = test_server.test_connection()
+                if success:
+                    messagebox.showinfo("Test Result", "SMTP connection successful!", parent=settings_window)
+                else:
+                    messagebox.showerror("Test Result", f"SMTP connection failed: {message}", parent=settings_window)
+
+            ttk.Button(test_frame, text="Test Connection", command=test_connection).pack(side=tk.LEFT)
+
+            # Notifications Tab
+            notif_frame = ttk.Frame(notebook)
+            notebook.add(notif_frame, text="Notifications")
+
+            # Automated notifications settings
+            auto_frame = ttk.LabelFrame(notif_frame, text="Automated Notifications", padding=10)
+            auto_frame.pack(fill=tk.X, pady=(0, 10))
+
+            settings = notification_manager.get_automated_settings()
+            notif_vars = {}
+
+            for i, (key, label) in enumerate([
+                ('welcome_email', 'Send welcome emails to new users'),
+                ('password_reset_email', 'Send password reset emails'),
+                ('account_locked_email', 'Send account locked notifications'),
+                ('server_alerts_email', 'Send server alert notifications'),
+                ('maintenance_email', 'Send maintenance notifications'),
+                ('admin_only_alerts', 'Send server alerts to admins only')
+            ]):
+                var = tk.BooleanVar(value=settings.get(key, True))
+                notif_vars[key] = var
+                ttk.Checkbutton(auto_frame, text=label, variable=var).pack(anchor="w", pady=2)
+
+            # Manual Email Tab
+            manual_frame = ttk.Frame(notebook)
+            notebook.add(manual_frame, text="Send Email")
+
+            # Manual email form
+            email_frame = ttk.LabelFrame(manual_frame, text="Send Email", padding=10)
+            email_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+            ttk.Label(email_frame, text="To:").grid(row=0, column=0, sticky="w", pady=2)
+            to_var = tk.StringVar()
+            ttk.Entry(email_frame, textvariable=to_var, width=50).grid(row=0, column=1, sticky="ew", pady=2, padx=(10, 0))
+
+            ttk.Label(email_frame, text="Subject:").grid(row=1, column=0, sticky="w", pady=2)
+            subject_var = tk.StringVar()
+            ttk.Entry(email_frame, textvariable=subject_var, width=50).grid(row=1, column=1, sticky="ew", pady=2, padx=(10, 0))
+
+            ttk.Label(email_frame, text="Message:").grid(row=2, column=0, sticky="nw", pady=2)
+            message_text = tk.Text(email_frame, height=10, width=50)
+            message_text.grid(row=2, column=1, sticky="nsew", pady=2, padx=(10, 0))
+
+            # Configure grid weights
+            email_frame.grid_columnconfigure(1, weight=1)
+            email_frame.grid_rowconfigure(2, weight=1)
+
+            def send_manual_email():
+                to_email = to_var.get().strip()
+                subject = subject_var.get().strip()
+                message = message_text.get("1.0", tk.END).strip()
+
+                if not to_email:
+                    messagebox.showerror("Error", "Recipient email is required.", parent=settings_window)
+                    return
+                if not subject:
+                    messagebox.showerror("Error", "Subject is required.", parent=settings_window)
+                    return
+                if not message:
+                    messagebox.showerror("Error", "Message is required.", parent=settings_window)
+                    return
+
+                success = notification_manager.send_custom_notification(to_email, subject, message)
+                if success:
+                    messagebox.showinfo("Success", "Email sent successfully!", parent=settings_window)
+                    to_var.set("")
+                    subject_var.set("")
+                    message_text.delete("1.0", tk.END)
+                else:
+                    messagebox.showerror("Error", "Failed to send email. Check mail server settings.", parent=settings_window)
+
+            ttk.Button(email_frame, text="Send Email", command=send_manual_email).grid(row=3, column=1, sticky="e", pady=10)
+
+            # Save button
+            def save_settings():
+                # Save SMTP config
+                config = {
+                    'provider': provider_var.get(),
+                    'server': entries['server'].get(),
+                    'port': int(entries['port'].get()) if entries['port'].get().isdigit() else 587,
+                    'username': entries['username'].get(),
+                    'password': entries['password'].get(),
+                    'from_email': entries['from_email'].get(),
+                    'from_name': entries['from_name'].get(),
+                    'use_tls': use_tls_var.get(),
+                    'use_ssl': use_ssl_var.get(),
+                    'enabled': enabled_var.get()
+                }
+
+                if mail_server.save_config(config):
+                    # Save notification settings
+                    notif_settings = {key: var.get() for key, var in notif_vars.items()}
+                    if notification_manager.save_automated_settings(notif_settings):
+                        messagebox.showinfo("Success", "Settings saved successfully!", parent=settings_window)
+                    else:
+                        messagebox.showerror("Error", "Failed to save notification settings.", parent=settings_window)
+                else:
+                    messagebox.showerror("Error", "Failed to save mail server settings.", parent=settings_window)
+
+            # Button frame
+            btn_frame = ttk.Frame(settings_window)
+            btn_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+            ttk.Button(btn_frame, text="Save Settings", command=save_settings).pack(side=tk.RIGHT, padx=(5, 0))
+            ttk.Button(btn_frame, text="Close", command=settings_window.destroy).pack(side=tk.RIGHT)
+
+            # Initialize SMTP fields based on provider
+            self._update_smtp_fields(provider_var.get(), entries)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open email settings: {str(e)}")
+
+    def _update_smtp_fields(self, provider, entries):
+        """Update SMTP fields based on selected provider"""
+        from Modules.SMTP.mailserver import mail_server
+
+        config = mail_server.get_provider_config(provider)
+        for key, var in entries.items():
+            if key in config:
+                var.set(str(config[key]))
+
+    def send_bulk_email(self):
+        """Send email to multiple users"""
+        try:
+            # Get all users with emails
+            users = self.user_manager.list_users()
+            email_users = []
+            for user in users:
+                email = getattr(user, 'email', None)
+                if email and str(email).strip():
+                    email_users.append((user.username, email))
+
+            if not email_users:
+                messagebox.showerror("Error", "No users with email addresses found.")
+                return
+
+            # Bulk email dialog
+            bulk_window = tk.Toplevel(self)
+            bulk_window.title("Send Bulk Email - Server Manager")
+            bulk_window.geometry("600x500")
+            bulk_window.resizable(True, True)
+            bulk_window.grab_set()
+
+            # Recipients list
+            recipients_frame = ttk.LabelFrame(bulk_window, text="Recipients", padding=10)
+            recipients_frame.pack(fill=tk.X, pady=(10, 5))
+
+            recipients_text = tk.Text(recipients_frame, height=6, width=60)
+            recipients_text.pack(fill=tk.BOTH, expand=True)
+
+            # Populate recipients
+            recipients_list = []
+            for username, email in email_users:
+                recipients_text.insert(tk.END, f"{username} <{email}>\n")
+                recipients_list.append(email)
+
+            recipients_text.config(state=tk.DISABLED)
+
+            # Email form
+            email_frame = ttk.LabelFrame(bulk_window, text="Email Content", padding=10)
+            email_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+            ttk.Label(email_frame, text="Subject:").grid(row=0, column=0, sticky="w", pady=2)
+            subject_var = tk.StringVar()
+            ttk.Entry(email_frame, textvariable=subject_var, width=50).grid(row=0, column=1, sticky="ew", pady=2, padx=(10, 0))
+
+            ttk.Label(email_frame, text="Message:").grid(row=1, column=0, sticky="nw", pady=2)
+            message_text = tk.Text(email_frame, height=10, width=50)
+            message_text.grid(row=1, column=1, sticky="nsew", pady=2, padx=(10, 0))
+
+            # Configure grid weights
+            email_frame.grid_columnconfigure(1, weight=1)
+            email_frame.grid_rowconfigure(1, weight=1)
+
+            def send_bulk():
+                subject = subject_var.get().strip()
+                message = message_text.get("1.0", tk.END).strip()
+
+                if not subject:
+                    messagebox.showerror("Error", "Subject is required.", parent=bulk_window)
+                    return
+                if not message:
+                    messagebox.showerror("Error", "Message is required.", parent=bulk_window)
+                    return
+
+                from Modules.SMTP.notifications import notification_manager
+
+                success_count = 0
+                for email in recipients_list:
+                    if notification_manager.send_custom_notification(email, subject, message):
+                        success_count += 1
+
+                if success_count == len(recipients_list):
+                    messagebox.showinfo("Success", f"Email sent successfully to all {success_count} recipients!", parent=bulk_window)
+                    bulk_window.destroy()
+                else:
+                    messagebox.showwarning("Partial Success", f"Email sent to {success_count}/{len(recipients_list)} recipients.", parent=bulk_window)
+
+            # Buttons
+            btn_frame = ttk.Frame(bulk_window)
+            btn_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+            ttk.Button(btn_frame, text="Send to All", command=send_bulk).pack(side=tk.RIGHT, padx=(5, 0))
+            ttk.Button(btn_frame, text="Cancel", command=bulk_window.destroy).pack(side=tk.RIGHT)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open bulk email dialog: {str(e)}")
+
+    def setup_user_2fa(self):
+        """Setup 2FA for a selected user"""
+        try:
+            selected_username = self.get_selected_username()
+            if not selected_username:
+                messagebox.showerror("Error", "Please select a user first.")
+                return
+            
+            # Check if pyotp is available
+            if not PYOTP_AVAILABLE:
+                messagebox.showerror("Error", "pyotp library is not available. Please install it to use 2FA.")
+                return
+            
+            # Setup 2FA for the user
+            success, result = self.user_manager.setup_2fa(selected_username)
+            
+            if not success:
+                messagebox.showerror("Error", f"Failed to setup 2FA: {result}")
+                return
+            
+            # Show QR code dialog
+            self.show_2fa_qr_dialog(selected_username, result['secret'], result['provisioning_uri'])
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to setup 2FA: {str(e)}")
+
+    def show_2fa_qr_dialog(self, username, secret, provisioning_uri):
+        """Show QR code dialog for 2FA setup"""
+        try:
+            qr_dialog = tk.Toplevel(self)
+            qr_dialog.title(f"2FA Setup - {username}")
+            qr_dialog.geometry("500x400")
+            qr_dialog.resizable(True, True)
+            qr_dialog.grab_set()
+            
+            # Center the dialog
+            qr_dialog.update_idletasks()
+            x = (qr_dialog.winfo_screenwidth() // 2) - (250)
+            y = (qr_dialog.winfo_screenheight() // 2) - (200)
+            qr_dialog.geometry(f"+{x}+{y}")
+            
+            # Main frame
+            main_frame = tk.Frame(qr_dialog, padx=20, pady=20)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Title
+            title_label = tk.Label(main_frame, text=f"2FA Setup for {username}", 
+                                  font=("Segoe UI", 14, "bold"))
+            title_label.pack(pady=(0, 15))
+            
+            # Instructions
+            instructions = tk.Label(main_frame, text=
+                "1. Install an authenticator app (Google Authenticator, Authy, etc.)\n"
+                "2. Scan the QR code below or manually enter the secret key\n"
+                "3. Enter the 6-digit code from your app to verify and enable 2FA",
+                justify=tk.LEFT, font=("Segoe UI", 10))
+            instructions.pack(pady=(0, 15))
+            
+            # Secret key display
+            secret_frame = tk.Frame(main_frame)
+            secret_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            tk.Label(secret_frame, text="Secret Key:", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+            secret_var = tk.StringVar(value=secret)
+            secret_entry = tk.Entry(secret_frame, textvariable=secret_var, 
+                                   font=("Courier", 10), state="readonly", width=40)
+            secret_entry.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
+            
+            # QR Code placeholder (since we can't easily generate QR codes in tkinter)
+            qr_frame = tk.Frame(main_frame, bg='white', relief=tk.SUNKEN, bd=1)
+            qr_frame.pack(fill=tk.X, pady=(10, 15))
+            
+            qr_label = tk.Label(qr_frame, text="QR Code:\n\n[Scan with authenticator app]\n\n" +
+                               f"URI: {provisioning_uri}", 
+                               font=("Courier", 10), bg='white', justify=tk.LEFT)
+            qr_label.pack(pady=20, padx=20)
+            
+            # Copy URI button
+            def copy_uri():
+                self.clipboard_clear()
+                self.clipboard_append(provisioning_uri)
+                messagebox.showinfo("Copied", "URI copied to clipboard", parent=qr_dialog)
+            
+            tk.Button(qr_frame, text="Copy URI", command=copy_uri).pack(pady=(0, 10))
+            
+            # Verification section
+            verify_frame = tk.Frame(main_frame)
+            verify_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            tk.Label(verify_frame, text="Verification Code:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
+            code_var = tk.StringVar()
+            code_entry = tk.Entry(verify_frame, textvariable=code_var, width=20, 
+                                 font=("Courier", 14), justify="center")
+            code_entry.pack(pady=(0, 10))
+            
+            # Status label
+            status_var = tk.StringVar()
+            status_label = tk.Label(verify_frame, textvariable=status_var, 
+                                   foreground="red", font=("Segoe UI", 9))
+            status_label.pack(pady=(0, 10))
+            
+            def verify_and_enable():
+                token = code_var.get().strip()
+                if not token:
+                    status_var.set("Please enter the 6-digit code")
+                    return
+                
+                if len(token) != 6 or not token.isdigit():
+                    status_var.set("Code must be 6 digits")
+                    return
+                
+                # Verify and enable 2FA
+                success, message = self.user_manager.enable_2fa(username, token)
+                if success:
+                    messagebox.showinfo("Success", "2FA has been enabled successfully!", parent=qr_dialog)
+                    qr_dialog.destroy()
+                    self.refresh_user_list()
+                else:
+                    status_var.set(f"Verification failed: {message}")
+                    code_var.set("")
+            
+            def cancel_setup():
+                # Disable 2FA setup (remove secret)
+                self.user_manager.disable_2fa(username)
+                qr_dialog.destroy()
+            
+            # Buttons
+            button_frame = tk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            tk.Button(button_frame, text="Verify & Enable", command=verify_and_enable, 
+                     font=("Segoe UI", 10, "bold"), width=15).pack(side=tk.RIGHT, padx=(5, 0))
+            tk.Button(button_frame, text="Cancel", command=cancel_setup, 
+                     font=("Segoe UI", 10, "bold"), width=12).pack(side=tk.RIGHT)
+            
+            # Bind Enter key
+            code_entry.bind('<Return>', lambda e: verify_and_enable())
+            code_entry.focus_set()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to show 2FA setup dialog: {str(e)}")
 
 
 if __name__ == "__main__":

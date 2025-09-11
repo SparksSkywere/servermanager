@@ -244,6 +244,15 @@ def sql_login(user_manager, parent_window=None):
             try:
                 user = user_manager.authenticate_user(username, password)
                 if user:
+                    # Check if 2FA is enabled for this user
+                    two_factor_enabled = getattr(user, 'two_factor_enabled', False)
+                    if two_factor_enabled:
+                        # Show 2FA dialog
+                        if not handle_2fa_login(user_manager, username, login_dialog):
+                            status_var.set("2FA verification failed")
+                            password_var.set("")
+                            return
+                    
                     login_result[0] = True
                     login_result[1] = user
                     login_dialog.destroy()
@@ -302,7 +311,101 @@ def sql_login(user_manager, parent_window=None):
     messagebox.showerror("Login Failed", "Maximum login attempts exceeded.")
     return False, None
 
-def handle_2fa_authentication(parent_window=None):
+def handle_2fa_login(user_manager, username, parent_window=None):
+    """Handle 2FA verification during login process"""
+    try:
+        # Create 2FA dialog
+        twofa_dialog = tk.Toplevel() if parent_window else tk.Tk()
+        if parent_window:
+            twofa_dialog.transient(parent_window)
+        
+        twofa_dialog.title("Two-Factor Authentication")
+        twofa_dialog.geometry("380x200")
+        twofa_dialog.resizable(False, False)
+        twofa_dialog.grab_set()
+        
+        # Center the dialog
+        twofa_dialog.update_idletasks()
+        x = (twofa_dialog.winfo_screenwidth() // 2) - (190)
+        y = (twofa_dialog.winfo_screenheight() // 2) - (100)
+        twofa_dialog.geometry(f"+{x}+{y}")
+        
+        # Main frame
+        main_frame = ttk.Frame(twofa_dialog, padding=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = ttk.Label(main_frame, text="Two-Factor Authentication", font=("Segoe UI", 14, "bold"))
+        title_label.pack(pady=(0, 20))
+        
+        # Instructions
+        instructions = ttk.Label(main_frame, text="Enter the 6-digit code from your authenticator app:")
+        instructions.pack(pady=(0, 15))
+        
+        # Code entry
+        code_var = tk.StringVar()
+        code_entry = ttk.Entry(main_frame, textvariable=code_var, width=20, font=("Courier", 14), justify="center")
+        code_entry.pack(pady=(0, 15))
+        
+        # Status label
+        status_var = tk.StringVar()
+        status_label = ttk.Label(main_frame, textvariable=status_var, foreground="red")
+        status_label.pack(pady=(0, 15))
+        
+        # Result variable
+        result = [False]
+        
+        def on_verify():
+            token = code_var.get().strip()
+            if not token:
+                status_var.set("Please enter the 6-digit code")
+                return
+            
+            if len(token) != 6 or not token.isdigit():
+                status_var.set("Code must be 6 digits")
+                return
+            
+            # Verify the token
+            if user_manager.verify_2fa(username, token):
+                result[0] = True
+                twofa_dialog.destroy()
+            else:
+                status_var.set("Invalid code. Please try again.")
+                code_var.set("")
+        
+        def on_cancel():
+            result[0] = False
+            twofa_dialog.destroy()
+        
+        def on_key_press(event):
+            if event.keysym == 'Return':
+                on_verify()
+            elif event.keysym == 'Escape':
+                on_cancel()
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)
+        
+        verify_button = ttk.Button(button_frame, text="Verify", command=on_verify)
+        verify_button.pack(side=tk.RIGHT, padx=(5, 0))
+        
+        cancel_button = ttk.Button(button_frame, text="Cancel", command=on_cancel)
+        cancel_button.pack(side=tk.RIGHT)
+        
+        # Bind keyboard events
+        twofa_dialog.bind('<Key>', on_key_press)
+        code_entry.bind('<Return>', lambda e: on_verify())
+        code_entry.focus_set()
+        
+        # Show dialog and wait
+        twofa_dialog.wait_window()
+        
+        return result[0]
+        
+    except Exception as e:
+        logger.error(f"Error in 2FA login: {e}")
+        return False
     # Handle 2FA authentication process with GUI dialog
     # Create 2FA dialog
     twofa_dialog = tk.Toplevel() if parent_window else tk.Tk()

@@ -11,6 +11,8 @@ A comprehensive Windows-based server management system for Steam game servers, M
 - **Security**: Multi-method authentication, 2FA support, and role-based access control
 - **Clustering**: Host-subhost architecture for distributed server management
 - **Automation**: Scheduled updates, task scheduling, and resource monitoring
+- **Email Notifications**: SMTP-based email system with support for Gmail, Outlook, Office 365, and custom providers
+- **Two-Factor Authentication**: TOTP-based 2FA for enhanced security
 
 ## Quick Start
 
