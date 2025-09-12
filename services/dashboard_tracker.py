@@ -19,10 +19,8 @@ if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.debug("DashboardTracker debug mode enabled via environment")
 
 class DashboardTracker:
-    """
-    Tracks running dashboard interfaces and server processes.
-    Can be used by dashboards or other modules to keep state in sync.
-    """
+    # Tracks running dashboard interfaces and server processes.
+    # Can be used by dashboards or other modules to keep state in sync.
     def __init__(self, server_manager_dir=None):
         # Try to auto-detect server_manager_dir if not provided
         if server_manager_dir is None:
@@ -41,7 +39,7 @@ class DashboardTracker:
         self._thread = None
 
     def scan_dashboards(self):
-        """Scan temp directory for dashboard PID files and update self.dashboards"""
+        # Scan temp directory for dashboard PID files and update self.dashboards
         dashboards = {}
         if os.path.exists(self.temp_dir):
             for fname in os.listdir(self.temp_dir):
@@ -70,7 +68,7 @@ class DashboardTracker:
         self.dashboards = dashboards
 
     def scan_servers(self):
-        """Scan servers directory for running server processes and update self.servers"""
+        # Scan servers directory for running server processes and update self.servers
         servers = {}
         if os.path.exists(self.servers_dir):
             for fname in os.listdir(self.servers_dir):
@@ -94,23 +92,23 @@ class DashboardTracker:
         self.servers = servers
 
     def refresh(self):
-        """Refresh dashboards and servers info (thread-safe)"""
+        # Refresh dashboards and servers info (thread-safe)
         with self.lock:
             self.scan_dashboards()
             self.scan_servers()
 
     def get_dashboards(self):
-        """Get current dashboards info"""
+        # Get current dashboards info
         with self.lock:
             return dict(self.dashboards)
 
     def get_servers(self):
-        """Get current servers info"""
+        # Get current servers info
         with self.lock:
             return dict(self.servers)
 
     def start_auto_refresh(self):
-        """Start background thread to refresh info periodically"""
+        # Start background thread to refresh info periodically
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
@@ -118,7 +116,7 @@ class DashboardTracker:
         self._thread.start()
 
     def stop_auto_refresh(self):
-        """Stop background refresh thread"""
+        # Stop background refresh thread
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=2)

@@ -25,7 +25,7 @@ if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.debug("Debug module debug mode enabled via environment")
 
 class DebugManager:
-    """Simplified class for system diagnostics and debugging"""
+    # Simplified class for system diagnostics and debugging
     def __init__(self):
         # Add project root to sys.path
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -39,7 +39,7 @@ class DebugManager:
         self.initialize_from_registry()
     
     def initialize_from_registry(self):
-        """Initialize paths from registry settings"""
+        # Initialize paths from registry settings
         try:
             from Modules.common import REGISTRY_ROOT
             # Read registry for paths
@@ -81,7 +81,7 @@ class DebugManager:
             return False
     
     def set_debug_mode(self, enabled=True):
-        """Enable or disable debug mode"""
+        # Enable or disable debug mode
         self.debug_enabled = enabled
         level = logging.DEBUG if enabled else logging.INFO
         logger.setLevel(level)
@@ -93,11 +93,11 @@ class DebugManager:
         return True
     
     def is_debug_enabled(self):
-        """Check if debug mode is enabled"""
+        # Check if debug mode is enabled
         return self.debug_enabled
     
     def get_system_info(self):
-        """Get basic system information"""
+        # Get basic system information
         try:
             # Basic system info
             system_info = {
@@ -179,7 +179,7 @@ class DebugManager:
             return {"error": str(e)}
     
     def get_process_info(self, pid):
-        """Get information about a specific process"""
+        # Get information about a specific process
         try:
             if not pid or not psutil.pid_exists(pid):
                 return None
@@ -205,7 +205,7 @@ class DebugManager:
             return None
     
     def get_server_status(self, server_name=None):
-        """Get status of a specific server"""
+        # Get status of a specific server
         try:
             if not self.server_manager_dir:
                 return {"error": "Server manager directory not initialized"}
@@ -256,7 +256,7 @@ class DebugManager:
             return {"error": str(e)}
     
     def get_detailed_process_info(self, pid):
-        """Get comprehensive process information including children, files, etc."""
+        # Get comprehensive process information including children, files, etc.
         try:
             if not pid or not psutil.pid_exists(pid):
                 return None
@@ -349,7 +349,7 @@ class DebugManager:
             return None
     
     def check_port_status(self, host="localhost", port=8080, timeout=1):
-        """Check if a port is open on the specified host"""
+        # Check if a port is open on the specified host
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(timeout)
@@ -360,7 +360,7 @@ class DebugManager:
             return False
     
     def get_network_info(self):
-        """Get detailed network information"""
+        # Get detailed network information
         try:
             network_info = {
                 "interfaces": {},
@@ -417,7 +417,7 @@ class DebugManager:
             return {"error": str(e)}
     
     def get_disk_info(self):
-        """Get detailed disk information"""
+        # Get detailed disk information
         try:
             disk_info = {
                 "partitions": [],
@@ -471,7 +471,7 @@ class DebugManager:
             return {"error": str(e)}
     
     def monitor_process_resources(self, pid, duration=5):
-        """Monitor a process's resource usage over time"""
+        # Monitor a process's resource usage over time
         try:
             if not psutil.pid_exists(pid):
                 return {"error": f"Process {pid} does not exist"}
@@ -508,7 +508,7 @@ class DebugManager:
             return {"error": str(e)}
     
     def create_diagnostic_report(self):
-        """Create a comprehensive diagnostic report"""
+        # Create a comprehensive diagnostic report
         try:
             report = {
                 "timestamp": datetime.datetime.now().isoformat(),
@@ -588,7 +588,7 @@ class DebugManager:
             return None
     
     def log_exception(self, e, message="An exception occurred"):
-        """Log an exception with traceback"""
+        # Log an exception with traceback
         exc_info = sys.exc_info()
         if exc_info[0] is not None:
             tb_text = ''.join(traceback.format_exception(*exc_info))
@@ -597,7 +597,7 @@ class DebugManager:
             logger.error(f"{message}: {str(e)}")
     
     def get_server_process_details(self, server_name):
-        """Get detailed process information for a specific server"""
+        # Get detailed process information for a specific server
         try:
             if not self.server_manager_dir:
                 return {"error": "Server manager directory not initialized"}
@@ -662,57 +662,57 @@ debug_manager = DebugManager()
 
 # Export functions for easy access
 def get_system_info():
-    """Get basic system information"""
+    # Get basic system information
     return debug_manager.get_system_info()
 
 def create_diagnostic_report():
-    """Create a comprehensive diagnostic report"""
+    # Create a comprehensive diagnostic report
     return debug_manager.create_diagnostic_report()
 
 def enable_debug():
-    """Enable debug mode"""
+    # Enable debug mode
     return debug_manager.set_debug_mode(True)
 
 def disable_debug():
-    """Disable debug mode"""
+    # Disable debug mode
     return debug_manager.set_debug_mode(False)
 
 def is_debug_enabled():
-    """Check if debug mode is enabled"""
+    # Check if debug mode is enabled
     return debug_manager.is_debug_enabled()
 
 def get_process_info(pid):
-    """Get information about a specific process"""
+    # Get information about a specific process
     return debug_manager.get_process_info(pid)
 
 def get_detailed_process_info(pid):
-    """Get comprehensive process information including children, files, etc."""
+    # Get comprehensive process information including children, files, etc.
     return debug_manager.get_detailed_process_info(pid)
 
 def get_server_status(server_name=None):
-    """Get status of a specific server or all servers"""
+    # Get status of a specific server or all servers
     return debug_manager.get_server_status(server_name)
 
 def get_network_info():
-    """Get detailed network information"""
+    # Get detailed network information
     return debug_manager.get_network_info()
 
 def get_disk_info():
-    """Get detailed disk information"""
+    # Get detailed disk information
     return debug_manager.get_disk_info()
 
 def check_port_status(host="localhost", port=8080, timeout=1):
-    """Check if a port is open on the specified host"""
+    # Check if a port is open on the specified host
     return debug_manager.check_port_status(host, port, timeout)
 
 def monitor_process_resources(pid, duration=5):
-    """Monitor a process's resource usage over time"""
+    # Monitor a process's resource usage over time
     return debug_manager.monitor_process_resources(pid, duration)
 
 def get_server_process_details(server_name):
-    """Get detailed process information for a specific server"""
+    # Get detailed process information for a specific server
     return debug_manager.get_server_process_details(server_name)
 
 def log_exception(e, message="An exception occurred"):
-    """Log an exception with traceback"""
+    # Log an exception with traceback
     debug_manager.log_exception(e, message)

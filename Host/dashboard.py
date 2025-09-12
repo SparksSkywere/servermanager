@@ -320,7 +320,7 @@ class ServerManagerDashboard(ServerManagerModule):
             logger.error(f"Error during server reattachment: {e}")
 
     def setup_menu_bar(self):
-        """Setup the menu bar with update options"""
+        # Setup the menu bar with update options
         self.menubar = tk.Menu(self.root)
         self.root.config(menu=self.menubar)
         
@@ -356,7 +356,7 @@ class ServerManagerDashboard(ServerManagerModule):
         help_menu.add_command(label="About", command=self.show_about)
 
     def setup_ui(self):
-        """Create and configure the main dashboard user interface"""
+        # Create and configure the main dashboard user interface
         # Create top frame for help and about buttons
         self.top_frame = ttk.Frame(self.root)
         self.top_frame.pack(fill=tk.X, padx=15, pady=(15, 0))
@@ -548,7 +548,7 @@ class ServerManagerDashboard(ServerManagerModule):
     # ===== TAB MANAGEMENT METHODS =====
     
     def add_subhost_tab(self, subhost_name, is_local=False):
-        """Add a new tab for a subhost"""
+        # Add a new tab for a subhost
         # Create tab frame
         tab_frame = ttk.Frame(self.server_notebook)
         self.tab_frames[subhost_name] = tab_frame
@@ -598,7 +598,7 @@ class ServerManagerDashboard(ServerManagerModule):
         logger.info(f"Added tab for subhost: {subhost_name}")
     
     def remove_subhost_tab(self, subhost_name):
-        """Remove a tab for a subhost"""
+        # Remove a tab for a subhost
         if subhost_name in self.tab_frames:
             # Remove from notebook
             tab_index = self.server_notebook.index(self.tab_frames[subhost_name])
@@ -614,7 +614,7 @@ class ServerManagerDashboard(ServerManagerModule):
             logger.info(f"Removed tab for subhost: {subhost_name}")
     
     def load_subhost_tabs(self):
-        """Load tabs for all available subhosts"""
+        # Load tabs for all available subhosts
         try:
             # Import agent manager
             from Modules.agents import AgentManager
@@ -631,7 +631,7 @@ class ServerManagerDashboard(ServerManagerModule):
             logger.warning(f"Could not load subhost tabs: {e}")
     
     def update_tab_navigation(self):
-        """Update the state of navigation arrows based on tab count and visibility"""
+        # Update the state of navigation arrows based on tab count and visibility
         tab_count = len(self.server_notebook.tabs())
         
         if tab_count <= 5:  # If 5 or fewer tabs, no need for navigation
@@ -643,19 +643,19 @@ class ServerManagerDashboard(ServerManagerModule):
             self.right_arrow.config(state=tk.NORMAL)
     
     def scroll_tabs_left(self):
-        """Scroll tabs to the left"""
+        # Scroll tabs to the left
         current_tab = self.server_notebook.index(self.server_notebook.select())
         if current_tab > 0:
             self.server_notebook.select(current_tab - 1)
     
     def scroll_tabs_right(self):
-        """Scroll tabs to the right"""
+        # Scroll tabs to the right
         current_tab = self.server_notebook.index(self.server_notebook.select())
         if current_tab < len(self.server_notebook.tabs()) - 1:
             self.server_notebook.select(current_tab + 1)
     
     def get_current_server_list(self):
-        """Get the server list for the currently active tab"""
+        # Get the server list for the currently active tab
         current_tab_id = self.server_notebook.select()
         if not current_tab_id:
             return None
@@ -668,7 +668,7 @@ class ServerManagerDashboard(ServerManagerModule):
         return None
     
     def get_current_subhost(self):
-        """Get the name of the currently active subhost"""
+        # Get the name of the currently active subhost
         current_tab_id = self.server_notebook.select()
         if not current_tab_id:
             return "Local Host"
@@ -681,7 +681,7 @@ class ServerManagerDashboard(ServerManagerModule):
         return "Local Host"
     
     def update_server_list_for_subhost(self, subhost_name, servers_data):
-        """Update the server list for a specific subhost"""
+        # Update the server list for a specific subhost
         if subhost_name not in self.server_lists:
             return
             
@@ -709,18 +709,18 @@ class ServerManagerDashboard(ServerManagerModule):
                 logger.error(f"Error adding server {server_name} to list: {e}")
     
     def refresh_all_subhost_servers(self):
-        """Refresh servers for all subhost tabs"""
+        # Refresh servers for all subhost tabs
         for subhost_name in self.server_lists.keys():
             self.refresh_subhost_servers(subhost_name)
     
     def refresh_current_subhost_servers(self):
-        """Refresh servers for the currently active subhost tab"""
+        # Refresh servers for the currently active subhost tab
         current_subhost = self.get_current_subhost()
         if current_subhost:
             self.refresh_subhost_servers(current_subhost)
     
     def refresh_subhost_servers(self, subhost_name):
-        """Refresh servers for a specific subhost"""
+        # Refresh servers for a specific subhost
         try:
             if subhost_name == "Local Host":
                 # Get local servers
@@ -744,7 +744,7 @@ class ServerManagerDashboard(ServerManagerModule):
             logger.error(f"Error refreshing servers for {subhost_name}: {e}")
 
     def show_server_context_menu(self, event):
-        """Show context menu on right-click in server list"""
+        # Show context menu on right-click in server list
         current_list = self.get_current_server_list()
         if not current_list:
             return
@@ -779,7 +779,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_context_menu.tk_popup(event.x_root, event.y_root)
 
     def on_server_list_click(self, event):
-        """Handle left-click on server list - deselect all if clicking on empty space"""
+        # Handle left-click on server list - deselect all if clicking on empty space
         current_list = self.get_current_server_list()
         if not current_list:
             return
@@ -792,7 +792,7 @@ class ServerManagerDashboard(ServerManagerModule):
             logger.debug("Cleared server list selection due to empty space click")
 
     def on_server_double_click(self, event):
-        """Handle double-click on server list - open configuration dialog"""
+        # Handle double-click on server list - open configuration dialog
         current_list = self.get_current_server_list()
         if not current_list:
             return
@@ -805,7 +805,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.configure_server()
 
     def add_server(self):
-        """Add a new game server (Steam, Minecraft, or Other)"""
+        # Add a new game server (Steam, Minecraft, or Other)
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
             return
@@ -941,7 +941,7 @@ class ServerManagerDashboard(ServerManagerModule):
             app_id_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
             
             def browse_appid():
-                """Open dialog to browse and select Steam dedicated server AppID"""
+                # Open dialog to browse and select Steam dedicated server AppID
                 # Create AppID selection dialog
                 appid_dialog = tk.Toplevel(dialog)
                 appid_dialog.title("Select Dedicated Server")
@@ -1041,7 +1041,7 @@ class ServerManagerDashboard(ServerManagerModule):
                 
                 # Populate server list with enhanced data
                 def populate_servers(filter_text=""):
-                    """Populate the server tree with filtered dedicated server list"""
+                    # Populate the server tree with filtered dedicated server list
                     server_tree.delete(*server_tree.get_children())
                     for server in dedicated_servers:
                         server_name = server["name"]
@@ -1057,14 +1057,14 @@ class ServerManagerDashboard(ServerManagerModule):
                 
                 # Enhanced search functionality
                 def on_search(*args):
-                    """Update server list when search text changes"""
+                    # Update server list when search text changes
                     populate_servers(search_var.get())
                 
                 search_var.trace('w', on_search)
                 
                 # Add tooltip functionality for descriptions
                 def show_server_info(event):
-                    """Show server description tooltip on mouse hover"""
+                    # Show server description tooltip on mouse hover
                     item = server_tree.selection()
                     if item:
                         selected_server = None
@@ -1352,7 +1352,7 @@ class ServerManagerDashboard(ServerManagerModule):
         center_window(dialog, 950, 700, self.root)
 
     def update_server_list(self, force_refresh=False):
-        """Update server list from configuration files - thread-safe"""
+        # Update server list from configuration files - thread-safe
         def _update():
             try:
                 # Skip update if already refreshing
@@ -1389,14 +1389,14 @@ class ServerManagerDashboard(ServerManagerModule):
             self.root.after(0, _update)
     
     def toggle_offline_mode(self):
-        """Toggle offline mode"""
+        # Toggle offline mode
         # Toggle offline mode
         self.variables["offlineMode"] = self.offline_var.get()
         self.update_webserver_status()
         logger.info(f"Offline mode set to {self.variables['offlineMode']}")
     
     def update_webserver_status(self):
-        """Update the web server status display - thread-safe"""
+        # Update the web server status display - thread-safe
         def _update():
             try:
                 # Use the imported function from dashboard_functions
@@ -1411,7 +1411,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.root.after(0, _update)
     
     def update_system_info(self):
-        """Update system information in the UI - thread-safe"""
+        # Update system information in the UI - thread-safe
         def _update():
             try:
                 # Update web server status
@@ -1430,7 +1430,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.root.after(0, _update)
     
     def periodic_server_list_refresh(self):
-        """Periodic refresh of server list to clean up orphaned processes and update status"""
+        # Periodic refresh of server list to clean up orphaned processes and update status
         def _refresh():
             try:
                 # Only refresh if not already refreshing and enough time has passed
@@ -1449,7 +1449,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.root.after(0, _refresh)
     
     def run(self):
-        """Run the dashboard application"""
+        # Run the dashboard application
         logger.info("Starting dashboard run method")
 
         try:
@@ -1486,7 +1486,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.on_close()
     
     def on_close(self):
-        """Handle window close event"""
+        # Handle window close event
         logger.info("Dashboard closing")
 
         # Clean up resources
@@ -1517,7 +1517,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.root.destroy()
 
     def start_server(self):
-        """Start the selected game server (Steam/Minecraft/Other)"""
+        # Start the selected game server (Steam/Minecraft/Other)
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -1587,7 +1587,7 @@ class ServerManagerDashboard(ServerManagerModule):
         start_thread.start()
 
     def stop_server(self):
-        """Stop the selected game server"""
+        # Stop the selected game server
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -1656,7 +1656,7 @@ class ServerManagerDashboard(ServerManagerModule):
         stop_thread.start()
     
     def restart_server(self):
-        """Restart the selected game server"""
+        # Restart the selected game server
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -1725,7 +1725,7 @@ class ServerManagerDashboard(ServerManagerModule):
         restart_thread.start()
     
     def view_process_details(self):
-        """View detailed process information for a server using debug module"""
+        # View detailed process information for a server using debug module
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -1966,7 +1966,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", f"Failed to get process details: {str(e)}")
     
     def show_server_console(self):
-        """Show console window for the selected server"""
+        # Show console window for the selected server
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -2016,7 +2016,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Console Error", f"Failed to open console:\n{str(e)}")
     
     def update_server_status(self, server_name, status):
-        """Update the status of a server in the UI - thread-safe"""
+        # Update the status of a server in the UI - thread-safe
         def _update():
             try:
                 current_list = self.get_current_server_list()
@@ -2034,7 +2034,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             self.root.after(0, _update)
     
     def configure_server(self):
-        """Configure server settings including name, type, AppID, and startup configuration"""
+        # Configure server settings including name, type, AppID, and startup configuration
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -2136,7 +2136,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         appid_entry.grid(row=2, column=1, padx=10, pady=5, sticky=tk.W)
         
         def browse_appid():
-            """Open dialog to browse and select Steam dedicated server AppID"""
+            # Open dialog to browse and select Steam dedicated server AppID
             # Create AppID selection dialog
             appid_dialog = tk.Toplevel(dialog)
             appid_dialog.title("Select Dedicated Server")
@@ -2236,7 +2236,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             
             # Populate server list with enhanced data
             def populate_servers(filter_text=""):
-                """Populate the server tree with filtered dedicated server list"""
+                # Populate the server tree with filtered dedicated server list
                 server_tree.delete(*server_tree.get_children())
                 for server in dedicated_servers:
                     server_name = server["name"]
@@ -2252,14 +2252,14 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             
             # Enhanced search functionality
             def on_search(*args):
-                """Update server list when search text changes"""
+                # Update server list when search text changes
                 populate_servers(search_var.get())
             
             search_var.trace('w', on_search)
             
             # Add tooltip functionality for descriptions
             def show_server_info(event):
-                """Show server description tooltip on mouse hover"""
+                # Show server description tooltip on mouse hover
                 item = server_tree.selection()
                 if item:
                     selected_server = None
@@ -3381,7 +3381,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         center_window(dialog, 600, 500, self.root)
 
     def open_server_directory(self):
-        """Open the server's installation directory in file explorer"""
+        # Open the server's installation directory in file explorer
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -3424,7 +3424,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", f"Failed to open server directory: {str(e)}")
 
     def remove_server(self):
-        """Remove the selected server configuration and optionally files"""
+        # Remove the selected server configuration and optionally files
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -3470,7 +3470,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 messagebox.showerror("Error", f"Failed to remove server: {str(e)}")
 
     def import_server(self):
-        """Enhanced import server functionality with support for exported configurations"""
+        # Enhanced import server functionality with support for exported configurations
         try:
             # Choose import type
             import_dialog = tk.Toplevel(self.root)
@@ -3537,7 +3537,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             result = export_server_dialog(self.root, current_list, self.paths)
 
     def refresh_all(self):
-        """Refresh all dashboard data"""
+        # Refresh all dashboard data
         try:
             logger.info("Refreshing all dashboard data")
 
@@ -3557,7 +3557,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", f"Failed to refresh dashboard: {str(e)}")
 
     def sync_all(self):
-        """Synchronize all server data with the database"""
+        # Synchronize all server data with the database
         try:
             if self.variables["offlineMode"]:
                 messagebox.showinfo("Offline Mode", "Cannot sync while in offline mode.")
@@ -3656,7 +3656,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", f"Failed to open cluster management: {str(e)}")
 
     def check_server_updates(self):
-        """Check for updates for the selected server"""
+        # Check for updates for the selected server
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -3741,7 +3741,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         check_thread.start()
     
     def update_server(self):
-        """Update the selected server"""
+        # Update the selected server
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -3834,21 +3834,21 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         update_thread.start()
     
     def show_schedule_manager(self):
-        """Show unified schedule manager"""
+        # Show unified schedule manager
         if not self.timer_manager:
             messagebox.showerror("Error", "Scheduler not available.")
             return
         self.timer_manager.show_schedules_manager()
     
     def show_server_schedule(self):
-        """Show schedule manager for the selected server"""
+        # Show schedule manager for the selected server
         if not self.timer_manager:
             messagebox.showerror("Error", "Scheduler not available.")
             return
         self.timer_manager.show_schedules_manager()
     
     def update_all_servers(self):
-        """Update all Steam servers"""
+        # Update all Steam servers
         if not self.update_manager:
             messagebox.showerror("Error", "Update manager not available.")
             return
@@ -4008,7 +4008,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         restart_thread.start()
 
     def show_console_manager(self):
-        """Show console manager dialog with list of active consoles"""
+        # Show console manager dialog with list of active consoles
         try:
             if not self.console_manager:
                 messagebox.showinfo("Console Manager", "Console manager not available.")
@@ -4022,7 +4022,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Console Manager Error", f"Failed to show console manager:\n{str(e)}")
 
     def batch_update_server_types(self):
-        """Batch update all server types using database-based detection"""
+        # Batch update all server types using database-based detection
         try:
             # Show confirmation dialog first
             response = messagebox.askyesno(
@@ -4111,7 +4111,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Update Error", f"Failed to update server types:\n{str(e)}")
 
     def kill_server_process(self):
-        """Kill the process for the selected server"""
+        # Kill the process for the selected server
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -4173,15 +4173,15 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", f"Failed to kill process: {str(e)}", parent=self.root)
 
     def show_help(self):
-        """Show help dialog using the documentation module"""
+        # Show help dialog using the documentation module
         show_help_dialog(self.root, logger)
 
     def show_about(self):
-        """Show about dialog using the documentation module"""
+        # Show about dialog using the documentation module
         show_about_dialog(self.root, logger)
 
 def main():
-    """Parse command line arguments and create/run dashboard"""
+    # Parse command line arguments and create/run dashboard
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Server Manager Dashboard')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')

@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from user_database import initialize_user_manager
 
 def reset_admin_2fa():
-    """Reset admin 2FA settings - disable 2FA and clear secrets"""
+    # Reset admin 2FA settings - disable 2FA and clear secrets
     print("=== Resetting Admin 2FA ===")
     
     try:

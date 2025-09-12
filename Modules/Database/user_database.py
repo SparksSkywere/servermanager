@@ -312,7 +312,7 @@ def sql_login(user_manager, parent_window=None):
     return False, None
 
 def handle_2fa_login(user_manager, username, parent_window=None):
-    """Handle 2FA verification during login process"""
+    # Handle 2FA verification during login process
     try:
         # Create 2FA dialog
         twofa_dialog = tk.Toplevel() if parent_window else tk.Tk()

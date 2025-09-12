@@ -13,19 +13,19 @@ except ImportError:
     PYOTP_AVAILABLE = False
 
 def create_totp(secret: str):
-    """Safe wrapper for creating TOTP objects"""
+    # Safe wrapper for creating TOTP objects
     if not PYOTP_AVAILABLE or _pyotp is None:
         raise ImportError("pyotp library not available")
     return _pyotp.TOTP(str(secret))
 
 def generate_secret():
-    """Safe wrapper for generating secrets"""
+    # Safe wrapper for generating secrets
     if not PYOTP_AVAILABLE or _pyotp is None:
         raise ImportError("pyotp library not available")
     return _pyotp.random_base32()
 
 def create_provisioning_uri(secret: str, username: str, issuer: str):
-    """Safe wrapper for creating provisioning URIs"""
+    # Safe wrapper for creating provisioning URIs
     if not PYOTP_AVAILABLE or _pyotp is None:
         raise ImportError("pyotp library not available")
     return _pyotp.totp.TOTP(secret).provisioning_uri(
@@ -307,7 +307,7 @@ class UserManager:
             return None
 
     def verify_2fa(self, username, token, admin_override=False):
-        """Verify 2FA token for user"""
+        # Verify 2FA token for user
         if not PYOTP_AVAILABLE:
             logger.warning("pyotp library not available, cannot verify 2FA")
             return False
@@ -388,7 +388,7 @@ class UserManager:
             # Continue execution even if migration fails
     
     def setup_2fa(self, username):
-        """Setup 2FA for a user and return the secret and QR code URL"""
+        # Setup 2FA for a user and return the secret and QR code URL
         if not PYOTP_AVAILABLE:
             return False, "pyotp library not available"
             
@@ -425,7 +425,7 @@ class UserManager:
             return False, str(e)
     
     def enable_2fa(self, username, token):
-        """Enable 2FA for a user after verifying the token"""
+        # Enable 2FA for a user after verifying the token
         if not PYOTP_AVAILABLE:
             return False, "pyotp library not available"
             
@@ -460,7 +460,7 @@ class UserManager:
             return False, str(e)
     
     def disable_2fa(self, username):
-        """Disable 2FA for a user"""
+        # Disable 2FA for a user
         try:
             session = self.Session()
             db_user = session.query(User).filter(User.username == username).first()

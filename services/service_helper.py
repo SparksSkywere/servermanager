@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))
 from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
 
 def get_server_manager_dir():
-    """Get Server Manager directory from registry"""
+    # Get Server Manager directory from registry
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         server_manager_dir = winreg.QueryValueEx(key, "ServerManagerPath")[0]
@@ -23,7 +23,7 @@ def get_server_manager_dir():
         return None
 
 def check_admin():
-    """Check if script is running with admin privileges"""
+    # Check if script is running with admin privileges
     try:
         import ctypes
         return ctypes.windll.shell32.IsUserAnAdmin() != 0
@@ -31,7 +31,7 @@ def check_admin():
         return False
 
 def run_as_admin():
-    """Re-run script with admin privileges"""
+    # Re-run script with admin privileges
     try:
         import ctypes
         ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
@@ -40,7 +40,7 @@ def run_as_admin():
         return False
 
 def install_service():
-    """Install the Server Manager service"""
+    # Install the Server Manager service
     if not check_admin():
         print("Admin privileges required for service installation.")
         if input("Restart with admin privileges? (y/n): ").lower() == 'y':
@@ -96,7 +96,7 @@ def install_service():
         return False
 
 def uninstall_service():
-    """Uninstall the Server Manager service"""
+    # Uninstall the Server Manager service
     if not check_admin():
         print("Admin privileges required for service uninstallation.")
         if input("Restart with admin privileges? (y/n): ").lower() == 'y':
@@ -137,7 +137,7 @@ def uninstall_service():
         return False
 
 def service_status():
-    """Check service status"""
+    # Check service status
     try:
         result = subprocess.run(['sc', 'query', 'ServerManagerService'], 
                                capture_output=True, text=True)
@@ -156,7 +156,7 @@ def service_status():
         print(f"Error checking service status: {e}")
 
 def start_stop_service(action):
-    """Start or stop the service"""
+    # Start or stop the service
     if not check_admin():
         print(f"Admin privileges required to {action} service.")
         if input("Restart with admin privileges? (y/n): ").lower() == 'y':

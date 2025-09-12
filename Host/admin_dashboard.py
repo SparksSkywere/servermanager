@@ -17,7 +17,7 @@ except ImportError:
     print("Warning: pyotp not available. 2FA functionality will be disabled.")
 
 def handle_2fa_login_admin(user_manager, username, parent_window=None):
-    """Handle 2FA verification during admin login process"""
+    # Handle 2FA verification during admin login process
     try:
         # Create 2FA dialog
         twofa_dialog = tk.Toplevel() if parent_window else tk.Tk()
@@ -468,7 +468,7 @@ def admin_login(user_manager):
     return None
 
 def admin_login_with_root(login_root, user_manager):
-    """Admin login function that uses an existing Tkinter root window to avoid conflicts"""
+    # Admin login function that uses an existing Tkinter root window to avoid conflicts
     max_attempts = 3
     attempts = 0
     
@@ -1406,7 +1406,7 @@ class AdminDashboard(tk.Tk):
             messagebox.showerror("Error", f"Failed to open add user dialog: {str(e)}")
 
     def manage_email_settings(self):
-        """Open email settings management dialog"""
+        # Open email settings management dialog
         try:
             settings_window = tk.Toplevel(self)
             settings_window.title("Email Settings - Server Manager")
@@ -1615,7 +1615,7 @@ class AdminDashboard(tk.Tk):
             messagebox.showerror("Error", f"Failed to open email settings: {str(e)}")
 
     def _update_smtp_fields(self, provider, entries):
-        """Update SMTP fields based on selected provider"""
+        # Update SMTP fields based on selected provider
         from Modules.SMTP.mailserver import mail_server
 
         config = mail_server.get_provider_config(provider)
@@ -1624,7 +1624,7 @@ class AdminDashboard(tk.Tk):
                 var.set(str(config[key]))
 
     def send_bulk_email(self):
-        """Send email to multiple users"""
+        # Send email to multiple users
         try:
             # Get all users with emails
             users = self.user_manager.list_users()
@@ -1711,7 +1711,7 @@ class AdminDashboard(tk.Tk):
             messagebox.showerror("Error", f"Failed to open bulk email dialog: {str(e)}")
 
     def setup_user_2fa(self):
-        """Setup 2FA for a selected user"""
+        # Setup 2FA for a selected user
         try:
             selected_username = self.get_selected_username()
             if not selected_username:
@@ -1737,7 +1737,7 @@ class AdminDashboard(tk.Tk):
             messagebox.showerror("Error", f"Failed to setup 2FA: {str(e)}")
 
     def show_2fa_qr_dialog(self, username, secret, provisioning_uri):
-        """Show QR code dialog for 2FA setup"""
+        # Show QR code dialog for 2FA setup
         try:
             qr_dialog = tk.Toplevel(self)
             qr_dialog.title(f"2FA Setup - {username}")

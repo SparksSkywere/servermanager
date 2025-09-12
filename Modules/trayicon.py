@@ -91,7 +91,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
             self.configure_file_logging()
 
     def _find_window_by_title(self, partial_title):
-        """Find a window by partial title match"""
+        # Find a window by partial title match
         try:
             import ctypes
             

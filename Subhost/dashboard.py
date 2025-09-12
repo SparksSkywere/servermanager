@@ -26,7 +26,7 @@ app = Flask(__name__)
 
 # Get configuration from registry
 def get_subhost_config():
-    """Get subhost configuration from registry"""
+    # Get subhost configuration from registry
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         try:
@@ -64,7 +64,7 @@ def get_headers():
     return {}  # No authorization headers needed in simplified cluster system
 
 def report_status():
-    """Report status to host with retries and error handling"""
+    # Report status to host with retries and error handling
     retry_count = 0
     max_retries = 3
     base_delay = 10
@@ -108,7 +108,7 @@ def report_status():
         time.sleep(base_delay)
 
 def fetch_servers():
-    """Fetch servers from local API with error handling"""
+    # Fetch servers from local API with error handling
     try:
         resp = requests.get(WEB_API, headers=get_headers(), timeout=5)
         if resp.status_code == 200:
@@ -122,13 +122,13 @@ def fetch_servers():
 
 @app.route("/servers")
 def servers():
-    """Get servers endpoint for cluster communication"""
+    # Get servers endpoint for cluster communication
     servers = fetch_servers()
     return jsonify(servers)
 
 @app.route("/status")  
 def status():
-    """Get subhost status"""
+    # Get subhost status
     return jsonify({
         "subhost_id": SUBHOST_ID,
         "host_url": HOST_URL,
@@ -139,7 +139,7 @@ def status():
 
 @app.route("/")
 def index():
-    """Main subhost dashboard page"""
+    # Main subhost dashboard page
     servers = fetch_servers()
     
     # Get cluster status
