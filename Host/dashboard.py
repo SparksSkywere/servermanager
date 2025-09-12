@@ -390,38 +390,39 @@ class ServerManagerDashboard(ServerManagerModule):
         self.main_pane = ttk.PanedWindow(self.container_frame, orient=tk.HORIZONTAL)
         self.main_pane.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
-        # Server list frame (left side)
-        self.servers_frame = ttk.LabelFrame(self.main_pane, text="Game Servers", padding=10)
+        # Server tabs frame (left side) - Tabbed interface for subhosts
+        self.servers_frame = ttk.LabelFrame(self.main_pane, text="Host Servers", padding=10)
         self.main_pane.add(self.servers_frame, weight=70)
         
-        # Server list with columns
-        columns = ("name", "status", "pid", "cpu", "memory", "uptime")
-        self.server_list = ttk.Treeview(self.servers_frame, columns=columns, show="headings")
+        # Create tab navigation frame
+        self.tab_nav_frame = ttk.Frame(self.servers_frame)
+        self.tab_nav_frame.pack(fill=tk.X, pady=(0, 5))
         
-        # Column headings
-        self.server_list.heading("name", text="Server Name")
-        self.server_list.heading("status", text="Status")
-        self.server_list.heading("pid", text="PID")
-        self.server_list.heading("cpu", text="CPU Usage")
-        self.server_list.heading("memory", text="Memory Usage")
-        self.server_list.heading("uptime", text="Uptime")
-
-        # Column widths - improved for better readability and consistent spacing
-        self.server_list.column("name", width=200, minwidth=150, anchor=tk.W)
-        self.server_list.column("status", width=100, minwidth=80, anchor=tk.CENTER)
-        self.server_list.column("pid", width=80, minwidth=60, anchor=tk.CENTER)
-        self.server_list.column("cpu", width=100, minwidth=80, anchor=tk.CENTER)
-        self.server_list.column("memory", width=120, minwidth=100, anchor=tk.CENTER)
-        self.server_list.column("uptime", width=160, minwidth=120, anchor=tk.CENTER)
+        # Left arrow button for tab navigation
+        self.left_arrow = ttk.Button(self.tab_nav_frame, text="◀", width=3, command=self.scroll_tabs_left)
+        self.left_arrow.pack(side=tk.LEFT, padx=(0, 2))
+        self.left_arrow.config(state=tk.DISABLED)  # Initially disabled
         
-        # Add scrollbar to server list
-        server_scroll = ttk.Scrollbar(self.servers_frame, orient=tk.VERTICAL, command=self.server_list.yview)
-        self.server_list.configure(yscrollcommand=server_scroll.set)
+        # Right arrow button for tab navigation
+        self.right_arrow = ttk.Button(self.tab_nav_frame, text="▶", width=3, command=self.scroll_tabs_right)
+        self.right_arrow.pack(side=tk.RIGHT, padx=(2, 0))
+        self.right_arrow.config(state=tk.DISABLED)  # Initially disabled
         
-        server_scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
-        self.server_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Tab notebook
+        self.server_notebook = ttk.Notebook(self.servers_frame)
+        self.server_notebook.pack(fill=tk.BOTH, expand=True)
         
-        # Setup right-click context menu for server list
+        # Dictionary to store server lists for each tab
+        self.server_lists = {}
+        self.tab_frames = {}
+        
+        # Initialize with local host tab
+        self.add_subhost_tab("Local Host", is_local=True)
+        
+        # Load cluster nodes and create tabs for subhosts
+        self.load_subhost_tabs()
+        
+        # Setup right-click context menu for server lists (will be bound to each tab's treeview)
         self.server_context_menu = tk.Menu(self.root, tearoff=0)
         self.server_context_menu.add_command(label="Add Server", command=self.add_server)
         self.server_context_menu.add_command(label="Refresh", command=self.refresh_all)
@@ -432,6 +433,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_context_menu.add_command(label="Restart Server", command=self.restart_server)
         self.server_context_menu.add_command(label="View Process Details", command=self.view_process_details)
         self.server_context_menu.add_command(label="Show Console", command=self.show_server_console)
+        self.server_context_menu.add_command(label="Console Manager", command=self.show_console_manager)
         self.server_context_menu.add_command(label="Configure Server", command=self.configure_server)
         self.server_context_menu.add_separator()
         self.server_context_menu.add_command(label="Check for Updates", command=self.check_server_updates)
@@ -441,15 +443,6 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_context_menu.add_command(label="Export Server", command=self.export_server)
         self.server_context_menu.add_command(label="Open Folder Directory", command=self.open_server_directory)
         self.server_context_menu.add_command(label="Remove Server", command=self.remove_server)
-        
-        # Bind right-click to server list
-        self.server_list.bind("<Button-3>", self.show_server_context_menu)
-        
-        # Bind left-click to handle deselection on empty space (like Windows Explorer)
-        self.server_list.bind("<Button-1>", self.on_server_list_click)
-        
-        # Bind double-click to configure server
-        self.server_list.bind("<Double-1>", self.on_server_double_click)
         
         # System info frame (right side)
         self.system_frame = ttk.LabelFrame(self.main_pane, text="System Information", padding=10)
@@ -552,12 +545,214 @@ class ServerManagerDashboard(ServerManagerModule):
             ttk.Button(self.button_row2, text=btn["text"], command=btn["command"], 
                       width=btn["width"]).pack(side=tk.LEFT, padx=(0, 8))
     
+    # ===== TAB MANAGEMENT METHODS =====
+    
+    def add_subhost_tab(self, subhost_name, is_local=False):
+        """Add a new tab for a subhost"""
+        # Create tab frame
+        tab_frame = ttk.Frame(self.server_notebook)
+        self.tab_frames[subhost_name] = tab_frame
+        
+        # Create server list for this tab
+        columns = ("name", "status", "pid", "cpu", "memory", "uptime")
+        server_list = ttk.Treeview(tab_frame, columns=columns, show="headings")
+        
+        # Column headings
+        server_list.heading("name", text="Server Name")
+        server_list.heading("status", text="Status")
+        server_list.heading("pid", text="PID")
+        server_list.heading("cpu", text="CPU Usage")
+        server_list.heading("memory", text="Memory Usage")
+        server_list.heading("uptime", text="Uptime")
+
+        # Column widths
+        server_list.column("name", width=200, minwidth=150, anchor=tk.W)
+        server_list.column("status", width=100, minwidth=80, anchor=tk.CENTER)
+        server_list.column("pid", width=80, minwidth=60, anchor=tk.CENTER)
+        server_list.column("cpu", width=100, minwidth=80, anchor=tk.CENTER)
+        server_list.column("memory", width=120, minwidth=100, anchor=tk.CENTER)
+        server_list.column("uptime", width=160, minwidth=120, anchor=tk.CENTER)
+        
+        # Add scrollbar
+        server_scroll = ttk.Scrollbar(tab_frame, orient=tk.VERTICAL, command=server_list.yview)
+        server_list.configure(yscrollcommand=server_scroll.set)
+        
+        server_scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
+        server_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Bind events
+        server_list.bind("<Button-3>", self.show_server_context_menu)
+        server_list.bind("<Button-1>", self.on_server_list_click)
+        server_list.bind("<Double-1>", self.on_server_double_click)
+        
+        # Store reference
+        self.server_lists[subhost_name] = server_list
+        
+        # Add tab to notebook
+        display_name = f"🏠 {subhost_name}" if is_local else f"🌐 {subhost_name}"
+        self.server_notebook.add(tab_frame, text=display_name)
+        
+        # Update navigation arrows
+        self.update_tab_navigation()
+        
+        logger.info(f"Added tab for subhost: {subhost_name}")
+    
+    def remove_subhost_tab(self, subhost_name):
+        """Remove a tab for a subhost"""
+        if subhost_name in self.tab_frames:
+            # Remove from notebook
+            tab_index = self.server_notebook.index(self.tab_frames[subhost_name])
+            self.server_notebook.forget(tab_index)
+            
+            # Clean up references
+            del self.server_lists[subhost_name]
+            del self.tab_frames[subhost_name]
+            
+            # Update navigation arrows
+            self.update_tab_navigation()
+            
+            logger.info(f"Removed tab for subhost: {subhost_name}")
+    
+    def load_subhost_tabs(self):
+        """Load tabs for all available subhosts"""
+        try:
+            # Import agent manager
+            from Modules.agents import AgentManager
+            agent_manager = AgentManager()
+            
+            # Add tabs for each cluster node
+            for node_name, node in agent_manager.nodes.items():
+                if node_name != "Local Host":  # Skip local host as it's already added
+                    self.add_subhost_tab(node_name, is_local=False)
+            
+            logger.info(f"Loaded {len(agent_manager.nodes)} subhost tabs")
+            
+        except Exception as e:
+            logger.warning(f"Could not load subhost tabs: {e}")
+    
+    def update_tab_navigation(self):
+        """Update the state of navigation arrows based on tab count and visibility"""
+        tab_count = len(self.server_notebook.tabs())
+        
+        if tab_count <= 5:  # If 5 or fewer tabs, no need for navigation
+            self.left_arrow.config(state=tk.DISABLED)
+            self.right_arrow.config(state=tk.DISABLED)
+        else:
+            # Enable navigation arrows
+            self.left_arrow.config(state=tk.NORMAL)
+            self.right_arrow.config(state=tk.NORMAL)
+    
+    def scroll_tabs_left(self):
+        """Scroll tabs to the left"""
+        current_tab = self.server_notebook.index(self.server_notebook.select())
+        if current_tab > 0:
+            self.server_notebook.select(current_tab - 1)
+    
+    def scroll_tabs_right(self):
+        """Scroll tabs to the right"""
+        current_tab = self.server_notebook.index(self.server_notebook.select())
+        if current_tab < len(self.server_notebook.tabs()) - 1:
+            self.server_notebook.select(current_tab + 1)
+    
+    def get_current_server_list(self):
+        """Get the server list for the currently active tab"""
+        current_tab_id = self.server_notebook.select()
+        if not current_tab_id:
+            return None
+            
+        # Find which subhost this tab belongs to
+        for subhost_name, tab_frame in self.tab_frames.items():
+            if str(tab_frame) in current_tab_id:
+                return self.server_lists.get(subhost_name)
+        
+        return None
+    
+    def get_current_subhost(self):
+        """Get the name of the currently active subhost"""
+        current_tab_id = self.server_notebook.select()
+        if not current_tab_id:
+            return "Local Host"
+            
+        # Find which subhost this tab belongs to
+        for subhost_name, tab_frame in self.tab_frames.items():
+            if str(tab_frame) in current_tab_id:
+                return subhost_name
+        
+        return "Local Host"
+    
+    def update_server_list_for_subhost(self, subhost_name, servers_data):
+        """Update the server list for a specific subhost"""
+        if subhost_name not in self.server_lists:
+            return
+            
+        server_list = self.server_lists[subhost_name]
+        
+        # Clear existing items
+        for item in server_list.get_children():
+            server_list.delete(item)
+        
+        # Add servers for this subhost
+        for server_name, server_info in servers_data.items():
+            try:
+                # Extract server information
+                status = server_info.get('status', 'Unknown')
+                pid = server_info.get('pid', '')
+                cpu = server_info.get('cpu', '0%')
+                memory = server_info.get('memory', '0 MB')
+                uptime = server_info.get('uptime', '00:00:00')
+                
+                # Insert into treeview
+                server_list.insert("", tk.END, values=(
+                    server_name, status, pid, cpu, memory, uptime
+                ))
+            except Exception as e:
+                logger.error(f"Error adding server {server_name} to list: {e}")
+    
+    def refresh_all_subhost_servers(self):
+        """Refresh servers for all subhost tabs"""
+        for subhost_name in self.server_lists.keys():
+            self.refresh_subhost_servers(subhost_name)
+    
+    def refresh_current_subhost_servers(self):
+        """Refresh servers for the currently active subhost tab"""
+        current_subhost = self.get_current_subhost()
+        if current_subhost:
+            self.refresh_subhost_servers(current_subhost)
+    
+    def refresh_subhost_servers(self, subhost_name):
+        """Refresh servers for a specific subhost"""
+        try:
+            if subhost_name == "Local Host":
+                # Get local servers
+                if self.server_manager:
+                    servers = self.server_manager.get_all_servers()
+                    self.update_server_list_for_subhost(subhost_name, servers)
+            else:
+                # Get servers from remote subhost
+                from Modules.agents import AgentManager
+                agent_manager = AgentManager()
+                servers = agent_manager.get_node_servers(subhost_name)
+                
+                # Convert to expected format
+                servers_data = {}
+                for server in servers:
+                    servers_data[server.get('name', 'Unknown')] = server
+                
+                self.update_server_list_for_subhost(subhost_name, servers_data)
+                
+        except Exception as e:
+            logger.error(f"Error refreshing servers for {subhost_name}: {e}")
+
     def show_server_context_menu(self, event):
         """Show context menu on right-click in server list"""
-        item = self.server_list.identify_row(event.y)
+        current_list = self.get_current_server_list()
+        if not current_list:
+            return
+            
+        item = current_list.identify_row(event.y)
         
         if item:
-            self.server_list.selection_set(item)
+            current_list.selection_set(item)
             # Enable server-specific options
             self.server_context_menu.entryconfigure("Open Folder Directory", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("Remove Server", state=tk.NORMAL)
@@ -585,20 +780,28 @@ class ServerManagerDashboard(ServerManagerModule):
 
     def on_server_list_click(self, event):
         """Handle left-click on server list - deselect all if clicking on empty space"""
-        item = self.server_list.identify_row(event.y)
+        current_list = self.get_current_server_list()
+        if not current_list:
+            return
+            
+        item = current_list.identify_row(event.y)
         
         if not item:
             # Clicked on empty space - clear all selections (like Windows Explorer)
-            self.server_list.selection_remove(self.server_list.selection())
+            current_list.selection_remove(current_list.selection())
             logger.debug("Cleared server list selection due to empty space click")
 
     def on_server_double_click(self, event):
         """Handle double-click on server list - open configuration dialog"""
-        item = self.server_list.identify_row(event.y)
+        current_list = self.get_current_server_list()
+        if not current_list:
+            return
+            
+        item = current_list.identify_row(event.y)
         
         if item:
             # Double-clicked on a server - open configuration
-            self.server_list.selection_set(item)
+            current_list.selection_set(item)
             self.configure_server()
 
     def add_server(self):
@@ -1169,11 +1372,8 @@ class ServerManagerDashboard(ServerManagerModule):
                 self._refreshing_server_list = True
                 
                 try:
-                    # Use the new function from dashboard_functions
-                    update_server_list_from_files(
-                        self.server_list, self.paths, self.variables, 
-                        log_dashboard_event, format_uptime_from_start_time
-                    )
+                    # Update all subhost tabs
+                    self.refresh_all_subhost_servers()
                 finally:
                     # Always clear the refreshing flag
                     self._refreshing_server_list = False
@@ -1318,12 +1518,18 @@ class ServerManagerDashboard(ServerManagerModule):
 
     def start_server(self):
         """Start the selected game server (Steam/Minecraft/Other)"""
-        selected_items = self.server_list.selection()
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+            
+        selected_items = current_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
             
-        server_name = self.server_list.item(selected_items[0])['values'][0]
+        server_name = current_list.item(selected_items[0])['values'][0]
+        current_subhost = self.get_current_subhost()
         
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
@@ -1382,12 +1588,18 @@ class ServerManagerDashboard(ServerManagerModule):
 
     def stop_server(self):
         """Stop the selected game server"""
-        selected_items = self.server_list.selection()
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+            
+        selected_items = current_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
             
-        server_name = self.server_list.item(selected_items[0])['values'][0]
+        server_name = current_list.item(selected_items[0])['values'][0]
+        current_subhost = self.get_current_subhost()
         
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
@@ -1445,12 +1657,18 @@ class ServerManagerDashboard(ServerManagerModule):
     
     def restart_server(self):
         """Restart the selected game server"""
-        selected_items = self.server_list.selection()
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+            
+        selected_items = current_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
             
-        server_name = self.server_list.item(selected_items[0])['values'][0]
+        server_name = current_list.item(selected_items[0])['values'][0]
+        current_subhost = self.get_current_subhost()
         
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
@@ -1508,12 +1726,17 @@ class ServerManagerDashboard(ServerManagerModule):
     
     def view_process_details(self):
         """View detailed process information for a server using debug module"""
-        selected_items = self.server_list.selection()
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+            
+        selected_items = current_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
             
-        server_name = self.server_list.item(selected_items[0])['values'][0]
+        server_name = current_list.item(selected_items[0])['values'][0]
         
         try:
             # Get server process details from debug module
@@ -1744,12 +1967,18 @@ Working Directory: {process_details.get('cwd', 'N/A')}
     
     def show_server_console(self):
         """Show console window for the selected server"""
-        selected_items = self.server_list.selection()
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+            
+        selected_items = current_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
             
-        server_name = self.server_list.item(selected_items[0])['values'][0]
+        server_name = current_list.item(selected_items[0])['values'][0]
+        current_subhost = self.get_current_subhost()
         
         try:
             if not self.console_manager:
@@ -1766,7 +1995,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             
             # If we can't get config from server manager, create a basic one
             if not server_config:
-                server_values = self.server_list.item(selected_items[0])['values']
+                server_values = current_list.item(selected_items[0])['values']
                 server_config = {
                     'name': server_name,
                     'type': 'Unknown',
@@ -1790,9 +2019,11 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         """Update the status of a server in the UI - thread-safe"""
         def _update():
             try:
-                update_server_status_in_treeview(self.server_list, server_name, status)
-                # Force UI update
-                self.root.update_idletasks()
+                current_list = self.get_current_server_list()
+                if current_list:
+                    update_server_status_in_treeview(current_list, server_name, status)
+                    # Force UI update
+                    self.root.update_idletasks()
             except Exception as e:
                 logger.error(f"Error updating server status: {str(e)}")
         
@@ -1804,12 +2035,18 @@ Working Directory: {process_details.get('cwd', 'N/A')}
     
     def configure_server(self):
         """Configure server settings including name, type, AppID, and startup configuration"""
-        selected = self.server_list.selection()
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+            
+        selected = current_list.selection()
         if not selected:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
             
-        server_name = self.server_list.item(selected[0])['values'][0]
+        server_name = current_list.item(selected[0])['values'][0]
+        current_subhost = self.get_current_subhost()
         
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
@@ -2646,14 +2883,19 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
     def configure_java(self):
         # Open Java configuration dialog for selected server
-        selected_items = self.server_list.selection()
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showwarning("No Selection", "No server list available.")
+            return
+            
+        selected_items = current_list.selection()
         if not selected_items:
             messagebox.showwarning("No Selection", "Please select a server to configure Java for.")
             return
         
         # Get selected server name
         item = selected_items[0]
-        server_name = self.server_list.item(item)["values"][0]
+        server_name = current_list.item(item)["values"][0]
         
         # Check if it's a Minecraft server
         server_config = None
@@ -3140,12 +3382,17 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
     def open_server_directory(self):
         """Open the server's installation directory in file explorer"""
-        selected_items = self.server_list.selection()
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+            
+        selected_items = current_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
             
-        server_name = self.server_list.item(selected_items[0])['values'][0]
+        server_name = current_list.item(selected_items[0])['values'][0]
         
         try:
             # Get server config file path
@@ -3178,12 +3425,18 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
     def remove_server(self):
         """Remove the selected server configuration and optionally files"""
-        selected_items = self.server_list.selection()
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+            
+        selected_items = current_list.selection()
         if not selected_items:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
             
-        server_name = self.server_list.item(selected_items[0])['values'][0]
+        server_name = current_list.item(selected_items[0])['values'][0]
+        current_subhost = self.get_current_subhost()
         
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
@@ -3279,7 +3532,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
     def export_server(self):
         # Export server configuration for use on other hosts or clusters
-        result = export_server_dialog(self.root, self.server_list, self.paths)
+        current_list = self.get_current_server_list()
+        if current_list:
+            result = export_server_dialog(self.root, current_list, self.paths)
 
     def refresh_all(self):
         """Refresh all dashboard data"""
@@ -3402,12 +3657,17 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
     def check_server_updates(self):
         """Check for updates for the selected server"""
-        selected = self.server_list.selection()
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+            
+        selected = current_list.selection()
         if not selected:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
         
-        server_name = self.server_list.item(selected[0])['values'][0]
+        server_name = current_list.item(selected[0])['values'][0]
         
         if not self.update_manager:
             messagebox.showerror("Error", "Update manager not available.")
@@ -3482,12 +3742,18 @@ Working Directory: {process_details.get('cwd', 'N/A')}
     
     def update_server(self):
         """Update the selected server"""
-        selected = self.server_list.selection()
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+            
+        selected = current_list.selection()
         if not selected:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
         
-        server_name = self.server_list.item(selected[0])['values'][0]
+        server_name = current_list.item(selected[0])['values'][0]
+        current_subhost = self.get_current_subhost()
         
         if not self.server_manager:
             messagebox.showerror("Error", "Server manager not available.")
@@ -3846,12 +4112,18 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
     def kill_server_process(self):
         """Kill the process for the selected server"""
-        selected = self.server_list.selection()
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+            
+        selected = current_list.selection()
         if not selected:
             messagebox.showinfo("No Selection", "Please select a server first.")
             return
         
-        server_name = self.server_list.item(selected[0])['values'][0]
+        server_name = current_list.item(selected[0])['values'][0]
+        current_subhost = self.get_current_subhost()
         
         # Confirm action
         if not messagebox.askyesno("Kill Process", 

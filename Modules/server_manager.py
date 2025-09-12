@@ -26,6 +26,15 @@ except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger("ServerManager")
 
+# Import resource management modules
+try:
+    from Modules.resource_manager import create_limited_process, resource_manager
+    from Modules.resource_config import get_resource_limits, is_resource_limiting_enabled
+    RESOURCE_MANAGEMENT_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Resource management modules not available: {e}")
+    RESOURCE_MANAGEMENT_AVAILABLE = False
+
 if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.setLevel(logging.DEBUG)
     logger.debug("ServerManager module debug mode enabled via environment")
@@ -452,7 +461,7 @@ class ServerManager(ServerManagerModule):
                 
             # Create process with pipes for real-time console interaction
             hide_consoles = should_hide_server_consoles(self.config)
-            
+
             # For Steam/Source servers, try to force console output to stdout
             cmd_str_check = cmd if isinstance(cmd, str) else ' '.join(cmd)
             if "srcds" in cmd_str_check.lower() or "steamcmd" in cmd_str_check.lower():
@@ -467,32 +476,126 @@ class ServerManager(ServerManagerModule):
                         cmd.append("-console")
                     if "-condebug" not in cmd:
                         cmd.append("-condebug")
-                    
-            if shell:
-                process = subprocess.Popen(
-                    cmd,
-                    shell=True,
-                    cwd=install_dir,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,  # Redirect stderr to stdout for combined output
-                    text=True,
-                    bufsize=0,  # Unbuffered for real-time output
-                    universal_newlines=True,
-                    creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
-                )
+
+            # Check if resource limiting is enabled and available
+            use_resource_limiting = (RESOURCE_MANAGEMENT_AVAILABLE and
+                                   is_resource_limiting_enabled() and
+                                   not server_config.get('DisableResourceLimiting', False))
+
+            if use_resource_limiting:
+                # Get resource limits for this server type
+                server_type = server_config.get("Type", "Other").lower()
+                if "minecraft" in server_type:
+                    resource_limits = get_resource_limits("minecraft_servers")
+                elif "steam" in server_type or "source" in server_type:
+                    resource_limits = get_resource_limits("steam_servers")
+                else:
+                    resource_limits = get_resource_limits("default")
+
+                cpu_cores = resource_limits.get("cpu_cores")
+                memory_mb = resource_limits.get("memory_mb")
+
+                # Create unique job name for this server
+                job_name = f"server_{server_name}_{int(time.time())}"
+
+                logger.info(f"Starting server '{server_name}' with resource limits: CPU={cpu_cores} cores, RAM={memory_mb}MB")
+
+                # Use resource-limited process creation
+                if shell:
+                    # For shell commands, we need to handle them differently
+                    process = subprocess.Popen(
+                        cmd,
+                        shell=True,
+                        cwd=install_dir,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=0,
+                        universal_newlines=True,
+                        creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
+                    )
+                    # Assign to job object after creation
+                    if process.pid:
+                        job_handle = resource_manager.create_resource_limited_job(
+                            job_name=job_name,
+                            cpu_cores=cpu_cores,
+                            memory_limit_mb=memory_mb
+                        )
+                        if job_handle:
+                            resource_manager.assign_process_to_job(job_handle, process.pid)
+                else:
+                    # Use the resource manager for non-shell commands
+                    if isinstance(cmd, str):
+                        # Convert string command to list for resource manager
+                        import shlex
+                        cmd_list = shlex.split(cmd)
+                    else:
+                        cmd_list = cmd
+
+                    psutil_process = create_limited_process(
+                        job_name=job_name,
+                        cmd=cmd_list,
+                        cpu_cores=cpu_cores,
+                        memory_limit_mb=memory_mb,
+                        cwd=install_dir
+                    )
+                    if psutil_process:
+                        # Create a mock subprocess object that wraps the psutil process
+                        class MockSubprocess:
+                            def __init__(self, psutil_proc):
+                                self.pid = psutil_proc.pid
+                                self.stdout = None
+                                self.stderr = None
+                                self.stdin = None
+                                self.returncode = None
+                                self._psutil_proc = psutil_proc
+
+                            def poll(self):
+                                return self._psutil_proc.poll()
+
+                            def wait(self, timeout=None):
+                                return self._psutil_proc.wait(timeout)
+
+                            def terminate(self):
+                                return self._psutil_proc.terminate()
+
+                            def kill(self):
+                                return self._psutil_proc.kill()
+
+                        process = MockSubprocess(psutil_process)
+                    else:
+                        logger.error(f"Failed to create resource-limited process for server '{server_name}'")
+                        if callback:
+                            callback(f"Failed to create resource-limited process for server '{server_name}'")
+                        return False, f"Failed to create resource-limited process for server '{server_name}'"
             else:
-                process = subprocess.Popen(
-                    cmd,
-                    cwd=install_dir,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,  # Redirect stderr to stdout for combined output
-                    text=True,
-                    bufsize=0,  # Unbuffered for real-time output
-                    universal_newlines=True,
-                    creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
-                )
+                # Standard process creation without resource limiting
+                if shell:
+                    process = subprocess.Popen(
+                        cmd,
+                        shell=True,
+                        cwd=install_dir,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=0,
+                        universal_newlines=True,
+                        creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
+                    )
+                else:
+                    process = subprocess.Popen(
+                        cmd,
+                        cwd=install_dir,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=0,
+                        universal_newlines=True,
+                        creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
+                    )
             time.sleep(1)
             if not psutil.pid_exists(process.pid):
                 logger.error(f"Server process terminated immediately after starting. Check logs at {stderr_log}")

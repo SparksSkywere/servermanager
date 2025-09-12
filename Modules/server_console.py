@@ -641,13 +641,13 @@ class RealTimeConsole:
             
             ttk.Button(btn_frame, text="Clear", command=self._clear_output).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(btn_frame, text="Kill Process", command=self._kill_process_gui).pack(side=tk.LEFT, padx=(0, 10))
-            ttk.Button(btn_frame, text="Close", command=self._close_window).pack(side=tk.RIGHT)
+            ttk.Button(btn_frame, text="Close", command=self.force_close_window).pack(side=tk.RIGHT)
             
             # Bind events
             self.command_entry.bind("<Return>", lambda e: self._send_command_gui())
             self.command_entry.bind("<Up>", self._prev_command)
             self.command_entry.bind("<Down>", self._next_command)
-            self.window.protocol("WM_DELETE_WINDOW", self._close_window)
+            self.window.protocol("WM_DELETE_WINDOW", self.force_close_window)
             
             # Load existing output
             self._populate_existing_output()
@@ -840,16 +840,22 @@ class RealTimeConsole:
         except Exception as e:
             logger.error(f"Error clearing output: {e}")
     
-    def _close_window(self):
-        # Close console window
+    def force_close_window(self):
+        # Force close console window (for stuck windows)
         try:
-            if self.window:
+            if self.window and self.window.winfo_exists():
+                logger.info(f"Force closing console window for {self.server_name}")
                 self.window.destroy()
                 self.window = None
                 self.text_widget = None
                 self.command_entry = None
+                return True
+            else:
+                logger.warning(f"No window to force close for {self.server_name}")
+                return False
         except Exception as e:
-            logger.error(f"Error closing console window: {e}")
+            logger.error(f"Error force closing console window for {self.server_name}: {e}")
+            return False
     
     def kill_process(self):
         # Forcefully kill the attached process
@@ -1028,15 +1034,29 @@ class ConsoleManager:
             logger.error(f"Error killing process for {server_name}: {e}")
             return False
     
+    def force_close_console(self, server_name):
+        # Force close console window for a specific server
+        try:
+            with self.lock:
+                console = self.consoles.get(server_name)
+                if console:
+                    return console.force_close_window()
+                else:
+                    logger.warning(f"No console available for {server_name} to force close")
+                    return False
+        except Exception as e:
+            logger.error(f"Error force closing console for {server_name}: {e}")
+            return False
+    
     def cleanup_all_consoles(self):
         # Cleanup all consoles
         try:
             with self.lock:
                 for server_name, console in list(self.consoles.items()):
                     try:
-                        console.detach()
+                        console.force_close_window()
                     except Exception as e:
-                        logger.error(f"Error detaching console {server_name}: {e}")
+                        logger.error(f"Error closing console window {server_name}: {e}")
                 
                 self.consoles.clear()
                 logger.info("All consoles cleaned up")
@@ -1063,11 +1083,17 @@ class ConsoleManager:
             list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
             
             # Treeview
-            columns = ("server", "status", "pid")
+            columns = ("server", "status", "pid", "window")
             tree = ttk.Treeview(list_frame, columns=columns, show="headings")
             tree.heading("server", text="Server Name")
             tree.heading("status", text="Status")  
             tree.heading("pid", text="Process ID")
+            tree.heading("window", text="Console Window")
+            
+            tree.column("server", width=150, minwidth=100)
+            tree.column("status", width=80, minwidth=60)
+            tree.column("pid", width=80, minwidth=60)
+            tree.column("window", width=120, minwidth=80)
             
             scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=tree.yview)
             tree.configure(yscrollcommand=scrollbar.set)
@@ -1100,16 +1126,33 @@ class ConsoleManager:
                 else:
                     messagebox.showwarning("No Selection", "Please select a console from the list.", parent=window)
             
+            def force_close_selected():
+                selection = tree.selection()
+                if selection:
+                    server_name = tree.item(selection[0])['values'][0]
+                    if messagebox.askyesno("Force Close Console", 
+                                         f"Are you sure you want to forcefully close the console window for '{server_name}'?\n\nThis will close the console window but the server process may still be running.",
+                                         parent=window):
+                        if self.force_close_console(server_name):
+                            messagebox.showinfo("Success", f"Console window for '{server_name}' has been force closed.", parent=window)
+                            refresh_list()
+                        else:
+                            messagebox.showerror("Error", f"Failed to force close console for '{server_name}'.", parent=window)
+                else:
+                    messagebox.showwarning("No Selection", "Please select a console from the list.", parent=window)
+            
             def refresh_list():
                 tree.delete(*tree.get_children())
                 with self.lock:
                     for server_name, console in self.consoles.items():
                         status = "Active" if console.is_active else "Inactive"
                         pid = console.process.pid if console.process else "N/A"
-                        tree.insert("", "end", values=(server_name, status, pid))
+                        window_status = "Open" if console.window and console.window.winfo_exists() else "Closed"
+                        tree.insert("", "end", values=(server_name, status, pid, window_status))
             
             ttk.Button(btn_frame, text="Show Console", command=show_selected).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(btn_frame, text="Kill Process", command=kill_selected).pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(btn_frame, text="Force Close Console", command=force_close_selected).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(btn_frame, text="Refresh", command=refresh_list).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(btn_frame, text="Close", command=window.destroy).pack(side=tk.RIGHT)
             
