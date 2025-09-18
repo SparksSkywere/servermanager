@@ -10,7 +10,6 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 import logging
-from pathlib import Path
 import json
 import time
 import webbrowser

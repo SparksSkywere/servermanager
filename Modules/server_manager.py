@@ -4,20 +4,10 @@ import sys
 import json
 import logging
 import subprocess
-import winreg
 import time
 import psutil
 import urllib.request
-import threading
 from datetime import datetime
-
-# GUI imports for error dialogs
-try:
-    import tkinter as tk
-    from tkinter import messagebox
-    GUI_AVAILABLE = True
-except ImportError:
-    GUI_AVAILABLE = False
 
 try:
     from Modules.server_logging import get_component_logger, log_server_action, log_exception
@@ -25,15 +15,6 @@ try:
 except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger("ServerManager")
-
-# Import resource management modules
-try:
-    from Modules.resource_manager import create_limited_process, resource_manager
-    from Modules.resource_config import get_resource_limits, is_resource_limiting_enabled
-    RESOURCE_MANAGEMENT_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Resource management modules not available: {e}")
-    RESOURCE_MANAGEMENT_AVAILABLE = False
 
 if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.setLevel(logging.DEBUG)
@@ -58,24 +39,8 @@ def should_hide_server_consoles(config=None):
         return config['configuration'].get('hideServerConsoles', True)
     return True  # Default to hiding consoles
 
-# Import Minecraft-specific functions
+# Import Minecraft-specific functions (NO FALLBACKS)
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Modules'))
-
-# Define fallback functions with correct types
-def _fallback_fetch_minecraft_versions():
-    return []
-
-def _fallback_get_minecraft_server_jar_url(version_id, versions_list):
-    return None
-
-def _fallback_fetch_fabric_installer_url(mc_version):
-    return None
-
-def _fallback_fetch_forge_installer_url(mc_version):
-    return None
-
-def _fallback_fetch_neoforge_installer_url(mc_version):
-    return None
 
 try:
     from Modules.minecraft import (
@@ -83,14 +48,10 @@ try:
         fetch_fabric_installer_url, fetch_forge_installer_url,
         fetch_neoforge_installer_url
     )
-except ImportError:
-    logger.warning("Minecraft helper functions not available")
-    # Use fallback functions
-    fetch_minecraft_versions = _fallback_fetch_minecraft_versions
-    get_minecraft_server_jar_url = _fallback_get_minecraft_server_jar_url
-    fetch_fabric_installer_url = _fallback_fetch_fabric_installer_url
-    fetch_forge_installer_url = _fallback_fetch_forge_installer_url
-    fetch_neoforge_installer_url = _fallback_fetch_neoforge_installer_url
+except ImportError as e:
+    error_msg = f"Minecraft helper functions not available: {e}"
+    logger.error(error_msg)
+    raise Exception(f"Minecraft module unavailable: {error_msg}")
 
 from Modules.common import ServerManagerModule
 
@@ -223,6 +184,15 @@ class ServerManager(ServerManagerModule):
     def get_all_servers(self):
         # Get all servers as a dictionary with server names as keys
         return self.servers.copy()
+            
+    def is_process_running(self, process_id):
+        # Check if a process with the given ID is running
+        try:
+            if process_id is None:
+                return False
+            return psutil.pid_exists(process_id)
+        except Exception:
+            return False
             
     def start_server(self, server_name):
         # Start a server using the appropriate script
@@ -477,125 +447,46 @@ class ServerManager(ServerManagerModule):
                     if "-condebug" not in cmd:
                         cmd.append("-condebug")
 
-            # Check if resource limiting is enabled and available
-            use_resource_limiting = (RESOURCE_MANAGEMENT_AVAILABLE and
-                                   is_resource_limiting_enabled() and
-                                   not server_config.get('DisableResourceLimiting', False))
+            # Create process with pipes for real-time console interaction
+            hide_consoles = should_hide_server_consoles(self.config)
 
-            if use_resource_limiting:
-                # Get resource limits for this server type
-                server_type = server_config.get("Type", "Other").lower()
-                if "minecraft" in server_type:
-                    resource_limits = get_resource_limits("minecraft_servers")
-                elif "steam" in server_type or "source" in server_type:
-                    resource_limits = get_resource_limits("steam_servers")
+            # For Steam/Source servers, try to force console output to stdout
+            cmd_str_check = cmd if isinstance(cmd, str) else ' '.join(cmd)
+            if "srcds" in cmd_str_check.lower() or "steamcmd" in cmd_str_check.lower():
+                # Add console output flags for Source servers
+                if isinstance(cmd, str):
+                    if "-condebug" not in cmd:
+                        cmd += " -condebug"
                 else:
-                    resource_limits = get_resource_limits("default")
+                    if "-condebug" not in cmd:
+                        cmd.append("-condebug")
 
-                cpu_cores = resource_limits.get("cpu_cores")
-                memory_mb = resource_limits.get("memory_mb")
-
-                # Create unique job name for this server
-                job_name = f"server_{server_name}_{int(time.time())}"
-
-                logger.info(f"Starting server '{server_name}' with resource limits: CPU={cpu_cores} cores, RAM={memory_mb}MB")
-
-                # Use resource-limited process creation
-                if shell:
-                    # For shell commands, we need to handle them differently
-                    process = subprocess.Popen(
-                        cmd,
-                        shell=True,
-                        cwd=install_dir,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=0,
-                        universal_newlines=True,
-                        creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
-                    )
-                    # Assign to job object after creation
-                    if process.pid:
-                        job_handle = resource_manager.create_resource_limited_job(
-                            job_name=job_name,
-                            cpu_cores=cpu_cores,
-                            memory_limit_mb=memory_mb
-                        )
-                        if job_handle:
-                            resource_manager.assign_process_to_job(job_handle, process.pid)
-                else:
-                    # Use the resource manager for non-shell commands
-                    if isinstance(cmd, str):
-                        # Convert string command to list for resource manager
-                        import shlex
-                        cmd_list = shlex.split(cmd)
-                    else:
-                        cmd_list = cmd
-
-                    psutil_process = create_limited_process(
-                        job_name=job_name,
-                        cmd=cmd_list,
-                        cpu_cores=cpu_cores,
-                        memory_limit_mb=memory_mb,
-                        cwd=install_dir
-                    )
-                    if psutil_process:
-                        # Create a mock subprocess object that wraps the psutil process
-                        class MockSubprocess:
-                            def __init__(self, psutil_proc):
-                                self.pid = psutil_proc.pid
-                                self.stdout = None
-                                self.stderr = None
-                                self.stdin = None
-                                self.returncode = None
-                                self._psutil_proc = psutil_proc
-
-                            def poll(self):
-                                return self._psutil_proc.poll()
-
-                            def wait(self, timeout=None):
-                                return self._psutil_proc.wait(timeout)
-
-                            def terminate(self):
-                                return self._psutil_proc.terminate()
-
-                            def kill(self):
-                                return self._psutil_proc.kill()
-
-                        process = MockSubprocess(psutil_process)
-                    else:
-                        logger.error(f"Failed to create resource-limited process for server '{server_name}'")
-                        if callback:
-                            callback(f"Failed to create resource-limited process for server '{server_name}'")
-                        return False, f"Failed to create resource-limited process for server '{server_name}'"
+            # Standard process creation
+            if shell:
+                process = subprocess.Popen(
+                    cmd,
+                    shell=True,
+                    cwd=install_dir,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=0,
+                    universal_newlines=True,
+                    creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
+                )
             else:
-                # Standard process creation without resource limiting
-                if shell:
-                    process = subprocess.Popen(
-                        cmd,
-                        shell=True,
-                        cwd=install_dir,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=0,
-                        universal_newlines=True,
-                        creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
-                    )
-                else:
-                    process = subprocess.Popen(
-                        cmd,
-                        cwd=install_dir,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=0,
-                        universal_newlines=True,
-                        creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
-                    )
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=install_dir,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=0,
+                    universal_newlines=True,
+                    creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
+                )
             time.sleep(1)
             if not psutil.pid_exists(process.pid):
                 logger.error(f"Server process terminated immediately after starting. Check logs at {stderr_log}")
@@ -1408,7 +1299,7 @@ class ServerManager(ServerManagerModule):
             if not mc_versions:
                 raise Exception("Could not fetch Minecraft versions from Mojang")
             
-            if modloader == "Vanilla":
+            if modloader.lower() == "vanilla":
                 jar_url = get_minecraft_server_jar_url(version, mc_versions)
                 if not jar_url:
                     raise Exception(f"Could not find server jar for version {version}")
@@ -1423,7 +1314,7 @@ class ServerManager(ServerManagerModule):
                 if progress_callback:
                     progress_callback("[INFO] Download complete.")
                 
-            elif modloader == "Fabric":
+            elif modloader.lower() == "fabric":
                 if progress_callback:
                     progress_callback(f"[INFO] Downloading Fabric installer for {version}...")
                 
@@ -1455,7 +1346,7 @@ class ServerManager(ServerManagerModule):
                 if progress_callback:
                     progress_callback("[INFO] Fabric server installed successfully.")
                 
-            elif modloader == "Forge":
+            elif modloader.lower() == "forge":
                 if progress_callback:
                     progress_callback(f"[INFO] Downloading Forge installer for {version}...")
                 
@@ -1486,7 +1377,7 @@ class ServerManager(ServerManagerModule):
                 if progress_callback:
                     progress_callback("[INFO] Forge server installed successfully.")
                 
-            elif modloader == "NeoForge":
+            elif modloader.lower() == "neoforge":
                 if progress_callback:
                     progress_callback(f"[INFO] Downloading NeoForge installer for {version}...")
                 
@@ -1567,6 +1458,9 @@ class ServerManager(ServerManagerModule):
             os.makedirs(self.paths["servers"], exist_ok=True)
             with open(config_file, 'w') as f:
                 json.dump(server_config, f, indent=4)
+            
+            # Add to in-memory server list immediately
+            self.servers[server_name] = server_config
             
             logger.info(f"Server configuration saved: {server_name}")
             return True, "Server configuration created successfully"
@@ -1690,12 +1584,40 @@ class ServerManager(ServerManagerModule):
             return False, f"Installation failed: {str(e)}"
 
     def get_minecraft_versions(self):
-        # Get available Minecraft versions
+        # Get available Minecraft versions from database (NO FALLBACKS)
         try:
-            return fetch_minecraft_versions()
+            from Modules.Database.MinecraftIDScanner import MinecraftIDScanner
+            scanner = MinecraftIDScanner(use_database=True, debug_mode=False)
+            servers = scanner.get_servers_from_database(modloader=None, dedicated_only=True)
+            scanner.close()
+
+            if not servers:
+                servers = []
+
+            # Convert to expected format
+            versions = []
+            for server in servers:
+                versions.append({
+                    "id": server["version_id"],
+                    "type": server["version_type"],
+                    "modloader": server["modloader"],
+                    "modloader_version": server["modloader_version"],
+                    "java_requirement": server["java_requirement"]
+                })
+
+            # Sort by version (newest first)
+            versions.sort(key=lambda x: x["id"], reverse=True)
+            return versions
+
+        except ImportError as e:
+            error_msg = f"Minecraft database modules not available: {e}"
+            logger.error(error_msg)
+            raise Exception(f"Minecraft database unavailable: {error_msg}")
+
         except Exception as e:
-            logger.error(f"Error fetching Minecraft versions: {str(e)}")
-            return []
+            error_msg = f"Failed to retrieve Minecraft versions from database: {e}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
 
     def get_supported_server_types(self):
         # Get list of supported server types
@@ -1750,6 +1672,10 @@ class ServerManager(ServerManagerModule):
             
             if progress_callback:
                 progress_callback(f"[SUCCESS] Server '{server_name}' uninstalled successfully!")
+            
+            # Remove from in-memory cache
+            if server_name in self.servers:
+                del self.servers[server_name]
             
             logger.info(f"Server uninstalled: {server_name} (files removed: {remove_files})")
             return True, f"Server '{server_name}' uninstalled successfully"

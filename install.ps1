@@ -444,7 +444,7 @@ function Remove-ServerManagerFirewallRules {
 # Define global variables first
 $global:logMemory = @()
 $global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Install-Log.txt"
-$CurrentVersion = "0.7"
+$CurrentVersion = "0.8"
 $steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
 $gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"
@@ -455,7 +455,7 @@ function Test-ExistingInstallation {
     return Test-Path $RegPath
 }
 
-function Prompt-Reinstall {
+function Request-Reinstall {
     $result = [System.Windows.Forms.MessageBox]::Show(
         "An existing Server Manager installation was detected. Do you want to reinstall (this will overwrite previous settings)?",
         "Reinstall Server Manager",
@@ -916,7 +916,7 @@ function Stop-RunningServerManager {
 }
 
 # Function to force delete directories using .NET methods (bypasses PowerShell confirmation system)
-function Force-DeleteDirectory {
+function Remove-DirectoryForce {
     param([string]$Path)
     
     if (-not (Test-Path $Path)) {
@@ -1175,7 +1175,7 @@ Technical Details:
     }
 }
 
-function Download-FromWebsite {
+function Get-FromWebsite {
     param ([string]$destination, [System.Windows.Forms.Label]$StatusLabel = $null, [System.Windows.Forms.Form]$Form = $null)
     
     Write-Log "Attempting to download Server Manager from website..."
@@ -2110,7 +2110,8 @@ Provide this token to subhost administrators during their installation process.
             if (-not (Test-Path $DataFolder)) {
                 New-Item -ItemType Directory -Force -Path $DataFolder | Out-Null
             }
-            $SQLDatabasePath = Initialize-SQLDatabase -SQLType $Settings.SQLType -SQLVersion $Settings.SQLVersion -SQLLocation $Settings.SQLLocation -DataFolder $DataFolder
+            # Initialize database and store path for potential future use
+            $null = Initialize-SQLDatabase -SQLType $Settings.SQLType -SQLVersion $Settings.SQLVersion -SQLLocation $Settings.SQLLocation -DataFolder $DataFolder
         } catch {
             if (-not (Show-StepError "Database Setup" "Failed to initialize database: $($_.Exception.Message)`n`nUser authentication may not work properly.")) {
                 throw "Installation cancelled by user after database setup failed"
@@ -2535,12 +2536,12 @@ function Show-ClusterApprovalDialog {
     
     # Handle form closing
     $approvalForm.Add_FormClosing({
-        param($sender, $e)
+        param($formSender, $closeEventArgs)
         if ($timer) {
             $timer.Stop()
             $timer.Dispose()
         }
-        if ($e.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing -and $approvalForm.DialogResult -eq [System.Windows.Forms.DialogResult]::Cancel) {
+        if ($closeEventArgs.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing -and $approvalForm.DialogResult -eq [System.Windows.Forms.DialogResult]::Cancel) {
             # User cancelled - close main form too
             $Form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
             $Form.Close()
@@ -2746,7 +2747,7 @@ function Set-InitialAuthConfig {
             
             # Form validation using FormClosing event
             $adminForm.Add_FormClosing({
-                param($sender, $e)
+                param($formSender, $closeEventArgs)
                 
                 # Only validate if OK was clicked (DialogResult is OK)
                 if ($adminForm.DialogResult -eq [System.Windows.Forms.DialogResult]::OK) {
@@ -2773,7 +2774,7 @@ function Set-InitialAuthConfig {
                     
                     # If validation failed, cancel the form closing
                     if (-not $isValid) {
-                        $e.Cancel = $true
+                        $closeEventArgs.Cancel = $true
                     }
                 }
             })

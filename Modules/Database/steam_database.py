@@ -1,110 +1,27 @@
-import os
-import sys
-import winreg
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-
 # Steam Apps Database Connection Module
 # Handles SQLAlchemy connections specifically for Steam application data
 
-# Add project root to sys.path for module resolution
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from sqlalchemy import text
 
-# Import standardized logging
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("SteamDatabase")
-except Exception:
-    import logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("SteamDatabase")
+# Import shared utilities
+from .database_utils import get_sql_config_from_registry, build_db_url, get_engine_by_type
+
+# Setup standardized logging
+from Modules.common import setup_module_logging, setup_module_path
+setup_module_path()
+logger = setup_module_logging("SteamDatabase")
 
 def get_steam_sql_config_from_registry():
     # Get SQL configuration for Steam apps database from Windows registry
-    try:
-        from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-        
-        # Try to get SQL type
-        try:
-            sql_type = winreg.QueryValueEx(key, "SQLType")[0]
-        except:
-            sql_type = "SQLite"  # Default to SQLite
-        
-        # Get database path/connection info based on type
-        if sql_type.lower() == "sqlite":
-            try:
-                db_path = winreg.QueryValueEx(key, "SteamSQLDatabasePath")[0]
-            except:
-                # Default Steam database path when no registry configuration exists
-                try:
-                    server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-                    db_path = os.path.join(server_manager_dir, "db", "steam_ID.db")
-                except:
-                    db_path = "steam_ID.db"
-            
-            config = {
-                "type": "sqlite",
-                "db_path": db_path
-            }
-        else:
-            # Multi-server SQL databases - use dedicated Steam apps database
-            try:
-                db_name = winreg.QueryValueEx(key, "SteamSQLDatabase")[0]
-            except:
-                db_name = "steam_apps"
-                
-            config = {
-                "type": sql_type.lower(),
-                "host": winreg.QueryValueEx(key, "SQLHost")[0],
-                "port": winreg.QueryValueEx(key, "SQLPort")[0],
-                "database": db_name,
-                "username": winreg.QueryValueEx(key, "SQLUsername")[0],
-                "password": winreg.QueryValueEx(key, "SQLPassword")[0]
-            }
-        
-        winreg.CloseKey(key)
-        return config
-        
-    except Exception as e:
-        logger.error(f"Failed to read Steam SQL config from registry: {e}")
-        # Return default SQLite config
-        return {
-            "type": "sqlite",
-            "db_path": "steam_ID.db"
-        }
+    return get_sql_config_from_registry()
 
 def build_steam_db_url(config):
     # Build SQLAlchemy database URL from config for Steam apps database
-    if config["type"] == "sqlite":
-        # Ensure absolute path for SQLite database file
-        db_path = config["db_path"]
-        if not os.path.isabs(db_path):
-            db_path = os.path.abspath(db_path)
-        return f"sqlite:///{db_path}"
-    elif config["type"] == "mysql":
-        return f"mysql+pymysql://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
-    elif config["type"] == "postgresql":
-        return f"postgresql://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
-    else:
-        raise ValueError(f"Unsupported database type: {config['type']}")
+    return build_db_url(config)
 
 def get_steam_engine():
     # Get SQLAlchemy engine for Steam apps database
-    config = get_steam_sql_config_from_registry()
-    db_url = build_steam_db_url(config)
-    
-    # Configure engine based on database type
-    if config["type"] == "sqlite":
-        engine = create_engine(
-            db_url,
-            echo=False,
-            connect_args={"check_same_thread": False}
-        )
-    else:
-        engine = create_engine(db_url, echo=False)
-    
-    return engine
+    return get_engine_by_type("steam")
 
 def ensure_steam_tables(engine):
     # Ensure Steam apps tables exist in the Steam database

@@ -21,28 +21,28 @@ except Exception:
 try:
     from .user_database import (
         get_user_engine, get_user_sql_config_from_registry, build_user_db_url, 
-        ensure_root_admin, initialize_user_manager, sql_login, handle_2fa_authentication
+        ensure_root_admin, initialize_user_manager, sql_login, handle_2fa_login
     )
     from .steam_database import (
         get_steam_engine, get_steam_sql_config_from_registry, build_steam_db_url, 
         ensure_steam_tables, initialize_steam_database
     )
+    from .database_utils import get_sql_config_from_registry, build_db_url, get_engine_by_type
 except ImportError:
     # Fallback for direct imports
     try:
         from user_database import (
             get_user_engine, get_user_sql_config_from_registry, build_user_db_url, 
-            ensure_root_admin, initialize_user_manager, sql_login, handle_2fa_authentication
+            ensure_root_admin, initialize_user_manager, sql_login, handle_2fa_login
         )
         from steam_database import (
             get_steam_engine, get_steam_sql_config_from_registry, build_steam_db_url, 
             ensure_steam_tables, initialize_steam_database
         )
+        from database_utils import get_sql_config_from_registry, build_db_url, get_engine_by_type
     except ImportError as e:
         logger.error(f"Failed to import database modules: {e}")
-        raise
-
-# Backward compatibility layer - redirects deprecated functions to new database modules
+        raise# Backward compatibility layer - redirects deprecated functions to new database modules
 
 def get_sql_config_from_registry():
     # DEPRECATED: Use get_user_sql_config_from_registry() or get_steam_sql_config_from_registry()
@@ -66,11 +66,14 @@ def get_engine():
 __all__ = [
     # User database functions
     'get_user_engine', 'get_user_sql_config_from_registry', 'build_user_db_url', 
-    'ensure_root_admin', 'initialize_user_manager', 'sql_login', 'handle_2fa_authentication',
+    'ensure_root_admin', 'initialize_user_manager', 'sql_login', 'handle_2fa_login',
     
     # Steam database functions  
     'get_steam_engine', 'get_steam_sql_config_from_registry', 'build_steam_db_url', 
     'ensure_steam_tables', 'initialize_steam_database',
+    
+    # Shared database utilities
+    'get_sql_config_from_registry', 'build_db_url', 'get_engine_by_type',
     
     # Deprecated functions (maintained for backward compatibility)
     'get_engine', 'get_sql_config_from_registry', 'build_db_url'

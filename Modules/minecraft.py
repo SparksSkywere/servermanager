@@ -212,14 +212,32 @@ def fetch_minecraft_versions():
 def get_minecraft_server_jar_url(version_id, versions_list):
     # Get the download URL for the server jar for a given version
     try:
+        # First check if the version exists in the list
+        version_info = None
         for v in versions_list:
             if v["id"] == version_id:
-                with urllib.request.urlopen(v["url"], timeout=10) as resp:
-                    version_data = json.load(resp)
-                return version_data["downloads"]["server"]["url"]
+                version_info = v
+                break
+
+        if not version_info:
+            logger.error(f"Version {version_id} not found in available versions")
+            return None
+
+        # Fetch the version-specific manifest
+        with urllib.request.urlopen(version_info["url"], timeout=10) as resp:
+            version_data = json.load(resp)
+
+        # Check if server download is available
+        downloads = version_data.get("downloads", {})
+        server_download = downloads.get("server")
+        if not server_download:
+            logger.error(f"Server download not available for version {version_id}")
+            return None
+
+        return server_download["url"]
     except Exception as e:
         logger.error(f"Failed to get server jar URL for {version_id}: {str(e)}")
-    return None
+        return None
 
 
 def fetch_fabric_installer_url(mc_version):

@@ -11,7 +11,6 @@ import time
 import uuid
 import bcrypt
 import win32security
-import win32api
 import traceback
 import ctypes
 from pathlib import Path

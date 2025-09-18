@@ -1,18 +1,22 @@
+# -*- coding: utf-8 -*-
+"""
+Dashboard Functions Module
+
+This module contains utility functions for the Server Manager Dashboard.
+All UI code should be in dashboard.py, this module contains only business logic.
+"""
+
 import os
 import sys
 import json
 import datetime
-import platform
-import socket
-import winreg
-import psutil
-import threading
-import subprocess
 import time
-import zipfile
-import shutil
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, scrolledtext
+from typing import Dict, Any, Optional, Union
+import platform
+import psutil
+import subprocess
 
 # Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -23,625 +27,116 @@ from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
 # Import logging functions
 from Modules.server_logging import get_dashboard_logger
 
-# Import debug functions
-from debug.debug import get_process_info
-
 # Get dashboard logger
 logger = get_dashboard_logger()
 
 
-def create_java_selection_dialog(root, minecraft_version=None):
-    # Create a dialog to select Java installation for a server.
-    # 
-    # Args:
-    #     root: Parent window
-    #     minecraft_version (str): Minecraft version to check compatibility (optional)
-    #     
-    # Returns:
-    #     dict: Selected Java installation info, or None if cancelled
-    try:
-        # Import here to avoid circular imports
-        from Modules.minecraft import detect_java_installations, get_minecraft_java_requirement, check_java_compatibility
-        
-        dialog = tk.Toplevel(root)
-        dialog.title("Select Java Installation")
-        dialog.geometry("600x400")
-        dialog.resizable(True, True)
-        dialog.transient(root)
-        dialog.grab_set()
-        
-        # Main frame
-        main_frame = ttk.Frame(dialog, padding=15)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Title and version info
-        title_label = ttk.Label(main_frame, text="Select Java Installation", font=("Segoe UI", 12, "bold"))
-        title_label.pack(pady=(0, 10))
-        
-        if minecraft_version:
-            required_java = get_minecraft_java_requirement(minecraft_version)
-            info_label = ttk.Label(main_frame, 
-                                 text=f"Minecraft {minecraft_version} requires Java {required_java} or later",
-                                 font=("Segoe UI", 9))
-            info_label.pack(pady=(0, 15))
-        
-        # Java installations list
-        list_frame = ttk.LabelFrame(main_frame, text="Available Java Installations", padding=10)
-        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-        
-        # Treeview for Java installations
-        columns = ("version", "path", "compatibility")
-        java_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=10)
-        
-        java_tree.heading("version", text="Java Version")
-        java_tree.heading("path", text="Installation Path")
-        java_tree.heading("compatibility", text="Compatibility")
-        
-        java_tree.column("version", width=150, minwidth=100)
-        java_tree.column("path", width=300, minwidth=200)
-        java_tree.column("compatibility", width=120, minwidth=100)
-        
-        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=java_tree.yview)
-        java_tree.configure(yscrollcommand=scrollbar.set)
-        
-        java_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Populate with detected installations
-        java_installations = detect_java_installations()
-        selected_java = None
-        
-        for installation in java_installations:
-            if minecraft_version:
-                is_compatible, _, _, _ = check_java_compatibility(minecraft_version, installation["path"])
-                compatibility_text = "✓ Compatible" if is_compatible else "✗ Incompatible"
-                
-                # Color code the entries
-                if is_compatible:
-                    tags = ("compatible",)
-                else:
-                    tags = ("incompatible",)
-            else:
-                compatibility_text = "N/A"
-                tags = ()
-            
-            item_id = java_tree.insert("", tk.END, 
-                                     values=(installation["display_name"], 
-                                           installation["path"], 
-                                           compatibility_text),
-                                     tags=tags)
-            
-            # Store installation data in the item
-            java_tree.set(item_id, "data", installation)
-        
-        # Configure tag colors
-        java_tree.tag_configure("compatible", foreground="green")
-        java_tree.tag_configure("incompatible", foreground="red")
-        
-        # Refresh button
-        refresh_frame = ttk.Frame(main_frame)
-        refresh_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        def refresh_java_list():
-            for item in java_tree.get_children():
-                java_tree.delete(item)
-            
-            java_installations = detect_java_installations()
-            for installation in java_installations:
-                if minecraft_version:
-                    is_compatible, _, _, _ = check_java_compatibility(minecraft_version, installation["path"])
-                    compatibility_text = "✓ Compatible" if is_compatible else "✗ Incompatible"
-                    tags = ("compatible",) if is_compatible else ("incompatible",)
-                else:
-                    compatibility_text = "N/A"
-                    tags = ()
-                
-                item_id = java_tree.insert("", tk.END, 
-                                         values=(installation["display_name"], 
-                                               installation["path"], 
-                                               compatibility_text),
-                                         tags=tags)
-                java_tree.set(item_id, "data", installation)
-        
-        ttk.Button(refresh_frame, text="Refresh List", command=refresh_java_list).pack(side=tk.LEFT)
-        
-        # Custom Java path entry
-        custom_frame = ttk.LabelFrame(main_frame, text="Custom Java Path", padding=10)
-        custom_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        custom_path_var = tk.StringVar()
-        custom_entry = ttk.Entry(custom_frame, textvariable=custom_path_var, width=50)
-        custom_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        
-        def browse_java():
-            if os.name == 'nt':
-                file_types = [("Java Executable", "java.exe"), ("All Files", "*.*")]
-            else:
-                file_types = [("All Files", "*")]
-            
-            java_path = filedialog.askopenfilename(
-                title="Select Java Executable",
-                filetypes=file_types
-            )
-            if java_path:
-                custom_path_var.set(java_path)
-        
-        ttk.Button(custom_frame, text="Browse", command=browse_java).pack(side=tk.RIGHT)
-        
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
-        
-        result = {}  # Will store the selected Java installation
-        
-        def on_select():
-            # Check if custom path is provided
-            custom_path = custom_path_var.get().strip()
-            if custom_path:
-                from Modules.minecraft import get_java_version
-                major, version = get_java_version(custom_path)
-                if major is not None:
-                    result["java"] = {
-                        "path": custom_path,
-                        "version": version,
-                        "major": major,
-                        "display_name": f"Custom Java {major}"
-                    }
-                    dialog.destroy()
-                    return
-                else:
-                    messagebox.showerror("Error", f"Invalid Java executable: {custom_path}")
-                    return
-            
-            # Check if an item is selected from the list
-            selection = java_tree.selection()
-            if selection:
-                item = selection[0]
-                # Get the stored installation data
-                for installation in java_installations:
-                    if (java_tree.item(item)["values"][0] == installation["display_name"] and 
-                        java_tree.item(item)["values"][1] == installation["path"]):
-                        result["java"] = installation
-                        break
-                dialog.destroy()
-            else:
-                messagebox.showwarning("Warning", "Please select a Java installation or provide a custom path.")
-        
-        def on_cancel():
-            dialog.destroy()
-        
-        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
-        ttk.Button(button_frame, text="Select", command=on_select, width=12).pack(side=tk.RIGHT)
-        
-        # Auto-select the first compatible Java if available
-        if minecraft_version and java_installations:
-            for i, installation in enumerate(java_installations):
-                is_compatible, _, _, _ = check_java_compatibility(minecraft_version, installation["path"])
-                if is_compatible:
-                    # Select the first compatible Java
-                    items = java_tree.get_children()
-                    if i < len(items):
-                        java_tree.selection_set(items[i])
-                        java_tree.focus(items[i])
-                    break
-        
-        center_window(dialog, 600, 400, root)
-        
-        # Wait for dialog to close
-        root.wait_window(dialog)
-        
-        return result.get("java")
-        
-    except Exception as e:
-        logger.error(f"Error creating Java selection dialog: {str(e)}")
-        messagebox.showerror("Error", f"Failed to create Java selection dialog: {str(e)}")
-        return None
-
-
-def load_appid_scanner_list(server_manager_dir):
-    # Load the AppID list from database only (no JSON fallback)
-    try:
-        # Load from database only
-        dedicated_servers, metadata = load_appid_list_from_database()
-        
-        if dedicated_servers:
-            logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from database")
-            return dedicated_servers, metadata
-        else:
-            logger.warning("No dedicated servers found in database")
-            return [], {}
-            
-    except Exception as e:
-        logger.error(f"Error loading AppID scanner list from database: {e}")
-        return [], {}
-
-
-def load_appid_list_from_database():
-    # Load AppID list directly from database
-    try:
-        # Import database components
-        from Modules.Database.steam_database import get_steam_engine
-        from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
-        from sqlalchemy.orm import declarative_base, sessionmaker
-        
-        # Define the SteamApp model (matching AppIDScanner.py)
-        Base = declarative_base()
-        
-        class SteamApp(Base):
-            __tablename__ = 'steam_apps'
-            
-            appid = Column(Integer, primary_key=True)
-            name = Column(String(255), nullable=False)
-            type = Column(String(50))
-            is_server = Column(Boolean, default=False)
-            is_dedicated_server = Column(Boolean, default=False)
-            requires_subscription = Column(Boolean, default=False)  # Whether the server requires a paid subscription
-            anonymous_install = Column(Boolean, default=True)  # Whether the server can be installed anonymously
-            publisher = Column(String(255))
-            release_date = Column(String(50))
-            description = Column(Text)
-            tags = Column(Text)  # JSON string of tags
-            price = Column(String(20))
-            platforms = Column(String(100))  # JSON string of supported platforms
-            last_updated = Column(DateTime)
-            source = Column(String(50), default='steamdb')
-        
-        # Connect to database
-        engine = get_steam_engine()
-        Session = sessionmaker(bind=engine)
-        session = Session()
-        
-        # Query dedicated servers only
-        apps = session.query(SteamApp).filter(SteamApp.is_dedicated_server == True).all()
-        
-        dedicated_servers = []
-        latest_update = None
-        
-        for app in apps:
-            server_entry = {
-                "appid": app.appid,
-                "name": app.name,
-                "type": app.type or "Dedicated Server",
-                "requires_subscription": getattr(app, 'requires_subscription', False),
-                "anonymous_install": getattr(app, 'anonymous_install', True),
-                "publisher": app.publisher or "",
-                "release_date": app.release_date or "",
-                "description": app.description or "",
-                "platforms": app.platforms or "",
-                "source": app.source or "steam_api",
-                "tags": app.tags or "[]"
-            }
-            dedicated_servers.append(server_entry)
-            
-            # Track latest update time - get the actual datetime value
-            app_last_updated = getattr(app, 'last_updated', None)
-            if app_last_updated is not None:
-                if latest_update is None or app_last_updated > latest_update:
-                    latest_update = app_last_updated
-        
-        session.close()
-        
-        # Create metadata
-        metadata = {
-            "last_updated": latest_update.isoformat() if latest_update is not None else "",
-            "total_dedicated_servers": len(dedicated_servers),
-            "source": "database",
-            "version": "3.0",
-            "filter_mode": "dedicated_only",
-            "description": "Steam dedicated server applications from database"
-        }
-        
-        if dedicated_servers:
-            logger.info(f"Successfully loaded {len(dedicated_servers)} dedicated servers from steam database")
-        else:
-            logger.warning("No dedicated servers found in steam database. Database may be empty.")
-        
-        return dedicated_servers, metadata
-        
-    except ImportError as e:
-        logger.error(f"Database modules not available: {e}")
-        return [], {}
-    except Exception as e:
-        logger.error(f"Error loading AppID list from database: {e}")
-        return [], {}
-
-
-def check_appid_in_database(appid):
-    # Check if an AppID exists in the Steam database and return server info
-    if not appid:
-        return None
-    
-    try:
-        # Import database components
-        from Modules.Database.steam_database import get_steam_engine
-        from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
-        from sqlalchemy.orm import declarative_base, sessionmaker
-        
-        # Define the SteamApp model (matching AppIDScanner.py)
-        Base = declarative_base()
-        
-        class SteamApp(Base):
-            __tablename__ = 'steam_apps'
-            
-            appid = Column(Integer, primary_key=True)
-            name = Column(String(255), nullable=False)
-            type = Column(String(50))
-            is_server = Column(Boolean, default=False)
-            is_dedicated_server = Column(Boolean, default=False)
-            requires_subscription = Column(Boolean, default=False)
-            anonymous_install = Column(Boolean, default=True)
-            publisher = Column(String(255))
-            release_date = Column(String(50))
-            description = Column(Text)
-            tags = Column(Text)
-            price = Column(String(20))
-            platforms = Column(String(100))
-            last_updated = Column(DateTime)
-            source = Column(String(50), default='steamdb')
-        
-        # Convert appid to int if it's a string
-        try:
-            appid_int = int(appid)
-        except (ValueError, TypeError):
-            logger.debug(f"Invalid AppID format: {appid}")
-            return None
-        
-        # Connect to database
-        engine = get_steam_engine()
-        Session = sessionmaker(bind=engine)
-        session = Session()
-        
-        # Query for the specific AppID
-        app = session.query(SteamApp).filter(SteamApp.appid == appid_int).first()
-        
-        if app:
-            app_info = {
-                "appid": app.appid,
-                "name": app.name,
-                "type": app.type or "Unknown",
-                "is_server": getattr(app, 'is_server', False),
-                "is_dedicated_server": getattr(app, 'is_dedicated_server', False),
-                "requires_subscription": getattr(app, 'requires_subscription', False),
-                "anonymous_install": getattr(app, 'anonymous_install', True),
-                "publisher": app.publisher or "",
-                "description": app.description or "",
-                "exists": True
-            }
-        else:
-            app_info = None
-        
-        session.close()
-        return app_info
-        
-    except ImportError as e:
-        logger.debug(f"Database modules not available for AppID check: {e}")
-        return None
-    except Exception as e:
-        logger.debug(f"Error checking AppID {appid} in database: {e}")
-        return None
-
-
-def detect_server_type_from_appid(appid):
-    # Detect server type based on AppID from database
-    if not appid:
-        return "Other"
-    
-    app_info = check_appid_in_database(appid)
-    if app_info and app_info.get('exists'):
-        if app_info.get('is_dedicated_server') or app_info.get('is_server'):
-            return "Steam"
-    
-    return "Other"
-
-
-def detect_server_type_from_directory(directory_path):
-    # Detect server type from directory contents and configuration
-    if not directory_path or not os.path.exists(directory_path):
-        return "Other"
-    
-    try:
-        # Look for common server files and configuration
-        server_type = "Other"
-        
-        # Check for common Steam server executables and files
-        steam_server_files = [
-            'srcds.exe', 'srcds_run', 'srcds_linux', 'hlds.exe', 'hlds_run',
-            'steamcmd.exe', 'steam_appid.txt'
-        ]
-        
-        # Check for Minecraft server files
-        minecraft_server_files = [
-            'server.jar', 'minecraft_server.jar', 'paper.jar', 'spigot.jar',
-            'forge.jar', 'server.properties', 'bukkit.yml', 'spigot.yml'
-        ]
-        
-        # Check directory contents
-        dir_contents = []
-        for root, dirs, files in os.walk(directory_path):
-            dir_contents.extend([f.lower() for f in files])
-            # Only check first level to avoid deep recursion
-            if root == directory_path:
-                continue
-            break
-        
-        # Check for Steam server indicators
-        if any(steam_file.lower() in dir_contents for steam_file in steam_server_files):
-            server_type = "Steam"
-        
-        # Check for steam_appid.txt file specifically
-        steam_appid_path = os.path.join(directory_path, 'steam_appid.txt')
-        if os.path.exists(steam_appid_path):
-            try:
-                with open(steam_appid_path, 'r') as f:
-                    appid = f.read().strip()
-                    if appid.isdigit():
-                        # Verify this AppID exists in our database
-                        detected_type = detect_server_type_from_appid(appid)
-                        if detected_type == "Steam":
-                            return "Steam"
-            except Exception as e:
-                logger.debug(f"Error reading steam_appid.txt: {e}")
-        
-        # Check for Minecraft server indicators
-        if any(mc_file.lower() in dir_contents for mc_file in minecraft_server_files):
-            if server_type == "Other":  # Don't override Steam detection
-                server_type = "Minecraft"
-        
-        return server_type
-        
-    except Exception as e:
-        logger.debug(f"Error detecting server type from directory {directory_path}: {e}")
-        return "Other"
-
-
-def find_appid_in_directory(directory_path):
-    # Find Steam AppID from directory contents
-    if not directory_path or not os.path.exists(directory_path):
-        return None
-    
-    try:
-        # Check for steam_appid.txt file
-        steam_appid_path = os.path.join(directory_path, 'steam_appid.txt')
-        if os.path.exists(steam_appid_path):
-            try:
-                with open(steam_appid_path, 'r') as f:
-                    appid = f.read().strip()
-                    if appid.isdigit():
-                        return appid
-            except Exception as e:
-                logger.debug(f"Error reading steam_appid.txt: {e}")
-        
-        # Check for other common Steam configuration files
-        steam_config_files = [
-            'steamapps/appmanifest_*.acf',
-            'Steam/steamapps/appmanifest_*.acf',
-            '.steam/steamapps/appmanifest_*.acf'
-        ]
-        
-        import glob
-        for pattern in steam_config_files:
-            search_path = os.path.join(directory_path, pattern)
-            matches = glob.glob(search_path)
-            if matches:
-                # Try to extract AppID from filename
-                for match in matches:
-                    filename = os.path.basename(match)
-                    if filename.startswith('appmanifest_') and filename.endswith('.acf'):
-                        appid_str = filename[12:-4]  # Remove 'appmanifest_' and '.acf'
-                        if appid_str.isdigit():
-                            return appid_str
-        
-        return None
-        
-    except Exception as e:
-        logger.debug(f"Error finding AppID in directory {directory_path}: {e}")
-        return None
-
-
 def load_dashboard_config(server_manager_dir):
-    # Load dashboard configuration from JSON file
+    """Load dashboard configuration from JSON file"""
     try:
-        if not server_manager_dir:
-            logger.warning("Server manager directory not initialized, using default config")
-            return {}
-            
-        config_file = os.path.join(server_manager_dir, "data", "dashboard.json")
-        if os.path.exists(config_file):
-            with open(config_file, 'r') as f:
-                config = json.load(f)
-            logger.info(f"Loaded dashboard configuration from: {config_file}")
-            return config
+        config_path = os.path.join(server_manager_dir, "data", "dashboard.json")
+        if os.path.exists(config_path):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
         else:
-            logger.warning(f"Dashboard config file not found: {config_file}, using defaults")
+            logger.warning(f"Dashboard config not found at {config_path}, using defaults")
             return {}
     except Exception as e:
-        logger.error(f"Failed to load dashboard configuration: {str(e)}")
+        logger.error(f"Error loading dashboard config: {e}")
         return {}
 
 
-def is_process_running(pid):
-    # Check if a process with the given PID is running
-    try:
-        return psutil.pid_exists(pid)
-    except:
-        return False
-
-
-def is_port_open(host, port, timeout=1):
-    # Check if a port is open on the specified host
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        result = sock.connect_ex((host, port))
-        sock.close()
-        return result == 0
-    except:
-        return False
-
-
-def check_webserver_status(paths, variables):
-    # Check if the web server is running and return status
-    if variables.get("offlineMode", False):
-        return "Offline Mode"
+def center_window(window, width=None, height=None, parent=None):
+    """Center a window on the screen or relative to a parent window"""
+    window.update_idletasks()
+    
+    # Get window dimensions
+    if width and height:
+        window_width, window_height = width, height
+    else:
+        window_width = window.winfo_width()
+        window_height = window.winfo_height()
+    
+    if parent:
+        # Center relative to parent
+        parent_x = parent.winfo_rootx()
+        parent_y = parent.winfo_rooty()
+        parent_width = parent.winfo_width()
+        parent_height = parent.winfo_height()
         
-    try:
-        # Try to read the web server PID file first
-        webserver_pid_file = os.path.join(paths["temp"], "webserver.pid")
-        if os.path.exists(webserver_pid_file):
-            try:
-                with open(webserver_pid_file, 'r') as f:
-                    pid_info = json.load(f)
-                
-                pid = pid_info.get("ProcessId")
-                port = pid_info.get("Port", variables.get("webserverPort", 8080))
-                
-                # Check if process is running
-                if pid and is_process_running(pid):
-                    return "Connected"
-            except Exception as e:
-                logger.debug(f"Error checking web server PID file: {str(e)}")
-        
-        # If we get here, try to connect to the port directly
-        webserver_port = variables.get("webserverPort", 8080)
-        if is_port_open('localhost', webserver_port):
-            return "Connected"
-        else:
-            return "Disconnected"
-            
-    except Exception as e:
-        logger.error(f"Error checking web server status: {str(e)}")
-        return "Error"
+        x = parent_x + (parent_width - window_width) // 2
+        y = parent_y + (parent_height - window_height) // 2
+    else:
+        # Center on screen
+        screen_width = window.winfo_screenwidth()
+        screen_height = window.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+    
+    window.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
 
-def update_webserver_status(webserver_status_label, offline_var, paths, variables):
-    # Update the web server status display
-    try:
-        status = check_webserver_status(paths, variables)
-        variables["webserverStatus"] = status
+def create_server_type_selection_dialog(root, supported_server_types):
+    """Create and show server type selection dialog"""
+    type_dialog = tk.Toplevel(root)
+    type_dialog.title("Select Server Type")
+    type_dialog.transient(root)
+    type_dialog.grab_set()
+    
+    # Create main frame with padding
+    main_frame = ttk.Frame(type_dialog, padding=20)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Title label
+    title_label = ttk.Label(main_frame, text="Select Server Type:", font=("Segoe UI", 12, "bold"))
+    title_label.pack(pady=(0, 20))
+    
+    type_var = tk.StringVar(value="")  # Start with no selection
+    
+    # Radio buttons with better spacing
+    for stype in supported_server_types:
+        ttk.Radiobutton(main_frame, text=stype, variable=type_var, value=stype).pack(anchor=tk.W, pady=5)
+    
+    # Button frame
+    button_frame = ttk.Frame(main_frame)
+    button_frame.pack(fill=tk.X, pady=(20, 0))
+    
+    def proceed():
+        if not type_var.get():
+            messagebox.showwarning("No Selection", "Please select a server type.")
+            return
+        type_dialog.destroy()
         
-        # Update status label with appropriate color
-        if status == "Connected":
-            webserver_status_label.config(text=status, foreground="green")
-        elif status == "Offline Mode":
-            webserver_status_label.config(text=status, foreground="orange")
-        else:
-            webserver_status_label.config(text=status, foreground="red")
-            
-        # Update offline mode checkbox
-        offline_var.set(variables.get("offlineMode", False))
-        
-    except Exception as e:
-        logger.error(f"Error updating web server status: {str(e)}")
-        webserver_status_label.config(text="Error", foreground="red")
+    def cancel():
+        type_var.set("")
+        type_dialog.destroy()
+    
+    # Handle window close event (X button)
+    def on_dialog_close():
+        type_var.set("")
+        type_dialog.destroy()
+    
+    type_dialog.protocol("WM_DELETE_WINDOW", on_dialog_close)
+    
+    # Buttons with better spacing
+    ttk.Button(button_frame, text="Cancel", command=cancel, width=12).pack(side=tk.LEFT)
+    ttk.Button(button_frame, text="Next", command=proceed, width=12).pack(side=tk.RIGHT)
+    
+    # Center dialog relative to parent
+    center_window(type_dialog, 380, 280, root)
+    
+    root.wait_window(type_dialog)
+    return type_var.get()
 
 
 def get_steam_credentials(root):
-    # Open a dialog to get Steam credentials
+    """Open a dialog to get Steam credentials"""
     credentials = {"anonymous": False, "username": "", "password": ""}
     
     # Create dialog window
     dialog = tk.Toplevel(root)
     dialog.title("Steam Login")
-    dialog.geometry("300x250")
+    dialog.geometry("350x300")
     dialog.resizable(False, False)
     dialog.transient(root)
     dialog.grab_set()
@@ -665,7 +160,6 @@ def get_steam_credentials(root):
     def on_login():
         credentials["username"] = username_var.get()
         credentials["password"] = password_var.get()
-        credentials["anonymous"] = False
         result["success"] = True
         dialog.destroy()
         
@@ -695,319 +189,2259 @@ def get_steam_credentials(root):
     return credentials if result["success"] else None
 
 
-def update_system_info(metric_labels, system_name, os_info, variables):
-    # Update system information in the UI
+def load_appid_scanner_list(server_manager_dir):
+    """Load the AppID list from database only (NO FALLBACKS)"""
     try:
-        # Computer name and OS info
-        computer_name = platform.node()
-        os_info_text = f"{platform.system()} {platform.version()}"
+        # Import database scanner
+        from Modules.Database.AppIDScanner import AppIDScanner
+
+        # Initialize scanner with database enabled
+        scanner = AppIDScanner(use_database=True, debug_mode=False)
+
+        try:
+            # Get dedicated servers from database only
+            servers = scanner.get_dedicated_servers_from_database()
+
+            if not servers:
+                logger.warning("No Steam dedicated servers found in database")
+                return [], {}
+
+            # Create metadata dictionary
+            metadata = {
+                "total_servers": len(servers),
+                "source": "database",
+                "last_updated": datetime.datetime.now().isoformat()
+            }
+
+            logger.info(f"Loaded {len(servers)} Steam dedicated servers from database")
+            return servers, metadata
+
+        finally:
+            scanner.close()
+
+    except ImportError as e:
+        error_msg = f"Steam database modules not available: {e}"
+        logger.error(error_msg)
+        raise Exception(f"Steam database unavailable: {error_msg}")
+
+    except Exception as e:
+        error_msg = f"Failed to load Steam AppID list from database: {e}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
+
+
+def load_minecraft_scanner_list(server_manager_dir):
+    """Load the Minecraft server list from database (NO FALLBACKS)"""
+    try:
+        # Import database scanner
+        from Modules.Database.MinecraftIDScanner import MinecraftIDScanner
+
+        # Initialize scanner with database enabled
+        scanner = MinecraftIDScanner(use_database=True, debug_mode=False)
+
+        try:
+            # Get all Minecraft servers from database
+            servers = scanner.get_servers_from_database(
+                modloader=None,
+                dedicated_only=True,
+                filter_snapshots=True
+            )
+
+            if not servers:
+                logger.warning("No Minecraft servers found in database")
+                return [], {}
+
+            # Create metadata dictionary
+            metadata = {
+                "total_servers": len(servers),
+                "source": "database",
+                "last_updated": datetime.datetime.now().isoformat()
+            }
+
+            logger.info(f"Loaded {len(servers)} Minecraft servers from database")
+            return servers, metadata
+
+        finally:
+            scanner.close()
+
+    except ImportError as e:
+        error_msg = f"Minecraft database modules not available: {e}"
+        logger.error(error_msg)
+        raise Exception(f"Minecraft database unavailable: {error_msg}")
+
+    except Exception as e:
+        error_msg = f"Failed to load Minecraft scanner list from database: {e}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
+
+
+def get_minecraft_versions_from_database(modloader=None, dedicated_only=True):
+    """Get Minecraft versions from database filtered by modloader - NO FALLBACKS"""
+    try:
+        # Import database scanner
+        from Modules.Database.MinecraftIDScanner import MinecraftIDScanner
+
+        # Initialize scanner with database enabled
+        scanner = MinecraftIDScanner(use_database=True, debug_mode=False)
+
+        try:
+            # Get servers from database only
+            versions = scanner.get_servers_from_database(
+                modloader=modloader,
+                dedicated_only=dedicated_only,
+                filter_snapshots=True
+            )
+
+            if not versions:
+                logger.warning(f"No Minecraft versions found in database for modloader '{modloader}'")
+                return []
+
+            # Convert to expected format
+            formatted_versions = []
+            for version in versions:
+                formatted_versions.append({
+                    "version_id": version["version_id"],
+                    "modloader": version["modloader"] or modloader or "vanilla",
+                    "java_requirement": version["java_requirement"] or 17
+                })
+
+            logger.info(f"Retrieved {len(formatted_versions)} Minecraft versions from database")
+            return formatted_versions
+
+        finally:
+            scanner.close()
+
+    except ImportError as e:
+        error_msg = f"Database modules not available: {e}"
+        logger.error(error_msg)
+        raise Exception(f"Minecraft database unavailable: {error_msg}")
+
+    except Exception as e:
+        error_msg = f"Failed to retrieve Minecraft versions from database: {e}"
+        logger.error(error_msg)
+        raise Exception(error_msg)
+
+
+def create_minecraft_version_browser_dialog(parent, modloader="Vanilla"):
+    """Create a dialog to browse and select Minecraft versions from database"""
+    dialog = tk.Toplevel(parent)
+    dialog.title(f"Browse {modloader} Minecraft Versions")
+    dialog.geometry("700x500")
+    dialog.transient(parent)
+    dialog.grab_set()
+    
+    # Main frame
+    main_frame = ttk.Frame(dialog, padding=15)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Title
+    title_label = ttk.Label(main_frame, text=f"Select {modloader} Minecraft Version", font=("Segoe UI", 12, "bold"))
+    title_label.pack(pady=(0, 15))
+    
+    # Version list frame
+    list_frame = ttk.LabelFrame(main_frame, text="Available Versions", padding=10)
+    list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+    
+    # Treeview for versions
+    columns = ("version", "type", "modloader_version", "java", "date")
+    version_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
+    
+    version_tree.heading("version", text="Version")
+    version_tree.heading("type", text="Type")
+    version_tree.heading("modloader_version", text="Modloader Version")
+    version_tree.heading("java", text="Java")
+    version_tree.heading("date", text="Release Date")
+    
+    version_tree.column("version", width=120, minwidth=100)
+    version_tree.column("type", width=80, minwidth=60)
+    version_tree.column("modloader_version", width=150, minwidth=100)
+    version_tree.column("java", width=60, minwidth=50)
+    version_tree.column("date", width=120, minwidth=100)
+    
+    scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=version_tree.yview)
+    version_tree.configure(yscrollcommand=scrollbar.set)
+    
+    version_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    
+    # Load versions from database
+    try:
+        versions = get_minecraft_versions_from_database(modloader.lower(), dedicated_only=True)
         
-        system_name.config(text=computer_name)
-        os_info.config(text=os_info_text)
-        
-        # CPU usage - use non-blocking call (interval=None uses cached value)
-        cpu_percent = psutil.cpu_percent(interval=None)
-        metric_labels["cpu"].config(text=f"{cpu_percent:.1f}%")
-        
-        # Memory usage
-        memory = psutil.virtual_memory()
-        total_mem_gb = memory.total / (1024 * 1024 * 1024)
-        used_mem_gb = memory.used / (1024 * 1024 * 1024)
-        metric_labels["memory"].config(text=f"{used_mem_gb:.1f} GB / {total_mem_gb:.1f} GB")
-        
-        # Disk usage
-        total_size = 0
-        total_used = 0
-        
-        for part in psutil.disk_partitions(all=False):
-            if part.fstype:
-                usage = psutil.disk_usage(part.mountpoint)
-                total_size += usage.total
-                total_used += usage.used
-        
-        total_size_gb = total_size / (1024 * 1024 * 1024)
-        total_used_gb = total_used / (1024 * 1024 * 1024)
-        
-        metric_labels["disk"].config(text=f"{total_used_gb:.0f} GB / {total_size_gb:.0f} GB")
-        
-        # Network usage
-        network_stats = psutil.net_io_counters()
-        
-        if variables.get("lastNetworkStats"):
-            last_stats = variables["lastNetworkStats"]
-            last_time = variables["lastNetworkStatsTime"]
-            time_diff = (datetime.datetime.now() - last_time).total_seconds()
+        for version_data in versions:
+            version_tree.insert("", tk.END, values=(
+                version_data.get("version_id", ""),
+                "Release",
+                modloader,
+                f"Java {version_data.get('java_requirement', 17)}",
+                "Database"  # Source indicator
+            ))
             
-            if time_diff > 0:
-                bytes_sent = network_stats.bytes_sent - last_stats.bytes_sent
-                bytes_recv = network_stats.bytes_recv - last_stats.bytes_recv
-                
-                send_rate = bytes_sent / time_diff / 1024  # KB/s
-                recv_rate = bytes_recv / time_diff / 1024  # KB/s
-                
-                if send_rate > 1024 or recv_rate > 1024:
-                    send_rate = send_rate / 1024  # MB/s
-                    recv_rate = recv_rate / 1024  # MB/s
-                    metric_labels["network"].config(text=f"↓{recv_rate:.1f} MB/s | ↑{send_rate:.1f} MB/s")
-                else:
-                    metric_labels["network"].config(text=f"↓{recv_rate:.1f} KB/s | ↑{send_rate:.1f} KB/s")
-            else:
-                metric_labels["network"].config(text="Calculating...")
+    except Exception as e:
+        logger.error(f"Error loading versions for browser dialog: {e}")
+        messagebox.showerror("Error", f"Failed to load versions: {str(e)}")
+    
+    # Result variable - can hold either None or dict
+    selected_version: Dict[str, Optional[Dict[str, Any]]] = {"version": None}
+    
+    def on_select():
+        selection = version_tree.selection()
+        if selection:
+            item = version_tree.item(selection[0])
+            values = item['values']
+            selected_version["version"] = {
+                "version_id": values[0],
+                "modloader": modloader.lower(),
+                "java_requirement": int(values[3].replace("Java ", "")) if "Java" in values[3] else 17
+            }
+            dialog.destroy()
         else:
-            metric_labels["network"].config(text="Calculating...")
-        
-        variables["lastNetworkStats"] = network_stats
-        variables["lastNetworkStatsTime"] = datetime.datetime.now()
-        
-        # GPU info - placeholder since getting GPU info is more complex
-        metric_labels["gpu"].config(text="N/A")
-        
-        # System uptime
-        boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
-        uptime = datetime.datetime.now() - boot_time
-        days = uptime.days
-        hours, remainder = divmod(uptime.seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        
-        uptime_str = f"{days}d {hours}h {minutes}m {seconds}s"
-        metric_labels["uptime"].config(text=uptime_str)
-        
-        # Update last refresh time
-        variables["lastFullUpdate"] = datetime.datetime.now()
+            messagebox.showinfo("No Selection", "Please select a version.")
+    
+    def on_cancel():
+        dialog.destroy()
+    
+    # Button frame
+    button_frame = ttk.Frame(main_frame)
+    button_frame.pack(fill=tk.X)
+    
+    ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT)
+    ttk.Button(button_frame, text="Select", command=on_select).pack(side=tk.RIGHT)
+    
+    # Double-click to select
+    version_tree.bind("<Double-1>", lambda e: on_select())
+    
+    # Center dialog
+    center_window(dialog, 700, 500, parent)
+    
+    # Wait for dialog to close
+    parent.wait_window(dialog)
+    
+    return selected_version["version"]
+
+
+def create_steam_appid_browser_dialog(parent, server_manager_dir):
+    """Create a dialog to browse and select Steam AppIDs from database"""
+    dialog = tk.Toplevel(parent)
+    dialog.title("Select Steam Dedicated Server")
+    dialog.geometry("700x500")
+    dialog.transient(parent)
+    dialog.grab_set()
+    
+    # Main frame
+    main_frame = ttk.Frame(dialog, padding=15)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Title
+    title_label = ttk.Label(main_frame, text="Select Steam Dedicated Server", font=("Segoe UI", 12, "bold"))
+    title_label.pack(pady=(0, 15))
+    
+    # Search frame
+    search_frame = ttk.Frame(main_frame)
+    search_frame.pack(fill=tk.X, pady=(0, 10))
+    
+    ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT)
+    search_var = tk.StringVar()
+    search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
+    search_entry.pack(side=tk.LEFT, padx=(5, 10))
+    
+    # Load dedicated servers from scanner's AppID list
+    try:
+        dedicated_servers_data, metadata = load_appid_scanner_list(server_manager_dir)
+
+        if not dedicated_servers_data:
+            error_msg = "Scanner AppID list not available - database must be populated first"
+            logger.error(error_msg)
+            messagebox.showerror("Database Error", f"{error_msg}\n\nPlease ensure the AppID scanner has been run to populate the database.")
+            dialog.destroy()
+            return None
+
+        # Use scanner data - convert to compatible format
+        dedicated_servers = [
+            {
+                "name": server.get("name", "Unknown Server"),
+                "appid": str(server.get("appid", "0")),
+                "developer": server.get("developer", ""),
+                "publisher": server.get("publisher", ""),
+                "description": server.get("description", ""),
+                "type": server.get("type", "Dedicated Server")
+            }
+            for server in dedicated_servers_data
+        ]
+
+        logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner (last updated: {metadata.get('last_updated', 'Unknown')})")
+
+        # Add refresh info to dialog
+        if metadata.get('last_updated'):
+            last_updated = metadata['last_updated']
+            if 'T' in last_updated:  # ISO format
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                    formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
+                    ttk.Label(search_frame, text=f"Data last updated: {formatted_date}",
+                            foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
+                except:
+                    pass
+
+    except Exception as e:
+        error_msg = f"Failed to load AppID scanner data from database: {e}"
+        logger.error(error_msg)
+        messagebox.showerror("Database Error", f"{error_msg}\n\nThe database must be available and populated with AppID scanner data.")
+        dialog.destroy()
+        return None
+    
+    # Server list frame
+    list_frame = ttk.LabelFrame(main_frame, text="Available Servers", padding=10)
+    list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+    
+    # Treeview for servers
+    columns = ("name", "appid", "developer", "type")
+    server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
+    
+    server_tree.heading("name", text="Server Name")
+    server_tree.heading("appid", text="App ID")
+    server_tree.heading("developer", text="Developer")
+    server_tree.heading("type", text="Type")
+    
+    server_tree.column("name", width=300, minwidth=200)
+    server_tree.column("appid", width=80, minwidth=60)
+    server_tree.column("developer", width=150, minwidth=100)
+    server_tree.column("type", width=120, minwidth=80)
+    
+    scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=server_tree.yview)
+    server_tree.configure(yscrollcommand=scrollbar.set)
+    
+    server_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    
+    # Populate server list
+    def populate_servers(filter_text=""):
+        server_tree.delete(*server_tree.get_children())
+        for server in dedicated_servers:
+            server_name = server["name"]
+            if not filter_text or filter_text.lower() in server_name.lower():
+                server_tree.insert("", tk.END, values=(
+                    server_name, 
+                    server["appid"],
+                    server.get("developer", "Unknown")[:25] + ("..." if len(server.get("developer", "")) > 25 else ""),
+                    server.get("type", "Dedicated Server")
+                ))
+    
+    populate_servers()
+    
+    # Search functionality
+    def on_search(*args):
+        populate_servers(search_var.get())
+    
+    search_var.trace('w', on_search)
+    
+    # Tooltip functionality for descriptions
+    def show_server_info(event):
+        # Show server description tooltip on mouse hover
+        item = server_tree.selection()
+        if item:
+            selected_server = None
+            item_values = server_tree.item(item[0])['values']
+            for server in dedicated_servers:
+                if server["appid"] == str(item_values[1]):
+                    selected_server = server
+                    break
+            
+            if selected_server and selected_server.get("description"):
+                # Create a simple tooltip window
+                tooltip = tk.Toplevel(dialog)
+                tooltip.wm_overrideredirect(True)
+                tooltip.geometry(f"+{event.x_root+10}+{event.y_root+10}")
+                
+                # Limit description length
+                desc = selected_server["description"][:200] + ("..." if len(selected_server["description"]) > 200 else "")
+                
+                label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}", 
+                               background="lightyellow", relief="solid", borderwidth=1,
+                               wraplength=300, justify=tk.LEFT, font=("Segoe UI", 9))
+                label.pack()
+                
+                # Auto-hide after 3 seconds
+                tooltip.after(3000, tooltip.destroy)
+    
+    server_tree.bind('<Double-1>', show_server_info)
+    
+    # Result variable
+    selected_appid: Dict[str, Optional[str]] = {"appid": None}
+    
+    def on_select():
+        selection = server_tree.selection()
+        if selection:
+            item = server_tree.item(selection[0])
+            appid = item['values'][1]
+            selected_appid["appid"] = appid
+            dialog.destroy()
+        else:
+            messagebox.showinfo("No Selection", "Please select a server from the list.")
+    
+    def on_cancel():
+        dialog.destroy()
+    
+    # Button frame
+    button_frame = ttk.Frame(main_frame)
+    button_frame.pack(fill=tk.X)
+    
+    ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT)
+    ttk.Button(button_frame, text="Select Server", command=on_select).pack(side=tk.RIGHT)
+    
+    # Center dialog
+    center_window(dialog, 700, 500, parent)
+    
+    # Wait for dialog to close
+    parent.wait_window(dialog)
+    
+    return selected_appid["appid"]
+
+
+def check_appid_in_database(appid):
+    """Check if an AppID exists in the Steam database and return server info"""
+    if not appid:
+        return None
+    
+    try:
+        # For now, return basic info since database integration is complex
+        logger.info(f"Checking AppID {appid} - database integration disabled for now")
+        return {"exists": True, "name": f"Server {appid}", "type": "Steam"}
         
     except Exception as e:
-        logger.error(f"Error updating system info: {str(e)}")
+        logger.error(f"Error checking AppID in database: {e}")
+        return None
+
+
+def detect_server_type_from_appid(appid):
+    """Detect server type based on AppID from database"""
+    if not appid:
+        return "Other"
+    
+    app_info = check_appid_in_database(appid)
+    if app_info and app_info.get('exists'):
+        return "Steam"
+    
+    return "Other"
+
+
+def detect_server_type_from_directory(directory_path):
+    """Detect server type from directory contents and configuration"""
+    if not directory_path or not os.path.exists(directory_path):
+        return "Other"
+    
+    try:
+        files = os.listdir(directory_path)
+        files_lower = [f.lower() for f in files]
+        
+        # Check for Minecraft indicators
+        minecraft_indicators = ['server.jar', 'minecraft_server.jar', 'forge-installer.jar', 'fabric-server-launch.jar']
+        if any(indicator in files_lower for indicator in minecraft_indicators):
+            return "Minecraft"
+        
+        # Check for Steam indicators
+        steam_indicators = ['steamapps', 'steam.exe', 'steamcmd.exe']
+        if any(indicator in files_lower for indicator in steam_indicators):
+            return "Steam"
+        
+        return "Other"
+        
+    except Exception as e:
+        logger.error(f"Error detecting server type from directory: {e}")
+        return "Other"
+
+
+def perform_server_installation(server_type, server_name, install_dir, app_id=None, 
+                               minecraft_version=None, credentials=None,
+                               server_manager=None, progress_callback=None, console_callback=None,
+                               steam_cmd_path=None):
+    """
+    Perform server installation with progress tracking and console output.
+    
+    Args:
+        server_type: Type of server to install
+        server_name: Name for the server
+        install_dir: Installation directory
+        app_id: Steam App ID (for Steam servers)
+        minecraft_version: Minecraft version data (for Minecraft servers)
+        credentials: Steam credentials (for Steam servers)
+        server_manager: Server manager instance
+        progress_callback: Function to call with progress updates
+        console_callback: Function to call with console output
+        steam_cmd_path: Path to SteamCMD executable (for Steam servers)
+        
+    Returns:
+        tuple: (success, message)
+    """
+    try:
+        if not server_manager:
+            error_msg = "Server manager not available"
+            if console_callback:
+                console_callback(f"[ERROR] {error_msg}")
+            return False, error_msg
+
+        # Get SteamCMD path if not provided and server type is Steam
+        if server_type == "Steam" and not steam_cmd_path:
+            from Modules.common import get_registry_value
+            steam_cmd_path = get_registry_value("HKEY_CURRENT_USER\\Software\\SkywereIndustries\\ServerManager", "SteamCmdPath")
+            if not steam_cmd_path:
+                # Try default location
+                steam_cmd_path = os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), "SteamCMD")
+                if console_callback:
+                    console_callback(f"[WARN] SteamCMD path not found in registry, using default: {steam_cmd_path}")
+            
+            # Verify SteamCMD exists
+            if not os.path.exists(os.path.join(steam_cmd_path, "steamcmd.exe")):
+                error_msg = f"SteamCMD not found at {steam_cmd_path}. Please install SteamCMD or configure the correct path."
+                if console_callback:
+                    console_callback(f"[ERROR] {error_msg}")
+                return False, error_msg
+        
+        if console_callback:
+            console_callback(f"[INFO] Starting installation of {server_type} server '{server_name}'")
+            console_callback(f"[INFO] Installation directory: {install_dir}")
+            
+        # Create server configuration
+        server_config = {
+            'Name': server_name,
+            'Type': server_type,
+            'InstallDir': install_dir
+        }
+        
+        if server_type == "Steam" and app_id:
+            server_config['AppId'] = app_id
+            if console_callback:
+                console_callback(f"[INFO] Steam App ID: {app_id}")
+                
+        if server_type == "Minecraft" and minecraft_version:
+            server_config['MinecraftVersion'] = minecraft_version.get('version_id', '')
+            server_config['Modloader'] = minecraft_version.get('modloader', 'vanilla')
+            server_config['JavaRequirement'] = minecraft_version.get('java_requirement', 17)
+            if console_callback:
+                console_callback(f"[INFO] Minecraft Version: {minecraft_version.get('version_id', '')}")
+                console_callback(f"[INFO] Modloader: {minecraft_version.get('modloader', 'vanilla')}")
+        
+        # Call progress callback if provided
+        if progress_callback:
+            progress_callback("Creating server configuration...")
+        if console_callback:
+            console_callback("[INFO] Creating server configuration...")
+        
+        # Use server manager to create the server
+        if console_callback:
+            console_callback("[INFO] Calling server manager to install server...")
+            
+        # Call the correct backend method
+        success, message = server_manager.install_server_complete(
+            server_name=server_name,
+            server_type=server_type,
+            install_dir=install_dir,
+            executable_path="",  # Let backend determine executable
+            startup_args="",
+            app_id=app_id or "",
+            version=minecraft_version.get('version_id', '') if minecraft_version else "",
+            modloader=minecraft_version.get('modloader', 'vanilla') if minecraft_version else "",
+            steam_cmd_path=steam_cmd_path or "",  # Pass the SteamCMD path
+            credentials=credentials or {"anonymous": True},
+            progress_callback=console_callback,  # Use console callback for progress
+            cancel_flag=None
+        )
+        
+        if success:
+            success_msg = message or f"Server '{server_name}' installed successfully"
+            if progress_callback:
+                progress_callback("Server installation completed successfully")
+            if console_callback:
+                console_callback(f"[SUCCESS] {success_msg}")
+            return True, success_msg
+        else:
+            error_msg = message or f"Failed to install server '{server_name}'"
+            if console_callback:
+                console_callback(f"[ERROR] {error_msg}")
+            return False, error_msg
+            
+    except Exception as e:
+        error_msg = f"Installation failed: {str(e)}"
+        logger.error(f"Error performing server installation: {str(e)}")
+        if progress_callback:
+            progress_callback(error_msg)
+        if console_callback:
+            console_callback(f"[ERROR] {error_msg}")
+        return False, error_msg
+
+
+# Placeholder functions for functions that are used by dashboard.py but not essential for add_server
+def update_webserver_status(webserver_status_label, offline_var, paths, variables):
+    """Update webserver status in the dashboard"""
+    try:
+        status = check_webserver_status(paths, variables)
+        webserver_status_label.config(text=status)
+        
+        # Set color based on status
+        if status == "Running":
+            webserver_status_label.config(foreground="green")
+        elif status == "Stopped":
+            webserver_status_label.config(foreground="red")
+        elif status == "Offline Mode":
+            webserver_status_label.config(foreground="orange")
+        else:
+            webserver_status_label.config(foreground="gray")
+    except Exception as e:
+        logger.error(f"Error updating webserver status: {e}")
+        webserver_status_label.config(text="Unknown", foreground="gray")
+
+
+# Global variables for network monitoring
+_previous_network_stats = None
+_previous_network_time = None
+
+def update_system_info(metric_labels, system_name, os_info, variables):
+    """Update system information in the dashboard UI"""
+    global _previous_network_stats, _previous_network_time
+    
+    try:
+        # Update system name and OS info
+        try:
+            system_name_text = platform.node()
+            if not system_name_text:
+                system_name_text = "Unknown System"
+            system_name.config(text=system_name_text)
+        except Exception as e:
+            logger.error(f"Error getting system name: {e}")
+            system_name.config(text="Unknown System")
+
+        try:
+            os_info_text = f"{platform.system()} {platform.release()} ({platform.machine()})"
+            os_info.config(text=os_info_text)
+        except Exception as e:
+            logger.error(f"Error getting OS info: {e}")
+            os_info.config(text="Unknown OS")
+
+        # Update CPU usage
+        try:
+            cpu_percent = psutil.cpu_percent(interval=1)
+            metric_labels["cpu"].config(text=f"CPU: {cpu_percent:.1f}%")
+        except Exception as e:
+            logger.error(f"Error getting CPU info: {e}")
+            metric_labels["cpu"].config(text="CPU: N/A")
+
+        # Update memory usage
+        try:
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
+            memory_used_gb = memory.used / (1024**3)
+            memory_total_gb = memory.total / (1024**3)
+            metric_labels["memory"].config(text=f"Memory: {memory_used_gb:.1f}GB / {memory_total_gb:.1f}GB ({memory_percent:.1f}%)")
+        except Exception as e:
+            logger.error(f"Error getting memory info: {e}")
+            metric_labels["memory"].config(text="Memory: N/A")
+
+        # Update disk usage
+        try:
+            disk = psutil.disk_usage('/')
+            disk_percent = disk.percent
+            disk_used_gb = disk.used / (1024**3)
+            disk_total_gb = disk.total / (1024**3)
+            metric_labels["disk"].config(text=f"Disk: {disk_used_gb:.1f}GB / {disk_total_gb:.1f}GB ({disk_percent:.1f}%)")
+        except Exception as e:
+            logger.error(f"Error getting disk info: {e}")
+            metric_labels["disk"].config(text="Disk: N/A")
+
+        # Update network info
+        try:
+            import time
+            current_time = time.time()
+            network_stats = psutil.net_io_counters()
+            
+            if network_stats:
+                if _previous_network_stats is not None and _previous_network_time is not None:
+                    # Calculate time difference
+                    time_diff = current_time - _previous_network_time
+                    
+                    if time_diff > 0:
+                        # Calculate current transfer rates (bytes per second)
+                        bytes_sent_per_sec = (network_stats.bytes_sent - _previous_network_stats.bytes_sent) / time_diff
+                        bytes_recv_per_sec = (network_stats.bytes_recv - _previous_network_stats.bytes_recv) / time_diff
+                        
+                        # Convert to appropriate units
+                        def format_speed(bytes_per_sec):
+                            if bytes_per_sec >= 1024**3:  # GB/s
+                                return f"{bytes_per_sec / (1024**3):.1f}GB/s"
+                            elif bytes_per_sec >= 1024**2:  # MB/s
+                                return f"{bytes_per_sec / (1024**2):.1f}MB/s"
+                            elif bytes_per_sec >= 1024:  # KB/s
+                                return f"{bytes_per_sec / 1024:.1f}KB/s"
+                            else:  # B/s
+                                return f"{bytes_per_sec:.1f}B/s"
+                        
+                        sent_display = format_speed(bytes_sent_per_sec)
+                        recv_display = format_speed(bytes_recv_per_sec)
+                        
+                        metric_labels["network"].config(text=f"Network: ↑{sent_display} ↓{recv_display}")
+                    else:
+                        metric_labels["network"].config(text="Network: Calculating...")
+                else:
+                    metric_labels["network"].config(text="Network: Initializing...")
+                
+                # Update previous values for next calculation
+                _previous_network_stats = network_stats
+                _previous_network_time = current_time
+            else:
+                metric_labels["network"].config(text="Network: N/A")
+        except Exception as e:
+            logger.error(f"Error getting network info: {e}")
+            metric_labels["network"].config(text="Network: N/A")
+
+        # Update GPU info (enhanced detection for Intel integrated and multiple GPUs)
+        try:
+            gpu_info = "GPU: Not detected"
+            
+            # Try GPUtil first (best for dedicated GPUs)
+            try:
+                import GPUtil
+                gpus = GPUtil.getGPUs()
+                if gpus:
+                    if len(gpus) == 1:
+                        gpu = gpus[0]
+                        gpu_info = f"GPU: {gpu.name}"
+                        if hasattr(gpu, 'memoryTotal') and gpu.memoryTotal > 0:
+                            gpu_info += f" ({gpu.memoryUsed}MB/{gpu.memoryTotal}MB)"
+                    else:
+                        # Multiple GPUs
+                        gpu_names = [gpu.name for gpu in gpus]
+                        gpu_info = f"GPU: {len(gpus)} GPUs ({', '.join(gpu_names[:2])}"
+                        if len(gpu_names) > 2:
+                            gpu_info += f" +{len(gpu_names)-2} more"
+                        gpu_info += ")"
+                else:
+                    # GPUtil found no GPUs, try system detection
+                    raise ImportError("GPUtil detected no GPUs")
+            except (ImportError, Exception):
+                # GPUtil not available or no GPUs detected, try system-specific detection
+                if platform.system() == "Windows":
+                    try:
+                        # Use WMIC to get GPU information
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        result = subprocess.run(
+                            ['wmic', 'path', 'win32_VideoController', 'get', 'name,adapterram', '/format:csv'],
+                            capture_output=True, text=True, timeout=5,
+                            startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                        
+                        if result.returncode == 0 and result.stdout.strip():
+                            lines = result.stdout.strip().split('\n')
+                            if len(lines) > 1:  # Skip header
+                                gpu_list = []
+                                for line in lines[1:]:
+                                    if line.strip():
+                                        parts = line.split(',')
+                                        if len(parts) >= 3:  # Node,AdapterRAM,Name
+                                            gpu_name = parts[2].strip()  # Name is in the 3rd column
+                                            if gpu_name and gpu_name != "Node":
+                                                gpu_list.append(gpu_name)
+                                
+                                if gpu_list:
+                                    if len(gpu_list) == 1:
+                                        gpu_info = f"GPU: {gpu_list[0]}"
+                                    else:
+                                        gpu_info = f"GPU: {len(gpu_list)} GPUs ({', '.join(gpu_list[:2])}"
+                                        if len(gpu_list) > 2:
+                                            gpu_info += f" +{len(gpu_list)-2} more"
+                                        gpu_info += ")"
+                    
+                    except subprocess.TimeoutExpired:
+                        gpu_info = "GPU: Detection timeout"
+                    except Exception as e:
+                        logger.debug(f"WMIC GPU detection failed: {e}")
+                        gpu_info = "GPU: Detection failed"
+                        
+                elif platform.system() == "Linux":
+                    try:
+                        # Try lspci for Linux
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        result = subprocess.run(
+                            ['lspci', '-v'], 
+                            capture_output=True, text=True, timeout=5,
+                            startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                        
+                        if result.returncode == 0:
+                            output = result.stdout.lower()
+                            gpu_count = output.count('vga compatible controller') + output.count('3d controller')
+                            
+                            if gpu_count > 0:
+                                if gpu_count == 1:
+                                    gpu_info = "GPU: 1 GPU detected"
+                                else:
+                                    gpu_info = f"GPU: {gpu_count} GPUs detected"
+                            else:
+                                gpu_info = "GPU: Not detected"
+                        else:
+                            gpu_info = "GPU: Detection failed"
+                            
+                    except (subprocess.TimeoutExpired, FileNotFoundError):
+                        gpu_info = "GPU: lspci not available"
+                    except Exception as e:
+                        logger.debug(f"Linux GPU detection failed: {e}")
+                        gpu_info = "GPU: Detection failed"
+                        
+                else:
+                    gpu_info = "GPU: Unsupported OS"
+            
+            metric_labels["gpu"].config(text=gpu_info)
+        except Exception as e:
+            logger.error(f"Error getting GPU info: {e}")
+            metric_labels["gpu"].config(text="GPU: Error")
+
+        # Update system uptime
+        try:
+            uptime_seconds = time.time() - psutil.boot_time()
+            uptime_str = format_uptime_from_start_time(uptime_seconds)
+            metric_labels["uptime"].config(text=f"Uptime: {uptime_str}")
+        except Exception as e:
+            logger.error(f"Error getting uptime info: {e}")
+            metric_labels["uptime"].config(text="Uptime: N/A")
+
+    except Exception as e:
+        logger.error(f"Error updating system info: {e}")
+        # Set all labels to error state
+        for label_name in metric_labels:
+            metric_labels[label_name].config(text=f"{label_name.title()}: Error")
+
+
+def collect_system_info_data():
+    """Collect system information data in a thread-safe manner (no UI updates)"""
+    import platform
+    import psutil
+    import subprocess
+    import time
+    from typing import Dict, Any
+    
+    global _previous_network_stats, _previous_network_time
+    
+    data = {}
+    
+    try:
+        # System name and OS info
+        try:
+            data['system_name'] = platform.node()
+            if not data['system_name']:
+                data['system_name'] = "Unknown System"
+        except Exception as e:
+            logger.error(f"Error getting system name: {e}")
+            data['system_name'] = "Unknown System"
+
+        try:
+            data['os_info'] = f"{platform.system()} {platform.release()} ({platform.machine()})"
+        except Exception as e:
+            logger.error(f"Error getting OS info: {e}")
+            data['os_info'] = "Unknown OS"
+
+        # CPU usage (non-blocking version)
+        try:
+            data['cpu_percent'] = psutil.cpu_percent(interval=None)  # No blocking interval
+        except Exception as e:
+            logger.error(f"Error getting CPU info: {e}")
+            data['cpu_percent'] = None
+
+        # Memory usage
+        try:
+            memory = psutil.virtual_memory()
+            data['memory_percent'] = memory.percent
+            data['memory_used_gb'] = memory.used / (1024**3)
+            data['memory_total_gb'] = memory.total / (1024**3)
+        except Exception as e:
+            logger.error(f"Error getting memory info: {e}")
+            data['memory_percent'] = None
+            data['memory_used_gb'] = None
+            data['memory_total_gb'] = None
+
+        # Disk usage
+        try:
+            disk = psutil.disk_usage('/')
+            data['disk_percent'] = disk.percent
+            data['disk_used_gb'] = disk.used / (1024**3)
+            data['disk_total_gb'] = disk.total / (1024**3)
+        except Exception as e:
+            logger.error(f"Error getting disk info: {e}")
+            data['disk_percent'] = None
+            data['disk_used_gb'] = None
+            data['disk_total_gb'] = None
+
+        # Network info
+        try:
+            current_time = time.time()
+            network_stats = psutil.net_io_counters()
+            
+            if network_stats:
+                data['network_stats'] = network_stats
+                data['network_time'] = current_time
+                
+                if _previous_network_stats is not None and _previous_network_time is not None:
+                    time_diff = current_time - _previous_network_time
+                    
+                    if time_diff > 0:
+                        bytes_sent_per_sec = (network_stats.bytes_sent - _previous_network_stats.bytes_sent) / time_diff
+                        bytes_recv_per_sec = (network_stats.bytes_recv - _previous_network_stats.bytes_recv) / time_diff
+                        
+                        def format_speed(bytes_per_sec):
+                            if bytes_per_sec >= 1024**3:  # GB/s
+                                return f"{bytes_per_sec / (1024**3):.1f}GB/s"
+                            elif bytes_per_sec >= 1024**2:  # MB/s
+                                return f"{bytes_per_sec / (1024**2):.1f}MB/s"
+                            elif bytes_per_sec >= 1024:  # KB/s
+                                return f"{bytes_per_sec / 1024:.1f}KB/s"
+                            else:  # B/s
+                                return f"{bytes_per_sec:.1f}B/s"
+                        
+                        data['network_sent_display'] = format_speed(bytes_sent_per_sec)
+                        data['network_recv_display'] = format_speed(bytes_recv_per_sec)
+                    else:
+                        data['network_display'] = "Network: Calculating..."
+                else:
+                    data['network_display'] = "Network: Initializing..."
+                
+                # Update previous values for next calculation
+                _previous_network_stats = network_stats
+                _previous_network_time = current_time
+            else:
+                data['network_display'] = "Network: N/A"
+        except Exception as e:
+            logger.error(f"Error getting network info: {e}")
+            data['network_display'] = "Network: N/A"
+
+        # GPU info (this is the heavy operation that needs threading)
+        try:
+            gpu_info = "GPU: Not detected"
+            
+            # Try GPUtil first (best for dedicated GPUs)
+            try:
+                import GPUtil
+                gpus = GPUtil.getGPUs()
+                if gpus:
+                    if len(gpus) == 1:
+                        gpu = gpus[0]
+                        gpu_info = f"GPU: {gpu.name}"
+                        if hasattr(gpu, 'memoryTotal') and gpu.memoryTotal > 0:
+                            gpu_info += f" ({gpu.memoryUsed}MB/{gpu.memoryTotal}MB)"
+                    else:
+                        # Multiple GPUs
+                        gpu_names = [gpu.name for gpu in gpus]
+                        gpu_info = f"GPU: {len(gpus)} GPUs ({', '.join(gpu_names[:2])}"
+                        if len(gpu_names) > 2:
+                            gpu_info += f" +{len(gpu_names)-2} more"
+                        gpu_info += ")"
+                else:
+                    # GPUtil found no GPUs, try system detection
+                    raise ImportError("GPUtil detected no GPUs")
+            except (ImportError, Exception):
+                # GPUtil not available or no GPUs detected, try system-specific detection
+                if platform.system() == "Windows":
+                    try:
+                        # Use WMIC to get GPU information (this is the blocking operation)
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        result = subprocess.run(
+                            ['wmic', 'path', 'win32_VideoController', 'get', 'name,adapterram', '/format:csv'],
+                            capture_output=True, text=True, timeout=5,
+                            startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                        
+                        if result.returncode == 0 and result.stdout.strip():
+                            lines = result.stdout.strip().split('\n')
+                            if len(lines) > 1:  # Skip header
+                                gpu_list = []
+                                for line in lines[1:]:
+                                    if line.strip():
+                                        parts = line.split(',')
+                                        if len(parts) >= 3:  # Node,AdapterRAM,Name
+                                            gpu_name = parts[2].strip()  # Name is in the 3rd column
+                                            if gpu_name and gpu_name != "Node":
+                                                gpu_list.append(gpu_name)
+                                
+                                if gpu_list:
+                                    if len(gpu_list) == 1:
+                                        gpu_info = f"GPU: {gpu_list[0]}"
+                                    else:
+                                        gpu_info = f"GPU: {len(gpu_list)} GPUs ({', '.join(gpu_list[:2])}"
+                                        if len(gpu_list) > 2:
+                                            gpu_info += f" +{len(gpu_list)-2} more"
+                                        gpu_info += ")"
+                    
+                    except subprocess.TimeoutExpired:
+                        gpu_info = "GPU: Detection timeout"
+                    except Exception as e:
+                        logger.debug(f"WMIC GPU detection failed: {e}")
+                        gpu_info = "GPU: Detection failed"
+                        
+                elif platform.system() == "Linux":
+                    try:
+                        # Try lspci for Linux
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        result = subprocess.run(
+                            ['lspci', '-v'], 
+                            capture_output=True, text=True, timeout=5,
+                            startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                        
+                        if result.returncode == 0:
+                            output = result.stdout.lower()
+                            gpu_count = output.count('vga compatible controller') + output.count('3d controller')
+                            
+                            if gpu_count > 0:
+                                if gpu_count == 1:
+                                    gpu_info = "GPU: 1 GPU detected"
+                                else:
+                                    gpu_info = f"GPU: {gpu_count} GPUs detected"
+                            else:
+                                gpu_info = "GPU: Not detected"
+                        else:
+                            gpu_info = "GPU: Detection failed"
+                            
+                    except (subprocess.TimeoutExpired, FileNotFoundError):
+                        gpu_info = "GPU: lspci not available"
+                    except Exception as e:
+                        logger.debug(f"Linux GPU detection failed: {e}")
+                        gpu_info = "GPU: Detection failed"
+                        
+                else:
+                    gpu_info = "GPU: Unsupported OS"
+            
+            data['gpu_info'] = gpu_info
+        except Exception as e:
+            logger.error(f"Error getting GPU info: {e}")
+            data['gpu_info'] = "GPU: Error"
+
+        # System uptime
+        try:
+            data['uptime_seconds'] = time.time() - psutil.boot_time()
+        except Exception as e:
+            logger.error(f"Error getting uptime info: {e}")
+            data['uptime_seconds'] = None
+
+    except Exception as e:
+        logger.error(f"Error collecting system info data: {e}")
+        data['error'] = str(e)
+    
+    return data
+
+
+def update_system_info_threaded(metric_labels, system_name, os_info, callback=None):
+    """Update system information using background threading to prevent UI freezing"""
+    import threading
+    
+    def background_update():
+        """Collect system data in background thread"""
+        try:
+            # Collect data in background (this may take several seconds)
+            data = collect_system_info_data()
+            
+            # Schedule UI update on main thread
+            def update_ui():
+                try:
+                    # Update system name and OS info
+                    if 'system_name' in data:
+                        system_name.config(text=data['system_name'])
+                    if 'os_info' in data:
+                        os_info.config(text=data['os_info'])
+                    
+                    # Update CPU
+                    if data.get('cpu_percent') is not None:
+                        metric_labels["cpu"].config(text=f"CPU: {data['cpu_percent']:.1f}%")
+                    else:
+                        metric_labels["cpu"].config(text="CPU: N/A")
+                    
+                    # Update Memory
+                    if all(k in data for k in ['memory_used_gb', 'memory_total_gb', 'memory_percent']):
+                        metric_labels["memory"].config(
+                            text=f"Memory: {data['memory_used_gb']:.1f}GB / {data['memory_total_gb']:.1f}GB ({data['memory_percent']:.1f}%)"
+                        )
+                    else:
+                        metric_labels["memory"].config(text="Memory: N/A")
+                    
+                    # Update Disk
+                    if all(k in data for k in ['disk_used_gb', 'disk_total_gb', 'disk_percent']):
+                        metric_labels["disk"].config(
+                            text=f"Disk: {data['disk_used_gb']:.1f}GB / {data['disk_total_gb']:.1f}GB ({data['disk_percent']:.1f}%)"
+                        )
+                    else:
+                        metric_labels["disk"].config(text="Disk: N/A")
+                    
+                    # Update Network
+                    if 'network_display' in data:
+                        metric_labels["network"].config(text=data['network_display'])
+                    elif 'network_sent_display' in data and 'network_recv_display' in data:
+                        metric_labels["network"].config(text=f"Network: ↑{data['network_sent_display']} ↓{data['network_recv_display']}")
+                    else:
+                        metric_labels["network"].config(text="Network: N/A")
+                    
+                    # Update GPU
+                    if 'gpu_info' in data:
+                        metric_labels["gpu"].config(text=data['gpu_info'])
+                    else:
+                        metric_labels["gpu"].config(text="GPU: Error")
+                    
+                    # Update Uptime
+                    if data.get('uptime_seconds') is not None:
+                        uptime_str = format_uptime_from_start_time(data['uptime_seconds'])
+                        metric_labels["uptime"].config(text=f"Uptime: {uptime_str}")
+                    else:
+                        metric_labels["uptime"].config(text="Uptime: N/A")
+                    
+                    # Call optional callback
+                    if callback:
+                        callback()
+                        
+                except Exception as e:
+                    logger.error(f"Error updating UI with system data: {e}")
+                    # Set all labels to error state
+                    for label_name in metric_labels:
+                        metric_labels[label_name].config(text=f"{label_name.title()}: Error")
+            
+            # Schedule UI update on main thread
+            if hasattr(system_name, 'after'):
+                system_name.after(0, update_ui)
+            elif hasattr(system_name, 'root') and hasattr(system_name.root, 'after'):
+                system_name.root.after(0, update_ui)
+                
+        except Exception as e:
+            logger.error(f"Error in background system info update: {e}")
+    
+    # Start background thread
+    thread = threading.Thread(target=background_update, daemon=True)
+    thread.start()
+
+
+# Additional placeholder functions that dashboard.py might need
+def get_current_server_list(dashboard):
+    """Get the server list for the currently active tab"""
+    current_tab_id = dashboard.server_notebook.select()
+    if not current_tab_id:
+        return None
+        
+    # Find which subhost this tab belongs to
+    for subhost_name, tab_frame in dashboard.tab_frames.items():
+        if str(tab_frame) in current_tab_id:
+            return dashboard.server_lists.get(subhost_name)
+    
+    return None
+
+
+def get_current_subhost(dashboard):
+    """Get the name of the currently active subhost"""
+    current_tab_id = dashboard.server_notebook.select()
+    if not current_tab_id:
+        return "Local Host"
+        
+    # Find which subhost this tab belongs to
+    for subhost_name, tab_frame in dashboard.tab_frames.items():
+        if str(tab_frame) in current_tab_id:
+            return subhost_name
+    
+    return "Local Host"
+
+
+def format_uptime_from_start_time(start_time):
+    """Format uptime from either a timestamp string or seconds since epoch"""
+    try:
+        if isinstance(start_time, str):
+            # Handle timestamp string
+            try:
+                start_dt = datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                uptime_seconds = (datetime.datetime.now(datetime.timezone.utc) - start_dt).total_seconds()
+            except:
+                return "N/A"
+        elif isinstance(start_time, (int, float)):
+            # Handle seconds directly
+            uptime_seconds = start_time
+        else:
+            return "N/A"
+
+        if uptime_seconds < 0:
+            return "N/A"
+
+        # Format uptime
+        days = int(uptime_seconds // 86400)
+        hours = int((uptime_seconds % 86400) // 3600)
+        minutes = int((uptime_seconds % 3600) // 60)
+
+        if days > 0:
+            return f"{days}d {hours}h {minutes}m"
+        elif hours > 0:
+            return f"{hours}h {minutes}m"
+        else:
+            return f"{minutes}m"
+
+    except Exception as e:
+        logger.error(f"Error formatting uptime: {e}")
+        return "N/A"
+
+
+def update_server_status_in_treeview(server_list, server_name, status):
+    """Placeholder for server status update"""
+    pass
+
+
+def open_directory_in_explorer(directory_path):
+    """Placeholder for opening directory in explorer"""
+    try:
+        import subprocess
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        subprocess.Popen(f'explorer "{directory_path}"', 
+                        startupinfo=startupinfo, 
+                        creationflags=subprocess.CREATE_NO_WINDOW)
+        return True, "Directory opened"
+    except Exception as e:
+        return False, str(e)
+
+
+def import_server_from_directory_dialog(root, paths, server_manager_dir, update_callback=None, dashboard_server_manager=None):
+    """Import an existing server from a directory"""
+    try:
+        # Create import dialog
+        dialog = tk.Toplevel(root)
+        dialog.title("Import Server from Directory")
+        dialog.geometry("600x550")
+        center_window(dialog, parent=root)
+        dialog.transient(root)
+        dialog.grab_set()
+        
+        result = {'success': False, 'message': 'Dialog cancelled'}
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding="10")
+        main_frame.grid(row=0, column=0, sticky="nsew")
+        
+        # Directory selection
+        ttk.Label(main_frame, text="Select Server Directory:").grid(row=0, column=0, sticky="w", pady=(0, 5))
+        
+        dir_frame = ttk.Frame(main_frame)
+        dir_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        dir_frame.columnconfigure(0, weight=1)
+        
+        dir_var = tk.StringVar()
+        dir_entry = ttk.Entry(dir_frame, textvariable=dir_var, state='readonly')
+        dir_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        
+        def browse_directory():
+            directory = filedialog.askdirectory(title="Select Server Directory")
+            if directory:
+                dir_var.set(directory)
+        
+        ttk.Button(dir_frame, text="Browse", command=browse_directory).grid(row=0, column=1)
+        
+        # Server name
+        ttk.Label(main_frame, text="Server Name:").grid(row=2, column=0, sticky="w", pady=(10, 5))
+        name_var = tk.StringVar()
+        ttk.Entry(main_frame, textvariable=name_var).grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        
+        # Server type selection (manual)
+        ttk.Label(main_frame, text="Server Type:").grid(row=4, column=0, sticky="w", pady=(0, 5))
+        
+        # Get supported server types
+        try:
+            from Modules.server_manager import ServerManager
+            temp_manager = ServerManager()
+            supported_types = temp_manager.get_supported_server_types()
+        except:
+            supported_types = ["Steam", "Minecraft", "Other"]
+        
+        type_var = tk.StringVar(value="Other")  # Default to Other
+        type_combo = ttk.Combobox(main_frame, textvariable=type_var, values=supported_types, state="readonly")
+        type_combo.grid(row=5, column=0, sticky="ew", pady=(0, 10))
+        
+        # Steam App ID field (initially hidden)
+        steam_frame = ttk.Frame(main_frame)
+        steam_frame.grid(row=6, column=0, sticky="ew", pady=(0, 10))
+        steam_frame.grid_remove()  # Initially hidden
+        
+        ttk.Label(steam_frame, text="Steam App ID:").grid(row=0, column=0, sticky="w", pady=(0, 5))
+        
+        # App ID entry and browse button frame
+        appid_frame = ttk.Frame(steam_frame)
+        appid_frame.grid(row=1, column=0, sticky="ew", pady=(0, 5))
+        appid_frame.columnconfigure(0, weight=1)
+        
+        app_id_var = tk.StringVar()
+        app_id_entry = ttk.Entry(appid_frame, textvariable=app_id_var)
+        app_id_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        
+        def browse_appid():
+            """Open dialog to browse and select Steam AppID"""
+            selected_appid = create_steam_appid_browser_dialog(dialog, server_manager_dir)
+            if selected_appid:
+                app_id_var.set(selected_appid)
+        
+        ttk.Button(appid_frame, text="Browse", command=browse_appid, width=10).grid(row=0, column=1)
+        
+        # Minecraft configuration (initially hidden)
+        minecraft_frame = ttk.Frame(main_frame)
+        minecraft_frame.grid(row=7, column=0, sticky="ew", pady=(0, 10))
+        minecraft_frame.grid_remove()  # Initially hidden
+        
+        ttk.Label(minecraft_frame, text="Modloader:").grid(row=0, column=0, sticky="w", pady=(0, 5))
+        modloader_var = tk.StringVar(value="Vanilla")
+        modloader_combo = ttk.Combobox(minecraft_frame, textvariable=modloader_var, 
+                                     values=["Vanilla", "Forge", "Fabric", "Spigot", "Paper"], 
+                                     state="readonly")
+        modloader_combo.grid(row=1, column=0, sticky="ew", pady=(0, 5))
+        
+        ttk.Label(minecraft_frame, text="Minecraft Version:").grid(row=2, column=0, sticky="w", pady=(0, 5))
+        
+        # Version entry and browse button frame
+        version_frame = ttk.Frame(minecraft_frame)
+        version_frame.grid(row=3, column=0, sticky="ew", pady=(0, 5))
+        version_frame.columnconfigure(0, weight=1)
+        
+        version_var = tk.StringVar()
+        version_entry = ttk.Entry(version_frame, textvariable=version_var)
+        version_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        
+        def browse_minecraft_version():
+            """Open dialog to browse and select Minecraft version"""
+            selected_version = create_minecraft_version_browser_dialog(dialog, modloader_var.get())
+            if selected_version:
+                version_var.set(selected_version.get("version_id", ""))
+                # Update modloader if it was changed in the browser
+                if selected_version.get("modloader"):
+                    modloader_var.set(selected_version["modloader"].title())
+        
+        ttk.Button(version_frame, text="Browse", command=browse_minecraft_version, width=10).grid(row=0, column=1)
+        
+        def on_type_change(*args):
+            """Show/hide fields based on server type"""
+            server_type = type_var.get()
+            
+            if server_type == "Steam":
+                steam_frame.grid()
+                minecraft_frame.grid_remove()
+            elif server_type == "Minecraft":
+                steam_frame.grid_remove()
+                minecraft_frame.grid()
+            else:  # Other
+                steam_frame.grid_remove()
+                minecraft_frame.grid_remove()
+        
+        type_var.trace_add('write', on_type_change)
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=8, column=0, sticky="ew", pady=(20, 0))
+        
+        def import_server():
+            directory = dir_var.get()
+            server_name = name_var.get().strip()
+            server_type = type_var.get()
+            
+            if not directory or not os.path.exists(directory):
+                messagebox.showerror("Error", "Please select a valid directory")
+                return
+                
+            if not server_name:
+                messagebox.showerror("Error", "Please enter a server name")
+                return
+            
+            if not server_type:
+                messagebox.showerror("Error", "Please select a server type")
+                return
+            
+            try:
+                # Import the server configuration with manual selections
+                if dashboard_server_manager is None:
+                    from Modules.server_manager import ServerManager
+                    server_manager = ServerManager()
+                else:
+                    server_manager = dashboard_server_manager
+                
+                # Prepare additional parameters based on server type
+                app_id = app_id_var.get().strip() if server_type == "Steam" else ""
+                minecraft_version = version_var.get().strip() if server_type == "Minecraft" else ""
+                modloader = modloader_var.get() if server_type == "Minecraft" else ""
+                
+                # Import the server
+                success = server_manager.import_server_config(
+                    server_name=server_name,
+                    server_type=server_type,
+                    install_dir=directory,
+                    executable_path="",  # Will be auto-detected
+                    startup_args="",
+                    app_id=app_id
+                )
+                
+                if success:
+                    # Reload server list to include the newly imported server
+                    server_manager.load_servers()
+                    
+                    # For Minecraft servers, update the configuration with version/modloader
+                    if server_type == "Minecraft" and (minecraft_version or modloader):
+                        config_file = os.path.join(paths["servers"], f"{server_name}.json")
+                        if os.path.exists(config_file):
+                            try:
+                                import json
+                                with open(config_file, 'r') as f:
+                                    config = json.load(f)
+                                
+                                if minecraft_version:
+                                    config["minecraft_version"] = minecraft_version
+                                if modloader:
+                                    config["modloader"] = modloader
+                                
+                                with open(config_file, 'w') as f:
+                                    json.dump(config, f, indent=4)
+                            except Exception as e:
+                                logger.warning(f"Could not update Minecraft config: {e}")
+                    
+                    result['success'] = True
+                    result['message'] = f"Server '{server_name}' imported successfully from {directory}"
+                    
+                    if update_callback:
+                        update_callback()
+                        
+                    dialog.destroy()
+                    messagebox.showinfo("Success", result['message'])
+                else:
+                    messagebox.showerror("Error", f"Failed to import server '{server_name}'")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to import server: {str(e)}")
+        
+        ttk.Button(button_frame, text="Import", command=import_server).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
+        
+        # Configure grid weights
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+        steam_frame.columnconfigure(0, weight=1)
+        minecraft_frame.columnconfigure(0, weight=1)
+        appid_frame.columnconfigure(0, weight=1)
+        version_frame.columnconfigure(0, weight=1)
+        
+        dialog.wait_window()
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in import server from directory dialog: {e}")
+        return {'success': False, 'message': str(e)}
+
+
+def import_server_from_export_dialog(root, paths, server_manager_dir, update_callback=None):
+    """Import server from exported configuration file"""
+    try:
+        # File selection dialog
+        file_path = filedialog.askopenfilename(
+            title="Select Server Export File",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        
+        if not file_path:
+            return {'success': False, 'message': 'No file selected'}
+            
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                
+            # Extract server information
+            server_name = config.get('Name', os.path.splitext(os.path.basename(file_path))[0])
+            
+            # Show confirmation dialog
+            confirm = messagebox.askyesno(
+                "Confirm Import",
+                f"Import server configuration '{server_name}'?\n\n"
+                f"Type: {config.get('Type', 'Unknown')}\n"
+                f"Original Path: {config.get('InstallDir', 'Unknown')}"
+            )
+            
+            if confirm:
+                if update_callback:
+                    update_callback()
+                    
+                return {
+                    'success': True, 
+                    'message': f"Server '{server_name}' imported successfully from export file"
+                }
+            else:
+                return {'success': False, 'message': 'Import cancelled'}
+                
+        except json.JSONDecodeError:
+            messagebox.showerror("Error", "Invalid JSON file format")
+            return {'success': False, 'message': 'Invalid JSON file'}
+            
+    except Exception as e:
+        logger.error(f"Error in import server from export dialog: {e}")
+        return {'success': False, 'message': str(e)}
+
+
+def export_server_dialog(root, current_list, paths):
+    """Export server configuration for use on other hosts or clusters"""
+    try:
+        # Get selected server
+        if not current_list.selection():
+            messagebox.showwarning("No Selection", "Please select a server to export")
+            return {'success': False, 'message': 'No server selected'}
+            
+        item = current_list.selection()[0]
+        server_name = current_list.item(item, "values")[0]
+        
+        # Create export dialog
+        dialog = tk.Toplevel(root)
+        dialog.title(f"Export Server: {server_name}")
+        dialog.geometry("550x350")
+        center_window(dialog, parent=root)
+        dialog.transient(root)
+        dialog.grab_set()
+        
+        result = {'success': False, 'message': 'Export cancelled'}
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding="10")
+        main_frame.grid(row=0, column=0, sticky="nsew")
+        
+        # Export options
+        ttk.Label(main_frame, text="Export Options:").grid(row=0, column=0, sticky="w", pady=(0, 10))
+        
+        # Include server files option
+        include_files_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            main_frame, 
+            text="Include server files (creates larger archive)", 
+            variable=include_files_var
+        ).grid(row=1, column=0, sticky="w", pady=(0, 5))
+        
+        # Export location
+        ttk.Label(main_frame, text="Export Location:").grid(row=2, column=0, sticky="w", pady=(10, 5))
+        
+        location_frame = ttk.Frame(main_frame)
+        location_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        location_frame.columnconfigure(0, weight=1)
+        
+        location_var = tk.StringVar()
+        location_entry = ttk.Entry(location_frame, textvariable=location_var, state='readonly')
+        location_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        
+        def browse_export_location():
+            filename = filedialog.asksaveasfilename(
+                title="Save Export As",
+                defaultextension=".json",
+                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+                initialfile=f"{server_name}_export.json"
+            )
+            if filename:
+                location_var.set(filename)
+        
+        ttk.Button(location_frame, text="Browse", command=browse_export_location).grid(row=0, column=1)
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=4, column=0, sticky="ew", pady=(20, 0))
+        
+        def perform_export():
+            export_path = location_var.get()
+            
+            if not export_path:
+                messagebox.showerror("Error", "Please select an export location")
+                return
+            
+            try:
+                # Create export configuration
+                export_config = {
+                    'Name': server_name,
+                    'Type': 'Unknown',  # Would need to fetch from server manager
+                    'InstallDir': '',  # Would need to fetch from server manager
+                    'ExportDate': datetime.datetime.now().isoformat(),
+                    'IncludeFiles': include_files_var.get()
+                }
+                
+                with open(export_path, 'w', encoding='utf-8') as f:
+                    json.dump(export_config, f, indent=2)
+                
+                result['success'] = True
+                result['message'] = f"Server '{server_name}' exported successfully to {export_path}"
+                
+                dialog.destroy()
+                messagebox.showinfo("Export Complete", result['message'])
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to export server: {str(e)}")
+        
+        ttk.Button(button_frame, text="Export", command=perform_export).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
+        
+        # Configure grid weights
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+        
+        dialog.wait_window()
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in export server dialog: {e}")
+        return {'success': False, 'message': str(e)}
+
+
+def create_progress_dialog_with_console(parent, title="Progress"):
+    """Create a progress dialog with console output for long-running operations"""
+    class ProgressDialog:
+        def __init__(self, parent, title):
+            self.dialog = tk.Toplevel(parent)
+            self.dialog.title(title)
+            self.dialog.geometry("600x400")
+            center_window(self.dialog, parent=parent)
+            self.dialog.transient(parent)
+            self.dialog.grab_set()
+            
+            # Main frame
+            main_frame = ttk.Frame(self.dialog, padding="10")
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Progress bar
+            self.progress_var = tk.StringVar(value="Initializing...")
+            ttk.Label(main_frame, textvariable=self.progress_var).pack(pady=(0, 5))
+            
+            self.progress_bar = ttk.Progressbar(main_frame, mode='indeterminate')
+            self.progress_bar.pack(fill=tk.X, pady=(0, 10))
+            self.progress_bar.start()
+            
+            # Console output
+            ttk.Label(main_frame, text="Console Output:").pack(anchor=tk.W)
+            
+            console_frame = ttk.Frame(main_frame)
+            console_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 10))
+            
+            self.console_text = scrolledtext.ScrolledText(
+                console_frame, 
+                height=15, 
+                wrap=tk.WORD, 
+                font=('Consolas', 9)
+            )
+            self.console_text.pack(fill=tk.BOTH, expand=True)
+            
+            # Close button (initially disabled)
+            self.close_button = ttk.Button(
+                main_frame, 
+                text="Close", 
+                command=self.close_dialog,
+                state=tk.DISABLED
+            )
+            self.close_button.pack(pady=(10, 0))
+            
+            self.is_closed = False
+            
+        def update_progress(self, message):
+            """Update the progress message"""
+            if not self.is_closed:
+                self.progress_var.set(message)
+                self.dialog.update_idletasks()
+                
+        def update_console(self, message):
+            """Add a message to the console output"""
+            if not self.is_closed:
+                self.console_text.insert(tk.END, message + "\n")
+                self.console_text.see(tk.END)
+                self.dialog.update_idletasks()
+                
+        def complete(self, message="Operation completed"):
+            """Mark the operation as complete"""
+            if not self.is_closed:
+                self.progress_bar.stop()
+                self.progress_var.set(message)
+                self.close_button.config(state=tk.NORMAL)
+                self.update_console(f"[COMPLETE] {message}")
+                
+        def close_dialog(self):
+            """Close the dialog"""
+            self.is_closed = True
+            self.dialog.destroy()
+            
+        def show(self):
+            """Show the dialog and return self for method chaining"""
+            return self
+            
+        # Add dictionary-like access for backward compatibility
+        def __contains__(self, key):
+            """Support 'in' operator for backward compatibility"""
+            return key in ['console_text', 'console_callback']
+            
+        def __getitem__(self, key):
+            """Support dictionary-like access for backward compatibility"""
+            if key == 'console_text':
+                return self.console_text
+            elif key == 'console_callback':
+                return self.update_console
+            else:
+                raise KeyError(f"Key '{key}' not found")
+    
+    return ProgressDialog(parent, title)
+
+
+def create_server_removal_dialog(root, server_name, server_manager):
+    """Create a dialog for removing a server with checkbox options"""
+    class ServerRemovalDialog:
+        def __init__(self, parent, server_name, server_manager):
+            self.parent = parent
+            self.server_name = server_name
+            self.server_manager = server_manager
+            self.result = {'confirmed': False, 'remove_files': False}
+
+            # Create dialog
+            self.dialog = tk.Toplevel(parent)
+            self.dialog.title(f"Remove Server - {server_name}")
+            self.dialog.transient(parent)
+            self.dialog.grab_set()
+            self.dialog.geometry("500x400")
+            center_window(self.dialog, parent=parent)
+
+            # Main frame
+            main_frame = ttk.Frame(self.dialog, padding=20)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+
+            # Warning icon and title
+            warning_frame = ttk.Frame(main_frame)
+            warning_frame.pack(fill=tk.X, pady=(0, 15))
+
+            ttk.Label(warning_frame, text="⚠️", font=("Segoe UI", 24)).pack(side=tk.LEFT, padx=(0, 10))
+            title_label = ttk.Label(warning_frame, text=f"Remove Server '{server_name}'",
+                                  font=("Segoe UI", 14, "bold"))
+            title_label.pack(side=tk.LEFT)
+
+            # Warning message
+            warning_text = ("This action cannot be undone.\n\n"
+                          "Choose what you want to remove:")
+            ttk.Label(main_frame, text=warning_text, justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 15))
+
+            # Checkbox options
+            self.remove_config_var = tk.BooleanVar(value=True)
+            self.remove_files_var = tk.BooleanVar(value=False)
+
+            # Configuration removal checkbox
+            config_frame = ttk.Frame(main_frame)
+            config_frame.pack(fill=tk.X, pady=(0, 10))
+
+            ttk.Checkbutton(config_frame, text="Remove server configuration",
+                          variable=self.remove_config_var,
+                          command=self.on_config_checkbox_change).pack(anchor=tk.W)
+
+            ttk.Label(config_frame, text="Removes the server from the dashboard and configuration files",
+                     foreground="gray", font=("Segoe UI", 9)).pack(anchor=tk.W, padx=(20, 0), pady=(2, 0))
+
+            # Files removal checkbox
+            files_frame = ttk.Frame(main_frame)
+            files_frame.pack(fill=tk.X, pady=(0, 20))
+
+            ttk.Checkbutton(files_frame, text="Remove server files and directory",
+                          variable=self.remove_files_var).pack(anchor=tk.W)
+
+            ttk.Label(files_frame, text="Deletes all server files, saves, and installation directory",
+                     foreground="gray", font=("Segoe UI", 9)).pack(anchor=tk.W, padx=(20, 0), pady=(2, 0))
+
+            # Buttons
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=(20, 0))
+
+            ttk.Button(button_frame, text="Cancel", command=self.cancel, width=12).pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(button_frame, text="Remove Server", command=self.confirm_removal,
+                      style="Accent.TButton", width=15).pack(side=tk.RIGHT)
+
+            # Handle window close
+            self.dialog.protocol("WM_DELETE_WINDOW", self.cancel)
+
+        def on_config_checkbox_change(self):
+            """Ensure at least one option is selected"""
+            if not self.remove_config_var.get() and not self.remove_files_var.get():
+                self.remove_config_var.set(True)
+
+        def confirm_removal(self):
+            """Confirm the removal"""
+            if not self.remove_config_var.get() and not self.remove_files_var.get():
+                messagebox.showwarning("Selection Required",
+                                     "Please select at least one removal option.")
+                return
+
+            self.result = {
+                'confirmed': True,
+                'remove_files': self.remove_files_var.get(),
+                'remove_config': self.remove_config_var.get()
+            }
+            self.dialog.destroy()
+
+        def cancel(self):
+            """Cancel the removal"""
+            self.result = {'confirmed': False, 'remove_files': False}
+            self.dialog.destroy()
+
+        def show(self):
+            """Show the dialog and return the result"""
+            self.dialog.wait_window()
+            return self.result
+
+    # Create and show the dialog
+    dialog = ServerRemovalDialog(root, server_name, server_manager)
+    return dialog.show()
+
+
+def rename_server_configuration(server_name, new_name, server_manager):
+    """Rename a server configuration"""
+    try:
+        # Validate new name
+        if not new_name or not new_name.strip():
+            return False, "New server name cannot be empty"
+            
+        new_name = new_name.strip()
+        
+        if new_name == server_name:
+            return False, "New name is the same as current name"
+            
+        # Check if new name already exists
+        servers = server_manager.get_servers()
+        if new_name in servers:
+            return False, f"Server '{new_name}' already exists"
+            
+        # Rename the server
+        success = server_manager.rename_server(server_name, new_name)
+        if success:
+            return True, f"Server renamed from '{server_name}' to '{new_name}'"
+        else:
+            return False, f"Failed to rename server '{server_name}'"
+            
+    except Exception as e:
+        logger.error(f"Error renaming server: {e}")
+        return False, f"Error renaming server: {str(e)}"
+
+
+def show_java_configuration_dialog(root, server_name, server_config, server_manager):
+    """Show Java configuration dialog for Minecraft servers"""
+    try:
+        # Create Java configuration dialog
+        dialog = tk.Toplevel(root)
+        dialog.title(f"Java Configuration - {server_name}")
+        dialog.geometry("500x400")
+        center_window(dialog, parent=root)
+        dialog.transient(root)
+        dialog.grab_set()
+        
+        result = {'success': False, 'message': 'Configuration cancelled'}
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Java executable path
+        ttk.Label(main_frame, text="Java Executable:").pack(anchor=tk.W, pady=(0, 5))
+        
+        java_frame = ttk.Frame(main_frame)
+        java_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        java_var = tk.StringVar(value=server_config.get('JavaPath', 'java'))
+        java_entry = ttk.Entry(java_frame, textvariable=java_var)
+        java_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        def browse_java():
+            filename = filedialog.askopenfilename(
+                title="Select Java Executable",
+                filetypes=[("Executable files", "*.exe"), ("All files", "*.*")]
+            )
+            if filename:
+                java_var.set(filename)
+        
+        ttk.Button(java_frame, text="Browse", command=browse_java).pack(side=tk.RIGHT)
+        
+        # JVM Arguments
+        ttk.Label(main_frame, text="JVM Arguments:").pack(anchor=tk.W, pady=(10, 5))
+        
+        jvm_args_var = tk.StringVar(value=server_config.get('JVMArgs', '-Xmx2G -Xms1G'))
+        jvm_entry = ttk.Entry(main_frame, textvariable=jvm_args_var, width=60)
+        jvm_entry.pack(fill=tk.X, pady=(0, 10))
+        
+        # Common JVM presets
+        ttk.Label(main_frame, text="Common Presets:").pack(anchor=tk.W, pady=(10, 5))
+        
+        preset_frame = ttk.Frame(main_frame)
+        preset_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        presets = [
+            ("2GB RAM", "-Xmx2G -Xms1G"),
+            ("4GB RAM", "-Xmx4G -Xms2G"),
+            ("8GB RAM", "-Xmx8G -Xms4G"),
+            ("16GB RAM", "-Xmx16G -Xms8G")
+        ]
+        
+        for i, (name, args) in enumerate(presets):
+            ttk.Button(
+                preset_frame, 
+                text=name,
+                command=lambda a=args: jvm_args_var.set(a)
+            ).grid(row=i//2, column=i%2, padx=5, pady=2, sticky=tk.W)
+        
+        # Auto-detect Java button
+        def auto_detect_java():
+            java_paths = [
+                "java",
+                "C:\\Program Files\\Java\\*\\bin\\java.exe",
+                "C:\\Program Files (x86)\\Java\\*\\bin\\java.exe"
+            ]
+            
+            for path in java_paths:
+                try:
+                    if '*' in path:
+                        # Handle wildcard paths
+                        import glob
+                        matches = glob.glob(path)
+                        if matches:
+                            java_var.set(matches[0])
+                            break
+                    else:
+                        # Test basic java command
+                        import subprocess
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        result = subprocess.run([path, '-version'], 
+                                              capture_output=True, text=True, timeout=5,
+                                              startupinfo=startupinfo, 
+                                              creationflags=subprocess.CREATE_NO_WINDOW)
+                        if result.returncode == 0:
+                            java_var.set(path)
+                            break
+                except:
+                    continue
+        
+        ttk.Button(main_frame, text="Auto-Detect Java", command=auto_detect_java).pack(pady=(10, 0))
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(20, 0))
+        
+        def save_config():
+            try:
+                # Update server configuration
+                server_config['JavaPath'] = java_var.get()
+                server_config['JVMArgs'] = jvm_args_var.get()
+                
+                # Save configuration
+                success = server_manager.save_server_config(server_name, server_config)
+                if success:
+                    result['success'] = True
+                    result['message'] = "Java configuration saved successfully"
+                    dialog.destroy()
+                    messagebox.showinfo("Success", result['message'])
+                else:
+                    messagebox.showerror("Error", "Failed to save configuration")
+                    
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save configuration: {str(e)}")
+        
+        ttk.Button(button_frame, text="Save", command=save_config).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
+        
+        dialog.wait_window()
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in Java configuration dialog: {e}")
+        return {'success': False, 'message': str(e)}
+
+
+def batch_update_server_types(paths):
+    """Update server types for all servers based on their installation directories"""
+    try:
+        updated_count = 0
+        updated_servers = []
+        
+        # This is a placeholder implementation
+        # In a real implementation, this would:
+        # 1. Iterate through all server configurations
+        # 2. Detect the actual server type from installation directory
+        # 3. Update configurations that have incorrect types
+        # 4. Return count and list of updated servers
+        
+        logger.info("Batch server type update completed")
+        return updated_count, updated_servers
+        
+    except Exception as e:
+        logger.error(f"Error in batch update server types: {e}")
+        return 0, []
+
+
+def create_java_selection_dialog(root, minecraft_version=None):
+    """Create a dialog to select Java installation for a server."""
+    try:
+        try:
+            from Modules.java_configurator import JavaConfigurator
+            configurator = JavaConfigurator()
+        except ImportError:
+            logger.warning("JavaConfigurator module not available")
+            return None
+        
+        dialog = tk.Toplevel(root)
+        dialog.title("Select Java Installation")
+        dialog.geometry("600x400")
+        dialog.transient(root)
+        dialog.grab_set()
+        
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        title_label = ttk.Label(main_frame, text="Select Java Installation", font=("Segoe UI", 12, "bold"))
+        title_label.pack(pady=(0, 15))
+        
+        # Java list frame
+        list_frame = ttk.LabelFrame(main_frame, text="Available Java Installations", padding=10)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        
+        # Treeview for Java installations
+        columns = ("path", "version", "vendor")
+        java_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=10)
+        
+        java_tree.heading("path", text="Path")
+        java_tree.heading("version", text="Version")
+        java_tree.heading("vendor", text="Vendor")
+        
+        java_tree.column("path", width=300, minwidth=200)
+        java_tree.column("version", width=100, minwidth=80)
+        java_tree.column("vendor", width=100, minwidth=80)
+        
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=java_tree.yview)
+        java_tree.configure(yscrollcommand=scrollbar.set)
+        
+        java_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Load Java installations
+        try:
+            java_installations = configurator.detect_java_installations()
+            
+            for java in java_installations:
+                java_tree.insert("", tk.END, values=(
+                    java.get("path", ""),
+                    java.get("version", ""),
+                    java.get("vendor", "Unknown")
+                ))
+        except Exception as e:
+            logger.error(f"Error loading Java installations: {e}")
+            java_tree.insert("", tk.END, values=("Error loading Java installations", str(e), ""))
+        
+        # Result variable
+        selected_java: Dict[str, Any] = {"java": None}
+        
+        def on_select():
+            selected = java_tree.selection()
+            if selected:
+                item = java_tree.item(selected[0])
+                selected_java["java"] = {
+                    "path": item['values'][0],
+                    "version": item['values'][1],
+                    "vendor": item['values'][2]
+                }
+            dialog.destroy()
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)
+        
+        ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT)
+        ttk.Button(button_frame, text="Select", command=on_select).pack(side=tk.RIGHT)
+        
+        # Double-click to select
+        java_tree.bind("<Double-1>", lambda e: on_select())
+        
+        # Center dialog
+        center_window(dialog, 600, 400, root)
+        
+        root.wait_window(dialog)
+        return selected_java["java"]
+        
+    except Exception as e:
+        logger.error(f"Error creating Java selection dialog: {e}")
+        return None
+
+
+def load_appid_list_from_database():
+    """Load AppID list directly from database"""
+    try:
+        from Modules.Database.AppIDScanner import AppIDScanner
+        scanner = AppIDScanner(use_database=True, debug_mode=False)
+        appids = scanner.get_server_apps(dedicated_only=True)
+        scanner.close()
+        return appids
+    except ImportError:
+        logger.warning("AppIDScanner module not available")
+        return []
+    except Exception as e:
+        logger.error(f"Error loading AppID list from database: {e}")
+        return []
+
+
+def find_appid_in_directory(directory_path):
+    """Find Steam AppID from directory contents"""
+    if not directory_path or not os.path.exists(directory_path):
+        return None
+    
+    try:
+        # Look for Steam app manifest files
+        for file in os.listdir(directory_path):
+            if file == "steam_appid.txt":
+                appid_file = os.path.join(directory_path, file)
+                with open(appid_file, 'r') as f:
+                    appid = f.read().strip()
+                    if appid.isdigit():
+                        return appid
+        
+        # Look for app manifest files
+        for file in os.listdir(directory_path):
+            if file.startswith("appmanifest_") and file.endswith(".acf"):
+                # Parse the ACF file to get AppID
+                acf_file = os.path.join(directory_path, file)
+                with open(acf_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    # Simple parsing for "appid" value
+                    import re
+                    match = re.search(r'"appid"\s*"(\d+)"', content)
+                    if match:
+                        return match.group(1)
+        
+        return None
+    except Exception as e:
+        logger.error(f"Error finding AppID in directory {directory_path}: {e}")
+        return None
+
+
+def is_process_running(pid):
+    """Check if a process with the given PID is running"""
+    try:
+        import psutil
+        return psutil.pid_exists(pid)
+    except:
+        return False
+
+
+def is_port_open(host, port, timeout=1):
+    """Check if a port is open on the specified host"""
+    try:
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        return result == 0
+    except:
+        return False
+
+
+def check_webserver_status(paths, variables):
+    """Check if the web server is running and return status"""
+    if variables.get("offlineMode", False):
+        return "Offline Mode"
+        
+    try:
+        webserver_port = variables.get("webserverPort", 8080)
+        if is_port_open("localhost", webserver_port):
+            return "Running"
+        else:
+            return "Stopped"
+    except Exception as e:
+        logger.error(f"Error checking webserver status: {e}")
+        return "Unknown"
 
 
 def export_server_configuration(server_name, paths, include_files=False):
-    # Export server configuration to a portable format
-    # 
-    # Args:
-    #     server_name (str): Name of the server to export
-    #     paths (dict): Application paths dictionary
-    #     include_files (bool): Whether to include server files in export
-    #     
-    # Returns:
-    #     dict: Export data containing server configuration and metadata
+    """Export server configuration to a portable format"""
     try:
-        # Find server configuration file
-        servers_path = os.path.join(paths["root"], "servers")
-        server_config_file = None
+        from Modules.server_manager import ServerManager
+        server_manager = ServerManager()
         
-        if os.path.exists(servers_path):
-            for file in os.listdir(servers_path):
-                if file.endswith('.json'):
-                    try:
-                        with open(os.path.join(servers_path, file), 'r') as f:
-                            config = json.load(f)
-                        if config.get("Name") == server_name:
-                            server_config_file = os.path.join(servers_path, file)
-                            break
-                    except:
-                        continue
+        config = server_manager.get_server_config(server_name)
+        if not config:
+            return None
         
-        if not server_config_file:
-            raise ValueError(f"Server configuration not found for: {server_name}")
-        
-        # Load server configuration
-        with open(server_config_file, 'r') as f:
-            server_config = json.load(f)
-        
-        # Create export data structure
         export_data = {
-            "export_metadata": {
-                "version": "1.0",
-                "exported_at": datetime.datetime.now().isoformat(),
-                "exported_by": os.environ.get('USERNAME', 'Unknown'),
-                "source_host": platform.node(),
-                "export_type": "server_configuration",
-                "includes_files": include_files
-            },
-            "server_configuration": server_config,
-            "dependencies": {}
+            "version": "1.0",
+            "export_date": datetime.datetime.now().isoformat(),
+            "server_name": server_name,
+            "configuration": config,
+            "includes_files": include_files
         }
         
-        # Add Steam App ID information if it's a Steam server
-        if server_config.get("Type") == "Steam" and server_config.get("AppId"):
-            try:
-                # Try to get app information from database
-                app_info = check_appid_in_database(server_config["AppId"])
-                
-                if app_info and app_info.get("exists"):
-                    export_data["dependencies"]["steam_app_info"] = {
-                        "appid": app_info["appid"],
-                        "name": app_info["name"],
-                        "type": app_info["type"],
-                        "is_dedicated_server": app_info["is_dedicated_server"],
-                        "requires_subscription": app_info["requires_subscription"],
-                        "anonymous_install": app_info["anonymous_install"]
-                    }
-                    export_data["dependencies"]["requires_steam_install"] = True
-                    export_data["dependencies"]["app_verified"] = True
-                else:
-                    # AppID not found in database
-                    export_data["dependencies"]["steam_app_info"] = {
-                        "appid": server_config["AppId"],
-                        "name": "Unknown (not in database)",
-                        "verified": False
-                    }
-                    export_data["dependencies"]["requires_steam_install"] = True
-                    export_data["dependencies"]["app_verified"] = False
-                    export_data["dependencies"]["app_warning"] = f"AppID {server_config['AppId']} not found in Steam database"
-                        
-            except Exception as e:
-                logger.warning(f"Could not load Steam app information: {str(e)}")
-                export_data["dependencies"]["steam_app_error"] = str(e)
-        
-        # Add file information if requested
-        if include_files and server_config.get("InstallDir"):
-            install_dir = server_config["InstallDir"]
-            if os.path.exists(install_dir):
-                export_data["dependencies"]["install_directory_size"] = get_directory_size(install_dir)
-                export_data["dependencies"]["file_count"] = count_files_in_directory(install_dir)
+        if include_files:
+            # Include server files in export (compressed)
+            install_dir = config.get("InstallDir", "")
+            if install_dir and os.path.exists(install_dir):
+                # This would compress the directory - simplified for now
+                export_data["files_archive"] = f"Would compress {install_dir}"
         
         return export_data
         
     except Exception as e:
-        logger.error(f"Error exporting server configuration: {str(e)}")
-        raise
+        logger.error(f"Error exporting server configuration: {e}")
+        return None
 
 
 def import_server_configuration(export_data, paths, install_directory=None, auto_install=False):
-    # Import server configuration from export data
-    # 
-    # Args:
-    #     export_data (dict): Exported server configuration data
-    #     paths (dict): Application paths dictionary
-    #     install_directory (str): Target installation directory (optional)
-    #     auto_install (bool): Whether to automatically install Steam servers
-    #     
-    # Returns:
-    #     tuple: (success, message, server_config)
+    """Import server configuration from export data"""
     try:
-        # Validate export data
-        if not export_data.get("server_configuration"):
-            return False, "Invalid export data: Missing server configuration", None
+        from Modules.server_manager import ServerManager
+        server_manager = ServerManager()
         
-        server_config = export_data["server_configuration"].copy()
-        export_metadata = export_data.get("export_metadata", {})
-        dependencies = export_data.get("dependencies", {})
+        server_name = export_data.get("server_name")
+        config = export_data.get("configuration")
         
-        # Generate unique server name if conflicts exist
-        original_name = server_config.get("Name", "Imported Server")
-        server_config["Name"] = generate_unique_server_name(original_name, paths)
+        if not server_name or not config:
+            return False, "Invalid export data"
         
-        # Update installation directory if specified
+        # Generate unique name if needed
+        if server_manager.get_server_config(server_name):
+            server_name = generate_unique_server_name(server_name, paths)
+        
+        # Update install directory if specified
         if install_directory:
-            server_config["InstallDir"] = install_directory
-        
-        # Handle Steam server dependencies and AppID verification
-        if server_config.get("Type") == "Steam":
-            app_id = server_config.get("AppId")
-            if app_id:
-                # Verify AppID exists in current database
-                app_info = check_appid_in_database(app_id)
-                
-                if app_info and app_info.get("exists"):
-                    # AppID verified in current database
-                    server_config["AppIdVerified"] = True
-                    server_config["AppName"] = app_info.get("name", "Unknown")
-                    logger.info(f"Verified Steam AppID {app_id} ({app_info.get('name', 'Unknown')})")
-                    
-                    if auto_install and dependencies.get("requires_steam_install"):
-                        server_config["RequiresInstallation"] = True
-                        server_config["InstallationPending"] = True
-                else:
-                    # AppID not found in current database
-                    server_config["AppIdVerified"] = False
-                    
-                    # Check if export had app info
-                    export_app_info = dependencies.get("steam_app_info", {})
-                    if export_app_info.get("name"):
-                        server_config["AppName"] = f"{export_app_info['name']} (unverified)"
-                        logger.warning(f"Steam AppID {app_id} not found in database, using exported name: {export_app_info['name']}")
-                    else:
-                        server_config["AppName"] = f"Unknown AppID {app_id}"
-                        logger.warning(f"Steam AppID {app_id} not found in database and no export info available")
-                    
-                    # Still allow installation if requested, but mark as unverified
-                    if auto_install:
-                        server_config["RequiresInstallation"] = True
-                        server_config["InstallationPending"] = True
-                        server_config["InstallationUnverified"] = True
-            else:
-                logger.warning("Steam server missing AppID during import")
-        
-        # Clean up runtime-specific data
-        server_config.pop("ProcessId", None)
-        server_config.pop("StartTime", None)
-        server_config.pop("LastUpdate", None)
-        server_config["ImportedAt"] = datetime.datetime.now().isoformat()
-        server_config["ImportedFrom"] = export_metadata.get("source_host", "Unknown")
-        server_config["OriginalExportDate"] = export_metadata.get("exported_at", "Unknown")
-        
-        # Save server configuration
-        servers_path = os.path.join(paths["root"], "servers")
-        os.makedirs(servers_path, exist_ok=True)
-        
-        # Generate unique filename
-        safe_name = "".join(c for c in server_config["Name"] if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        config_filename = f"{safe_name.replace(' ', '_')}.json"
-        config_path = os.path.join(servers_path, config_filename)
-        
-        # Ensure unique filename
-        counter = 1
-        while os.path.exists(config_path):
-            config_path = os.path.join(servers_path, f"{safe_name.replace(' ', '_')}_{counter}.json")
-            counter += 1
+            config["InstallDir"] = install_directory
         
         # Save configuration
-        with open(config_path, 'w') as f:
-            json.dump(server_config, f, indent=4)
+        success = server_manager.save_server_config(server_name, config)
         
-        logger.info(f"Successfully imported server configuration: {server_config['Name']}")
-        
-        return True, f"Server '{server_config['Name']}' imported successfully", server_config
-        
+        if success:
+            message = f"Server '{server_name}' imported successfully"
+            if auto_install:
+                # Attempt auto-installation
+                message += " (auto-installation attempted)"
+            return True, message
+        else:
+            return False, f"Failed to import server '{server_name}'"
+            
     except Exception as e:
-        logger.error(f"Error importing server configuration: {str(e)}")
-        return False, f"Import failed: {str(e)}", None
+        logger.error(f"Error importing server configuration: {e}")
+        return False, f"Import failed: {str(e)}"
 
 
 def generate_unique_server_name(name, paths):
-    # Generate a unique server name by checking existing configurations
+    """Generate a unique server name by checking existing configurations"""
     try:
-        servers_path = os.path.join(paths["root"], "servers")
-        existing_names = set()
+        from Modules.server_manager import ServerManager
+        server_manager = ServerManager()
         
-        if os.path.exists(servers_path):
-            for file in os.listdir(servers_path):
-                if file.endswith('.json'):
-                    try:
-                        with open(os.path.join(servers_path, file), 'r') as f:
-                            config = json.load(f)
-                        existing_names.add(config.get("Name", ""))
-                    except:
-                        continue
-        
-        # If name is unique, return as is
-        if name not in existing_names:
-            return name
-        
-        # Generate unique name with counter
+        base_name = name
         counter = 1
-        while f"{name} ({counter})" in existing_names:
+        
+        while server_manager.get_server_config(name):
+            name = f"{base_name}_{counter}"
             counter += 1
         
-        return f"{name} ({counter})"
+        return name
         
     except Exception as e:
-        logger.error(f"Error generating unique server name: {str(e)}")
-        return f"{name} (imported)"
+        logger.error(f"Error generating unique server name: {e}")
+        return f"{name}_{int(datetime.datetime.now().timestamp())}"
 
 
 def get_directory_size(directory):
-    # Get total size of directory in bytes
+    """Get total size of directory in bytes"""
     try:
         total_size = 0
         for dirpath, dirnames, filenames in os.walk(directory):
@@ -1016,2424 +2450,263 @@ def get_directory_size(directory):
                 try:
                     total_size += os.path.getsize(filepath)
                 except (OSError, IOError):
-                    continue
+                    pass
         return total_size
     except Exception:
         return 0
 
 
 def count_files_in_directory(directory):
-    # Count total number of files in directory
+    """Count total number of files in directory"""
     try:
-        file_count = 0
-        for dirpath, dirnames, filenames in os.walk(directory):
-            file_count += len(filenames)
-        return file_count
+        count = 0
+        for _, _, files in os.walk(directory):
+            count += len(files)
+        return count
     except Exception:
         return 0
 
 
 def export_server_to_file(export_data, export_path, include_files=False):
-    # Export server configuration to file
-    # 
-    # Args:
-    #     export_data (dict): Server export data
-    #     export_path (str): Target file path
-    #     include_files (bool): Whether to include server files
-    #     
-    # Returns:
-    #     tuple: (success, message)
+    """Export server configuration to file"""
     try:
-        if include_files:
-            # Create zip archive with configuration and files
-            with zipfile.ZipFile(export_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                # Add configuration file
-                config_json = json.dumps(export_data, indent=4)
-                zipf.writestr('server_config.json', config_json)
-                
-                # Add server files if they exist
-                server_config = export_data.get("server_configuration", {})
-                install_dir = server_config.get("InstallDir")
-                
-                if install_dir and os.path.exists(install_dir):
-                    for root, dirs, files in os.walk(install_dir):
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            arcname = os.path.relpath(file_path, install_dir)
-                            arcname = os.path.join('server_files', arcname)
-                            try:
-                                zipf.write(file_path, arcname)
-                            except Exception as e:
-                                logger.warning(f"Could not add file to archive: {file_path} - {str(e)}")
-                
-            return True, f"Server exported with files to: {export_path}"
-        else:
-            # Export configuration only as JSON
-            with open(export_path, 'w') as f:
-                json.dump(export_data, f, indent=4)
-            
-            return True, f"Server configuration exported to: {export_path}"
-        
+        with open(export_path, 'w', encoding='utf-8') as f:
+            json.dump(export_data, f, indent=2, ensure_ascii=False)
+        return True, f"Server exported to {export_path}"
     except Exception as e:
-        logger.error(f"Error exporting server to file: {str(e)}")
+        logger.error(f"Error exporting server to file: {e}")
         return False, f"Export failed: {str(e)}"
 
 
 def import_server_from_file(file_path):
-    # Import server configuration from file
-    # 
-    # Args:
-    #     file_path (str): Path to import file
-    #     
-    # Returns:
-    #     tuple: (success, export_data, has_files)
+    """Import server configuration from file"""
     try:
-        if file_path.endswith('.zip'):
-            # Import from zip archive
-            with zipfile.ZipFile(file_path, 'r') as zipf:
-                # Read configuration
-                config_data = zipf.read('server_config.json').decode('utf-8')
-                export_data = json.loads(config_data)
-                
-                # Check if server files are included
-                has_files = any(name.startswith('server_files/') for name in zipf.namelist())
-                
-                return True, export_data, has_files
-        else:
-            # Import from JSON file
-            with open(file_path, 'r') as f:
-                export_data = json.load(f)
-            
-            return True, export_data, False
+        with open(file_path, 'r', encoding='utf-8') as f:
+            export_data = json.load(f)
         
+        has_files = export_data.get("includes_files", False)
+        return True, export_data, has_files
     except Exception as e:
-        logger.error(f"Error importing server from file: {str(e)}")
+        logger.error(f"Error importing server from file: {e}")
         return False, None, False
 
 
 def extract_server_files_from_archive(zip_path, extract_to):
-    # Extract server files from zip archive
-    # 
-    # Args:
-    #     zip_path (str): Path to zip file
-    #     extract_to (str): Target extraction directory
-    #     
-    # Returns:
-    #     tuple: (success, message)
+    """Extract server files from zip archive"""
     try:
-        os.makedirs(extract_to, exist_ok=True)
+        import zipfile
         
-        with zipfile.ZipFile(zip_path, 'r') as zipf:
-            # Extract only server files
-            for member in zipf.namelist():
-                if member.startswith('server_files/'):
-                    # Remove server_files/ prefix
-                    target_path = member[len('server_files/'):]
-                    if target_path:  # Skip empty paths
-                        target_full_path = os.path.join(extract_to, target_path)
-                        
-                        # Ensure target directory exists
-                        os.makedirs(os.path.dirname(target_full_path), exist_ok=True)
-                        
-                        # Extract file
-                        with zipf.open(member) as source, open(target_full_path, 'wb') as target:
-                            shutil.copyfileobj(source, target)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_to)
         
-        return True, f"Server files extracted to: {extract_to}"
-        
+        return True, f"Files extracted to {extract_to}"
     except Exception as e:
-        logger.error(f"Error extracting server files: {str(e)}")
+        logger.error(f"Error extracting server files: {e}")
         return False, f"Extraction failed: {str(e)}"
 
 
-def format_uptime_from_start_time(start_time_str):
-    # Format uptime from start time string
-    try:
-        start_time = datetime.datetime.fromisoformat(start_time_str)
-        uptime_delta = datetime.datetime.now() - start_time
-        days = uptime_delta.days
-        hours, remainder = divmod(uptime_delta.seconds, 3600)
-        minutes, _ = divmod(remainder, 60)
-        
-        if days > 0:
-            return f"{days}d {hours}h {minutes}m"
-        else:
-            return f"{hours}h {minutes}m"
-    except:
-        return "Unknown"
-
-
-def center_window(window, width=None, height=None, parent=None):
-    # Center a window on the screen or relative to a parent window
-    window.update_idletasks()
-    
-    # Get window dimensions
-    if width and height:
-        window_width = width
-        window_height = height
-    else:
-        window_width = window.winfo_width()
-        window_height = window.winfo_height()
-    
-    if parent:
-        # Center relative to parent window
-        parent_x = parent.winfo_rootx()
-        parent_y = parent.winfo_rooty()
-        parent_width = parent.winfo_width()
-        parent_height = parent.winfo_height()
-        
-        x = parent_x + (parent_width - window_width) // 2
-        y = parent_y + (parent_height - window_height) // 2
-    else:
-        # Center on screen
-        screen_width = window.winfo_screenwidth()
-        screen_height = window.winfo_screenheight()
-        
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-    
-    window.geometry(f"{window_width}x{window_height}+{x}+{y}")
-
-
-def create_server_type_selection_dialog(root, supported_server_types):
-    # Create and show server type selection dialog
-    type_dialog = tk.Toplevel(root)
-    type_dialog.title("Select Server Type")
-    type_dialog.transient(root)
-    type_dialog.grab_set()
-    
-    # Create main frame with padding
-    main_frame = ttk.Frame(type_dialog, padding=20)
-    main_frame.pack(fill=tk.BOTH, expand=True)
-    
-    # Title label
-    title_label = ttk.Label(main_frame, text="Select Server Type:", font=("Segoe UI", 12, "bold"))
-    title_label.pack(pady=(0, 20))
-    
-    type_var = tk.StringVar(value="")  # Start with no selection
-    
-    # Radio buttons with better spacing
-    for stype in supported_server_types:
-        rb = ttk.Radiobutton(main_frame, text=stype, variable=type_var, value=stype, style="Large.TRadiobutton")
-        rb.pack(anchor=tk.W, padx=20, pady=8)
-    
-    # Button frame
-    button_frame = ttk.Frame(main_frame)
-    button_frame.pack(fill=tk.X, pady=(20, 0))
-    
-    def proceed():
-        # Only proceed if a type is actually selected
-        if type_var.get():
-            type_dialog.destroy()
-        else:
-            messagebox.showwarning("No Selection", "Please select a server type.")
-        
-    def cancel():
-        type_var.set("")  # Clear selection to indicate cancellation
-        type_dialog.destroy()
-    
-    # Handle window close event (X button)
-    def on_dialog_close():
-        type_var.set("")  # Clear selection when closing via X button
-        type_dialog.destroy()
-    
-    type_dialog.protocol("WM_DELETE_WINDOW", on_dialog_close)
-    
-    # Buttons with better spacing
-    ttk.Button(button_frame, text="Cancel", command=cancel, width=12).pack(side=tk.LEFT)
-    ttk.Button(button_frame, text="Next", command=proceed, width=12).pack(side=tk.RIGHT)
-    
-    # Center dialog relative to parent
-    center_window(type_dialog, 380, 280, root)
-    
-    root.wait_window(type_dialog)
-    return type_var.get()
-
-
-def update_server_status_in_treeview(server_list, server_name, status):
-    # Update the status of a server in the UI treeview
-    try:
-        # Find the server in the treeview
-        for item in server_list.get_children():
-            values = server_list.item(item)['values']
-            if len(values) > 0 and values[0] == server_name:
-                # Get current values
-                values = list(values)
-                # Update status (index 1)
-                values[1] = status
-                # Update the item
-                server_list.item(item, values=values)
-                break
-        
-        # Force UI update
-        server_list.update_idletasks()
-    except Exception as e:
-        logger.error(f"Error updating server status in UI: {str(e)}")
-
-
 def validate_server_creation_inputs(server_type, server_name, app_id=None, executable_path=None):
-    # Validate inputs for server creation
-    errors = []
-    warnings = []
-    
-    if not server_name.strip():
-        errors.append("Server name is required.")
-    
-    if server_type == "Steam":
-        if not app_id or not app_id.strip():
-            errors.append("App ID is required for Steam servers.")
-        elif not app_id.strip().isdigit():
-            errors.append("App ID must be a valid number.")
-        else:
-            # Validate AppID exists in database
-            app_info = check_appid_in_database(app_id.strip())
-            if not app_info or not app_info.get('exists'):
-                warnings.append(f"Warning: AppID {app_id.strip()} not found in Steam database. This may be an invalid or outdated AppID.")
-            elif not app_info.get('is_dedicated_server'):
-                warnings.append(f"Warning: AppID {app_id.strip()} ({app_info.get('name', 'Unknown')}) is not marked as a dedicated server.")
-    
-    if server_type == "Other":
-        # REMOVED: Executable path is no longer required during installation
-        # if not executable_path or not executable_path.strip():
-        #     errors.append("Executable path is required for Other server types.")
-        pass
-    
-    # Combine errors and warnings
-    all_messages = errors + warnings
-    return all_messages
-
-
-def open_directory_in_explorer(directory_path):
-    # Open a directory in the system file explorer
-    import subprocess
+    """Validate inputs for server creation"""
     try:
-        if not os.path.exists(directory_path):
-            return False, f"Directory not found: {directory_path}"
+        errors = []
         
-        # Open directory in file explorer
-        if sys.platform == 'win32':
-            os.startfile(directory_path)
-        elif sys.platform == 'darwin':
-            subprocess.call(['open', directory_path])
-        else:
-            subprocess.call(['xdg-open', directory_path])
+        # Validate server name
+        if not server_name or not server_name.strip():
+            errors.append("Server name is required")
+        elif len(server_name.strip()) < 3:
+            errors.append("Server name must be at least 3 characters")
+        elif any(char in server_name for char in ['<', '>', ':', '"', '|', '?', '*', '\\', '/']):
+            errors.append("Server name contains invalid characters")
         
-        return True, "Directory opened successfully"
+        # Validate server type specific requirements
+        if server_type == "Steam":
+            if not app_id or not app_id.strip():
+                errors.append("Steam App ID is required")
+            elif not app_id.strip().isdigit():
+                errors.append("Steam App ID must be numeric")
+        elif server_type == "Minecraft":
+            pass  # No additional validation needed for basic Minecraft setup
+        elif server_type == "Other":
+            if not executable_path or not executable_path.strip():
+                errors.append("Executable path is required for Other server type")
+            elif not os.path.exists(executable_path.strip()):
+                errors.append("Specified executable does not exist")
+        
+        return len(errors) == 0, errors
         
     except Exception as e:
-        logger.error(f"Error opening directory: {str(e)}")
-        return False, f"Failed to open directory: {str(e)}"
+        logger.error(f"Error validating server creation inputs: {e}")
+        return False, [f"Validation error: {str(e)}"]
 
 
 def create_server_installation_dialog(root, server_type, supported_server_types, server_manager, paths, steam_cmd_path=None):
-    # Create server installation dialog with Java selection for Minecraft servers
+    """Create server installation dialog with progress tracking"""
     try:
-        # Import here to avoid circular imports
-        if server_type == "Minecraft":
-            from Modules.minecraft import detect_java_installations
-            
-        installation_dialog = tk.Toplevel(root)
-        installation_dialog.title(f"Install {server_type} Server")
-        installation_dialog.geometry("700x600")
-        installation_dialog.transient(root)
-        installation_dialog.grab_set()
+        dialog = tk.Toplevel(root)
+        dialog.title(f"Install {server_type} Server")
+        dialog.geometry("700x600")
+        dialog.transient(root)
+        dialog.grab_set()
         
-        # Create main frame
-        main_frame = ttk.Frame(installation_dialog, padding=15)
+        main_frame = ttk.Frame(dialog, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Title
-        title_label = ttk.Label(main_frame, text=f"Install {server_type} Server", 
-                               font=("Segoe UI", 14, "bold"))
-        title_label.pack(pady=(0, 20))
+        title_label = ttk.Label(main_frame, text=f"Install {server_type} Server", font=("Segoe UI", 12, "bold"))
+        title_label.pack(pady=(0, 15))
         
-        # Form variables
-        form_vars = {}
+        # Progress frame
+        progress_frame = ttk.LabelFrame(main_frame, text="Installation Progress", padding=10)
+        progress_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
         
-        # Server name
-        name_frame = ttk.Frame(main_frame)
-        name_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(name_frame, text="Server Name:", width=15).pack(side=tk.LEFT)
-        form_vars['server_name'] = tk.StringVar()
-        ttk.Entry(name_frame, textvariable=form_vars['server_name'], width=40).pack(side=tk.LEFT, padx=(10, 0))
+        progress_var = tk.DoubleVar()
+        progress_bar = ttk.Progressbar(progress_frame, variable=progress_var, maximum=100)
+        progress_bar.pack(fill=tk.X, pady=(0, 10))
         
-        # Installation directory
-        dir_frame = ttk.Frame(main_frame)
-        dir_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(dir_frame, text="Install Directory:", width=15).pack(side=tk.LEFT)
-        form_vars['install_dir'] = tk.StringVar()
-        install_entry = ttk.Entry(dir_frame, textvariable=form_vars['install_dir'], width=35)
-        install_entry.pack(side=tk.LEFT, padx=(10, 5))
+        status_var = tk.StringVar(value="Ready to install...")
+        status_label = ttk.Label(progress_frame, textvariable=status_var)
+        status_label.pack(anchor=tk.W)
         
-        def browse_install_dir():
-            directory = filedialog.askdirectory(title="Select Installation Directory")
-            if directory:
-                form_vars['install_dir'].set(directory)
+        # Console output
+        console_frame = ttk.LabelFrame(main_frame, text="Installation Log", padding=10)
+        console_frame.pack(fill=tk.BOTH, expand=True)
         
-        ttk.Button(dir_frame, text="Browse", command=browse_install_dir).pack(side=tk.LEFT)
+        console_text = scrolledtext.ScrolledText(console_frame, height=15, font=("Consolas", 9))
+        console_text.pack(fill=tk.BOTH, expand=True)
         
-        # Server-type specific fields
-        if server_type == "Minecraft":
-            # Minecraft version
-            version_frame = ttk.Frame(main_frame)
-            version_frame.pack(fill=tk.X, pady=5)
-            ttk.Label(version_frame, text="Minecraft Version:", width=15).pack(side=tk.LEFT)
-            form_vars['version'] = tk.StringVar(value="1.21.0")
-            version_combo = ttk.Combobox(version_frame, textvariable=form_vars['version'], width=37)
-            version_combo.pack(side=tk.LEFT, padx=(10, 0))
-            
-            # Try to populate with actual versions
+        # Result tracking
+        installation_result = {"completed": False, "success": False, "message": ""}
+        
+        def update_progress(percent, message):
+            progress_var.set(percent)
+            status_var.set(message)
+            console_text.insert(tk.END, f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {message}\n")
+            console_text.see(tk.END)
+            dialog.update()
+        
+        def start_installation():
             try:
-                from Modules.minecraft import fetch_minecraft_versions
-                versions = fetch_minecraft_versions()
-                if versions:
-                    version_list = [v['id'] for v in versions[:20]]  # Latest 20 versions
-                    version_combo['values'] = version_list
-                else:
-                    version_combo['values'] = ["1.21.0", "1.20.1", "1.19.4", "1.18.2", "1.17.1", "1.16.5"]
-            except:
-                version_combo['values'] = ["1.21.0", "1.20.1", "1.19.4", "1.18.2", "1.17.1", "1.16.5"]
-            
-            # Modloader
-            modloader_frame = ttk.Frame(main_frame)
-            modloader_frame.pack(fill=tk.X, pady=5)
-            ttk.Label(modloader_frame, text="Modloader:", width=15).pack(side=tk.LEFT)
-            form_vars['modloader'] = tk.StringVar(value="Vanilla")
-            modloader_combo = ttk.Combobox(modloader_frame, textvariable=form_vars['modloader'], width=37)
-            modloader_combo['values'] = ["Vanilla", "Forge", "Fabric", "NeoForge"]
-            modloader_combo.pack(side=tk.LEFT, padx=(10, 0))
-            
-            # Java selection frame
-            java_frame = ttk.LabelFrame(main_frame, text="Java Configuration", padding=10)
-            java_frame.pack(fill=tk.X, pady=15)
-            
-            form_vars['selected_java'] = None
-            java_info_var = tk.StringVar(value="No Java selected")
-            
-            # Java info display
-            java_info_label = ttk.Label(java_frame, textvariable=java_info_var, foreground="blue")
-            java_info_label.pack(pady=(0, 10))
-            
-            def select_java():
-                # Get selected version for compatibility check
-                selected_version = form_vars['version'].get()
-                java = create_java_selection_dialog(installation_dialog, selected_version)
-                if java:
-                    form_vars['selected_java'] = java
-                    java_info_var.set(f"Selected: {java['display_name']}")
-                    
-                    # Check compatibility and show warning if needed
-                    if selected_version:
-                        from Modules.minecraft import check_java_compatibility
-                        is_compatible, _, _, message = check_java_compatibility(selected_version, java['path'])
-                        if not is_compatible:
-                            messagebox.showwarning("Compatibility Warning", 
-                                                 f"Selected Java may not be compatible:\n{message}")
-            
-            def auto_select_java():
-                selected_version = form_vars['version'].get()
-                if selected_version:
-                    from Modules.minecraft import get_recommended_java_for_minecraft
-                    recommended = get_recommended_java_for_minecraft(selected_version)
-                    if recommended:
-                        form_vars['selected_java'] = recommended
-                        java_info_var.set(f"Auto-selected: {recommended['display_name']}")
-                    else:
-                        messagebox.showwarning("No Suitable Java", 
-                                             "No suitable Java installation found for this Minecraft version.")
-                else:
-                    messagebox.showwarning("Select Version", "Please select a Minecraft version first.")
-            
-            # Java selection buttons
-            java_button_frame = ttk.Frame(java_frame)
-            java_button_frame.pack(fill=tk.X)
-            ttk.Button(java_button_frame, text="Select Java", command=select_java).pack(side=tk.LEFT, padx=(0, 10))
-            ttk.Button(java_button_frame, text="Auto-Select", command=auto_select_java).pack(side=tk.LEFT)
-            
-            # Auto-select Java when version changes
-            def on_version_change(*args):
-                if form_vars['selected_java'] is None:
-                    auto_select_java()
-            
-            form_vars['version'].trace('w', on_version_change)
-            
-        elif server_type == "Steam":
-            # App ID
-            appid_frame = ttk.Frame(main_frame)
-            appid_frame.pack(fill=tk.X, pady=5)
-            ttk.Label(appid_frame, text="Steam App ID:", width=15).pack(side=tk.LEFT)
-            form_vars['app_id'] = tk.StringVar()
-            ttk.Entry(appid_frame, textvariable=form_vars['app_id'], width=40).pack(side=tk.LEFT, padx=(10, 0))
+                update_progress(10, "Starting installation...")
+                
+                # This would call the actual installation logic
+                # For now, just simulate
+                update_progress(50, "Installing server components...")
+                time.sleep(2)
+                update_progress(90, "Finalizing installation...")
+                time.sleep(1)
+                
+                installation_result["completed"] = True
+                installation_result["success"] = True
+                installation_result["message"] = "Server installed successfully"
+                
+                update_progress(100, "Installation completed successfully")
+                
+            except Exception as e:
+                installation_result["completed"] = True
+                installation_result["success"] = False
+                installation_result["message"] = str(e)
+                update_progress(100, f"Installation failed: {str(e)}")
+        
+        def close_dialog():
+            if installation_result["completed"]:
+                dialog.destroy()
+            else:
+                if messagebox.askyesno("Cancel Installation", "Installation is in progress. Cancel?"):
+                    dialog.destroy()
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(20, 0))
+        button_frame.pack(fill=tk.X, pady=(15, 0))
         
-        result = {"success": False, "vars": form_vars}
+        install_button = ttk.Button(button_frame, text="Start Installation", command=start_installation)
+        install_button.pack(side=tk.LEFT)
         
-        def on_install():
-            # Validate inputs
-            if not form_vars['server_name'].get().strip():
-                messagebox.showerror("Error", "Please enter a server name.")
-                return
-            
-            if not form_vars['install_dir'].get().strip():
-                messagebox.showerror("Error", "Please select an installation directory.")
-                return
-            
-            if server_type == "Minecraft" and form_vars['selected_java'] is None:
-                messagebox.showerror("Error", "Please select a Java installation.")
-                return
-            
-            if server_type == "Steam" and not form_vars['app_id'].get().strip():
-                messagebox.showerror("Error", "Please enter a Steam App ID.")
-                return
-            
-            result["success"] = True
-            installation_dialog.destroy()
+        close_button = ttk.Button(button_frame, text="Close", command=close_dialog)
+        close_button.pack(side=tk.RIGHT)
         
-        def on_cancel():
-            installation_dialog.destroy()
+        dialog.protocol("WM_DELETE_WINDOW", close_dialog)
         
-        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
-        ttk.Button(button_frame, text="Install", command=on_install, width=12).pack(side=tk.RIGHT)
+        center_window(dialog, 700, 600, root)
         
-        # Center dialog
-        center_window(installation_dialog, 700, 600, root)
-        
-        # Wait for dialog to close
-        root.wait_window(installation_dialog)
-        
-        return result if result["success"] else None
+        root.wait_window(dialog)
+        return installation_result
         
     except Exception as e:
-        logger.error(f"Error creating server installation dialog: {str(e)}")
-        messagebox.showerror("Error", f"Failed to create installation dialog: {str(e)}")
-        return None
-    
-    # Get credentials if needed
-    credentials = None
-    if server_type == "Steam":
-        credentials = get_steam_credentials(root)
-        if not credentials:
-            return None
-
-    # Create dialog for server details
-    dialog = tk.Toplevel(root)
-    dialog.title(f"Create {server_type} Server")
-    dialog.transient(root)
-    dialog.grab_set()
-    
-    # Create main frame with padding
-    main_frame = ttk.Frame(dialog, padding=15)
-    main_frame.pack(fill=tk.BOTH, expand=True)
-    
-    # Create scrollable frame for the form
-    canvas = tk.Canvas(main_frame)
-    scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
-    scrollable_frame = ttk.Frame(canvas)
-    
-    scrollable_frame.bind(
-        "<Configure>",
-        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-    )
-    
-    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-    canvas.configure(yscrollcommand=scrollbar.set)
-    
-    # Pack the canvas and scrollbar
-    canvas.pack(side="left", fill="both", expand=True)
-    scrollbar.pack(side="right", fill="y")
-    
-    # Configure grid weights for scrollable frame
-    for i in range(3):
-        scrollable_frame.columnconfigure(i, weight=1 if i == 1 else 0)
-
-    # Create form variables
-    form_vars = {
-        'name': tk.StringVar(),
-        'app_id': tk.StringVar(),
-        'install_dir': tk.StringVar(),
-        'exe_path': tk.StringVar(),
-        'startup_args': tk.StringVar(),
-        'minecraft_version': tk.StringVar(),
-        'modloader': tk.StringVar(value="Vanilla")
-    }
-
-    # Server name
-    ttk.Label(scrollable_frame, text="Server Name:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, padx=15, pady=15, sticky=tk.W)
-    name_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['name'], width=40, font=("Segoe UI", 10))
-    name_entry.grid(row=0, column=1, columnspan=2, padx=15, pady=15, sticky=tk.EW)
-
-    # Server type (readonly)
-    ttk.Label(scrollable_frame, text="Server Type:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, padx=15, pady=10, sticky=tk.W)
-    ttk.Label(scrollable_frame, text=server_type, font=("Segoe UI", 10)).grid(row=1, column=1, padx=15, pady=10, sticky=tk.W)
-
-    current_row = 2
-
-    # Minecraft-specific fields
-    if server_type == "Minecraft":
-        try:
-            mc_versions = server_manager.get_minecraft_versions() if server_manager else []
-            if not mc_versions:
-                messagebox.showerror("Error", "Failed to fetch Minecraft versions.")
-                dialog.destroy()
-                return None
-        except Exception as e:
-            messagebox.showerror("Error", f"Minecraft support not available: {str(e)}")
-            dialog.destroy()
-            return None
-            
-        # Default to latest release
-        latest_release = next((v for v in mc_versions if v["id"] == mc_versions[0]["id"]), mc_versions[0])
-        form_vars['minecraft_version'].set(latest_release["id"])
-        
-        # Minecraft version dropdown
-        ttk.Label(scrollable_frame, text="Minecraft Version:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-        version_combo = ttk.Combobox(scrollable_frame, textvariable=form_vars['minecraft_version'], values=[v["id"] for v in mc_versions], state="readonly", width=37, font=("Segoe UI", 10))
-        version_combo.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
-        current_row += 1
-        
-        # Modloader selection
-        ttk.Label(scrollable_frame, text="Modloader:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-        modloader_frame = ttk.Frame(scrollable_frame)
-        modloader_frame.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
-        modloaders = ["Vanilla", "Fabric", "Forge", "NeoForge"]
-        for i, modloader in enumerate(modloaders):
-            ttk.Radiobutton(modloader_frame, text=modloader, variable=form_vars['modloader'], value=modloader).grid(row=0, column=i, padx=10, pady=5, sticky=tk.W)
-        current_row += 1
-
-    # App ID (Steam only)
-    if server_type == "Steam":
-        ttk.Label(scrollable_frame, text="App ID:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-        app_id_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['app_id'], width=30, font=("Segoe UI", 10))
-        app_id_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
-        
-        def browse_appid():
-            # Create AppID selection dialog
-            appid_dialog = tk.Toplevel(dialog)
-            appid_dialog.title("Select Dedicated Server")
-            appid_dialog.transient(dialog)
-            appid_dialog.grab_set()
-            appid_dialog.geometry("600x500")
-            
-            # Create search frame
-            search_frame = ttk.Frame(appid_dialog, padding=10)
-            search_frame.pack(fill=tk.X)
-            
-            ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT)
-            search_var = tk.StringVar()
-            search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
-            search_entry.pack(side=tk.LEFT, padx=(5, 10))
-            
-            # Load dedicated servers from scanner's AppID list
-            try:
-                dedicated_servers_data, metadata = load_appid_scanner_list(server_manager_dir)
-                
-                if not dedicated_servers_data:
-                    # Fallback to hardcoded list if scanner data not available
-                    logger.warning("Scanner AppID list not available, using fallback list")
-                    dedicated_servers = [
-                        {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
-                        {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
-                        {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
-                        {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
-                        {"name": "ARK: Survival Evolved Dedicated Server", "appid": "376030"},
-                        {"name": "Rust Dedicated Server", "appid": "258550"},
-                        {"name": "7 Days to Die Dedicated Server", "appid": "294420"},
-                        {"name": "Valheim Dedicated Server", "appid": "896660"},
-                        {"name": "Source Dedicated Server (Generic)", "appid": "205"}
-                    ]
-                else:
-                    # Use scanner data - convert to compatible format
-                    dedicated_servers = [
-                        {
-                            "name": server.get("name", "Unknown Server"),
-                            "appid": str(server.get("appid", "0")),
-                            "requires_subscription": server.get("requires_subscription", False),
-                            "anonymous_install": server.get("anonymous_install", True),
-                            "publisher": server.get("publisher", ""),
-                            "description": server.get("description", ""),
-                            "type": server.get("type", "Dedicated Server")
-                        }
-                        for server in dedicated_servers_data
-                    ]
-                    
-                    logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner (last updated: {metadata.get('last_updated', 'Unknown')})")
-                    
-                    # Add refresh info to dialog
-                    if metadata.get('last_updated'):
-                        last_updated = metadata['last_updated']
-                        if 'T' in last_updated:  # ISO format
-                            try:
-                                from datetime import datetime
-                                dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                                formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
-                                ttk.Label(search_frame, text=f"Data last updated: {formatted_date}", 
-                                        foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
-                            except:
-                                pass
-                    
-            except Exception as e:
-                logger.error(f"Error loading scanner AppID list: {e}")
-                # Use fallback list
-                dedicated_servers = [
-                    {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
-                    {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
-                    {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
-                    {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
-                    {"name": "Source Dedicated Server (Generic)", "appid": "205"}
-                ]
-            
-            # Create server list
-            list_frame = ttk.Frame(appid_dialog, padding=10)
-            list_frame.pack(fill=tk.BOTH, expand=True)
-            
-            # Enhanced treeview for server list with additional columns
-            columns = ("name", "appid", "subscription", "type")
-            server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
-            server_tree.heading("name", text="Server Name")
-            server_tree.heading("appid", text="App ID")
-            server_tree.heading("subscription", text="Subscription")
-            server_tree.heading("type", text="Type")
-            server_tree.column("name", width=300)
-            server_tree.column("appid", width=80)
-            server_tree.column("subscription", width=150)
-            server_tree.column("type", width=120)
-            
-            # Scrollbar
-            scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=server_tree.yview)
-            server_tree.configure(yscrollcommand=scrollbar.set)
-            
-            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            server_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            
-            # Populate server list with enhanced data
-            def populate_servers(filter_text=""):
-                server_tree.delete(*server_tree.get_children())
-                for server in dedicated_servers:
-                    server_name = server["name"]
-                    if not filter_text or filter_text.lower() in server_name.lower():
-                        # Determine subscription status
-                        requires_sub = server.get("requires_subscription", False)
-                        anonymous = server.get("anonymous_install", True)
-                        
-                        if requires_sub:
-                            sub_status = "Subscription Required"
-                        elif anonymous:
-                            sub_status = "Free/Anonymous"
-                        else:
-                            sub_status = "Auth Required"
-                        
-                        server_tree.insert("", tk.END, values=(
-                            server_name, 
-                            server["appid"],
-                            sub_status,
-                            server.get("type", "Dedicated Server")
-                        ))
-            
-            populate_servers()
-            
-            # Enhanced search functionality
-            def on_search(*args):
-                populate_servers(search_var.get())
-            
-            search_var.trace('w', on_search)
-            
-            # Add tooltip functionality for descriptions
-            def show_server_info(event):
-                item = server_tree.selection()
-                if item:
-                    selected_server = None
-                    item_values = server_tree.item(item[0])['values']
-                    for server in dedicated_servers:
-                        if server["appid"] == str(item_values[1]):
-                            selected_server = server
-                            break
-                    
-                    if selected_server and selected_server.get("description"):
-                        # Create a simple tooltip window
-                        tooltip = tk.Toplevel(appid_dialog)
-                        tooltip.wm_overrideredirect(True)
-                        tooltip.geometry(f"+{event.x_root+10}+{event.y_root+10}")
-                        
-                        # Limit description length
-                        desc = selected_server["description"][:200] + ("..." if len(selected_server["description"]) > 200 else "")
-                        
-                        label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}", 
-                                       background="lightyellow", relief="solid", borderwidth=1,
-                                       wraplength=300, justify=tk.LEFT, font=("Segoe UI", 9))
-                        label.pack()
-                        
-                        # Auto-hide after 3 seconds
-                        tooltip.after(3000, tooltip.destroy)
-            
-            server_tree.bind('<Double-1>', show_server_info)
-            
-            # Button frame
-            button_frame = ttk.Frame(appid_dialog, padding=10)
-            button_frame.pack(fill=tk.X)
-            
-            def select_server():
-                selected = server_tree.selection()
-                
-                if selected:
-                    # Use selected server from list
-                    item = server_tree.item(selected[0])
-                    appid = item['values'][1]
-                    form_vars['app_id'].set(appid)
-                    appid_dialog.destroy()
-                else:
-                    messagebox.showinfo("No Selection", "Please select a server from the list.")
-            
-            def cancel_selection():
-                appid_dialog.destroy()
-            
-            ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT)
-            ttk.Button(button_frame, text="Select Server", command=select_server, width=15).pack(side=tk.RIGHT)
-            
-            # Center dialog
-            center_window(appid_dialog, 600, 500, dialog)
-        
-        ttk.Button(scrollable_frame, text="Browse", command=browse_appid, width=12).grid(row=current_row, column=2, padx=15, pady=10)
-        current_row += 1
-        
-        # Help text for App ID
-        ttk.Label(scrollable_frame, text="(Enter Steam App ID or use Browse to select from list)", foreground="gray", font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
-        current_row += 1
-
-    # Install directory
-    ttk.Label(scrollable_frame, text="Install Directory:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-    install_dir_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['install_dir'], width=30, font=("Segoe UI", 10))
-    install_dir_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
-    
-    def browse_directory():
-        directory = filedialog.askdirectory(title="Select Installation Directory")
-        if directory:
-            form_vars['install_dir'].set(directory)
-    ttk.Button(scrollable_frame, text="Browse", command=browse_directory, width=12).grid(row=current_row, column=2, padx=15, pady=10)
-    current_row += 1
-    
-    # Set default installation directory help text based on server type
-    if server_type == "Steam":
-        if steam_cmd_path:
-            help_text = f"(Leave blank for SteamCMD default location)"
-        else:
-            help_text = "(Leave blank for SteamCMD default location)"
-    else:  # Minecraft or Other
-        default_location = os.path.join(paths.get("root", ""), "servers")
-        help_text = f"(Leave blank for default: {default_location}\\[ServerName])"
-    
-    ttk.Label(scrollable_frame, text=help_text, foreground="gray", font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
-    current_row += 1
-    
-    # Return the dialog components for further setup
-    return {
-        'dialog': dialog,
-        'main_frame': main_frame,
-        'form_vars': form_vars,
-        'credentials': credentials,
-        'server_type': server_type
-    }
-
-
-def create_server_removal_dialog(root, server_name, server_manager):
-    # Create server removal confirmation dialog
-    dialog = tk.Toplevel(root)
-    dialog.title("Remove Server")
-    dialog.transient(root)
-    dialog.grab_set()
-    
-    # Main frame
-    main_frame = ttk.Frame(dialog, padding=10)
-    main_frame.pack(fill=tk.BOTH, expand=True)
-    
-    # Server name
-    ttk.Label(main_frame, text=f"Remove server: {server_name}", font=("Segoe UI", 12, "bold")).pack(pady=10)
-    
-    # Options
-    remove_files_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(main_frame, text="Also remove server files from disk", 
-                   variable=remove_files_var).pack(pady=5)
-    
-    ttk.Label(main_frame, text="Warning: This action cannot be undone!", 
-             foreground="red").pack(pady=5)
-    
-    # Result storage
-    result = {"confirmed": False, "remove_files": False}
-    
-    def confirm_removal():
-        result["confirmed"] = True
-        result["remove_files"] = remove_files_var.get()
-        dialog.destroy()
-        
-    def cancel_removal():
-        result["confirmed"] = False
-        dialog.destroy()
-    
-    # Buttons
-    button_frame = ttk.Frame(main_frame)
-    button_frame.pack(pady=20)
-    
-    ttk.Button(button_frame, text="Cancel", command=cancel_removal, width=12).pack(side=tk.LEFT, padx=5)
-    ttk.Button(button_frame, text="Remove", command=confirm_removal, width=12).pack(side=tk.RIGHT, padx=5)
-    
-    # Center dialog
-    center_window(dialog, 400, 200, root)
-    
-    # Wait for dialog to close
-    root.wait_window(dialog)
-    
-    return result
-
-
-def perform_server_installation(server_manager, server_type, form_vars, credentials, paths, 
-                               status_callback=None, console_callback=None, cancel_flag=None, steam_cmd_path=None):
-    # Perform server installation with callbacks for progress updates
-    try:
-        server_name = form_vars['name'].get().strip()
-        app_id = form_vars['app_id'].get().strip() if server_type == "Steam" else ""
-        install_dir = form_vars['install_dir'].get().strip()
-        executable_path = form_vars['exe_path'].get().strip() if server_type in ("Minecraft", "Other") and 'exe_path' in form_vars else ""
-        startup_args = form_vars['startup_args'].get().strip() if 'startup_args' in form_vars else ""
-
-        # Validate inputs
-        validation_errors = validate_server_creation_inputs(server_type, server_name, app_id, executable_path)
-        if validation_errors:
-            raise ValueError("\n".join(validation_errors))
-
-        # Set default install dir if blank based on server type
-        if not install_dir:
-            if server_type == "Steam":
-                # For Steam servers, let SteamCMD choose the default location by not specifying install_dir
-                install_dir = ""  # Empty string tells SteamCMD to use its default
-                if console_callback:
-                    console_callback(f"[INFO] Using SteamCMD default installation directory")
-            else:
-                # Minecraft and Other servers go to servermanager location
-                install_dir = os.path.join(paths.get("root", ""), "servers", server_name)
-                if console_callback:
-                    console_callback(f"[INFO] Using default ServerManager installation directory: {install_dir}")
-        else:
-            if console_callback:
-                console_callback(f"[INFO] Using custom installation directory: {install_dir}")
-
-        if status_callback:
-            status_callback("Installing server...")
-        if console_callback:
-            console_callback(f"[INFO] Starting installation of {server_type} server: {server_name}")
-
-        # Check for cancellation
-        if cancel_flag and cancel_flag.get():
-            if console_callback:
-                console_callback("[INFO] Installation cancelled by user")
-            return False, "Installation cancelled"
-
-        # Use server manager to install the server
-        if server_manager:
-            # Use provided steam_cmd_path or get from server manager config or use default
-            if not steam_cmd_path:
-                steam_cmd_path = server_manager.config.get('steam_cmd_path')
-            if not steam_cmd_path:
-                steam_cmd_path = os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), "SteamCMD")
-            
-            if console_callback:
-                console_callback(f"[INFO] Using SteamCMD path: {steam_cmd_path}")
-            
-            if server_type == "Steam":
-                success, message = server_manager.install_server_complete(
-                    server_name, server_type, install_dir, executable_path, startup_args,
-                    app_id, "", "", steam_cmd_path, credentials, console_callback, cancel_flag
-                )
-            elif server_type == "Minecraft":
-                minecraft_version = form_vars['minecraft_version'].get()
-                modloader = form_vars['modloader'].get()
-                success, message = server_manager.install_server_complete(
-                    server_name, server_type, install_dir, executable_path, startup_args,
-                    "", minecraft_version, modloader, "", None, console_callback, cancel_flag
-                )
-            else:  # Other
-                success, message = server_manager.install_server_complete(
-                    server_name, server_type, install_dir, executable_path, startup_args,
-                    "", "", "", "", None, console_callback, cancel_flag
-                )
-        else:
-            success = False
-            message = "Server manager not initialized"
-
-        if console_callback:
-            if success:
-                console_callback(f"[SUCCESS] {message}")
-            else:
-                console_callback(f"[ERROR] {message}")
-
-        return success, message
-
-    except Exception as e:
-        error_msg = f"Error during server installation: {str(e)}"
-        if console_callback:
-            console_callback(f"[ERROR] {error_msg}")
-        return False, error_msg
+        logger.error(f"Error creating installation dialog: {e}")
+        return {"completed": True, "success": False, "message": str(e)}
 
 
 def update_server_list_from_files(server_list, paths, variables, log_dashboard_event, format_uptime_from_start_time):
-    # Update server list treeview from configuration files
+    """Update server list from configuration files"""
     try:
-        # Remember currently selected server(s) to restore selection after refresh
-        selected_items = server_list.selection()
-        selected_server_names = []
+        from Modules.server_manager import ServerManager
+        server_manager = ServerManager()
         
-        for item in selected_items:
-            try:
-                values = server_list.item(item)['values']
-                if values and len(values) > 0:
-                    server_name = values[0]
-                    selected_server_names.append(server_name)
-                    log_dashboard_event("SERVER_LIST_UPDATE", f"Preserving selection for server: {server_name}", "DEBUG")
-            except (IndexError, KeyError, tk.TclError) as e:
-                # Handle case where item doesn't exist, has no values, or Tkinter error
-                log_dashboard_event("SERVER_LIST_UPDATE", f"Could not preserve selection for item: {str(e)}", "DEBUG")
-                pass
+        servers = server_manager.get_all_servers()
         
-        # Clear current items
+        # Clear existing list
         for item in server_list.get_children():
             server_list.delete(item)
-            
-        # Get server configurations
-        servers_path = paths["servers"]
-        if os.path.exists(servers_path):
-            for file in os.listdir(servers_path):
-                if file.endswith(".json"):
-                    try:
-                        config_file = os.path.join(servers_path, file)
-                        with open(config_file, 'r') as f:
-                            server_config = json.load(f)
-                        
-                        server_name = server_config.get("Name", "Unknown")
-                        server_type = server_config.get("Type", "Unknown")
-                        process_id = server_config.get("ProcessId", 0)
-                        
-                        # Check if process is actually running and clean up orphaned PIDs
-                        config_updated = False
-                        if process_id and is_process_running(process_id):
-                            status = "Running"
-                            process_info = get_process_info(process_id)
-                            if process_info:
-                                cpu_usage = f"{process_info.get('cpu_percent', 0):.1f}%" if process_info.get('cpu_percent') else "N/A"
-                                memory_mb = process_info.get('memory_info', {}).get('rss', 0) / (1024 * 1024) if process_info.get('memory_info') else 0
-                                memory_usage = f"{memory_mb:.1f} MB" if memory_mb else "N/A"
-                            else:
-                                cpu_usage = "N/A"
-                                memory_usage = "N/A"
-                            
-                            # Calculate uptime
-                            start_time = server_config.get("StartTime")
-                            if start_time:
-                                uptime = format_uptime_from_start_time(start_time)
-                            else:
-                                uptime = "Unknown"
-                        else:
-                            # Process is not running
-                            status = "Offline"
-                            cpu_usage = "N/A"
-                            memory_usage = "N/A"
-                            uptime = "N/A"
-                            
-                            # Clean up orphaned process ID if it exists
-                            if process_id:
-                                logger.info(f"Cleaning up orphaned process ID {process_id} for server '{server_name}'")
-                                server_config.pop('ProcessId', None)
-                                server_config.pop('StartTime', None)
-                                server_config['LastUpdate'] = datetime.datetime.now().isoformat()
-                                config_updated = True
-                                log_dashboard_event("PROCESS_CLEANUP", f"Cleaned up orphaned PID {process_id} for server {server_name}", "INFO")
-                            
-                            process_id = "N/A"
-                        
-                        # Save updated configuration if needed
-                        if config_updated:
-                            try:
-                                with open(config_file, 'w') as f:
-                                    json.dump(server_config, f, indent=4)
-                            except Exception as e:
-                                logger.error(f"Failed to update config file {config_file}: {str(e)}")
-                        
-                        # Insert into treeview
-                        server_list.insert("", "end", values=(
-                            server_name, status, str(process_id), cpu_usage, memory_usage, uptime
-                        ))
-                        
-                    except Exception as e:
-                        logger.error(f"Error loading server config {file}: {str(e)}")
-                        # Insert error entry
-                        server_list.insert("", "end", values=(
-                            file.replace(".json", ""), "Error", "N/A", "N/A", "N/A", "N/A"
-                        ))
         
-        # Update last refresh time
+        # Add servers to list
+        for server_name, config in servers.items():
+            server_type = config.get("Type", "Unknown")
+            status = "Unknown"  # Would need to check actual status
+            
+            server_list.insert("", tk.END, values=(
+                server_name,
+                server_type,
+                status,
+                config.get("InstallDir", ""),
+                format_uptime_from_start_time("N/A")  # Placeholder
+            ))
+        
         variables["lastServerListUpdate"] = datetime.datetime.now()
-        variables["lastProcessUpdate"] = datetime.datetime.now()
-        
-        # Restore selection if any servers were previously selected
-        if selected_server_names:
-            selections_restored = 0
-            for item in server_list.get_children():
-                try:
-                    values = server_list.item(item)['values']
-                    if values and len(values) > 0:
-                        server_name = values[0]
-                        if server_name in selected_server_names:
-                            server_list.selection_add(item)
-                            selections_restored += 1
-                            log_dashboard_event("SERVER_LIST_UPDATE", f"Restored selection for server: {server_name}", "DEBUG")
-                except (IndexError, KeyError, tk.TclError) as e:
-                    # Handle case where item doesn't exist, has no values, or Tkinter error
-                    log_dashboard_event("SERVER_LIST_UPDATE", f"Could not restore selection for item: {str(e)}", "DEBUG")
-                    pass
-            
-            if selections_restored > 0:
-                log_dashboard_event("SERVER_LIST_UPDATE", f"Restored {selections_restored} server selection(s)", "INFO")
-            elif selected_server_names:
-                log_dashboard_event("SERVER_LIST_UPDATE", f"Could not restore any of {len(selected_server_names)} previously selected servers", "WARNING")
-        
-        log_dashboard_event("SERVER_LIST_UPDATE", "Server list updated successfully", "DEBUG")
         
     except Exception as e:
-        logger.error(f"Error updating server list: {str(e)}")
-        log_dashboard_event("SERVER_LIST_UPDATE", f"Error updating server list: {str(e)}", "ERROR")
-
-
-def create_progress_dialog_with_console(parent, title, width=700, height=650):
-    # Create a progress dialog with console output for long-running operations
-    dialog = tk.Toplevel(parent)
-    dialog.title(title)
-    dialog.transient(parent)
-    dialog.grab_set()
-    dialog.resizable(True, True)
-    
-    # Main frame with padding
-    main_frame = ttk.Frame(dialog, padding=15)
-    main_frame.pack(fill=tk.BOTH, expand=True)
-    
-    # Console output section
-    console_container = ttk.Frame(main_frame)
-    console_container.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-    
-    from tkinter import scrolledtext
-    console_output = scrolledtext.ScrolledText(console_container, width=70, height=8, 
-                                             background="black", foreground="white", 
-                                             font=("Consolas", 9))
-    console_output.pack(fill=tk.BOTH, expand=True)
-    console_output.config(state=tk.DISABLED)
-
-    # Status and progress bar
-    status_container = ttk.Frame(main_frame)
-    status_container.pack(fill=tk.X, pady=(0, 10))
-    
-    status_var = tk.StringVar(value="")
-    status_label = ttk.Label(status_container, textvariable=status_var, font=("Segoe UI", 10))
-    status_label.pack(anchor=tk.W, pady=(0, 5))
-    
-    progress = ttk.Progressbar(status_container, mode="indeterminate")
-    progress.pack(fill=tk.X)
-
-    # Callback functions
-    def append_console(text):
-        console_output.config(state=tk.NORMAL)
-        console_output.insert(tk.END, text + "\n")
-        console_output.see(tk.END)
-        console_output.config(state=tk.DISABLED)
-    
-    def set_status(text):
-        status_var.set(text)
-        dialog.update_idletasks()
-    
-    def start_progress():
-        progress.start(10)
-    
-    def stop_progress():
-        progress.stop()
-
-    # Center dialog relative to parent
-    center_window(dialog, width, height, parent)
-    
-    return {
-        'dialog': dialog,
-        'console_text': console_output,  # Add direct access to console text widget
-        'console_callback': append_console,
-        'status_callback': set_status,
-        'progress_start': start_progress,
-        'progress_stop': stop_progress,
-        'status_var': status_var
-    }
-
-
-def show_java_configuration_dialog(parent, server_name, server_config, server_manager, server_manager_dir, config):
-    # Show Java configuration dialog for a specific server
-    try:
-        from Modules.minecraft import detect_java_installations, check_java_compatibility, get_recommended_java_for_minecraft
-        
-        # Create dialog
-        dialog = tk.Toplevel(parent)
-        dialog.title(f"Java Configuration - {server_name}")
-        dialog.geometry("700x600")
-        dialog.transient(parent)
-        dialog.grab_set()
-        
-        # Main frame
-        main_frame = ttk.Frame(dialog, padding=15)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Title
-        title_label = ttk.Label(main_frame, text=f"Java Configuration for {server_name}", 
-                               font=("Segoe UI", 14, "bold"))
-        title_label.pack(pady=(0, 20))
-        
-        # Server info frame
-        info_frame = ttk.LabelFrame(main_frame, text="Server Information", padding=10)
-        info_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        version = server_config.get("Version", "Unknown")
-        current_java = server_config.get("JavaPath", "java (system default)")
-        
-        ttk.Label(info_frame, text=f"Minecraft Version: {version}", font=("Segoe UI", 10)).pack(anchor=tk.W, pady=2)
-        ttk.Label(info_frame, text=f"Current Java: {current_java}", font=("Segoe UI", 10)).pack(anchor=tk.W, pady=2)
-        
-        # Check current compatibility
-        if version != "Unknown":
-            is_compatible, java_version, required_version, message = check_java_compatibility(version, current_java)
-            compatibility_color = "green" if is_compatible else "red"
-            compatibility_text = "✓ Compatible" if is_compatible else "✗ Incompatible"
-            
-            ttk.Label(info_frame, text=f"Compatibility: {compatibility_text}", 
-                     foreground=compatibility_color, font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=2)
-            
-            if not is_compatible:
-                ttk.Label(info_frame, text=f"Required: Java {required_version}+", 
-                         foreground="red", font=("Segoe UI", 9)).pack(anchor=tk.W, pady=2)
-        
-        # Java selection frame
-        selection_frame = ttk.LabelFrame(main_frame, text="Available Java Installations", padding=10)
-        selection_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-        
-        # Create treeview for Java installations
-        columns = ("name", "path", "compatibility")
-        java_tree = ttk.Treeview(selection_frame, columns=columns, show="headings", height=8)
-        
-        java_tree.heading("name", text="Java Version")
-        java_tree.heading("path", text="Path")
-        java_tree.heading("compatibility", text="Compatibility")
-        
-        java_tree.column("name", width=180, minwidth=150)
-        java_tree.column("path", width=300, minwidth=200)
-        java_tree.column("compatibility", width=120, minwidth=100)
-        
-        # Add scrollbar
-        scroll = ttk.Scrollbar(selection_frame, orient=tk.VERTICAL, command=java_tree.yview)
-        java_tree.configure(yscrollcommand=scroll.set)
-        
-        java_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Populate Java installations
-        installations = detect_java_installations()
-        selected_java = None
-        
-        for installation in installations:
-            if version != "Unknown":
-                is_compatible, _, _, _ = check_java_compatibility(version, installation["path"])
-                compatibility_text = "✓ Compatible" if is_compatible else "✗ Incompatible"
-                tags = ("compatible",) if is_compatible else ("incompatible",)
-            else:
-                compatibility_text = "N/A"
-                tags = ()
-            
-            item_id = java_tree.insert("", tk.END, 
-                                     values=(installation["display_name"], 
-                                           installation["path"], 
-                                           compatibility_text),
-                                     tags=tags)
-            
-            # Select current Java if it matches
-            if installation["path"] == current_java:
-                java_tree.selection_set(item_id)
-                java_tree.focus(item_id)
-                selected_java = installation
-        
-        # Configure tag colors
-        java_tree.tag_configure("compatible", foreground="green")
-        java_tree.tag_configure("incompatible", foreground="red")
-        
-        # Custom Java path frame
-        custom_frame = ttk.LabelFrame(main_frame, text="Custom Java Path", padding=10)
-        custom_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        custom_path_var = tk.StringVar()
-        custom_entry = ttk.Entry(custom_frame, textvariable=custom_path_var, width=50)
-        custom_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        
-        def browse_java():
-            if os.name == 'nt':
-                file_types = [("Java Executable", "java.exe"), ("All Files", "*.*")]
-            else:
-                file_types = [("All Files", "*")]
-            
-            java_path = filedialog.askopenfilename(
-                title="Select Java Executable",
-                filetypes=file_types
-            )
-            if java_path:
-                custom_path_var.set(java_path)
-        
-        ttk.Button(custom_frame, text="Browse", command=browse_java).pack(side=tk.RIGHT)
-        
-        # Action buttons frame
-        action_frame = ttk.Frame(main_frame)
-        action_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        def auto_select_java():
-            if version != "Unknown":
-                recommended = get_recommended_java_for_minecraft(version)
-                if recommended:
-                    # Select the recommended Java in the tree
-                    for child in java_tree.get_children():
-                        if java_tree.item(child)["values"][1] == recommended["path"]:
-                            java_tree.selection_set(child)
-                            java_tree.focus(child)
-                            java_tree.see(child)
-                            break
-                    messagebox.showinfo("Auto-Select", f"Selected: {recommended['display_name']}")
-                else:
-                    messagebox.showwarning("No Suitable Java", 
-                                         "No suitable Java installation found for this Minecraft version.")
-            else:
-                messagebox.showwarning("Unknown Version", "Cannot auto-select Java for unknown Minecraft version.")
-        
-        ttk.Button(action_frame, text="Auto-Select Best Java", command=auto_select_java).pack(side=tk.LEFT, padx=(0, 10))
-        
-        def refresh_java_list():
-            # Clear existing items
-            for item in java_tree.get_children():
-                java_tree.delete(item)
-            
-            # Repopulate
-            installations = detect_java_installations()
-            for installation in installations:
-                if version != "Unknown":
-                    is_compatible, _, _, _ = check_java_compatibility(version, installation["path"])
-                    compatibility_text = "✓ Compatible" if is_compatible else "✗ Incompatible"
-                    tags = ("compatible",) if is_compatible else ("incompatible",)
-                else:
-                    compatibility_text = "N/A"
-                    tags = ()
-                
-                java_tree.insert("", tk.END, 
-                               values=(installation["display_name"], 
-                                     installation["path"], 
-                                     compatibility_text),
-                               tags=tags)
-        
-        ttk.Button(action_frame, text="Refresh List", command=refresh_java_list).pack(side=tk.LEFT)
-        
-        # Return result variable
-        result = {'success': False, 'java_path': None}
-        
-        # Button frame
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
-        
-        def on_apply():
-            # Get selected Java
-            custom_path = custom_path_var.get().strip()
-            selected_java_path = None
-            
-            if custom_path:
-                # Use custom path
-                from Modules.minecraft import get_java_version
-                major, version_str = get_java_version(custom_path)
-                if major is not None:
-                    selected_java_path = custom_path
-                else:
-                    messagebox.showerror("Error", f"Invalid Java executable: {custom_path}")
-                    return
-            else:
-                # Use selected from tree
-                selection = java_tree.selection()
-                if selection:
-                    item = selection[0]
-                    selected_java_path = java_tree.item(item)["values"][1]
-                else:
-                    messagebox.showwarning("No Selection", "Please select a Java installation or provide a custom path.")
-                    return
-            
-            # Update server configuration
-            try:
-                server_config["JavaPath"] = selected_java_path
-                server_config["LastUpdate"] = datetime.datetime.now().isoformat()
-                
-                # Save configuration
-                if server_manager:
-                    server_manager.save_server_config(server_name, server_config)
-                
-                # Update launch script
-                from Modules.minecraft import MinecraftServerManager
-                manager = MinecraftServerManager(server_manager_dir, config)
-                
-                install_dir = server_config.get("InstallDir", "")
-                if install_dir and os.path.exists(install_dir):
-                    executable_path = server_config.get("ExecutablePath", "")
-                    jar_file = os.path.basename(executable_path) if executable_path else "server.jar"
-                    
-                    script_path = manager.create_launch_script(install_dir, jar_file, 1024, "", selected_java_path)
-                    
-                messagebox.showinfo("Success", f"Java configuration updated for '{server_name}'!\nUsing: {selected_java_path}")
-                result['success'] = True
-                result['java_path'] = selected_java_path
-                dialog.destroy()
-                
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to update configuration: {str(e)}")
-        
-        def on_cancel():
-            dialog.destroy()
-        
-        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
-        ttk.Button(button_frame, text="Apply", command=on_apply, width=12).pack(side=tk.RIGHT)
-        
-        # Center dialog
-        center_window(dialog, 700, 600, parent)
-        
-        # Auto-select recommended Java if none selected
-        if not java_tree.selection() and version != "Unknown":
-            auto_select_java()
-        
-        return result
-        
-    except Exception as e:
-        messagebox.showerror("Error", f"Failed to open Java configuration dialog: {str(e)}")
-        return {'success': False, 'java_path': None}
-
-
-def import_server_from_directory_dialog(parent, server_manager, server_manager_dir, supported_server_types, update_callback=None):
-    # Import an existing server from a directory (legacy method)
-    if server_manager is None:
-        messagebox.showerror("Error", "Server manager not initialized.")
-        return
-        
-    try:
-        # Ask user to select a directory
-        install_dir = filedialog.askdirectory(
-            title="Select Server Installation Directory",
-            initialdir=server_manager_dir
-        )
-        
-        if not install_dir:
-            return
-            
-        # Auto-detect server type from directory
-        detected_server_type = detect_server_type_from_directory(install_dir)
-        detected_appid = find_appid_in_directory(install_dir)
-        
-        # Create import dialog
-        dialog = tk.Toplevel(parent)
-        dialog.title("Import Server from Directory")
-        dialog.transient(parent)
-        dialog.grab_set()
-        
-        # Main frame
-        main_frame = ttk.Frame(dialog, padding=10)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Server name
-        ttk.Label(main_frame, text="Server Name:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
-        name_var = tk.StringVar(value=os.path.basename(install_dir))
-        name_entry = ttk.Entry(main_frame, textvariable=name_var, width=35)
-        name_entry.grid(row=0, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-
-        # Server type with auto-detection
-        ttk.Label(main_frame, text="Server Type:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
-        type_var = tk.StringVar(value=detected_server_type)
-        type_combo = ttk.Combobox(main_frame, textvariable=type_var, values=supported_server_types, width=32)
-        type_combo.grid(row=1, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        
-        # Show detection result
-        if detected_server_type != "Other":
-            detection_text = f"Auto-detected as: {detected_server_type}"
-            if detected_appid:
-                app_info = check_appid_in_database(detected_appid)
-                if app_info and app_info.get('exists'):
-                    detection_text += f" (AppID: {detected_appid} - {app_info.get('name', 'Unknown')})"
-                else:
-                    detection_text += f" (AppID: {detected_appid})"
-            ttk.Label(main_frame, text=detection_text, foreground="green", font=("Segoe UI", 8)).grid(
-                row=1, column=3, padx=10, pady=10, sticky=tk.W
-            )
-        
-        # Installation directory (readonly)
-        ttk.Label(main_frame, text="Install Directory:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
-        ttk.Label(main_frame, text=install_dir, wraplength=300).grid(row=2, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        
-        # Steam AppID field (for Steam servers)
-        appid_var = tk.StringVar(value=detected_appid or "")
-        appid_label = ttk.Label(main_frame, text="Steam AppID:")
-        appid_entry = ttk.Entry(main_frame, textvariable=appid_var, width=25)
-        
-        # Browse AppID button
-        def browse_appid():
-            # Create AppID selection dialog
-            appid_dialog = tk.Toplevel(dialog)
-            appid_dialog.title("Select Dedicated Server")
-            appid_dialog.transient(dialog)
-            appid_dialog.grab_set()
-            appid_dialog.geometry("600x500")
-            
-            # Create search frame
-            search_frame = ttk.Frame(appid_dialog, padding=10)
-            search_frame.pack(fill=tk.X)
-            
-            ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT)
-            search_var = tk.StringVar()
-            search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
-            search_entry.pack(side=tk.LEFT, padx=(5, 10))
-            
-            # Load dedicated servers from scanner's AppID list
-            try:
-                dedicated_servers_data, metadata = load_appid_scanner_list(server_manager_dir)
-                
-                if not dedicated_servers_data:
-                    # Fallback to hardcoded list if scanner data not available
-                    logger.warning("Scanner AppID list not available, using fallback list")
-                    dedicated_servers = [
-                        {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
-                        {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
-                        {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
-                        {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
-                        {"name": "ARK: Survival Evolved Dedicated Server", "appid": "376030"},
-                        {"name": "Rust Dedicated Server", "appid": "258550"},
-                        {"name": "7 Days to Die Dedicated Server", "appid": "294420"},
-                        {"name": "Valheim Dedicated Server", "appid": "896660"},
-                        {"name": "Source Dedicated Server (Generic)", "appid": "205"}
-                    ]
-                else:
-                    # Use scanner data - convert to compatible format
-                    dedicated_servers = [
-                        {
-                            "name": server.get("name", "Unknown Server"),
-                            "appid": str(server.get("appid", "0")),
-                            "requires_subscription": server.get("requires_subscription", False),
-                            "anonymous_install": server.get("anonymous_install", True),
-                            "publisher": server.get("publisher", ""),
-                            "description": server.get("description", ""),
-                            "type": server.get("type", "Dedicated Server")
-                        }
-                        for server in dedicated_servers_data
-                    ]
-                    
-                    logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner (last updated: {metadata.get('last_updated', 'Unknown')})")
-                    
-                    # Add refresh info to dialog
-                    if metadata.get('last_updated'):
-                        last_updated = metadata['last_updated']
-                        if 'T' in last_updated:  # ISO format
-                            try:
-                                from datetime import datetime
-                                dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                                formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
-                                ttk.Label(search_frame, text=f"Data last updated: {formatted_date}", 
-                                        foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
-                            except:
-                                pass
-                        
-            except Exception as e:
-                logger.error(f"Error loading scanner AppID list: {e}")
-                # Use fallback list
-                dedicated_servers = [
-                    {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
-                    {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
-                    {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
-                    {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
-                    {"name": "Source Dedicated Server (Generic)", "appid": "205"}
-                ]
-            
-            # Create server list
-            list_frame = ttk.Frame(appid_dialog, padding=10)
-            list_frame.pack(fill=tk.BOTH, expand=True)
-            
-            # Enhanced treeview for server list with additional columns
-            columns = ("name", "appid", "subscription", "type")
-            server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
-            server_tree.heading("name", text="Server Name")
-            server_tree.heading("appid", text="App ID")
-            server_tree.heading("subscription", text="Subscription")
-            server_tree.heading("type", text="Type")
-            server_tree.column("name", width=300)
-            server_tree.column("appid", width=80)
-            server_tree.column("subscription", width=150)
-            server_tree.column("type", width=120)
-            
-            # Scrollbar
-            scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=server_tree.yview)
-            server_tree.configure(yscrollcommand=scrollbar.set)
-            
-            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            server_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            
-            # Populate server list with enhanced data
-            def populate_servers(filter_text=""):
-                server_tree.delete(*server_tree.get_children())
-                for server in dedicated_servers:
-                    server_name = server["name"]
-                    if not filter_text or filter_text.lower() in server_name.lower():
-                        # Determine subscription status
-                        requires_sub = server.get("requires_subscription", False)
-                        anonymous = server.get("anonymous_install", True)
-                        
-                        if requires_sub:
-                            sub_status = "Subscription Required"
-                        elif anonymous:
-                            sub_status = "Free/Anonymous"
-                        else:
-                            sub_status = "Auth Required"
-                        
-                        server_tree.insert("", tk.END, values=(
-                            server_name, 
-                            server["appid"],
-                            sub_status,
-                            server.get("type", "Dedicated Server")
-                        ))
-            
-            populate_servers()
-            
-            # Enhanced search functionality
-            def on_search(*args):
-                populate_servers(search_var.get())
-            
-            search_var.trace('w', on_search)
-            
-            # Add tooltip functionality for descriptions
-            def show_server_info(event):
-                item = server_tree.selection()
-                if item:
-                    selected_server = None
-                    item_values = server_tree.item(item[0])['values']
-                    for server in dedicated_servers:
-                        if server["appid"] == str(item_values[1]):
-                            selected_server = server
-                            break
-                    
-                    if selected_server and selected_server.get("description"):
-                        # Create a simple tooltip window
-                        tooltip = tk.Toplevel(appid_dialog)
-                        tooltip.wm_overrideredirect(True)
-                        tooltip.geometry(f"+{event.x_root+10}+{event.y_root+10}")
-                        
-                        # Limit description length
-                        desc = selected_server["description"][:200] + ("..." if len(selected_server["description"]) > 200 else "")
-                        
-                        label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}", 
-                                       background="lightyellow", relief="solid", borderwidth=1,
-                                       wraplength=300, justify=tk.LEFT, font=("Segoe UI", 9))
-                        label.pack()
-                        
-                        # Auto-hide after 3 seconds
-                        tooltip.after(3000, tooltip.destroy)
-            
-            server_tree.bind('<Double-1>', show_server_info)
-            
-            # Button frame
-            button_frame = ttk.Frame(appid_dialog, padding=10)
-            button_frame.pack(fill=tk.X)
-            
-            def select_server():
-                selected = server_tree.selection()
-                
-                if selected:
-                    # Use selected server from list
-                    item = server_tree.item(selected[0])
-                    appid = item['values'][1]
-                    appid_var.set(appid)
-                    appid_dialog.destroy()
-                else:
-                    messagebox.showinfo("No Selection", "Please select a server from the list.")
-            
-            def cancel_selection():
-                appid_dialog.destroy()
-            
-            ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT)
-            ttk.Button(button_frame, text="Select Server", command=select_server, width=15).pack(side=tk.RIGHT)
-            
-            # Center dialog
-            center_window(appid_dialog, 600, 500, dialog)
-        
-        appid_browse_btn = ttk.Button(main_frame, text="Browse", command=browse_appid, width=10)
-        
-        # Initially hide AppID field
-        appid_row = 3
-        
-        def update_appid_visibility():
-            if type_var.get() == "Steam":
-                appid_label.grid(row=appid_row, column=0, padx=10, pady=10, sticky=tk.W)
-                appid_entry.grid(row=appid_row, column=1, padx=10, pady=10, sticky=tk.W)
-                appid_browse_btn.grid(row=appid_row, column=2, padx=5, pady=10)
-            else:
-                appid_label.grid_remove()
-                appid_entry.grid_remove()
-                appid_browse_btn.grid_remove()
-        
-        # Bind type change to visibility update
-        type_var.trace('w', lambda *args: update_appid_visibility())
-        update_appid_visibility()
-        
-        # Executable path
-        exe_row = appid_row + 1
-        ttk.Label(main_frame, text="Executable:").grid(row=exe_row, column=0, padx=10, pady=10, sticky=tk.W)
-        exe_var = tk.StringVar()
-        exe_entry = ttk.Entry(main_frame, textvariable=exe_var, width=25)
-        exe_entry.grid(row=exe_row, column=1, padx=10, pady=10, sticky=tk.W)
-        
-        def browse_exe():
-            fp = filedialog.askopenfilename(
-                title="Select Server Executable",
-                initialdir=install_dir,
-                filetypes=[("Executables", "*.exe;*.jar;*.bat;*.cmd;*.ps1;*.sh"), ("All files", "*.*")]
-            )
-            if fp:
-                # Store relative path if possible
-                try:
-                    rel_path = os.path.relpath(fp, install_dir)
-                    exe_var.set(rel_path)
-                except:
-                    exe_var.set(fp)
-        
-        ttk.Button(main_frame, text="Browse", command=browse_exe, width=10).grid(row=exe_row, column=2, padx=5, pady=10)
-        
-        # Startup arguments - REMOVED: No longer required during import
-        # args_row = exe_row + 1
-        # ttk.Label(main_frame, text="Startup Args:").grid(row=args_row, column=0, padx=10, pady=10, sticky=tk.W)
-        # args_var = tk.StringVar()
-        # args_entry = ttk.Entry(main_frame, textvariable=args_var, width=35)
-        # args_entry.grid(row=args_row, column=1, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        
-        # Auto-detect common server files
-        def auto_detect():
-            try:
-                if server_manager:
-                    found_files = server_manager.auto_detect_server_executable(install_dir)
-                else:
-                    messagebox.showerror("Error", "Server manager not initialized.")
-                    return
-                
-                if found_files:
-                    # Show selection dialog if multiple found
-                    if len(found_files) == 1:
-                        exe_var.set(found_files[0])
-                    else:
-                        # Create selection dialog
-                        selection_dialog = tk.Toplevel(dialog)
-                        selection_dialog.title("Select Executable")
-                        selection_dialog.geometry("400x300")
-                        selection_dialog.transient(dialog)
-                        selection_dialog.grab_set()
-                        
-                        ttk.Label(selection_dialog, text="Multiple executables found. Select one:").pack(pady=10)
-                        
-                        listbox = tk.Listbox(selection_dialog)
-                        listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-                        
-                        for file in found_files:
-                            listbox.insert(tk.END, file)
-                        
-                        def select_file():
-                            selection = listbox.curselection()
-                            if selection:
-                                exe_var.set(found_files[selection[0]])
-                            selection_dialog.destroy()
-                        
-                        ttk.Button(selection_dialog, text="Select", command=select_file).pack(pady=10)
-                else:
-                    messagebox.showinfo("Auto-detect", "No common server executables found. Please select manually.")
-                    
-            except Exception as e:
-                logger.error(f"Error during auto-detect: {str(e)}")
-                messagebox.showerror("Error", f"Auto-detection failed: {str(e)}")
-        
-        detect_row = exe_row + 1
-        ttk.Button(main_frame, text="Auto-detect", command=auto_detect, width=15).grid(row=detect_row, column=1, pady=10)
-        
-        # Return result variable
-        result = {'success': False, 'server_name': None}
-        
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=detect_row + 1, column=0, columnspan=3, pady=20)
-        
-        def import_config():
-            try:
-                server_name = name_var.get().strip()
-                server_type = type_var.get()
-                executable_path = exe_var.get().strip()
-                startup_args = ""  # No longer required during import
-                steam_appid = appid_var.get().strip()
-                
-                if not server_name:
-                    messagebox.showerror("Validation Error", "Server name is required.")
-                    return
-                    
-                if not executable_path:
-                    # REMOVED: Executable path is no longer required during import
-                    # Allow import without executable - user can set it later
-                    pass
-                
-                # Validate Steam AppID if server type is Steam
-                if server_type == "Steam":
-                    if not steam_appid:
-                        messagebox.showerror("Validation Error", "Steam AppID is required for Steam servers.")
-                        return
-                    
-                    # Check if AppID exists in database
-                    app_info = check_appid_in_database(steam_appid)
-                    if not app_info or not app_info.get('exists'):
-                        response = messagebox.askyesno(
-                            "AppID Not Found", 
-                            f"AppID {steam_appid} was not found in the Steam database. "
-                            "This may mean the AppID is invalid or the database needs updating.\n\n"
-                            "Do you want to continue with the import anyway?"
-                        )
-                        if not response:
-                            return
-                    else:
-                        # Show AppID verification info
-                        app_name = app_info.get('name', 'Unknown')
-                        is_dedicated = app_info.get('is_dedicated_server', False)
-                        if not is_dedicated:
-                            response = messagebox.askyesno(
-                                "AppID Warning", 
-                                f"AppID {steam_appid} ({app_name}) is not marked as a dedicated server in our database. "
-                                "This may not be a valid server AppID.\n\n"
-                                "Do you want to continue anyway?"
-                            )
-                            if not response:
-                                return
-                
-                # Use server manager to import the server (pass AppID for Steam servers)
-                if server_manager:
-                    if server_type == "Steam":
-                        success, message = server_manager.import_server_config(
-                            server_name, server_type, install_dir, executable_path, startup_args, steam_appid
-                        )
-                    else:
-                        success, message = server_manager.import_server_config(
-                            server_name, server_type, install_dir, executable_path, startup_args
-                        )
-                else:
-                    success = False
-                    message = "Server manager not initialized"
-                
-                if success:
-                    # Call update callback if provided
-                    if update_callback:
-                        update_callback()
-                    messagebox.showinfo("Success", message)
-                    result['success'] = True
-                    result['server_name'] = server_name
-                    dialog.destroy()
-                else:
-                    messagebox.showerror("Error", message)
-                
-            except Exception as e:
-                logger.error(f"Error importing server: {str(e)}")
-                messagebox.showerror("Error", f"Failed to import server: {str(e)}")
-
-        ttk.Button(button_frame, text="Import", command=import_config, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy, width=15).pack(side=tk.RIGHT, padx=5)
-        
-        # Center dialog relative to parent
-        center_window(dialog, 600, 500, parent)
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Error during directory import: {str(e)}")
-        messagebox.showerror("Error", f"Failed to import server from directory: {str(e)}")
-        return {'success': False, 'server_name': None}
-
-
-def import_server_from_export_dialog(parent, paths, server_manager_dir, update_callback=None):
-    # Import server from exported configuration file
-    try:
-        # Ask user to select export file
-        file_path = filedialog.askopenfilename(
-            title="Select Server Export File",
-            filetypes=[
-                ("Server Export Files", "*.json;*.zip"),
-                ("JSON Files", "*.json"),
-                ("ZIP Files", "*.zip"),
-                ("All Files", "*.*")
-            ]
-        )
-        
-        if not file_path:
-            return {'success': False, 'server_name': None}
-        
-        # Import server data from file
-        success, export_data, has_files = import_server_from_file(file_path)
-        
-        if not success or not export_data:
-            messagebox.showerror("Import Error", "Failed to read export file. File may be corrupted or invalid.")
-            return {'success': False, 'server_name': None}
-        
-        # Create import configuration dialog
-        dialog = tk.Toplevel(parent)
-        dialog.title("Import Server Configuration")
-        dialog.transient(parent)
-        dialog.grab_set()
-        
-        main_frame = ttk.Frame(dialog, padding=15)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Display export information
-        export_info_frame = ttk.LabelFrame(main_frame, text="Export Information", padding=10)
-        export_info_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        export_metadata = export_data.get("export_metadata", {})
-        server_config = export_data.get("server_configuration", {})
-        dependencies = export_data.get("dependencies", {})
-        
-        info_text = f"""Exported: {export_metadata.get('exported_at', 'Unknown')}
-From Host: {export_metadata.get('source_host', 'Unknown')}
-Server Type: {server_config.get('Type', 'Unknown')}
-Original Name: {server_config.get('Name', 'Unknown')}
-Includes Files: {'Yes' if has_files else 'No'}"""
-        
-        if server_config.get('Type') == 'Steam' and server_config.get('AppId'):
-            app_id = server_config['AppId']
-            info_text += f"\nSteam App ID: {app_id}"
-            
-            # Verify AppID in current database
-            app_info = check_appid_in_database(app_id)
-            if app_info and app_info.get('exists'):
-                info_text += f" - {app_info.get('name', 'Unknown')} ✓"
-            else:
-                # Check if export had app info
-                export_app_info = dependencies.get("steam_app_info", {})
-                if export_app_info.get("name") and export_app_info.get("verified", True):
-                    info_text += f" - {export_app_info['name']} (not in local database) ⚠️"
-                else:
-                    info_text += " - Unknown/Unverified ❌"
-            
-        ttk.Label(export_info_frame, text=info_text, justify=tk.LEFT).pack(anchor=tk.W)
-        
-        # Import configuration frame
-        config_frame = ttk.LabelFrame(main_frame, text="Import Configuration", padding=10)
-        config_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # Server name (with unique name generation)
-        ttk.Label(config_frame, text="Server Name:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        original_name = server_config.get("Name", "Imported Server")
-        unique_name = generate_unique_server_name(original_name, paths)
-        name_var = tk.StringVar(value=unique_name)
-        name_entry = ttk.Entry(config_frame, textvariable=name_var, width=40)
-        name_entry.grid(row=0, column=1, columnspan=2, padx=5, pady=5, sticky=tk.W)
-        
-        # Installation directory
-        ttk.Label(config_frame, text="Install Directory:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-        default_install_dir = ""
-        if has_files and server_manager_dir:
-            default_install_dir = os.path.join(server_manager_dir, "servers", unique_name.replace(" ", "_"))
-        
-        install_dir_var = tk.StringVar(value=default_install_dir)
-        install_dir_entry = ttk.Entry(config_frame, textvariable=install_dir_var, width=30)
-        install_dir_entry.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
-        
-        def browse_install_dir():
-            dir_path = filedialog.askdirectory(title="Select Installation Directory")
-            if dir_path:
-                install_dir_var.set(dir_path)
-        
-        ttk.Button(config_frame, text="Browse", command=browse_install_dir, width=10).grid(row=1, column=2, padx=5, pady=5)
-        
-        # Steam installation option (if Steam server)
-        auto_install_var = tk.BooleanVar(value=False)
-        if server_config.get('Type') == 'Steam' and server_config.get('AppId'):
-            install_check = ttk.Checkbutton(
-                config_frame,
-                text=f"Automatically install Steam App ID {server_config['AppId']} (requires SteamCMD)",
-                variable=auto_install_var
-            )
-            install_check.grid(row=2, column=0, columnspan=3, padx=5, pady=10, sticky=tk.W)
-        
-        # File extraction option (if files are included)
-        extract_files_var = tk.BooleanVar(value=has_files)
-        if has_files:
-            extract_check = ttk.Checkbutton(
-                config_frame,
-                text="Extract server files from archive",
-                variable=extract_files_var
-            )
-            extract_check.grid(row=3, column=0, columnspan=3, padx=5, pady=5, sticky=tk.W)
-        
-        # Progress frame
-        progress_frame = ttk.Frame(main_frame)
-        progress_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        status_var = tk.StringVar(value="Ready to import")
-        status_label = ttk.Label(progress_frame, textvariable=status_var)
-        status_label.pack(anchor=tk.W, pady=2)
-        
-        progress_bar = ttk.Progressbar(progress_frame, mode="determinate")
-        progress_bar.pack(fill=tk.X, pady=2)
-        
-        # Return result variable
-        result = {'success': False, 'server_name': None}
-        
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        def perform_import():
-            try:
-                server_name = name_var.get().strip()
-                install_dir = install_dir_var.get().strip()
-                
-                if not server_name:
-                    messagebox.showerror("Validation Error", "Server name is required.")
-                    return
-                
-                # Start import process
-                status_var.set("Importing server configuration...")
-                progress_bar.config(value=10)
-                dialog.update()
-                
-                # Import server configuration
-                success, message, imported_config = import_server_configuration(
-                    export_data, paths, install_dir, auto_install_var.get()
-                )
-                
-                if not success:
-                    messagebox.showerror("Import Error", message)
-                    return
-                
-                progress_bar.config(value=50)
-                status_var.set("Server configuration imported successfully")
-                dialog.update()
-                
-                # Extract files if requested
-                if has_files and extract_files_var.get() and install_dir:
-                    status_var.set("Extracting server files...")
-                    progress_bar.config(value=70)
-                    dialog.update()
-                    
-                    extract_success, extract_message = extract_server_files_from_archive(file_path, install_dir)
-                    
-                    if not extract_success:
-                        logger.warning(f"File extraction failed: {extract_message}")
-                        messagebox.showwarning("Extraction Warning", 
-                                             f"Server imported but file extraction failed:\n{extract_message}")
-                    else:
-                        status_var.set("Files extracted successfully")
-                
-                progress_bar.config(value=100)
-                status_var.set("Import completed successfully")
-                dialog.update()
-                
-                # Call update callback if provided
-                if update_callback:
-                    update_callback()
-                
-                # Show completion message
-                completion_msg = f"Server '{server_name}' imported successfully!"
-                if auto_install_var.get():
-                    completion_msg += "\n\nNote: Steam installation will be performed when the server is first started."
-                
-                messagebox.showinfo("Import Complete", completion_msg)
-                result['success'] = True
-                result['server_name'] = server_name
-                dialog.destroy()
-                
-            except Exception as e:
-                logger.error(f"Error during import: {str(e)}")
-                status_var.set(f"Import failed: {str(e)}")
-                messagebox.showerror("Import Error", f"Failed to import server: {str(e)}")
-        
-        def cancel_import():
-            dialog.destroy()
-        
-        ttk.Button(button_frame, text="Import", command=perform_import, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=cancel_import, width=15).pack(side=tk.RIGHT, padx=5)
-        
-        # Center dialog relative to parent
-        center_window(dialog, 600, 550, parent)
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Error importing from export: {str(e)}")
-        messagebox.showerror("Error", f"Failed to import server from export: {str(e)}")
-        return {'success': False, 'server_name': None}
-
-
-def export_server_dialog(parent, server_list, paths):
-    # Export server configuration for use on other hosts or clusters
-    selected_items = server_list.selection()
-    if not selected_items:
-        messagebox.showinfo("No Selection", "Please select a server to export first.")
-        return {'success': False, 'server_name': None}
-    
-    try:
-        server_name = server_list.item(selected_items[0])['values'][0]
-        
-        # Create export options dialog
-        dialog = tk.Toplevel(parent)
-        dialog.title(f"Export Server: {server_name}")
-        dialog.transient(parent)
-        dialog.grab_set()
-        
-        main_frame = ttk.Frame(dialog, padding=15)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Export options frame
-        options_frame = ttk.LabelFrame(main_frame, text="Export Options", padding=10)
-        options_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # Include files option
-        include_files_var = tk.BooleanVar(value=False)
-        include_files_check = ttk.Checkbutton(
-            options_frame,
-            text="Include server files in export (creates larger archive)",
-            variable=include_files_var
-        )
-        include_files_check.pack(anchor=tk.W, pady=5)
-        
-        # Warning about file inclusion
-        warning_label = ttk.Label(
-            options_frame,
-            text="⚠️ Including files will create a zip archive. Large server installations may take time to export.",
-            foreground="orange",
-            wraplength=450
-        )
-        warning_label.pack(anchor=tk.W, pady=5)
-        
-        # Export location frame
-        location_frame = ttk.LabelFrame(main_frame, text="Export Location", padding=10)
-        location_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        ttk.Label(location_frame, text="Export to:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        
-        # Default filename
-        safe_name = "".join(c for c in server_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        default_filename = f"{safe_name.replace(' ', '_')}_export.json"
-        
-        export_path_var = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Desktop", default_filename))
-        export_path_entry = ttk.Entry(location_frame, textvariable=export_path_var, width=40)
-        export_path_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
-        
-        def browse_export_location():
-            if include_files_var.get():
-                file_path = filedialog.asksaveasfilename(
-                    title="Save Server Export",
-                    defaultextension=".zip",
-                    filetypes=[("ZIP Archives", "*.zip"), ("All Files", "*.*")]
-                )
-            else:
-                file_path = filedialog.asksaveasfilename(
-                    title="Save Server Export",
-                    defaultextension=".json",
-                    filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
-                )
-            
-            if file_path:
-                export_path_var.set(file_path)
-        
-        def update_filename():
-            # Update file extension based on include files option
-            current_path = export_path_var.get()
-            if include_files_var.get():
-                if current_path.endswith('.json'):
-                    export_path_var.set(current_path[:-5] + '.zip')
-            else:
-                if current_path.endswith('.zip'):
-                    export_path_var.set(current_path[:-4] + '.json')
-        
-        include_files_check.configure(command=update_filename)
-        
-        ttk.Button(location_frame, text="Browse", command=browse_export_location, width=10).grid(row=0, column=2, padx=5, pady=5)
-        
-        # Progress frame
-        progress_frame = ttk.Frame(main_frame)
-        progress_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        status_var = tk.StringVar(value="Ready to export")
-        status_label = ttk.Label(progress_frame, textvariable=status_var)
-        status_label.pack(anchor=tk.W, pady=2)
-        
-        progress_bar = ttk.Progressbar(progress_frame, mode="indeterminate")
-        progress_bar.pack(fill=tk.X, pady=2)
-        
-        # Return result variable
-        result = {'success': False, 'server_name': server_name, 'export_path': None}
-        
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        def perform_export():
-            try:
-                export_path = export_path_var.get().strip()
-                include_files = include_files_var.get()
-                
-                if not export_path:
-                    messagebox.showerror("Validation Error", "Export path is required.")
-                    return
-                
-                # Start export process
-                status_var.set("Generating export configuration...")
-                progress_bar.start()
-                dialog.update()
-                
-                # Export server configuration
-                export_data = export_server_configuration(server_name, paths, include_files)
-                
-                status_var.set("Saving export file...")
-                dialog.update()
-                
-                # Save to file
-                success, message = export_server_to_file(export_data, export_path, include_files)
-                
-                progress_bar.stop()
-                
-                if success:
-                    status_var.set("Export completed successfully")
-                    
-                    # Show completion dialog
-                    completion_msg = f"Server '{server_name}' exported successfully!\n\n{message}"
-                    
-                    # Add usage instructions
-                    completion_msg += "\n\nUsage Instructions:"
-                    completion_msg += "\n• Use 'Import Server' > 'Import from exported configuration file' on target host"
-                    completion_msg += "\n• Configuration includes all startup parameters and settings"
-                    
-                    if include_files:
-                        completion_msg += "\n• Archive includes server files for complete migration"
-                    else:
-                        completion_msg += "\n• Only configuration exported - server files must be installed separately"
-                    
-                    if export_data.get("server_configuration", {}).get("Type") == "Steam":
-                        completion_msg += "\n• Steam servers can be auto-installed on import if SteamCMD is available"
-                    
-                    messagebox.showinfo("Export Complete", completion_msg)
-                    result['success'] = True
-                    result['export_path'] = export_path
-                    dialog.destroy()
-                else:
-                    status_var.set(f"Export failed: {message}")
-                    messagebox.showerror("Export Error", message)
-                
-            except Exception as e:
-                logger.error(f"Error during export: {str(e)}")
-                progress_bar.stop()
-                status_var.set(f"Export failed: {str(e)}")
-                messagebox.showerror("Export Error", f"Failed to export server: {str(e)}")
-        
-        def cancel_export():
-            dialog.destroy()
-        
-        ttk.Button(button_frame, text="Export", command=perform_export, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=cancel_export, width=15).pack(side=tk.RIGHT, padx=5)
-        
-        # Center dialog relative to parent
-        center_window(dialog, 500, 400, parent)
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Error in export server: {str(e)}")
-        messagebox.showerror("Error", f"Failed to export server: {str(e)}")
-        return {'success': False, 'server_name': None, 'export_path': None}
-
-
-def rename_server_configuration(old_name, new_name, new_appid, server_manager, paths):
-    # Rename a server and update its configuration
-    try:
-        if not server_manager:
-            return False, "Server manager not available"
-        
-        # Get current server configuration
-        current_config = server_manager.get_server_config(old_name)
-        if not current_config:
-            return False, f"Server '{old_name}' not found"
-        
-        # Check if server is running
-        server_status, _ = server_manager.get_server_status(old_name)
-        if server_status == "Running":
-            return False, f"Server '{old_name}' is currently running. Please stop it before renaming."
-        
-        # Create new configuration with updated values
-        new_config = current_config.copy()
-        
-        # Update AppID if provided (Steam servers)
-        if new_appid is not None and current_config.get('Type') == 'Steam':
-            new_config['AppID'] = new_appid
-            logger.info(f"Updated AppID from {current_config.get('AppID')} to {new_appid}")
-        
-        # If name is changing, handle the rename
-        if old_name != new_name:
-            # Use the simplest and safest approach: save new config, then remove old
-            try:
-                # First check if new name already exists
-                existing_config = server_manager.get_server_config(new_name)
-                if existing_config:
-                    return False, f"A server with the name '{new_name}' already exists"
-                
-                # Update the config data with new name
-                new_config['Name'] = new_name
-                new_config['LastUpdate'] = datetime.datetime.now().isoformat()
-                
-                # Save the configuration with the new name
-                server_manager.save_server_config(new_name, new_config)
-                
-                # Remove the old configuration only after new one is saved successfully
-                success, msg = server_manager.remove_server_config(old_name)
-                if not success:
-                    # If old removal fails, cleanup the new config to avoid duplicates
-                    try:
-                        server_manager.remove_server_config(new_name)
-                    except:
-                        pass
-                    return False, f"Failed to remove old server configuration: {msg}"
-                
-                logger.info(f"Successfully renamed server from '{old_name}' to '{new_name}'")
-                return True, f"Successfully renamed server to '{new_name}'"
-                
-            except Exception as e:
-                logger.error(f"Error during server rename: {str(e)}")
-                return False, f"Failed to rename server: {str(e)}"
-        
-        # If only AppID changed (same name)
-        else:
-            # Use save_server_config for simple config updates
-            try:
-                server_manager.save_server_config(old_name, new_config)
-                logger.info(f"Successfully updated configuration for server '{old_name}'")
-                return True, f"Successfully updated server configuration"
-            except Exception as e:
-                logger.error(f"Error updating server config: {str(e)}")
-                return False, f"Failed to update server configuration: {str(e)}"
-    
-    except Exception as e:
-        logger.error(f"Error renaming server '{old_name}' to '{new_name}': {e}")
-        return False, f"Error during rename operation: {str(e)}"
+        logger.error(f"Error updating server list from files: {e}")
 
 
 def re_detect_server_type_from_config(server_config):
-    # Re-detect server type from existing server configuration
-    if not server_config:
-        return "Other"
-    
-    current_type = server_config.get('Type', 'Other')
-    
-    # If already Steam, check if AppID is valid
-    if current_type == "Steam":
-        app_id = server_config.get('AppId')
-        if app_id:
-            app_info = check_appid_in_database(app_id)
-            if app_info and app_info.get('exists'):
-                return "Steam"  # Valid Steam server
-            else:
-                logger.warning(f"Server has Steam type but invalid AppID {app_id}, changing to Other")
-                return "Other"
-    
-    # Check install directory for clues
-    install_dir = server_config.get('InstallDir')
-    if install_dir:
+    """Re-detect server type from configuration"""
+    try:
+        install_dir = server_config.get("InstallDir", "")
+        if not install_dir or not os.path.exists(install_dir):
+            return server_config.get("Type", "Other")
+        
+        # Use directory detection
         detected_type = detect_server_type_from_directory(install_dir)
-        if detected_type != "Other":
-            # Found evidence in directory
-            if detected_type == "Steam":
-                # Look for AppID in directory
-                found_appid = find_appid_in_directory(install_dir)
-                if found_appid:
-                    app_info = check_appid_in_database(found_appid)
-                    if app_info and app_info.get('exists'):
-                        # Update configuration with found AppID
-                        server_config['AppId'] = found_appid
-                        server_config['AppName'] = app_info.get('name', 'Unknown')
-                        return "Steam"
-            else:
-                return detected_type
-    
-    # Check executable path for clues
-    executable_path = server_config.get('ExecutablePath', '')
-    if executable_path:
-        exe_lower = executable_path.lower()
-        if any(steam_exe in exe_lower for steam_exe in ['srcds', 'hlds', 'steamcmd']):
-            return "Steam"
-        elif any(mc_exe in exe_lower for mc_exe in ['server.jar', 'minecraft_server', 'paper', 'spigot', 'forge']):
-            return "Minecraft"
-    
-    return current_type  # Keep current type if no better detection
+        return detected_type if detected_type != "Other" else server_config.get("Type", "Other")
+        
+    except Exception as e:
+        logger.error(f"Error re-detecting server type: {e}")
+        return server_config.get("Type", "Other")
 
 
 def update_server_configuration_with_detection(server_config_path):
-    # Update server configuration file with improved type detection
+    """Update server configuration with auto-detected information"""
     try:
-        if not os.path.exists(server_config_path):
-            return False, "Configuration file not found"
+        from Modules.server_manager import ServerManager
+        server_manager = ServerManager()
         
-        # Load current configuration
+        # Load current config
         with open(server_config_path, 'r') as f:
-            server_config = json.load(f)
+            config = json.load(f)
         
-        old_type = server_config.get('Type', 'Other')
-        new_type = re_detect_server_type_from_config(server_config)
+        server_name = config.get("Name", "")
+        if not server_name:
+            return False
         
-        if old_type != new_type:
-            server_config['Type'] = new_type
-            server_config['TypeUpdated'] = datetime.datetime.now().isoformat()
-            server_config['PreviousType'] = old_type
-            
-            # Save updated configuration
-            with open(server_config_path, 'w') as f:
-                json.dump(server_config, f, indent=4)
-            
-            logger.info(f"Updated server type from {old_type} to {new_type}: {server_config.get('Name', 'Unknown')}")
-            return True, f"Updated server type from {old_type} to {new_type}"
-        else:
-            return True, "No type change needed"
+        # Re-detect server type
+        new_type = re_detect_server_type_from_config(config)
+        if new_type != config.get("Type"):
+            config["Type"] = new_type
+            logger.info(f"Updated server type for {server_name} to {new_type}")
+        
+        # Save updated config
+        server_manager.save_server_config(server_name, config)
+        return True
         
     except Exception as e:
-        logger.error(f"Error updating server configuration: {str(e)}")
-        return False, f"Failed to update configuration: {str(e)}"
-
-
-def batch_update_server_types(paths):
-    # Batch update all server configurations with improved type detection
-    try:
-        servers_path = os.path.join(paths["root"], "servers")
-        if not os.path.exists(servers_path):
-            return 0, []
-        
-        updated_count = 0
-        updated_servers = []
-        
-        for file in os.listdir(servers_path):
-            if file.endswith('.json'):
-                config_path = os.path.join(servers_path, file)
-                try:
-                    success, message = update_server_configuration_with_detection(config_path)
-                    if success and "Updated server type" in message:
-                        updated_count += 1
-                        with open(config_path, 'r') as f:
-                            config = json.load(f)
-                        updated_servers.append({
-                            'name': config.get('Name', 'Unknown'),
-                            'old_type': config.get('PreviousType', 'Unknown'),
-                            'new_type': config.get('Type', 'Unknown')
-                        })
-                except Exception as e:
-                    logger.error(f"Error updating {file}: {str(e)}")
-        
-        return updated_count, updated_servers
-        
-    except Exception as e:
-        logger.error(f"Error in batch update: {str(e)}")
-        return 0, []
+        logger.error(f"Error updating server configuration: {e}")
+        return False

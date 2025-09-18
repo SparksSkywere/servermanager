@@ -598,6 +598,69 @@ class ServerManagerModule:
         # Get a specific path by key
         return self._paths_manager.get_path(path_key)
 
+# Additional utility functions from common_utils.py
+def setup_module_logging(module_name):
+    # Standardized logging setup for all modules
+    try:
+        from Modules.server_logging import get_component_logger
+        logger = get_component_logger(module_name)
+    except Exception:
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        logger = logging.getLogger(module_name)
+
+    # Enable debug logging if environment variable is set
+    if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
+        logger.setLevel(logging.DEBUG)
+
+    return logger
+
+def setup_module_path():
+    # Standardized path setup for module imports
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    sys.path.insert(0, project_root)
+
+def get_server_manager_dir():
+    # Centralized function to get server manager directory from registry
+    try:
+        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
+        server_manager_dir = winreg.QueryValueEx(key, "ServerManagerPath")[0]
+        winreg.CloseKey(key)
+        return server_manager_dir.strip('"').strip()
+    except Exception as e:
+        # Fallback to script directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        server_manager_dir = os.path.dirname(script_dir)
+        return server_manager_dir
+
+def get_registry_value(key_path, value_name, default=None):
+    # Generic function to get registry values
+    try:
+        key = winreg.OpenKey(REGISTRY_ROOT, key_path)
+        value = winreg.QueryValueEx(key, value_name)[0]
+        winreg.CloseKey(key)
+        return value
+    except Exception:
+        return default
+
+def ensure_directory_exists(directory_path):
+    # Ensure a directory exists, create if it doesn't
+    if not os.path.exists(directory_path):
+        os.makedirs(directory_path, exist_ok=True)
+    return directory_path
+
+def get_absolute_path(relative_path):
+    # Convert relative path to absolute path
+    if not os.path.isabs(relative_path):
+        return os.path.abspath(relative_path)
+    return relative_path
+
 # Export these instances to make them available to other modules
 __all__ = ['paths', 'process_manager', 'config_manager', 'system_utils', 'ServerManagerModule',
-           'initialize_paths_from_registry', 'initialize_registry_values', 'REGISTRY_ROOT', 'REGISTRY_PATH']
+           'initialize_paths_from_registry', 'initialize_registry_values', 'REGISTRY_ROOT', 'REGISTRY_PATH',
+           'setup_module_logging', 'setup_module_path', 'get_server_manager_dir', 'get_registry_value',
+           'ensure_directory_exists', 'get_absolute_path']

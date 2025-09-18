@@ -40,17 +40,25 @@ from Modules.documentation import show_help_dialog, show_about_dialog
 # Import core infrastructure
 from Modules.common import ServerManagerModule, initialize_registry_values
 
-# Import dashboard utility functions
+# Import dashboard utility functions (only confirmed working ones)
 from Host.dashboard_functions import (
-    load_dashboard_config, update_webserver_status, update_system_info, center_window,
-    create_server_type_selection_dialog, load_appid_scanner_list, show_java_configuration_dialog,
-    update_server_list_from_files, get_steam_credentials, open_directory_in_explorer,
-    create_server_removal_dialog, export_server_dialog, perform_server_installation,
-    format_uptime_from_start_time, update_server_status_in_treeview,
-    import_server_from_directory_dialog, import_server_from_export_dialog,
-    create_progress_dialog_with_console, rename_server_configuration,
+    load_dashboard_config, update_webserver_status, update_system_info, update_system_info_threaded, center_window,
+    create_server_type_selection_dialog, load_appid_scanner_list,
+    load_minecraft_scanner_list, get_minecraft_versions_from_database,
+    get_steam_credentials, create_minecraft_version_browser_dialog,
     check_appid_in_database, detect_server_type_from_appid, detect_server_type_from_directory,
-    batch_update_server_types, update_server_configuration_with_detection
+    perform_server_installation, import_server_from_directory_dialog, import_server_from_export_dialog,
+    export_server_dialog, create_progress_dialog_with_console, create_server_removal_dialog,
+    rename_server_configuration, show_java_configuration_dialog, batch_update_server_types,
+    update_server_status_in_treeview, open_directory_in_explorer,
+    create_java_selection_dialog, load_appid_list_from_database, find_appid_in_directory,
+    is_process_running, is_port_open, check_webserver_status, export_server_configuration,
+    import_server_configuration, generate_unique_server_name, get_directory_size,
+    count_files_in_directory, export_server_to_file, import_server_from_file,
+    extract_server_files_from_archive, validate_server_creation_inputs,
+    create_server_installation_dialog, update_server_list_from_files,
+    re_detect_server_type_from_config, update_server_configuration_with_detection,
+    get_current_server_list, get_current_subhost
 )
 
 # Import cluster management
@@ -90,6 +98,9 @@ class ServerManagerDashboard(ServerManagerModule):
 
         # Load AppID/server info from database (not JSON)
         self.dedicated_servers, self.appid_metadata = load_appid_scanner_list(self.server_manager_dir)
+        
+        # Load Minecraft server info from database
+        self.minecraft_servers, self.minecraft_metadata = load_minecraft_scanner_list(self.server_manager_dir)
 
         # Initialize runtime variables from config
         self.variables = {
@@ -262,7 +273,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.agent_manager = None
         
         # Initialize system info and timers - defer UI updates until after mainloop starts
-        # self.update_system_info()  # Defer this to avoid Tkinter issues before mainloop
+        self.update_system_info()  # Initial system info update
         self.timer_manager.start_timers()
         
         # Detect and reattach to running server processes
@@ -656,29 +667,13 @@ class ServerManagerDashboard(ServerManagerModule):
     
     def get_current_server_list(self):
         # Get the server list for the currently active tab
-        current_tab_id = self.server_notebook.select()
-        if not current_tab_id:
-            return None
-            
-        # Find which subhost this tab belongs to
-        for subhost_name, tab_frame in self.tab_frames.items():
-            if str(tab_frame) in current_tab_id:
-                return self.server_lists.get(subhost_name)
-        
-        return None
+        from Host.dashboard_functions import get_current_server_list
+        return get_current_server_list(self)
     
     def get_current_subhost(self):
         # Get the name of the currently active subhost
-        current_tab_id = self.server_notebook.select()
-        if not current_tab_id:
-            return "Local Host"
-            
-        # Find which subhost this tab belongs to
-        for subhost_name, tab_frame in self.tab_frames.items():
-            if str(tab_frame) in current_tab_id:
-                return subhost_name
-        
-        return "Local Host"
+        from Host.dashboard_functions import get_current_subhost
+        return get_current_subhost(self)
     
     def update_server_list_for_subhost(self, subhost_name, servers_data):
         # Update the server list for a specific subhost
@@ -805,7 +800,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.configure_server()
 
     def add_server(self):
-        # Add a new game server (Steam, Minecraft, or Other)
+        """Add a new game server (Steam, Minecraft, or Other)"""
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
             return
@@ -829,6 +824,7 @@ class ServerManagerDashboard(ServerManagerModule):
         dialog.title(f"Create {server_type} Server")
         dialog.transient(self.root)
         dialog.grab_set()
+        dialog.minsize(950, 700)  # Set minimum size for proper text wrapping
         
         # Main frame
         main_frame = ttk.Frame(dialog, padding=15)
@@ -882,8 +878,6 @@ class ServerManagerDashboard(ServerManagerModule):
             'name': tk.StringVar(),
             'app_id': tk.StringVar(),
             'install_dir': tk.StringVar(),
-            # 'exe_path': tk.StringVar(),  # REMOVED: No longer required during installation
-            'startup_args': tk.StringVar(),
             'minecraft_version': tk.StringVar(),
             'modloader': tk.StringVar(value="Vanilla")
         }
@@ -899,40 +893,78 @@ class ServerManagerDashboard(ServerManagerModule):
 
         current_row = 2
 
-        # Minecraft-specific fields
+        # Minecraft-specific fields with two-dropdown interface
         if server_type == "Minecraft":
             try:
-                mc_versions = self.server_manager.get_minecraft_versions() if self.server_manager else []
-                if not mc_versions:
-                    messagebox.showerror("Error", "Failed to fetch Minecraft versions.")
-                    dialog.destroy()
-                    return
+                # Load Minecraft versions from database using get_minecraft_versions_from_database
+                from Host.dashboard_functions import get_minecraft_versions_from_database
+                
+                # Get available modloaders
+                available_modloaders = ["Vanilla", "Forge", "Fabric", "NeoForge"]
+                
+                # Modloader selection (positioned above version dropdown)
+                ttk.Label(scrollable_frame, text="Modloader:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
+                modloader_combo = ttk.Combobox(scrollable_frame, textvariable=form_vars['modloader'], 
+                                             values=available_modloaders, state="readonly", width=32, font=("Segoe UI", 10))
+                modloader_combo.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
+                current_row += 1
+                
+                # Minecraft version dropdown (positioned below modloader)
+                ttk.Label(scrollable_frame, text="Minecraft Version:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
+                version_combo = ttk.Combobox(scrollable_frame, textvariable=form_vars['minecraft_version'], 
+                                           values=[], state="readonly", width=32, font=("Segoe UI", 10))
+                version_combo.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
+                current_row += 1
+                
+                # Function to update version list based on modloader selection
+                def update_version_list(*args):
+                    try:
+                        selected_modloader = form_vars['modloader'].get().lower()
+                        if selected_modloader == "vanilla":
+                            selected_modloader = "vanilla"  # Keep as is
+                        
+                        # Get versions from database for selected modloader
+                        versions = get_minecraft_versions_from_database(
+                            modloader=selected_modloader
+                        )
+                        
+                        # Create display options and mapping
+                        version_options = []
+                        version_map = {}
+                        
+                        for version_data in versions:
+                            version_id = version_data.get("version_id", "")
+                            display_text = version_id
+                            version_options.append(display_text)
+                            version_map[display_text] = version_data
+                        
+                        # Update combobox values
+                        version_combo['values'] = version_options
+                        
+                        # Set default selection to first item if available
+                        if version_options:
+                            form_vars['minecraft_version'].set(version_options[0])
+                        else:
+                            form_vars['minecraft_version'].set("")
+                        
+                        # Store version mapping for later use
+                        setattr(dialog, 'version_map', version_map)
+                        
+                    except Exception as e:
+                        logger.error(f"Error updating version list: {e}")
+                        version_combo['values'] = []
+                        form_vars['minecraft_version'].set("")
+                
+                # Bind modloader change event
+                form_vars['modloader'].trace('w', update_version_list)
+                
+                # Initialize with default modloader
+                update_version_list()
+                
             except Exception as e:
                 messagebox.showerror("Error", f"Minecraft support not available: {str(e)}")
                 dialog.destroy()
                 return
-                
-            # Default to latest release
-            latest_release = next((v for v in mc_versions if v["id"] == mc_versions[0]["id"]), mc_versions[0])
-            form_vars['minecraft_version'].set(latest_release["id"])
-            
-            # Minecraft version dropdown
-            ttk.Label(scrollable_frame, text="Minecraft Version:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-            version_combo = ttk.Combobox(scrollable_frame, textvariable=form_vars['minecraft_version'], values=[v["id"] for v in mc_versions], state="readonly", width=32, font=("Segoe UI", 10))
-            version_combo.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
-            current_row += 1
-            
-            # Modloader selection
-            ttk.Label(scrollable_frame, text="Modloader:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-            modloader_frame = ttk.Frame(scrollable_frame)
-            modloader_frame.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
-            for i in range(4):
-                modloader_frame.columnconfigure(i, weight=1)
-            
-            modloaders = ["Vanilla", "Fabric", "Forge", "NeoForge"]
-            for i, modloader in enumerate(modloaders):
-                ttk.Radiobutton(modloader_frame, text=modloader, variable=form_vars['modloader'], value=modloader).grid(row=0, column=i, padx=8, pady=5, sticky=tk.W)
-            current_row += 1
 
         # App ID (Steam only)
         if server_type == "Steam":
@@ -958,69 +990,54 @@ class ServerManagerDashboard(ServerManagerModule):
                 search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
                 search_entry.pack(side=tk.LEFT, padx=(5, 10))
                 
-                # Load dedicated servers from scanner's AppID list
+                # Load dedicated servers from scanner's AppID list (NO FALLBACKS)
                 try:
                     dedicated_servers_data, metadata = load_appid_scanner_list(self.server_manager_dir)
-                    
+
                     if not dedicated_servers_data:
-                        # Fallback to hardcoded list if scanner data not available
-                        logger.warning("Scanner AppID list not available, using fallback list")
-                        dedicated_servers = [
-                            {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
-                            {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
-                            {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
-                            {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
-                            {"name": "ARK: Survival Evolved Dedicated Server", "appid": "376030"},
-                            {"name": "Rust Dedicated Server", "appid": "258550"},
-                            {"name": "7 Days to Die Dedicated Server", "appid": "294420"},
-                            {"name": "Valheim Dedicated Server", "appid": "896660"},
-                            {"name": "Source Dedicated Server (Generic)", "appid": "205"}
-                        ]
-                    else:
-                        # Use scanner data - convert to compatible format
-                        dedicated_servers = [
-                            {
-                                "name": server.get("name", "Unknown Server"),
-                                "appid": str(server.get("appid", "0")),
-                                "developer": server.get("developer", ""),
-                                "publisher": server.get("publisher", ""),
-                                "description": server.get("description", ""),
-                                "type": server.get("type", "Dedicated Server")
-                            }
-                            for server in dedicated_servers_data
-                        ]
-                        
-                        logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner (last updated: {metadata.get('last_updated', 'Unknown')})")
-                        
-                        # Add refresh info to dialog
-                        if metadata.get('last_updated'):
-                            last_updated = metadata['last_updated']
-                            if 'T' in last_updated:  # ISO format
-                                try:
-                                    from datetime import datetime
-                                    dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                                    formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
-                                    ttk.Label(search_frame, text=f"Data last updated: {formatted_date}", 
-                                            foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
-                                except:
-                                    pass
-                        
-                except Exception as e:
-                    logger.error(f"Error loading scanner AppID list: {e}")
-                    # Use fallback list
+                        error_msg = "Scanner AppID list not available - database must be populated first"
+                        logger.error(error_msg)
+                        messagebox.showerror("Database Error", f"{error_msg}\n\nPlease ensure the AppID scanner has been run to populate the database.")
+                        return
+
+                    # Use scanner data - convert to compatible format
                     dedicated_servers = [
-                        {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
-                        {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
-                        {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
-                        {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
-                        {"name": "Source Dedicated Server (Generic)", "appid": "205"}
+                        {
+                            "name": server.get("name", "Unknown Server"),
+                            "appid": str(server.get("appid", "0")),
+                            "developer": server.get("developer", ""),
+                            "publisher": server.get("publisher", ""),
+                            "description": server.get("description", ""),
+                            "type": server.get("type", "Dedicated Server")
+                        }
+                        for server in dedicated_servers_data
                     ]
+
+                    logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner (last updated: {metadata.get('last_updated', 'Unknown')})")
+
+                    # Add refresh info to dialog
+                    if metadata.get('last_updated'):
+                        last_updated = metadata['last_updated']
+                        if 'T' in last_updated:  # ISO format
+                            try:
+                                from datetime import datetime
+                                dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                                formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
+                                ttk.Label(search_frame, text=f"Data last updated: {formatted_date}",
+                                        foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
+                            except:
+                                pass
+
+                except Exception as e:
+                    error_msg = f"Failed to load AppID scanner data from database: {e}"
+                    logger.error(error_msg)
+                    messagebox.showerror("Database Error", f"{error_msg}\n\nThe database must be available and populated with AppID scanner data.")
+                    return
                 
-                # Create server list
+                # Create server list with enhanced columns
                 list_frame = ttk.Frame(appid_dialog, padding=10)
                 list_frame.pack(fill=tk.BOTH, expand=True)
                 
-                # Enhanced treeview for server list with additional columns
                 columns = ("name", "appid", "developer", "type")
                 server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
                 server_tree.heading("name", text="Server Name")
@@ -1033,15 +1050,14 @@ class ServerManagerDashboard(ServerManagerModule):
                 server_tree.column("type", width=120)
                 
                 # Scrollbar
-                scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=server_tree.yview)
-                server_tree.configure(yscrollcommand=scrollbar.set)
+                tree_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=server_tree.yview)
+                server_tree.configure(yscrollcommand=tree_scrollbar.set)
                 
-                scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+                tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
                 server_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
                 
-                # Populate server list with enhanced data
+                # Populate server list
                 def populate_servers(filter_text=""):
-                    # Populate the server tree with filtered dedicated server list
                     server_tree.delete(*server_tree.get_children())
                     for server in dedicated_servers:
                         server_name = server["name"]
@@ -1055,9 +1071,8 @@ class ServerManagerDashboard(ServerManagerModule):
                 
                 populate_servers()
                 
-                # Enhanced search functionality
+                # Search functionality
                 def on_search(*args):
-                    # Update server list when search text changes
                     populate_servers(search_var.get())
                 
                 search_var.trace('w', on_search)
@@ -1099,9 +1114,7 @@ class ServerManagerDashboard(ServerManagerModule):
                 
                 def select_server():
                     selected = server_tree.selection()
-                    
                     if selected:
-                        # Use selected server from list
                         item = server_tree.item(selected[0])
                         appid = item['values'][1]
                         form_vars['app_id'].set(appid)
@@ -1141,30 +1154,22 @@ class ServerManagerDashboard(ServerManagerModule):
         if server_type == "Steam":
             help_text = "(Leave blank for SteamCMD default location)"
         else:  # Minecraft or Other
-            default_location = self.variables.get("defaultServerManagerInstallDir", "ServerManager location")
-            help_text = f"(Leave blank for default: {default_location}\\[ServerName])"
-        
-        ttk.Label(scrollable_frame, text=help_text, foreground="gray", font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
+            default_location = self.variables.get("defaultServerManagerInstallDir", "")
+            if default_location:
+                help_text = f"(Leave blank for default: {default_location}\\ServerName)"
+            else:
+                help_text = "(Please specify installation directory)"
+
+        # Create a wrapping label for the help text with better wrapping
+        help_label = ttk.Label(scrollable_frame, text=help_text, foreground="gray",
+                             font=("Segoe UI", 9), wraplength=500, justify=tk.LEFT)
+        help_label.grid(row=current_row, column=1, columnspan=2, padx=15, pady=(0, 5), sticky="ew")
+
+        # Ensure the column has proper weight for text wrapping
+        scrollable_frame.grid_columnconfigure(1, weight=1)
         current_row += 1
 
-        # Executable (Minecraft/Other) - REMOVED: No longer required during installation
-        # if server_type in ("Minecraft", "Other"):
-        #     ttk.Label(scrollable_frame, text="Executable Path:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-        #     exe_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['exe_path'], width=25, font=("Segoe UI", 10))
-        #     exe_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
-        #     
-        #     def browse_exe():
-        #         fp = filedialog.askopenfilename(title="Select Executable",
-        #             filetypes=[("Java/Jar/Exec","*.jar;*.exe;*.sh;*.bat;*.cmd;*.ps1"),("All","*.*")])
-        #         if fp:
-        #             form_vars['exe_path'].set(fp)
-        #     ttk.Button(scrollable_frame, text="Browse", command=browse_exe, width=12).grid(row=current_row, column=2, padx=15, pady=10)
-        #     current_row += 1
-
-        # Startup Args (all) - REMOVED: No longer required during installation
-        # ttk.Label(scrollable_frame, text="Startup Args:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-        # args_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['startup_args'], width=35, font=("Segoe UI", 10))
-        # args_entry.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
+        current_row += 1
         
         # Create button frame in top section (below the scrollable form)
         button_container = ttk.Frame(top_frame)
@@ -1227,6 +1232,59 @@ class ServerManagerDashboard(ServerManagerModule):
                 if not dialog.winfo_exists():
                     return
                     
+                # Validate required fields
+                server_name = form_vars['name'].get().strip()
+                install_dir = form_vars['install_dir'].get().strip()
+                
+                if not server_name:
+                    messagebox.showerror("Validation Error", "Server name is required.")
+                    return
+                    
+                # Set default install directory if not provided
+                if not install_dir:
+                    if server_type == "Steam":
+                        install_dir = self.variables.get("defaultSteamInstallDir", "")
+                        if not install_dir:
+                            messagebox.showerror("Validation Error", "SteamCMD path not configured. Please set the installation directory manually.")
+                            return
+                    else:  # Minecraft or Other
+                        default_base = self.variables.get("defaultServerManagerInstallDir", "")
+                        if default_base:
+                            install_dir = os.path.join(default_base, server_name)
+                        else:
+                            messagebox.showerror("Validation Error", "Default installation directory not configured. Please set the installation directory manually.")
+                            return
+                
+                # Validate server type specific fields
+                if server_type == "Steam":
+                    app_id = form_vars.get('app_id', tk.StringVar()).get().strip()
+                    if not app_id:
+                        messagebox.showerror("Validation Error", "Steam App ID is required for Steam servers.")
+                        return
+                    if not app_id.isdigit():
+                        messagebox.showerror("Validation Error", "Steam App ID must be a number.")
+                        return
+                        
+                elif server_type == "Minecraft":
+                    minecraft_version = form_vars['minecraft_version'].get().strip()
+                    if not minecraft_version:
+                        messagebox.showerror("Validation Error", "Minecraft version must be selected.")
+                        return
+                
+                # Check for invalid characters in server name
+                invalid_chars = ['<', '>', ':', '"', '|', '?', '*', '\\', '/']
+                if any(char in server_name for char in invalid_chars):
+                    messagebox.showerror("Validation Error", 
+                                       "Server name contains invalid characters. Please use only letters, numbers, spaces, and underscores.")
+                    return
+                
+                # Check if server name already exists
+                if self.server_manager:
+                    existing_config = self.server_manager.get_server_config(server_name)
+                    if existing_config:
+                        messagebox.showerror("Validation Error", f"A server with the name '{server_name}' already exists.")
+                        return
+                
                 create_button.config(state=tk.DISABLED)
                 cancel_button.config(state=tk.NORMAL)
                 progress.start(10)
@@ -1247,13 +1305,25 @@ class ServerManagerDashboard(ServerManagerModule):
                     except (tk.TclError, AttributeError):
                         pass
                 
+                # Prepare minecraft version data if applicable
+                minecraft_version_data = None
+                if server_type == "Minecraft":
+                    selected_version = form_vars['minecraft_version'].get()
+                    version_map = getattr(dialog, 'version_map', {})
+                    minecraft_version_data = version_map.get(selected_version)
+                
                 # Use the existing installation function from dashboard_functions
                 success, message = perform_server_installation(
-                    self.server_manager, server_type, form_vars, credentials, self.paths,
-                    status_callback=safe_status_callback,
+                    server_type=server_type,
+                    server_name=server_name,
+                    install_dir=install_dir,
+                    app_id=form_vars.get('app_id', tk.StringVar()).get() if server_type == "Steam" else None,
+                    minecraft_version=minecraft_version_data,
+                    credentials=credentials,
+                    server_manager=self.server_manager,
+                    progress_callback=safe_status_callback,
                     console_callback=safe_console_callback,
-                    cancel_flag=self.install_cancelled,
-                    steam_cmd_path=getattr(self, 'steam_cmd_path', None)
+                    steam_cmd_path=self.steam_cmd_path
                 )
 
                 # Check if dialog still exists before updating UI
@@ -1411,17 +1481,18 @@ class ServerManagerDashboard(ServerManagerModule):
             self.root.after(0, _update)
     
     def update_system_info(self):
-        # Update system information in the UI - thread-safe
+        # Update system information using background threading to prevent UI freezing
         def _update():
             try:
-                # Update web server status
+                # Update web server status (this is lightweight)
                 self.update_webserver_status()
 
-                # Use the imported function from dashboard_functions
-                update_system_info(self.metric_labels, self.system_name, self.os_info, self.variables)
+                # Use the threaded version from dashboard_functions for heavy system monitoring
+                from Host.dashboard_functions import update_system_info_threaded
+                update_system_info_threaded(self.metric_labels, self.system_name, self.os_info)
 
             except Exception as e:
-                logger.error(f"Error updating system info: {str(e)}")
+                logger.error(f"Error in update_system_info: {str(e)}")
         
         # Ensure this runs on the main thread
         if threading.current_thread() == threading.main_thread():
@@ -2153,63 +2224,49 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
             search_entry.pack(side=tk.LEFT, padx=(5, 10))
             
-            # Load dedicated servers from scanner's AppID list
+            # Load dedicated servers from scanner's AppID list (NO FALLBACKS)
             try:
                 dedicated_servers_data, metadata = load_appid_scanner_list(self.server_manager_dir)
-                
+
                 if not dedicated_servers_data:
-                    # Fallback to hardcoded list if scanner data not available
-                    logger.warning("Scanner AppID list not available, using fallback list")
-                    dedicated_servers = [
-                        {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
-                        {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
-                        {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
-                        {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
-                        {"name": "ARK: Survival Evolved Dedicated Server", "appid": "376030"},
-                        {"name": "Rust Dedicated Server", "appid": "258550"},
-                        {"name": "7 Days to Die Dedicated Server", "appid": "294420"},
-                        {"name": "Valheim Dedicated Server", "appid": "896660"},
-                        {"name": "Source Dedicated Server (Generic)", "appid": "205"}
-                    ]
-                else:
-                    # Use scanner data - convert to compatible format
-                    dedicated_servers = [
-                        {
-                            "name": server.get("name", "Unknown Server"),
-                            "appid": str(server.get("appid", "0")),
-                            "developer": server.get("developer", ""),
-                            "publisher": server.get("publisher", ""),
-                            "description": server.get("description", ""),
-                            "type": server.get("type", "Dedicated Server")
-                        }
-                        for server in dedicated_servers_data
-                    ]
-                    
-                    logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner (last updated: {metadata.get('last_updated', 'Unknown')})")
-                    
-                    # Add refresh info to dialog
-                    if metadata.get('last_updated'):
-                        last_updated = metadata['last_updated']
-                        if 'T' in last_updated:  # ISO format
-                            try:
-                                from datetime import datetime
-                                dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
-                                formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
-                                ttk.Label(search_frame, text=f"Data last updated: {formatted_date}", 
-                                        foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
-                            except:
-                                pass
-                        
-            except Exception as e:
-                logger.error(f"Error loading scanner AppID list: {e}")
-                # Use fallback list
+                    error_msg = "Scanner AppID list not available - database must be populated first"
+                    logger.error(error_msg)
+                    messagebox.showerror("Database Error", f"{error_msg}\n\nPlease ensure the AppID scanner has been run to populate the database.")
+                    return
+
+                # Use scanner data - convert to compatible format
                 dedicated_servers = [
-                    {"name": "Counter-Strike 2 Dedicated Server", "appid": "730"},
-                    {"name": "Team Fortress 2 Dedicated Server", "appid": "232250"},
-                    {"name": "Left 4 Dead 2 Dedicated Server", "appid": "222860"},
-                    {"name": "Garry's Mod Dedicated Server", "appid": "4020"},
-                    {"name": "Source Dedicated Server (Generic)", "appid": "205"}
+                    {
+                        "name": server.get("name", "Unknown Server"),
+                        "appid": str(server.get("appid", "0")),
+                        "developer": server.get("developer", ""),
+                        "publisher": server.get("publisher", ""),
+                        "description": server.get("description", ""),
+                        "type": server.get("type", "Dedicated Server")
+                    }
+                    for server in dedicated_servers_data
                 ]
+
+                logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner (last updated: {metadata.get('last_updated', 'Unknown')})")
+
+                # Add refresh info to dialog
+                if metadata.get('last_updated'):
+                    last_updated = metadata['last_updated']
+                    if 'T' in last_updated:  # ISO format
+                        try:
+                            from datetime import datetime
+                            dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                            formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
+                            ttk.Label(search_frame, text=f"Data last updated: {formatted_date}",
+                                    foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
+                        except:
+                            pass
+
+            except Exception as e:
+                error_msg = f"Failed to load AppID scanner data from database: {e}"
+                logger.error(error_msg)
+                messagebox.showerror("Database Error", f"{error_msg}\n\nThe database must be available and populated with AppID scanner data.")
+                return
             
             # Create server list
             list_frame = ttk.Frame(appid_dialog, padding=10)
@@ -2740,8 +2797,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                     # Use the rename function if name changed
                     if name_changed:
                         success, message = rename_server_configuration(server_name, new_name, 
-                                                                      int(new_appid) if new_type == 'Steam' and new_appid else None, 
-                                                                      self.server_manager, self.paths)
+                                                                      self.server_manager)
                         if not success:
                             messagebox.showerror("Error", f"Failed to rename server: {message}")
                             return
@@ -2912,7 +2968,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         
         # Open Java configuration dialog
         result = show_java_configuration_dialog(self.root, server_name, server_config, 
-                                               self.server_manager, self.server_manager_dir, self.config)
+                                               self.server_manager)
         
         # Refresh server list if Java was updated
         if result['success']:
@@ -3442,13 +3498,13 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", "Server manager not initialized.")
             return
         
-        # Use the new removal dialog function
+        # Use the removal dialog function from dashboard_functions
         result = create_server_removal_dialog(self.root, server_name, self.server_manager)
-        
+
         if result["confirmed"]:
             try:
                 remove_files = result["remove_files"]
-                
+
                 # Use server manager to remove/uninstall the server
                 if self.server_manager:
                     success, message = self.server_manager.uninstall_server(
@@ -3457,14 +3513,14 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 else:
                     success = False
                     message = "Server manager not initialized"
-                    
+
                 if success:
                     # Update server list
                     self.update_server_list(force_refresh=True)
                     messagebox.showinfo("Success", message)
                 else:
                     messagebox.showerror("Error", message)
-                    
+
             except Exception as e:
                 logger.error(f"Error removing server: {str(e)}")
                 messagebox.showerror("Error", f"Failed to remove server: {str(e)}")
@@ -3518,9 +3574,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
     def import_server_from_directory(self):
         # Import an existing server from a directory (legacy method)
         result = import_server_from_directory_dialog(
-            self.root, self.server_manager, self.server_manager_dir, 
-            self.supported_server_types, 
-            update_callback=lambda: self.update_server_list(force_refresh=True)
+            self.root, self.paths, self.server_manager_dir, 
+            update_callback=lambda: self.update_server_list(force_refresh=True),
+            dashboard_server_manager=self.server_manager
         )
 
     def import_server_from_export(self):
@@ -3695,10 +3751,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             try:
                 def progress_callback(message):
                     try:
-                        if 'console_text' in progress_dialog:
-                            progress_dialog['console_text'].insert(tk.END, message + "\n")
-                            progress_dialog['console_text'].see(tk.END)
-                            progress_dialog['console_text'].update()
+                        if hasattr(progress_dialog, 'update_console'):
+                            progress_dialog.update_console(message)
                         else:
                             print(message)
                     except:
@@ -3791,15 +3845,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             try:
                 def progress_callback(message):
                     try:
-                        # Use the console callback function which is more robust
-                        if 'console_callback' in progress_dialog:
-                            progress_dialog['console_callback'](message)
-                        elif 'console_text' in progress_dialog:
-                            progress_dialog['console_text'].config(state=tk.NORMAL)
-                            progress_dialog['console_text'].insert(tk.END, message + "\n")
-                            progress_dialog['console_text'].see(tk.END)
-                            progress_dialog['console_text'].config(state=tk.DISABLED)
-                            progress_dialog['console_text'].update()
+                        # Use the update_console method which is more robust
+                        if hasattr(progress_dialog, 'update_console'):
+                            progress_dialog.update_console(message)
                         else:
                             print(message)  # Fallback
                     except Exception as e:
@@ -3868,15 +3916,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             try:
                 def progress_callback(message):
                     try:
-                        # Use the console callback function which is more robust
-                        if 'console_callback' in progress_dialog:
-                            progress_dialog['console_callback'](message)
-                        elif 'console_text' in progress_dialog:
-                            progress_dialog['console_text'].config(state=tk.NORMAL)
-                            progress_dialog['console_text'].insert(tk.END, message + "\n")
-                            progress_dialog['console_text'].see(tk.END)
-                            progress_dialog['console_text'].config(state=tk.DISABLED)
-                            progress_dialog['console_text'].update()
+                        # Use the update_console method which is more robust
+                        if hasattr(progress_dialog, 'update_console'):
+                            progress_dialog.update_console(message)
                         else:
                             print(message)  # Fallback
                     except Exception as e:
@@ -3953,15 +3995,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             try:
                 def progress_callback(message):
                     try:
-                        # Use the console callback function which is more robust
-                        if 'console_callback' in progress_dialog:
-                            progress_dialog['console_callback'](message)
-                        elif 'console_text' in progress_dialog:
-                            progress_dialog['console_text'].config(state=tk.NORMAL)
-                            progress_dialog['console_text'].insert(tk.END, message + "\n")
-                            progress_dialog['console_text'].see(tk.END)
-                            progress_dialog['console_text'].config(state=tk.DISABLED)
-                            progress_dialog['console_text'].update()
+                        # Use the update_console method which is more robust
+                        if hasattr(progress_dialog, 'update_console'):
+                            progress_dialog.update_console(message)
                         else:
                             print(message)  # Fallback
                     except Exception as e:
@@ -4182,7 +4218,6 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
 def main():
     # Parse command line arguments and create/run dashboard
-    # Parse command line arguments
     parser = argparse.ArgumentParser(description='Server Manager Dashboard')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     args = parser.parse_args()

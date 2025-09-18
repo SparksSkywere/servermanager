@@ -8,10 +8,7 @@ import winreg
 import json
 import time
 import psutil
-import platform
 import datetime
-import tempfile
-import shutil
 import socket
 import webbrowser
 import traceback
