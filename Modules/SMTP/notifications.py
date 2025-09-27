@@ -19,14 +19,14 @@ except Exception:
 from .mailserver import mail_server
 
 class NotificationManager:
-    """Manages email notifications with templates and automated sending"""
+    # Manages email notifications with templates and automated sending
 
     def __init__(self):
         self.templates = self._load_templates()
         self.automated_notifications = self._load_automated_settings()
 
     def _load_templates(self):
-        """Load email templates"""
+        # Load email templates
         return {
             'welcome': {
                 'subject': 'Welcome to Server Manager',
@@ -242,7 +242,7 @@ Server Manager Team
         }
 
     def _load_automated_settings(self):
-        """Load automated notification settings from registry"""
+        # Load automated notification settings from registry
         try:
             import winreg
             from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
@@ -268,7 +268,7 @@ Server Manager Team
             return self._get_default_automated_settings()
 
     def _get_default_automated_settings(self):
-        """Return default automated notification settings"""
+        # Return default automated notification settings
         return {
             'welcome_email': True,
             'password_reset_email': True,
@@ -279,7 +279,7 @@ Server Manager Team
         }
 
     def save_automated_settings(self, settings):
-        """Save automated notification settings to registry"""
+        # Save automated notification settings to registry
         try:
             import winreg
             from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
@@ -304,7 +304,7 @@ Server Manager Team
             return False
 
     def send_notification(self, notification_type, recipient_email, **kwargs):
-        """Send a notification email"""
+        # Send a notification email
         if not mail_server.is_enabled():
             logger.warning("Mail server is disabled, cannot send notification")
             return False
@@ -332,7 +332,7 @@ Server Manager Team
         return mail_server.send_email(recipient_email, subject, text_body, html_body)
 
     def send_welcome_email(self, user):
-        """Send welcome email to new user"""
+        # Send welcome email to new user
         if not self.automated_notifications.get('welcome_email', True):
             return True
 
@@ -345,7 +345,7 @@ Server Manager Team
         return self.send_notification('welcome', user.email, **kwargs)
 
     def send_password_reset_email(self, user, temp_password):
-        """Send password reset email"""
+        # Send password reset email
         if not self.automated_notifications.get('password_reset_email', True):
             return True
 
@@ -357,7 +357,7 @@ Server Manager Team
         return self.send_notification('password_reset', user.email, **kwargs)
 
     def send_account_locked_email(self, user):
-        """Send account locked notification"""
+        # Send account locked notification
         if not self.automated_notifications.get('account_locked_email', True):
             return True
 
@@ -368,7 +368,7 @@ Server Manager Team
         return self.send_notification('account_locked', user.email, **kwargs)
 
     def send_server_alert(self, server_name, status, message, recipients=None):
-        """Send server alert to administrators or specified recipients"""
+        # Send server alert to administrators or specified recipients
         if not self.automated_notifications.get('server_alerts_email', True):
             return True
 
@@ -411,7 +411,7 @@ Server Manager Team
         return success
 
     def send_maintenance_notification(self, start_time, end_time, duration, recipients=None):
-        """Send maintenance notification"""
+        # Send maintenance notification
         if not self.automated_notifications.get('maintenance_email', True):
             return True
 
@@ -449,7 +449,7 @@ Server Manager Team
         return success
 
     def send_custom_notification(self, recipient_email, subject, message):
-        """Send custom notification"""
+        # Send custom notification
         kwargs = {
             'custom_subject': subject,
             'custom_message': message
@@ -458,11 +458,11 @@ Server Manager Team
         return self.send_notification('custom', recipient_email, **kwargs)
 
     def get_automated_settings(self):
-        """Get current automated notification settings"""
+        # Get current automated notification settings
         return self.automated_notifications.copy()
 
     def is_notification_enabled(self, notification_type):
-        """Check if a specific notification type is enabled"""
+        # Check if a specific notification type is enabled
         return self.automated_notifications.get(notification_type, True)
 
 

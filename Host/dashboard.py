@@ -42,23 +42,16 @@ from Modules.common import ServerManagerModule, initialize_registry_values
 
 # Import dashboard utility functions (only confirmed working ones)
 from Host.dashboard_functions import (
-    load_dashboard_config, update_webserver_status, update_system_info, update_system_info_threaded, center_window,
+    load_dashboard_config, update_webserver_status, update_system_info_threaded, center_window,
     create_server_type_selection_dialog, load_appid_scanner_list,
     load_minecraft_scanner_list, get_minecraft_versions_from_database,
-    get_steam_credentials, create_minecraft_version_browser_dialog,
-    check_appid_in_database, detect_server_type_from_appid, detect_server_type_from_directory,
-    perform_server_installation, import_server_from_directory_dialog, import_server_from_export_dialog,
-    export_server_dialog, create_progress_dialog_with_console, create_server_removal_dialog,
-    rename_server_configuration, show_java_configuration_dialog, batch_update_server_types,
+    get_steam_credentials,perform_server_installation, import_server_from_directory_dialog, import_server_from_export_dialog,
+    export_server_dialog, create_progress_dialog_with_console, rename_server_configuration, show_java_configuration_dialog, batch_update_server_types,
     update_server_status_in_treeview, open_directory_in_explorer,
-    create_java_selection_dialog, load_appid_list_from_database, find_appid_in_directory,
-    is_process_running, is_port_open, check_webserver_status, export_server_configuration,
-    import_server_configuration, generate_unique_server_name, get_directory_size,
-    count_files_in_directory, export_server_to_file, import_server_from_file,
-    extract_server_files_from_archive, validate_server_creation_inputs,
-    create_server_installation_dialog, update_server_list_from_files,
-    re_detect_server_type_from_config, update_server_configuration_with_detection,
-    get_current_server_list, get_current_subhost
+    get_current_server_list, get_current_subhost,
+    reattach_to_running_servers, update_server_list_for_subhost,
+    refresh_all_subhost_servers, refresh_current_subhost_servers, refresh_subhost_servers,
+    create_remote_host_connection_dialog, RemoteHostManager
 )
 
 # Import cluster management
@@ -73,7 +66,7 @@ from debug.debug import (
 from Modules.server_console import ConsoleManager
 
 # Import authentication
-from Host.admin_dashboard import admin_login
+from Host.admin_dashboard import (admin_login, admin_login_with_root)
 
 # Get dashboard logger
 logger = get_dashboard_logger()
@@ -133,9 +126,6 @@ class ServerManagerDashboard(ServerManagerModule):
             "formDisplayed": self.config.get("runtime", {}).get("formDisplayed", False),
             "verificationInProgress": self.config.get("runtime", {}).get("verificationInProgress", False),
             "webserverStatus": self.config.get("runtime", {}).get("webserverStatus", "Disconnected"),
-            # Registry-managed variables (will be set from registry)
-            "defaultSteamPath": "",
-            "webserverPort": 8080
         }
         
         # Initialize paths from registry and setup the application
@@ -200,15 +190,8 @@ class ServerManagerDashboard(ServerManagerModule):
             except Exception as e:
                 logger.warning(f"Window initialization issue (likely from trayicon launch): {e}")
                 # Continue anyway
-        
-        # Don't withdraw the main window initially - let login handle it
-        
-        # Prompt for login using admin authentication dialog (using admin_dashboard)
         # Pass our existing root window to avoid multiple Tkinter root windows
-        try:
-            # Import the login function
-            from Host.admin_dashboard import admin_login_with_root, admin_login
-            
+        try:            
             # Use the version that accepts existing root to avoid conflicts
             user = admin_login_with_root(self.root, self.user_manager)
                 
@@ -244,6 +227,13 @@ class ServerManagerDashboard(ServerManagerModule):
         logger.info("Dashboard window centered on screen")
         
         self.setup_ui()
+        
+        # Initial server list refresh to populate the UI
+        try:
+            self.update_server_list(force_refresh=True)
+            logger.info("Initial server list refresh completed")
+        except Exception as e:
+            logger.error(f"Error during initial server list refresh: {e}")
         
         # Write PID file
         self.write_pid_file("dashboard", os.getpid())
@@ -287,48 +277,7 @@ class ServerManagerDashboard(ServerManagerModule):
 
     def _reattach_to_running_servers(self):
         # Detect and reattach to running server processes
-        try:
-            if not self.server_manager or not self.console_manager:
-                return
-                
-            logger.info("Detecting running server processes for console reattachment...")
-            
-            # Get all configured servers
-            server_configs = self.server_manager.get_servers()
-            
-            for server_name, server_config in server_configs.items():
-                try:
-                    # Check if server process is running
-                    pid = server_config.get('ProcessId') or server_config.get('PID')
-                    if pid:
-                        try:
-                            import psutil
-                            if psutil.pid_exists(pid):
-                                process = psutil.Process(pid)
-                                if process.is_running():
-                                    logger.info(f"Found running server process for {server_name} (PID: {pid})")
-                                    
-                                    # Reattach console to the running process
-                                    success = self.console_manager.attach_console_to_process(
-                                        server_name, process, server_config
-                                    )
-                                    
-                                    if success:
-                                        logger.info(f"Successfully reattached console to {server_name}")
-                                    else:
-                                        logger.warning(f"Failed to reattach console to {server_name}")
-                        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                            logger.debug(f"Process {pid} for {server_name} is not accessible: {e}")
-                        except Exception as e:
-                            logger.error(f"Error checking process {pid} for {server_name}: {e}")
-                            
-                except Exception as e:
-                    logger.error(f"Error processing server {server_name} for reattachment: {e}")
-                    
-            logger.info("Finished detecting running server processes")
-            
-        except Exception as e:
-            logger.error(f"Error during server reattachment: {e}")
+        reattach_to_running_servers(self.server_manager, self.console_manager, logger)
 
     def setup_menu_bar(self):
         # Setup the menu bar with update options
@@ -340,6 +289,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Add Server", command=self.add_server)
         file_menu.add_command(label="Import Server", command=self.import_server)
+        file_menu.add_command(label="Sync All", command=self.sync_all)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.on_close)
         
@@ -354,7 +304,6 @@ class ServerManagerDashboard(ServerManagerModule):
         tools_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Tools", menu=tools_menu)
         tools_menu.add_command(label="Refresh All", command=self.refresh_all)
-        tools_menu.add_command(label="Sync All", command=self.sync_all)
         tools_menu.add_separator()
         tools_menu.add_command(label="Update Server Types", command=self.batch_update_server_types)
         tools_menu.add_separator()
@@ -370,32 +319,42 @@ class ServerManagerDashboard(ServerManagerModule):
         # Create and configure the main dashboard user interface
         # Create top frame for help and about buttons
         self.top_frame = ttk.Frame(self.root)
-        self.top_frame.pack(fill=tk.X, padx=15, pady=(15, 0))
+        self.top_frame.pack(fill=tk.X, padx=15, pady=(15, 10))
         
         # Add About and Help buttons to top right
         self.help_button = ttk.Button(self.top_frame, text="Help", command=self.show_help, width=10)
-        self.help_button.pack(side=tk.RIGHT, padx=(5, 0))
+        self.help_button.pack(side=tk.RIGHT, padx=(0, 10))
         
         self.about_button = ttk.Button(self.top_frame, text="About", command=self.show_about, width=10)
-        self.about_button.pack(side=tk.RIGHT, padx=(5, 5))
+        self.about_button.pack(side=tk.RIGHT)
         
-        # Add quick update buttons to top left
+        # Add quick update buttons to top left with consistent spacing
         self.update_all_button = ttk.Button(self.top_frame, text="Update All", 
                                           command=self.update_all_servers, width=12)
-        self.update_all_button.pack(side=tk.LEFT, padx=(0, 5))
+        self.update_all_button.pack(side=tk.LEFT, padx=(0, 8))
         
         self.schedules_button = ttk.Button(self.top_frame, text="Schedules", 
                                          command=self.show_schedule_manager, width=12)
-        self.schedules_button.pack(side=tk.LEFT, padx=(0, 5))
+        self.schedules_button.pack(side=tk.LEFT, padx=(0, 8))
         
         # Add console management button
         self.console_button = ttk.Button(self.top_frame, text="Consoles", 
                                        command=self.show_console_manager, width=12)
-        self.console_button.pack(side=tk.LEFT, padx=(0, 5))
+        self.console_button.pack(side=tk.LEFT, padx=(0, 8))
+        
+        # Add remote host button
+        self.remote_host_button = ttk.Button(self.top_frame, text="Remote Host", 
+                                           command=self.connect_remote_host, width=14)
+        self.remote_host_button.pack(side=tk.LEFT, padx=(0, 8))
         
         # Main container
         self.container_frame = ttk.Frame(self.root, padding=(15, 10, 15, 15))
         self.container_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Configure container frame for proper resizing
+        self.container_frame.columnconfigure(0, weight=1)
+        self.container_frame.rowconfigure(0, weight=1)
+        self.container_frame.rowconfigure(1, weight=0)
         
         # Main layout - servers list and system info
         self.main_pane = ttk.PanedWindow(self.container_frame, orient=tk.HORIZONTAL)
@@ -404,6 +363,11 @@ class ServerManagerDashboard(ServerManagerModule):
         # Server tabs frame (left side) - Tabbed interface for subhosts
         self.servers_frame = ttk.LabelFrame(self.main_pane, text="Host Servers", padding=10)
         self.main_pane.add(self.servers_frame, weight=70)
+        
+        # Configure servers frame for proper resizing
+        self.servers_frame.columnconfigure(0, weight=1)
+        self.servers_frame.rowconfigure(0, weight=0)  # Tab navigation
+        self.servers_frame.rowconfigure(1, weight=1)  # Notebook
         
         # Create tab navigation frame
         self.tab_nav_frame = ttk.Frame(self.servers_frame)
@@ -459,6 +423,11 @@ class ServerManagerDashboard(ServerManagerModule):
         self.system_frame = ttk.LabelFrame(self.main_pane, text="System Information", padding=10)
         self.main_pane.add(self.system_frame, weight=30)
         
+        # Configure system frame for proper resizing
+        self.system_frame.columnconfigure(0, weight=1)
+        self.system_frame.rowconfigure(0, weight=0)  # Header
+        self.system_frame.rowconfigure(1, weight=1)  # Metrics
+        
         # System info header
         self.system_header = ttk.Frame(self.system_frame)
         self.system_header.pack(fill=tk.X, pady=(0, 15))
@@ -496,16 +465,16 @@ class ServerManagerDashboard(ServerManagerModule):
         self.offline_check.pack(side=tk.LEFT, padx=(15, 0))
         
         # System metrics grid
-        self.metrics_frame = ttk.Frame(self.system_frame, padding=(5, 10))
+        self.metrics_frame = ttk.Frame(self.system_frame, padding=(0, 10, 0, 0))
         self.metrics_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Configure grid layout
+        # Configure grid layout with proper weights for uniform sizing
         for i in range(2):
-            self.metrics_frame.columnconfigure(i, weight=1, minsize=150)
+            self.metrics_frame.columnconfigure(i, weight=1, uniform="metric_col")
         for i in range(3):
-            self.metrics_frame.rowconfigure(i, weight=1, minsize=50)
+            self.metrics_frame.rowconfigure(i, weight=1, uniform="metric_row")
         
-        # Create metric panels
+        # Create metric panels with uniform sizing
         self.metric_labels = {}
         
         metrics = [
@@ -518,21 +487,28 @@ class ServerManagerDashboard(ServerManagerModule):
         ]
         
         for metric in metrics:
+            # Create frame with fixed minimum height and proper padding
             frame = ttk.LabelFrame(self.metrics_frame, text=f"{metric['icon']} {metric['title']}", padding=8)
-            frame.grid(row=metric["row"], column=metric["col"], padx=8, pady=8, sticky="nsew")
+            frame.grid(row=metric["row"], column=metric["col"], padx=3, pady=3, sticky="nsew")
             
-            value = ttk.Label(frame, text="Loading...", font=("Segoe UI", 10))
-            value.pack(anchor=tk.W, fill=tk.X)
+            # Ensure frame doesn't shrink below minimum size
+            frame.grid_propagate(False)
+            frame.configure(height=80)
+            
+            # Create value label with proper wrapping
+            wrap_width = 180 if metric["name"] == "gpu" else 150  # Extra width for GPU to handle multiple GPUs
+            value = ttk.Label(frame, text="Loading...", font=("Segoe UI", 9), wraplength=wrap_width, justify=tk.LEFT)
+            value.pack(anchor=tk.W, fill=tk.BOTH, expand=True)
             
             self.metric_labels[metric["name"]] = value
         
         # Button bar at bottom
         self.button_frame = ttk.Frame(self.container_frame)
-        self.button_frame.pack(fill=tk.X, pady=(15, 0))
+        self.button_frame.pack(fill=tk.X, pady=(10, 0))
         
         # Two rows of buttons for better organization
         self.button_row1 = ttk.Frame(self.button_frame)
-        self.button_row1.pack(fill=tk.X, pady=(0, 8))
+        self.button_row1.pack(fill=tk.X, pady=(0, 5))
         
         self.button_row2 = ttk.Frame(self.button_frame)
         self.button_row2.pack(fill=tk.X)
@@ -540,21 +516,21 @@ class ServerManagerDashboard(ServerManagerModule):
         # Add buttons with consistent sizing and spacing
         row1_buttons = [
             {"text": "Add Server", "command": self.add_server, "width": 15},
-            {"text": "Import Server", "command": self.import_server, "width": 15},
-            {"text": "Sync All", "command": self.sync_all, "width": 15}
+            {"text": "Import Server", "command": self.import_server, "width": 15}
         ]
         
         row2_buttons = [
+            {"text": "Sync All", "command": self.sync_all, "width": 15},
             {"text": "Cluster", "command": self.add_agent, "width": 15}
         ]
         
         for btn in row1_buttons:
             ttk.Button(self.button_row1, text=btn["text"], command=btn["command"], 
-                      width=btn["width"]).pack(side=tk.LEFT, padx=(0, 8))
+                      width=btn["width"]).pack(side=tk.LEFT, padx=(0, 10))
             
         for btn in row2_buttons:
             ttk.Button(self.button_row2, text=btn["text"], command=btn["command"], 
-                      width=btn["width"]).pack(side=tk.LEFT, padx=(0, 8))
+                      width=btn["width"]).pack(side=tk.LEFT, padx=(0, 10))
     
     # ===== TAB MANAGEMENT METHODS =====
     
@@ -563,6 +539,10 @@ class ServerManagerDashboard(ServerManagerModule):
         # Create tab frame
         tab_frame = ttk.Frame(self.server_notebook)
         self.tab_frames[subhost_name] = tab_frame
+        
+        # Configure tab frame for proper resizing
+        tab_frame.columnconfigure(0, weight=1)
+        tab_frame.rowconfigure(0, weight=1)
         
         # Create server list for this tab
         columns = ("name", "status", "pid", "cpu", "memory", "uptime")
@@ -667,76 +647,27 @@ class ServerManagerDashboard(ServerManagerModule):
     
     def get_current_server_list(self):
         # Get the server list for the currently active tab
-        from Host.dashboard_functions import get_current_server_list
         return get_current_server_list(self)
     
     def get_current_subhost(self):
         # Get the name of the currently active subhost
-        from Host.dashboard_functions import get_current_subhost
         return get_current_subhost(self)
     
     def update_server_list_for_subhost(self, subhost_name, servers_data):
         # Update the server list for a specific subhost
-        if subhost_name not in self.server_lists:
-            return
-            
-        server_list = self.server_lists[subhost_name]
-        
-        # Clear existing items
-        for item in server_list.get_children():
-            server_list.delete(item)
-        
-        # Add servers for this subhost
-        for server_name, server_info in servers_data.items():
-            try:
-                # Extract server information
-                status = server_info.get('status', 'Unknown')
-                pid = server_info.get('pid', '')
-                cpu = server_info.get('cpu', '0%')
-                memory = server_info.get('memory', '0 MB')
-                uptime = server_info.get('uptime', '00:00:00')
-                
-                # Insert into treeview
-                server_list.insert("", tk.END, values=(
-                    server_name, status, pid, cpu, memory, uptime
-                ))
-            except Exception as e:
-                logger.error(f"Error adding server {server_name} to list: {e}")
+        update_server_list_for_subhost(subhost_name, servers_data, self.server_lists, logger)
     
     def refresh_all_subhost_servers(self):
         # Refresh servers for all subhost tabs
-        for subhost_name in self.server_lists.keys():
-            self.refresh_subhost_servers(subhost_name)
+        refresh_all_subhost_servers(self.server_lists, self.server_manager, logger)
     
     def refresh_current_subhost_servers(self):
         # Refresh servers for the currently active subhost tab
-        current_subhost = self.get_current_subhost()
-        if current_subhost:
-            self.refresh_subhost_servers(current_subhost)
+        refresh_current_subhost_servers(self.get_current_subhost, self.server_manager, self.server_lists, logger)
     
     def refresh_subhost_servers(self, subhost_name):
         # Refresh servers for a specific subhost
-        try:
-            if subhost_name == "Local Host":
-                # Get local servers
-                if self.server_manager:
-                    servers = self.server_manager.get_all_servers()
-                    self.update_server_list_for_subhost(subhost_name, servers)
-            else:
-                # Get servers from remote subhost
-                from Modules.agents import AgentManager
-                agent_manager = AgentManager()
-                servers = agent_manager.get_node_servers(subhost_name)
-                
-                # Convert to expected format
-                servers_data = {}
-                for server in servers:
-                    servers_data[server.get('name', 'Unknown')] = server
-                
-                self.update_server_list_for_subhost(subhost_name, servers_data)
-                
-        except Exception as e:
-            logger.error(f"Error refreshing servers for {subhost_name}: {e}")
+        refresh_subhost_servers(subhost_name, self.server_manager, self.server_lists, logger)
 
     def show_server_context_menu(self, event):
         # Show context menu on right-click in server list
@@ -800,7 +731,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.configure_server()
 
     def add_server(self):
-        """Add a new game server (Steam, Minecraft, or Other)"""
+        # Add a new game server (Steam, Minecraft, or Other)
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
             return
@@ -897,7 +828,6 @@ class ServerManagerDashboard(ServerManagerModule):
         if server_type == "Minecraft":
             try:
                 # Load Minecraft versions from database using get_minecraft_versions_from_database
-                from Host.dashboard_functions import get_minecraft_versions_from_database
                 
                 # Get available modloaders
                 available_modloaders = ["Vanilla", "Forge", "Fabric", "NeoForge"]
@@ -973,7 +903,6 @@ class ServerManagerDashboard(ServerManagerModule):
             app_id_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
             
             def browse_appid():
-                # Open dialog to browse and select Steam dedicated server AppID
                 # Create AppID selection dialog
                 appid_dialog = tk.Toplevel(dialog)
                 appid_dialog.title("Select Dedicated Server")
@@ -990,7 +919,7 @@ class ServerManagerDashboard(ServerManagerModule):
                 search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
                 search_entry.pack(side=tk.LEFT, padx=(5, 10))
                 
-                # Load dedicated servers from scanner's AppID list (NO FALLBACKS)
+                # Load dedicated servers from scanner's AppID list
                 try:
                     dedicated_servers_data, metadata = load_appid_scanner_list(self.server_manager_dir)
 
@@ -1018,7 +947,7 @@ class ServerManagerDashboard(ServerManagerModule):
                     # Add refresh info to dialog
                     if metadata.get('last_updated'):
                         last_updated = metadata['last_updated']
-                        if 'T' in last_updated:  # ISO format
+                        if 'T' in last_updated:
                             try:
                                 from datetime import datetime
                                 dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
@@ -1125,7 +1054,7 @@ class ServerManagerDashboard(ServerManagerModule):
                 def cancel_selection():
                     appid_dialog.destroy()
                 
-                ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT)
+                ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT, padx=(0, 10))
                 ttk.Button(button_frame, text="Select Server", command=select_server, width=15).pack(side=tk.RIGHT)
                 
                 # Center dialog
@@ -1175,15 +1104,15 @@ class ServerManagerDashboard(ServerManagerModule):
         button_container = ttk.Frame(top_frame)
         button_container.pack(fill=tk.X, pady=(10, 5))
         
-        # Create buttons with reshuffled layout
+        # Create buttons with consistent spacing
         create_button = ttk.Button(button_container, text="Create Server", width=18)
-        create_button.pack(side=tk.LEFT, padx=(5, 10))
+        create_button.pack(side=tk.LEFT, padx=(0, 10))
         
         cancel_button = ttk.Button(button_container, text="Cancel Installation", width=18, state=tk.DISABLED)
         cancel_button.pack(side=tk.LEFT, padx=(0, 10))
         
         close_button = ttk.Button(button_container, text="Close", width=12)
-        close_button.pack(side=tk.RIGHT, padx=(0, 5))
+        close_button.pack(side=tk.RIGHT)
 
         # Status and progress bar in top section
         status_container = ttk.Frame(top_frame)
@@ -1424,33 +1353,8 @@ class ServerManagerDashboard(ServerManagerModule):
     def update_server_list(self, force_refresh=False):
         # Update server list from configuration files - thread-safe
         def _update():
-            try:
-                # Skip update if already refreshing
-                if hasattr(self, '_refreshing_server_list') and self._refreshing_server_list:
-                    log_dashboard_event("SERVER_LIST_UPDATE", "Skipping update - refresh already in progress", "DEBUG")
-                    return
-                
-                # Skip update if it's been less than configured interval since the last update and force_refresh isn't specified
-                update_interval = self.variables.get("serverListUpdateInterval", 30)
-                if not force_refresh and \
-                   (self.variables["lastServerListUpdate"] != datetime.datetime.min) and \
-                   (datetime.datetime.now() - self.variables["lastServerListUpdate"]).total_seconds() < update_interval:
-                    log_dashboard_event("SERVER_LIST_UPDATE", f"Skipping update - last update was less than {update_interval} seconds ago", "DEBUG")
-                    return
-                
-                # Set refreshing flag
-                self._refreshing_server_list = True
-                
-                try:
-                    # Update all subhost tabs
-                    self.refresh_all_subhost_servers()
-                finally:
-                    # Always clear the refreshing flag
-                    self._refreshing_server_list = False
-                    
-            except Exception as e:
-                logger.error(f"Error in update_server_list: {str(e)}")
-                self._refreshing_server_list = False
+            from Host.dashboard_functions import update_server_list_logic
+            update_server_list_logic(self, force_refresh)
         
         # Ensure this runs on the main thread
         if threading.current_thread() == threading.main_thread():
@@ -1488,7 +1392,6 @@ class ServerManagerDashboard(ServerManagerModule):
                 self.update_webserver_status()
 
                 # Use the threaded version from dashboard_functions for heavy system monitoring
-                from Host.dashboard_functions import update_system_info_threaded
                 update_system_info_threaded(self.metric_labels, self.system_name, self.os_info)
 
             except Exception as e:
@@ -1602,6 +1505,11 @@ class ServerManagerDashboard(ServerManagerModule):
         server_name = current_list.item(selected_items[0])['values'][0]
         current_subhost = self.get_current_subhost()
         
+        # Check if this is a remote host
+        if self.is_remote_host(current_subhost):
+            self.start_remote_server(server_name, current_subhost)
+            return
+        
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
             return
@@ -1657,6 +1565,132 @@ class ServerManagerDashboard(ServerManagerModule):
         start_thread = threading.Thread(target=start_in_background, daemon=True)
         start_thread.start()
 
+    def start_remote_server(self, server_name, subhost_name):
+        # Start a server on a remote host
+        try:
+            host, port = self.get_remote_connection_details(subhost_name)
+            if not host or not port or not hasattr(self, 'remote_host_manager'):
+                messagebox.showerror("Error", "Remote host connection not available")
+                return
+            
+            # Show starting message
+            self.update_server_status(server_name, "Starting...")
+            
+            def start_remote_in_background():
+                try:
+                    success, message = self.remote_host_manager.start_server(host, port, server_name)
+                    
+                    def update_ui():
+                        if success:
+                            self.update_server_status(server_name, "Running")
+                            messagebox.showinfo("Success", f"Server '{server_name}' started successfully on remote host")
+                        else:
+                            self.update_server_status(server_name, "Failed")
+                            messagebox.showerror("Error", f"Failed to start server '{server_name}': {message}")
+                        self.update_server_list(force_refresh=True)
+                    
+                    self.root.after(0, update_ui)
+                    
+                except Exception as e:
+                    logger.error(f"Error starting remote server: {str(e)}")
+                    def show_error():
+                        self.update_server_status(server_name, "Error")
+                        messagebox.showerror("Error", f"Failed to start remote server: {str(e)}")
+                        self.update_server_list(force_refresh=True)
+                    self.root.after(0, show_error)
+            
+            # Run in background thread
+            start_thread = threading.Thread(target=start_remote_in_background, daemon=True)
+            start_thread.start()
+            
+        except Exception as e:
+            logger.error(f"Error starting remote server: {str(e)}")
+            messagebox.showerror("Error", f"Failed to start remote server: {str(e)}")
+
+    def stop_remote_server(self, server_name, subhost_name):
+        # Stop a server on a remote host
+        try:
+            host, port = self.get_remote_connection_details(subhost_name)
+            if not host or not port or not hasattr(self, 'remote_host_manager'):
+                messagebox.showerror("Error", "Remote host connection not available")
+                return
+            
+            # Show stopping message
+            self.update_server_status(server_name, "Stopping...")
+            
+            def stop_remote_in_background():
+                try:
+                    success, message = self.remote_host_manager.stop_server(host, port, server_name)
+                    
+                    def update_ui():
+                        if success:
+                            self.update_server_status(server_name, "Stopped")
+                            messagebox.showinfo("Success", f"Server '{server_name}' stopped successfully on remote host")
+                        else:
+                            self.update_server_status(server_name, "Failed")
+                            messagebox.showerror("Error", f"Failed to stop server '{server_name}': {message}")
+                        self.update_server_list(force_refresh=True)
+                    
+                    self.root.after(0, update_ui)
+                    
+                except Exception as e:
+                    logger.error(f"Error stopping remote server: {str(e)}")
+                    def show_error():
+                        self.update_server_status(server_name, "Error")
+                        messagebox.showerror("Error", f"Failed to stop remote server: {str(e)}")
+                        self.update_server_list(force_refresh=True)
+                    self.root.after(0, show_error)
+            
+            # Run in background thread
+            stop_thread = threading.Thread(target=stop_remote_in_background, daemon=True)
+            stop_thread.start()
+            
+        except Exception as e:
+            logger.error(f"Error stopping remote server: {str(e)}")
+            messagebox.showerror("Error", f"Failed to stop remote server: {str(e)}")
+
+    def restart_remote_server(self, server_name, subhost_name):
+        # Restart a server on a remote host
+        try:
+            host, port = self.get_remote_connection_details(subhost_name)
+            if not host or not port or not hasattr(self, 'remote_host_manager'):
+                messagebox.showerror("Error", "Remote host connection not available")
+                return
+            
+            # Show restarting message
+            self.update_server_status(server_name, "Restarting...")
+            
+            def restart_remote_in_background():
+                try:
+                    success, message = self.remote_host_manager.restart_server(host, port, server_name)
+                    
+                    def update_ui():
+                        if success:
+                            self.update_server_status(server_name, "Running")
+                            messagebox.showinfo("Success", f"Server '{server_name}' restarted successfully on remote host")
+                        else:
+                            self.update_server_status(server_name, "Failed")
+                            messagebox.showerror("Error", f"Failed to restart server '{server_name}': {message}")
+                        self.update_server_list(force_refresh=True)
+                    
+                    self.root.after(0, update_ui)
+                    
+                except Exception as e:
+                    logger.error(f"Error restarting remote server: {str(e)}")
+                    def show_error():
+                        self.update_server_status(server_name, "Error")
+                        messagebox.showerror("Error", f"Failed to restart remote server: {str(e)}")
+                        self.update_server_list(force_refresh=True)
+                    self.root.after(0, show_error)
+            
+            # Run in background thread
+            restart_thread = threading.Thread(target=restart_remote_in_background, daemon=True)
+            restart_thread.start()
+            
+        except Exception as e:
+            logger.error(f"Error restarting remote server: {str(e)}")
+            messagebox.showerror("Error", f"Failed to restart remote server: {str(e)}")
+
     def stop_server(self):
         # Stop the selected game server
         current_list = self.get_current_server_list()
@@ -1671,6 +1705,11 @@ class ServerManagerDashboard(ServerManagerModule):
             
         server_name = current_list.item(selected_items[0])['values'][0]
         current_subhost = self.get_current_subhost()
+        
+        # Check if this is a remote host
+        if self.is_remote_host(current_subhost):
+            self.stop_remote_server(server_name, current_subhost)
+            return
         
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
@@ -1740,6 +1779,16 @@ class ServerManagerDashboard(ServerManagerModule):
             
         server_name = current_list.item(selected_items[0])['values'][0]
         current_subhost = self.get_current_subhost()
+        
+        # Check if this is a remote host
+        if self.is_remote_host(current_subhost):
+            # Confirm restart
+            confirm = messagebox.askyesno("Confirm Restart", 
+                                        f"Are you sure you want to restart the remote server '{server_name}'?",
+                                        icon=messagebox.WARNING)
+            if confirm:
+                self.restart_remote_server(server_name, current_subhost)
+            return
         
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
@@ -2002,7 +2051,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 dialog.destroy()
                 self.view_process_details()
             
-            ttk.Button(button_frame, text="Refresh", command=refresh_process_info, width=15).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Refresh", command=refresh_process_info, width=15).pack(side=tk.LEFT, padx=(0, 10))
             
             # Monitor button - shows resource monitoring
             def monitor_process():
@@ -2017,17 +2066,17 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 except Exception as e:
                     messagebox.showerror("Error", f"Failed to monitor process: {str(e)}")
             
-            ttk.Button(button_frame, text="Monitor (10s)", command=monitor_process, width=15).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Monitor (10s)", command=monitor_process, width=15).pack(side=tk.LEFT, padx=(0, 10))
             
             # Stop process button
             def stop_from_details():
                 dialog.destroy()
                 self.stop_server()
             
-            ttk.Button(button_frame, text="Stop Process", command=stop_from_details, width=15).pack(side=tk.RIGHT, padx=5)
+            ttk.Button(button_frame, text="Stop Process", command=stop_from_details, width=15).pack(side=tk.RIGHT, padx=(0, 10))
             
             # Close button
-            ttk.Button(button_frame, text="Close", command=dialog.destroy, width=15).pack(side=tk.RIGHT, padx=5)
+            ttk.Button(button_frame, text="Close", command=dialog.destroy, width=15).pack(side=tk.RIGHT, padx=(0, 10))
             
             # Center dialog relative to parent
             center_window(dialog, 700, 600, self.root)
@@ -2364,7 +2413,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             def cancel_selection():
                 appid_dialog.destroy()
             
-            ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT)
+            ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(button_frame, text="Select Server", command=select_server, width=15).pack(side=tk.RIGHT)
             
             # Center dialog
@@ -2930,9 +2979,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 messagebox.showerror("Test Failed", f"Executable not found: {exe_abs}")
         
         # Buttons
-        ttk.Button(button_frame, text="Test Path", command=test_executable).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Save Configuration", command=save_configuration).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Test Path", command=test_executable).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="Save Configuration", command=save_configuration).pack(side=tk.RIGHT)
 
         # Center dialog relative to parent
         center_window(dialog, 950, 850, self.root)
@@ -2975,7 +3024,6 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             self.update_server_list(force_refresh=True)
     
     def show_server_type_configuration(self):
-        # Show server configuration dialog based on server type - redirects to unified configure_server
         # Redirect to unified configure_server method
         self.configure_server()
     
@@ -3139,7 +3187,6 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 
                 # Update launch script
                 try:
-                    from Modules.minecraft import MinecraftServerManager
                     manager = MinecraftServerManager(self.server_manager_dir, self.config)
                     script_path = manager.create_launch_script(
                         install_dir_var.get(),
@@ -3163,7 +3210,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         def on_cancel():
             dialog.destroy()
         
-        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
+        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="Save", command=on_save, width=12).pack(side=tk.RIGHT)
         
         # Center dialog
@@ -3315,7 +3362,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         def on_cancel():
             dialog.destroy()
         
-        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
+        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="Save", command=on_save, width=12).pack(side=tk.RIGHT)
         
         # Center dialog
@@ -3430,7 +3477,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         def on_cancel():
             dialog.destroy()
         
-        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
+        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="Save", command=on_save, width=12).pack(side=tk.RIGHT)
         
         # Center dialog
@@ -3498,32 +3545,27 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", "Server manager not initialized.")
             return
         
-        # Use the removal dialog function from dashboard_functions
-        result = create_server_removal_dialog(self.root, server_name, self.server_manager)
+        # Remove server directly without confirmation dialog
+        try:
+            # Use server manager to remove/uninstall the server (keep files by default)
+            if self.server_manager:
+                success, message = self.server_manager.uninstall_server(
+                    server_name, remove_files=False
+                )
+            else:
+                success = False
+                message = "Server manager not initialized"
 
-        if result["confirmed"]:
-            try:
-                remove_files = result["remove_files"]
+            if success:
+                # Update server list
+                self.update_server_list(force_refresh=True)
+                messagebox.showinfo("Success", message)
+            else:
+                messagebox.showerror("Error", message)
 
-                # Use server manager to remove/uninstall the server
-                if self.server_manager:
-                    success, message = self.server_manager.uninstall_server(
-                        server_name, remove_files=remove_files
-                    )
-                else:
-                    success = False
-                    message = "Server manager not initialized"
-
-                if success:
-                    # Update server list
-                    self.update_server_list(force_refresh=True)
-                    messagebox.showinfo("Success", message)
-                else:
-                    messagebox.showerror("Error", message)
-
-            except Exception as e:
-                logger.error(f"Error removing server: {str(e)}")
-                messagebox.showerror("Error", f"Failed to remove server: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error removing server: {str(e)}")
+            messagebox.showerror("Error", f"Failed to remove server: {str(e)}")
 
     def import_server(self):
         # Enhanced import server functionality with support for exported configurations
@@ -3561,8 +3603,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             def cancel_import():
                 import_dialog.destroy()
             
-            ttk.Button(button_frame, text="Continue", command=proceed_import, width=15).pack(side=tk.LEFT, padx=5)
-            ttk.Button(button_frame, text="Cancel", command=cancel_import, width=15).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Continue", command=proceed_import, width=15).pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(button_frame, text="Cancel", command=cancel_import, width=15).pack(side=tk.LEFT, padx=(0, 10))
             
             # Center dialog
             center_window(import_dialog, 400, 300, self.root)
@@ -3711,6 +3753,168 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             logger.error(f"Error in cluster management: {str(e)}")
             messagebox.showerror("Error", f"Failed to open cluster management: {str(e)}")
 
+    def connect_remote_host(self):
+        # Open the remote host connection dialog
+        try:
+            create_remote_host_connection_dialog(self.root, self)
+        except Exception as e:
+            logger.error(f"Error opening remote host connection dialog: {str(e)}")
+            messagebox.showerror("Error", f"Failed to open remote host connection dialog: {str(e)}")
+
+    def add_remote_host(self, host, port, username, password, database="", use_ssl=False, timeout=10):
+        # Add a remote host to the dashboard with full connection management
+        try:
+            remote_host_name = f"Remote-{host}"
+            
+            # Check if tab already exists
+            if remote_host_name in self.tab_frames:
+                messagebox.showwarning("Warning", f"Remote host '{host}' is already connected")
+                return False
+            
+            # Initialize remote hosts manager if not exists
+            if not hasattr(self, 'remote_host_manager'):
+                self.remote_host_manager = RemoteHostManager()
+            
+            # Create connection using RemoteHostManager with SSL and timeout options
+            success, message = self.remote_host_manager.connect(host, port, username, password, use_ssl, timeout)
+            
+            if success:
+                # Connection successful, create tab and store connection
+                self.add_subhost_tab(remote_host_name, is_local=False)
+                
+                # Store the connection details for this tab
+                if not hasattr(self, 'remote_host_tabs'):
+                    self.remote_host_tabs = {}
+                
+                self.remote_host_tabs[remote_host_name] = {
+                    'host': host,
+                    'port': port,
+                    'username': username,
+                    'database': database,
+                    'use_ssl': use_ssl,
+                    'timeout': timeout
+                }
+                
+                # Load servers for this remote host
+                self.load_remote_host_servers(remote_host_name)
+                
+                logger.info(f"Successfully connected to remote host: {remote_host_name}")
+                messagebox.showinfo("Success", f"Successfully connected to remote host '{host}'")
+                return True
+            else:
+                messagebox.showerror("Connection Failed", f"Failed to connect to remote host '{host}': {message}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error adding remote host: {str(e)}")
+            messagebox.showerror("Error", f"Error connecting to remote host: {str(e)}")
+            return False
+
+    def load_remote_host_servers(self, remote_host_name):
+        # Load servers from a remote host into the dashboard
+        try:
+            if not hasattr(self, 'remote_host_manager') or remote_host_name not in self.remote_host_tabs:
+                return
+            
+            host = self.remote_host_tabs[remote_host_name]['host']
+            port = self.remote_host_tabs[remote_host_name]['port']
+            
+            # Get servers from remote host
+            success, servers_data = self.remote_host_manager.get_servers(host, port)
+            
+            if success and servers_data and remote_host_name in self.tab_frames:
+                # Parse servers data - handle both list and dict responses
+                servers = []
+                if isinstance(servers_data, list):
+                    servers = servers_data
+                elif isinstance(servers_data, dict):
+                    servers = servers_data.get('servers', [])
+                elif isinstance(servers_data, str):
+                    try:
+                        import json
+                        parsed_data = json.loads(servers_data)
+                        if isinstance(parsed_data, list):
+                            servers = parsed_data
+                        elif isinstance(parsed_data, dict):
+                            servers = parsed_data.get('servers', [])
+                    except:
+                        logger.warning(f"Could not parse servers data: {servers_data}")
+                        servers = []
+                
+                # Get the server list widget for this tab
+                tab_frame = self.tab_frames[remote_host_name]
+                server_list = None
+                
+                # Find the server list widget in the tab
+                for widget in tab_frame.winfo_children():
+                    if hasattr(widget, 'winfo_children'):
+                        for child in widget.winfo_children():
+                            if isinstance(child, ttk.Treeview):
+                                server_list = child
+                                break
+                        if server_list:
+                            break
+                
+                if server_list:
+                    # Clear existing items
+                    for item in server_list.get_children():
+                        server_list.delete(item)
+                    
+                    # Add remote servers to list
+                    for server in servers:
+                        server_list.insert('', 'end', values=(
+                            server.get('name', 'Unknown'),
+                            server.get('status', 'Unknown'),
+                            server.get('type', 'Unknown'),
+                            server.get('port', 'Unknown'),
+                            server.get('players', '0/0')
+                        ))
+                
+                logger.info(f"Loaded {len(servers)} servers for remote host: {remote_host_name}")
+            
+        except Exception as e:
+            logger.error(f"Error loading servers for remote host {remote_host_name}: {str(e)}")
+
+    def disconnect_remote_host(self, remote_host_name):
+        # Disconnect from a remote host and remove its tab
+        try:
+            if hasattr(self, 'remote_host_tabs') and remote_host_name in self.remote_host_tabs:
+                host = self.remote_host_tabs[remote_host_name]['host']
+                port = self.remote_host_tabs[remote_host_name]['port']
+                
+                # Disconnect using RemoteHostManager
+                if hasattr(self, 'remote_host_manager'):
+                    self.remote_host_manager.disconnect(host, port)
+                
+                # Remove from tracking
+                del self.remote_host_tabs[remote_host_name]
+                
+                # Remove tab if it exists - use the existing pattern from remove_subhost_tab
+                if remote_host_name in self.tab_frames:
+                    try:
+                        tab_index = self.server_notebook.index(self.tab_frames[remote_host_name])
+                        self.server_notebook.forget(tab_index)
+                    except:
+                        # If we can't find the tab index, just remove from dict
+                        pass
+                    del self.tab_frames[remote_host_name]
+                
+                logger.info(f"Disconnected from remote host: {remote_host_name}")
+                
+        except Exception as e:
+            logger.error(f"Error disconnecting from remote host {remote_host_name}: {str(e)}")
+
+    def get_remote_connection_details(self, subhost_name):
+        # Get the host and port for a remote host
+        if self.is_remote_host(subhost_name):
+            return (self.remote_host_tabs[subhost_name]['host'], 
+                    self.remote_host_tabs[subhost_name]['port'])
+        return None, None
+
+    def is_remote_host(self, subhost_name):
+        # Check if the given subhost is a remote host
+        return hasattr(self, 'remote_host_tabs') and subhost_name in self.remote_host_tabs
+
     def check_server_updates(self):
         # Check for updates for the selected server
         current_list = self.get_current_server_list()
@@ -3849,9 +4053,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                         if hasattr(progress_dialog, 'update_console'):
                             progress_dialog.update_console(message)
                         else:
-                            print(message)  # Fallback
+                            print(message)
                     except Exception as e:
-                        print(f"Console callback error: {e}, message: {message}")  # Fallback with error info
+                        print(f"Console callback error: {e}, message: {message}")
                 
                 if self.update_manager:
                     # Use scheduled=False to ensure full console output for manual updates
@@ -3920,10 +4124,10 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                         if hasattr(progress_dialog, 'update_console'):
                             progress_dialog.update_console(message)
                         else:
-                            print(message)  # Fallback
+                            print(message)
                     except Exception as e:
-                        print(f"Console callback error: {e}, message: {message}")  # Fallback with error info
-                
+                        print(f"Console callback error: {e}, message: {message}")
+
                 if self.update_manager:
                     # Use scheduled=False to ensure full console output for manual batch updates
                     results = self.update_manager.update_all_steam_servers(progress_callback=progress_callback, scheduled=False)
@@ -3999,10 +4203,10 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                         if hasattr(progress_dialog, 'update_console'):
                             progress_dialog.update_console(message)
                         else:
-                            print(message)  # Fallback
+                            print(message)
                     except Exception as e:
-                        print(f"Console callback error: {e}, message: {message}")  # Fallback with error info
-                
+                        print(f"Console callback error: {e}, message: {message}")
+
                 if self.update_manager:
                     # Use scheduled=False to ensure full console output for manual batch restarts
                     results = self.update_manager.restart_all_servers(progress_callback=progress_callback, scheduled=False)
@@ -4119,7 +4323,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 else:
                     # Show results dialog
                     result_msg = f"Successfully updated {count} server(s):\n\n"
-                    for server in servers[:10]:  # Show first 10 servers
+                    for server in servers[:10]:
                         result_msg += f"• {server['name']}: {server['old_type']} → {server['new_type']}\n"
                     
                     if len(servers) > 10:

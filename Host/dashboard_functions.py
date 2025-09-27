@@ -1,11 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Dashboard Functions Module
-
-This module contains utility functions for the Server Manager Dashboard.
-All UI code should be in dashboard.py, this module contains only business logic.
-"""
-
 import os
 import sys
 import json
@@ -25,14 +18,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
 
 # Import logging functions
-from Modules.server_logging import get_dashboard_logger
+from Modules.server_logging import get_dashboard_logger, log_dashboard_event
 
 # Get dashboard logger
 logger = get_dashboard_logger()
 
 
 def load_dashboard_config(server_manager_dir):
-    """Load dashboard configuration from JSON file"""
+    # Load dashboard configuration from JSON file
     try:
         config_path = os.path.join(server_manager_dir, "data", "dashboard.json")
         if os.path.exists(config_path):
@@ -47,7 +40,7 @@ def load_dashboard_config(server_manager_dir):
 
 
 def center_window(window, width=None, height=None, parent=None):
-    """Center a window on the screen or relative to a parent window"""
+    # Center a window on the screen or relative to a parent window
     window.update_idletasks()
     
     # Get window dimensions
@@ -77,7 +70,7 @@ def center_window(window, width=None, height=None, parent=None):
 
 
 def create_server_type_selection_dialog(root, supported_server_types):
-    """Create and show server type selection dialog"""
+    # Create and show server type selection dialog
     type_dialog = tk.Toplevel(root)
     type_dialog.title("Select Server Type")
     type_dialog.transient(root)
@@ -130,7 +123,7 @@ def create_server_type_selection_dialog(root, supported_server_types):
 
 
 def get_steam_credentials(root):
-    """Open a dialog to get Steam credentials"""
+    # Open a dialog to get Steam credentials
     credentials = {"anonymous": False, "username": "", "password": ""}
     
     # Create dialog window
@@ -190,7 +183,7 @@ def get_steam_credentials(root):
 
 
 def load_appid_scanner_list(server_manager_dir):
-    """Load the AppID list from database only (NO FALLBACKS)"""
+    # Load the AppID list from database only (NO FALLBACKS)
     try:
         # Import database scanner
         from Modules.Database.AppIDScanner import AppIDScanner
@@ -231,7 +224,7 @@ def load_appid_scanner_list(server_manager_dir):
 
 
 def load_minecraft_scanner_list(server_manager_dir):
-    """Load the Minecraft server list from database (NO FALLBACKS)"""
+    # Load the Minecraft server list from database (NO FALLBACKS)
     try:
         # Import database scanner
         from Modules.Database.MinecraftIDScanner import MinecraftIDScanner
@@ -276,7 +269,7 @@ def load_minecraft_scanner_list(server_manager_dir):
 
 
 def get_minecraft_versions_from_database(modloader=None, dedicated_only=True):
-    """Get Minecraft versions from database filtered by modloader - NO FALLBACKS"""
+    # Get Minecraft versions from database filtered by modloader - NO FALLBACKS
     try:
         # Import database scanner
         from Modules.Database.MinecraftIDScanner import MinecraftIDScanner
@@ -323,7 +316,7 @@ def get_minecraft_versions_from_database(modloader=None, dedicated_only=True):
 
 
 def create_minecraft_version_browser_dialog(parent, modloader="Vanilla"):
-    """Create a dialog to browse and select Minecraft versions from database"""
+    # Create a dialog to browse and select Minecraft versions from database
     dialog = tk.Toplevel(parent)
     dialog.title(f"Browse {modloader} Minecraft Versions")
     dialog.geometry("700x500")
@@ -421,7 +414,7 @@ def create_minecraft_version_browser_dialog(parent, modloader="Vanilla"):
 
 
 def create_steam_appid_browser_dialog(parent, server_manager_dir):
-    """Create a dialog to browse and select Steam AppIDs from database"""
+    # Create a dialog to browse and select Steam AppIDs from database
     dialog = tk.Toplevel(parent)
     dialog.title("Select Steam Dedicated Server")
     dialog.geometry("700x500")
@@ -600,7 +593,7 @@ def create_steam_appid_browser_dialog(parent, server_manager_dir):
 
 
 def check_appid_in_database(appid):
-    """Check if an AppID exists in the Steam database and return server info"""
+    # Check if an AppID exists in the Steam database and return server info
     if not appid:
         return None
     
@@ -615,7 +608,7 @@ def check_appid_in_database(appid):
 
 
 def detect_server_type_from_appid(appid):
-    """Detect server type based on AppID from database"""
+    # Detect server type based on AppID from database
     if not appid:
         return "Other"
     
@@ -627,7 +620,7 @@ def detect_server_type_from_appid(appid):
 
 
 def detect_server_type_from_directory(directory_path):
-    """Detect server type from directory contents and configuration"""
+    # Detect server type from directory contents and configuration
     if not directory_path or not os.path.exists(directory_path):
         return "Other"
     
@@ -656,24 +649,22 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
                                minecraft_version=None, credentials=None,
                                server_manager=None, progress_callback=None, console_callback=None,
                                steam_cmd_path=None):
-    """
-    Perform server installation with progress tracking and console output.
-    
-    Args:
-        server_type: Type of server to install
-        server_name: Name for the server
-        install_dir: Installation directory
-        app_id: Steam App ID (for Steam servers)
-        minecraft_version: Minecraft version data (for Minecraft servers)
-        credentials: Steam credentials (for Steam servers)
-        server_manager: Server manager instance
-        progress_callback: Function to call with progress updates
-        console_callback: Function to call with console output
-        steam_cmd_path: Path to SteamCMD executable (for Steam servers)
-        
-    Returns:
-        tuple: (success, message)
-    """
+    # Perform server installation with progress tracking and console output
+    #
+    # Args:
+    #     server_type: Type of server to install
+    #     server_name: Name for the server
+    #     install_dir: Installation directory
+    #     app_id: Steam App ID (for Steam servers)
+    #     minecraft_version: Minecraft version data (for Minecraft servers)
+    #     credentials: Steam credentials (for Steam servers)
+    #     server_manager: Server manager instance
+    #     progress_callback: Function to call with progress updates
+    #     console_callback: Function to call with console output
+    #     steam_cmd_path: Path to SteamCMD executable (for Steam servers)
+    #
+    # Returns:
+    #     tuple: (success, message)
     try:
         if not server_manager:
             error_msg = "Server manager not available"
@@ -773,7 +764,7 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
 
 # Placeholder functions for functions that are used by dashboard.py but not essential for add_server
 def update_webserver_status(webserver_status_label, offline_var, paths, variables):
-    """Update webserver status in the dashboard"""
+    # Update webserver status in the dashboard
     try:
         status = check_webserver_status(paths, variables)
         webserver_status_label.config(text=status)
@@ -797,7 +788,7 @@ _previous_network_stats = None
 _previous_network_time = None
 
 def update_system_info(metric_labels, system_name, os_info, variables):
-    """Update system information in the dashboard UI"""
+    # Update system information in the dashboard UI
     global _previous_network_stats, _previous_network_time
     
     try:
@@ -1013,7 +1004,7 @@ def update_system_info(metric_labels, system_name, os_info, variables):
 
 
 def collect_system_info_data():
-    """Collect system information data in a thread-safe manner (no UI updates)"""
+    # Collect system information data in a thread-safe manner (no UI updates)
     import platform
     import psutil
     import subprocess
@@ -1040,9 +1031,25 @@ def collect_system_info_data():
             logger.error(f"Error getting OS info: {e}")
             data['os_info'] = "Unknown OS"
 
-        # CPU usage (non-blocking version)
+        # CPU usage (per-core and overall)
         try:
-            data['cpu_percent'] = psutil.cpu_percent(interval=None)  # No blocking interval
+            # Get overall CPU usage
+            overall_cpu = psutil.cpu_percent(interval=0.1)
+            
+            # Get per-core CPU usage
+            per_core_cpu = psutil.cpu_percent(percpu=True, interval=0.1)
+            
+            # Format CPU display
+            if len(per_core_cpu) <= 8:  # Show per-core for systems with 8 or fewer cores
+                core_usage = ", ".join([f"{i}:{usage:.0f}%" for i, usage in enumerate(per_core_cpu)])
+                data['cpu_percent'] = f"Overall: {overall_cpu:.1f}%\nCores: {core_usage}"
+            else:  # For systems with many cores, show overall + summary
+                high_usage_cores = [i for i, usage in enumerate(per_core_cpu) if usage > 50]
+                if high_usage_cores:
+                    data['cpu_percent'] = f"Overall: {overall_cpu:.1f}%\nHigh usage cores: {len(high_usage_cores)}/{len(per_core_cpu)}"
+                else:
+                    data['cpu_percent'] = f"Overall: {overall_cpu:.1f}%\nAll cores: <50% usage"
+                    
         except Exception as e:
             logger.error(f"Error getting CPU info: {e}")
             data['cpu_percent'] = None
@@ -1059,17 +1066,39 @@ def collect_system_info_data():
             data['memory_used_gb'] = None
             data['memory_total_gb'] = None
 
-        # Disk usage
+        # Disk usage - detect all drive letters on Windows
         try:
-            disk = psutil.disk_usage('/')
-            data['disk_percent'] = disk.percent
-            data['disk_used_gb'] = disk.used / (1024**3)
-            data['disk_total_gb'] = disk.total / (1024**3)
+            import string
+            disk_info_lines = []
+
+            if platform.system() == "Windows":
+                # Get all drive letters on Windows
+                drives = [f"{letter}:\\" for letter in string.ascii_uppercase if os.path.exists(f"{letter}:\\")]
+                for drive in drives:
+                    try:
+                        disk = psutil.disk_usage(drive)
+                        used_gb = disk.used / (1024**3)
+                        total_gb = disk.total / (1024**3)
+                        percent = disk.percent
+                        drive_letter = drive[0].upper()
+                        disk_info_lines.append(f"{drive_letter}: {used_gb:.1f}GB/{total_gb:.1f}GB ({percent:.1f}%)")
+                    except Exception as e:
+                        logger.debug(f"Error getting disk info for {drive}: {e}")
+                        continue
+            else:
+                # For non-Windows systems, use the root filesystem
+                disk = psutil.disk_usage('/')
+                used_gb = disk.used / (1024**3)
+                total_gb = disk.total / (1024**3)
+                percent = disk.percent
+                disk_info_lines.append(f"Root: {used_gb:.1f}GB/{total_gb:.1f}GB ({percent:.1f}%)")
+
+            # Store the formatted disk information
+            data['disk_info'] = "\n".join(disk_info_lines)
+
         except Exception as e:
             logger.error(f"Error getting disk info: {e}")
-            data['disk_percent'] = None
-            data['disk_used_gb'] = None
-            data['disk_total_gb'] = None
+            data['disk_info'] = "Disk: Error"
 
         # Network info
         try:
@@ -1126,14 +1155,19 @@ def collect_system_info_data():
                         gpu = gpus[0]
                         gpu_info = f"GPU: {gpu.name}"
                         if hasattr(gpu, 'memoryTotal') and gpu.memoryTotal > 0:
-                            gpu_info += f" ({gpu.memoryUsed}MB/{gpu.memoryTotal}MB)"
+                            used_mb = int(gpu.memoryUsed)
+                            total_mb = int(gpu.memoryTotal)
+                            gpu_info += f"\n{used_mb}MB/{total_mb}MB ({gpu.memoryUtil*100:.1f}%)"
                     else:
-                        # Multiple GPUs
-                        gpu_names = [gpu.name for gpu in gpus]
-                        gpu_info = f"GPU: {len(gpus)} GPUs ({', '.join(gpu_names[:2])}"
-                        if len(gpu_names) > 2:
-                            gpu_info += f" +{len(gpu_names)-2} more"
-                        gpu_info += ")"
+                        # Multiple GPUs - format for wrapping
+                        gpu_info = f"GPU: {len(gpus)} GPUs detected"
+                        for i, gpu in enumerate(gpus):
+                            name = gpu.name.replace("NVIDIA GeForce ", "").replace("AMD Radeon ", "")
+                            gpu_info += f"\n• {name}"
+                            if hasattr(gpu, 'memoryTotal') and gpu.memoryTotal > 0:
+                                used_mb = int(gpu.memoryUsed)
+                                total_mb = int(gpu.memoryTotal)
+                                gpu_info += f" ({used_mb}MB/{total_mb}MB)"
                 else:
                     # GPUtil found no GPUs, try system detection
                     raise ImportError("GPUtil detected no GPUs")
@@ -1166,10 +1200,9 @@ def collect_system_info_data():
                                     if len(gpu_list) == 1:
                                         gpu_info = f"GPU: {gpu_list[0]}"
                                     else:
-                                        gpu_info = f"GPU: {len(gpu_list)} GPUs ({', '.join(gpu_list[:2])}"
-                                        if len(gpu_list) > 2:
-                                            gpu_info += f" +{len(gpu_list)-2} more"
-                                        gpu_info += ")"
+                                        gpu_info = f"GPU: {len(gpu_list)} GPUs"
+                                        for gpu_name in gpu_list:
+                                            gpu_info += f"\n• {gpu_name}"
                     
                     except subprocess.TimeoutExpired:
                         gpu_info = "GPU: Detection timeout"
@@ -1231,11 +1264,11 @@ def collect_system_info_data():
 
 
 def update_system_info_threaded(metric_labels, system_name, os_info, callback=None):
-    """Update system information using background threading to prevent UI freezing"""
+    # Update system information using background threading to prevent UI freezing
     import threading
     
     def background_update():
-        """Collect system data in background thread"""
+        # Collect system data in background thread
         try:
             # Collect data in background (this may take several seconds)
             data = collect_system_info_data()
@@ -1251,7 +1284,12 @@ def update_system_info_threaded(metric_labels, system_name, os_info, callback=No
                     
                     # Update CPU
                     if data.get('cpu_percent') is not None:
-                        metric_labels["cpu"].config(text=f"CPU: {data['cpu_percent']:.1f}%")
+                        if isinstance(data['cpu_percent'], str) and '\n' in data['cpu_percent']:
+                            # Multi-line CPU display (per-core)
+                            metric_labels["cpu"].config(text=data['cpu_percent'])
+                        else:
+                            # Single line CPU display
+                            metric_labels["cpu"].config(text=f"CPU: {data['cpu_percent']:.1f}%")
                     else:
                         metric_labels["cpu"].config(text="CPU: N/A")
                     
@@ -1264,10 +1302,8 @@ def update_system_info_threaded(metric_labels, system_name, os_info, callback=No
                         metric_labels["memory"].config(text="Memory: N/A")
                     
                     # Update Disk
-                    if all(k in data for k in ['disk_used_gb', 'disk_total_gb', 'disk_percent']):
-                        metric_labels["disk"].config(
-                            text=f"Disk: {data['disk_used_gb']:.1f}GB / {data['disk_total_gb']:.1f}GB ({data['disk_percent']:.1f}%)"
-                        )
+                    if 'disk_info' in data:
+                        metric_labels["disk"].config(text=data['disk_info'])
                     else:
                         metric_labels["disk"].config(text="Disk: N/A")
                     
@@ -1318,7 +1354,7 @@ def update_system_info_threaded(metric_labels, system_name, os_info, callback=No
 
 # Additional placeholder functions that dashboard.py might need
 def get_current_server_list(dashboard):
-    """Get the server list for the currently active tab"""
+    # Get the server list for the currently active tab
     current_tab_id = dashboard.server_notebook.select()
     if not current_tab_id:
         return None
@@ -1332,7 +1368,7 @@ def get_current_server_list(dashboard):
 
 
 def get_current_subhost(dashboard):
-    """Get the name of the currently active subhost"""
+    # Get the name of the currently active subhost
     current_tab_id = dashboard.server_notebook.select()
     if not current_tab_id:
         return "Local Host"
@@ -1346,7 +1382,7 @@ def get_current_subhost(dashboard):
 
 
 def format_uptime_from_start_time(start_time):
-    """Format uptime from either a timestamp string or seconds since epoch"""
+    # Format uptime from either a timestamp string or seconds since epoch
     try:
         if isinstance(start_time, str):
             # Handle timestamp string
@@ -1382,12 +1418,12 @@ def format_uptime_from_start_time(start_time):
 
 
 def update_server_status_in_treeview(server_list, server_name, status):
-    """Placeholder for server status update"""
+    # Placeholder for server status update
     pass
 
 
 def open_directory_in_explorer(directory_path):
-    """Placeholder for opening directory in explorer"""
+    # Opens the specified directory path in Windows Explorer
     try:
         import subprocess
         startupinfo = subprocess.STARTUPINFO()
@@ -1401,7 +1437,7 @@ def open_directory_in_explorer(directory_path):
 
 
 def import_server_from_directory_dialog(root, paths, server_manager_dir, update_callback=None, dashboard_server_manager=None):
-    """Import an existing server from a directory"""
+    # Import an existing server from a directory through a GUI dialog
     try:
         # Create import dialog
         dialog = tk.Toplevel(root)
@@ -1472,7 +1508,7 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
         app_id_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
         
         def browse_appid():
-            """Open dialog to browse and select Steam AppID"""
+            # Open dialog to browse and select Steam AppID
             selected_appid = create_steam_appid_browser_dialog(dialog, server_manager_dir)
             if selected_appid:
                 app_id_var.set(selected_appid)
@@ -1503,7 +1539,7 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
         version_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
         
         def browse_minecraft_version():
-            """Open dialog to browse and select Minecraft version"""
+            # Open dialog to browse and select Minecraft version
             selected_version = create_minecraft_version_browser_dialog(dialog, modloader_var.get())
             if selected_version:
                 version_var.set(selected_version.get("version_id", ""))
@@ -1514,7 +1550,7 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
         ttk.Button(version_frame, text="Browse", command=browse_minecraft_version, width=10).grid(row=0, column=1)
         
         def on_type_change(*args):
-            """Show/hide fields based on server type"""
+            # Show/hide fields based on server type
             server_type = type_var.get()
             
             if server_type == "Steam":
@@ -1631,7 +1667,7 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
 
 
 def import_server_from_export_dialog(root, paths, server_manager_dir, update_callback=None):
-    """Import server from exported configuration file"""
+    # Import server from exported configuration file
     try:
         # File selection dialog
         file_path = filedialog.askopenfilename(
@@ -1678,7 +1714,7 @@ def import_server_from_export_dialog(root, paths, server_manager_dir, update_cal
 
 
 def export_server_dialog(root, current_list, paths):
-    """Export server configuration for use on other hosts or clusters"""
+    # Export server configuration for use on other hosts or clusters
     try:
         # Get selected server
         if not current_list.selection():
@@ -1786,7 +1822,7 @@ def export_server_dialog(root, current_list, paths):
 
 
 def create_progress_dialog_with_console(parent, title="Progress"):
-    """Create a progress dialog with console output for long-running operations"""
+    # Create a progress dialog with console output for long-running operations
     class ProgressDialog:
         def __init__(self, parent, title):
             self.dialog = tk.Toplevel(parent)
@@ -1834,20 +1870,20 @@ def create_progress_dialog_with_console(parent, title="Progress"):
             self.is_closed = False
             
         def update_progress(self, message):
-            """Update the progress message"""
+            # Update the progress message
             if not self.is_closed:
                 self.progress_var.set(message)
                 self.dialog.update_idletasks()
                 
         def update_console(self, message):
-            """Add a message to the console output"""
+            # Add a message to the console output
             if not self.is_closed:
                 self.console_text.insert(tk.END, message + "\n")
                 self.console_text.see(tk.END)
                 self.dialog.update_idletasks()
                 
         def complete(self, message="Operation completed"):
-            """Mark the operation as complete"""
+            # Mark the operation as complete
             if not self.is_closed:
                 self.progress_bar.stop()
                 self.progress_var.set(message)
@@ -1855,21 +1891,21 @@ def create_progress_dialog_with_console(parent, title="Progress"):
                 self.update_console(f"[COMPLETE] {message}")
                 
         def close_dialog(self):
-            """Close the dialog"""
+            # Close the dialog
             self.is_closed = True
             self.dialog.destroy()
             
         def show(self):
-            """Show the dialog and return self for method chaining"""
+            # Show the dialog and return self for method chaining
             return self
             
         # Add dictionary-like access for backward compatibility
         def __contains__(self, key):
-            """Support 'in' operator for backward compatibility"""
+            # Support 'in' operator for backward compatibility
             return key in ['console_text', 'console_callback']
             
         def __getitem__(self, key):
-            """Support dictionary-like access for backward compatibility"""
+            # Support dictionary-like access for backward compatibility
             if key == 'console_text':
                 return self.console_text
             elif key == 'console_callback':
@@ -1881,7 +1917,7 @@ def create_progress_dialog_with_console(parent, title="Progress"):
 
 
 def create_server_removal_dialog(root, server_name, server_manager):
-    """Create a dialog for removing a server with checkbox options"""
+    # Create a dialog for removing a server with checkbox options
     class ServerRemovalDialog:
         def __init__(self, parent, server_name, server_manager):
             self.parent = parent
@@ -1952,12 +1988,12 @@ def create_server_removal_dialog(root, server_name, server_manager):
             self.dialog.protocol("WM_DELETE_WINDOW", self.cancel)
 
         def on_config_checkbox_change(self):
-            """Ensure at least one option is selected"""
+            # Ensure at least one option is selected
             if not self.remove_config_var.get() and not self.remove_files_var.get():
                 self.remove_config_var.set(True)
 
         def confirm_removal(self):
-            """Confirm the removal"""
+            # Confirm the removal
             if not self.remove_config_var.get() and not self.remove_files_var.get():
                 messagebox.showwarning("Selection Required",
                                      "Please select at least one removal option.")
@@ -1971,12 +2007,12 @@ def create_server_removal_dialog(root, server_name, server_manager):
             self.dialog.destroy()
 
         def cancel(self):
-            """Cancel the removal"""
+            # Cancel the removal
             self.result = {'confirmed': False, 'remove_files': False}
             self.dialog.destroy()
 
         def show(self):
-            """Show the dialog and return the result"""
+            # Show the dialog and return the result
             self.dialog.wait_window()
             return self.result
 
@@ -1986,7 +2022,7 @@ def create_server_removal_dialog(root, server_name, server_manager):
 
 
 def rename_server_configuration(server_name, new_name, server_manager):
-    """Rename a server configuration"""
+    # Rename a server configuration
     try:
         # Validate new name
         if not new_name or not new_name.strip():
@@ -2015,7 +2051,7 @@ def rename_server_configuration(server_name, new_name, server_manager):
 
 
 def show_java_configuration_dialog(root, server_name, server_config, server_manager):
-    """Show Java configuration dialog for Minecraft servers"""
+    # Show Java configuration dialog for Minecraft servers
     try:
         # Create Java configuration dialog
         dialog = tk.Toplevel(root)
@@ -2147,7 +2183,7 @@ def show_java_configuration_dialog(root, server_name, server_config, server_mana
 
 
 def batch_update_server_types(paths):
-    """Update server types for all servers based on their installation directories"""
+    # Update server types for all servers based on their installation directories
     try:
         updated_count = 0
         updated_servers = []
@@ -2168,7 +2204,7 @@ def batch_update_server_types(paths):
 
 
 def create_java_selection_dialog(root, minecraft_version=None):
-    """Create a dialog to select Java installation for a server."""
+    # Create a dialog to select Java installation for a server
     try:
         try:
             from Modules.java_configurator import JavaConfigurator
@@ -2264,7 +2300,7 @@ def create_java_selection_dialog(root, minecraft_version=None):
 
 
 def load_appid_list_from_database():
-    """Load AppID list directly from database"""
+    # Load AppID list directly from database
     try:
         from Modules.Database.AppIDScanner import AppIDScanner
         scanner = AppIDScanner(use_database=True, debug_mode=False)
@@ -2280,7 +2316,7 @@ def load_appid_list_from_database():
 
 
 def find_appid_in_directory(directory_path):
-    """Find Steam AppID from directory contents"""
+    # Find Steam AppID from directory contents
     if not directory_path or not os.path.exists(directory_path):
         return None
     
@@ -2314,7 +2350,7 @@ def find_appid_in_directory(directory_path):
 
 
 def is_process_running(pid):
-    """Check if a process with the given PID is running"""
+    # Check if a process with the given PID is running
     try:
         import psutil
         return psutil.pid_exists(pid)
@@ -2323,7 +2359,7 @@ def is_process_running(pid):
 
 
 def is_port_open(host, port, timeout=1):
-    """Check if a port is open on the specified host"""
+    # Check if a port is open on the specified host
     try:
         import socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -2336,7 +2372,7 @@ def is_port_open(host, port, timeout=1):
 
 
 def check_webserver_status(paths, variables):
-    """Check if the web server is running and return status"""
+    # Check if the web server is running and return status
     if variables.get("offlineMode", False):
         return "Offline Mode"
         
@@ -2352,7 +2388,7 @@ def check_webserver_status(paths, variables):
 
 
 def export_server_configuration(server_name, paths, include_files=False):
-    """Export server configuration to a portable format"""
+    # Export server configuration to a portable format
     try:
         from Modules.server_manager import ServerManager
         server_manager = ServerManager()
@@ -2384,7 +2420,7 @@ def export_server_configuration(server_name, paths, include_files=False):
 
 
 def import_server_configuration(export_data, paths, install_directory=None, auto_install=False):
-    """Import server configuration from export data"""
+    # Import server configuration from export data
     try:
         from Modules.server_manager import ServerManager
         server_manager = ServerManager()
@@ -2421,7 +2457,7 @@ def import_server_configuration(export_data, paths, install_directory=None, auto
 
 
 def generate_unique_server_name(name, paths):
-    """Generate a unique server name by checking existing configurations"""
+    # Generate a unique server name by checking existing configurations
     try:
         from Modules.server_manager import ServerManager
         server_manager = ServerManager()
@@ -2441,7 +2477,7 @@ def generate_unique_server_name(name, paths):
 
 
 def get_directory_size(directory):
-    """Get total size of directory in bytes"""
+    # Get total size of directory in bytes
     try:
         total_size = 0
         for dirpath, dirnames, filenames in os.walk(directory):
@@ -2457,7 +2493,7 @@ def get_directory_size(directory):
 
 
 def count_files_in_directory(directory):
-    """Count total number of files in directory"""
+    # Count total number of files in directory
     try:
         count = 0
         for _, _, files in os.walk(directory):
@@ -2468,7 +2504,7 @@ def count_files_in_directory(directory):
 
 
 def export_server_to_file(export_data, export_path, include_files=False):
-    """Export server configuration to file"""
+    # Export server configuration to file
     try:
         with open(export_path, 'w', encoding='utf-8') as f:
             json.dump(export_data, f, indent=2, ensure_ascii=False)
@@ -2479,7 +2515,7 @@ def export_server_to_file(export_data, export_path, include_files=False):
 
 
 def import_server_from_file(file_path):
-    """Import server configuration from file"""
+    # Import server configuration from file
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             export_data = json.load(f)
@@ -2492,7 +2528,7 @@ def import_server_from_file(file_path):
 
 
 def extract_server_files_from_archive(zip_path, extract_to):
-    """Extract server files from zip archive"""
+    # Extract server files from zip archive
     try:
         import zipfile
         
@@ -2506,7 +2542,7 @@ def extract_server_files_from_archive(zip_path, extract_to):
 
 
 def validate_server_creation_inputs(server_type, server_name, app_id=None, executable_path=None):
-    """Validate inputs for server creation"""
+    # Validate inputs for server creation
     try:
         errors = []
         
@@ -2539,8 +2575,427 @@ def validate_server_creation_inputs(server_type, server_name, app_id=None, execu
         return False, [f"Validation error: {str(e)}"]
 
 
+def create_remote_host_connection_dialog(parent, dashboard):
+    # Create a dialog for connecting to a remote host for one-time server operations
+    dialog = tk.Toplevel(parent)
+    dialog.title("Connect to Remote Host")
+    dialog.geometry("600x650")  # Increased height to show all content
+    dialog.transient(parent)
+    dialog.grab_set()
+    dialog.resizable(True, True)  # Allow resizing
+    dialog.minsize(500, 550)  # Set minimum size to ensure content visibility
+    
+    # Create a canvas with scrollbar for very small screens
+    canvas = tk.Canvas(dialog)
+    scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
+    scrollable_frame = ttk.Frame(canvas)
+    
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+    )
+    
+    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+    
+    main_frame = ttk.Frame(scrollable_frame, padding=20)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Configure main frame to allow proper resizing
+    main_frame.grid_rowconfigure(6, weight=1)  # Allow the area before buttons to expand
+    
+    # Title
+    title_label = ttk.Label(main_frame, text="Connect to Remote Server Manager Host", font=("Segoe UI", 14, "bold"))
+    title_label.pack(pady=(0, 15))
+    
+    info_label = ttk.Label(main_frame, text="Connect to a remote Server Manager instance for one-time operations", 
+                          foreground="gray", font=("Segoe UI", 9))
+    info_label.pack(pady=(0, 20))
+    
+    # Connection details frame
+    details_frame = ttk.LabelFrame(main_frame, text="Connection Details", padding=15)
+    details_frame.pack(fill=tk.X, pady=(0, 15))
+    
+    # Configure grid weights
+    details_frame.grid_columnconfigure(1, weight=1)
+    
+    # Host/IP field
+    ttk.Label(details_frame, text="Host/IP Address:").grid(row=0, column=0, sticky=tk.W, pady=8)
+    host_var = tk.StringVar()
+    host_entry = ttk.Entry(details_frame, textvariable=host_var, width=35)
+    host_entry.grid(row=0, column=1, pady=8, padx=(15, 0), sticky=tk.EW)
+    
+    # Port field
+    ttk.Label(details_frame, text="Port:").grid(row=1, column=0, sticky=tk.W, pady=8)
+    port_var = tk.StringVar(value="8080")
+    port_entry = ttk.Entry(details_frame, textvariable=port_var, width=35)
+    port_entry.grid(row=1, column=1, pady=8, padx=(15, 0), sticky=tk.EW)
+    
+    # Authentication frame
+    auth_frame = ttk.LabelFrame(main_frame, text="Authentication", padding=15)
+    auth_frame.pack(fill=tk.X, pady=(0, 15))
+    auth_frame.grid_columnconfigure(1, weight=1)
+    
+    # Username field
+    ttk.Label(auth_frame, text="Username:").grid(row=0, column=0, sticky=tk.W, pady=8)
+    username_var = tk.StringVar(value="admin")
+    username_entry = ttk.Entry(auth_frame, textvariable=username_var, width=35)
+    username_entry.grid(row=0, column=1, pady=8, padx=(15, 0), sticky=tk.EW)
+    
+    # Password field
+    ttk.Label(auth_frame, text="Password:").grid(row=1, column=0, sticky=tk.W, pady=8)
+    password_var = tk.StringVar()
+    password_entry = ttk.Entry(auth_frame, textvariable=password_var, width=35, show="*")
+    password_entry.grid(row=1, column=1, pady=8, padx=(15, 0), sticky=tk.EW)
+    
+    # Connection options frame
+    options_frame = ttk.LabelFrame(main_frame, text="Options", padding=15)
+    options_frame.pack(fill=tk.X, pady=(0, 15))
+    
+    # SSL/HTTPS option
+    ssl_var = tk.BooleanVar(value=False)
+    ssl_check = ttk.Checkbutton(options_frame, text="Use HTTPS (SSL)", variable=ssl_var)
+    ssl_check.pack(anchor=tk.W, pady=2)
+    
+    # Timeout option
+    timeout_frame = ttk.Frame(options_frame)
+    timeout_frame.pack(fill=tk.X, pady=(5, 0))
+    ttk.Label(timeout_frame, text="Connection Timeout (seconds):").pack(side=tk.LEFT)
+    timeout_var = tk.StringVar(value="10")
+    timeout_entry = ttk.Entry(timeout_frame, textvariable=timeout_var, width=8)
+    timeout_entry.pack(side=tk.RIGHT)
+    
+    # Status frame
+    status_frame = ttk.Frame(main_frame)
+    status_frame.pack(fill=tk.X, pady=(0, 15))
+    
+    status_var = tk.StringVar(value="Ready to connect...")
+    status_label = ttk.Label(status_frame, textvariable=status_var, foreground="blue", font=("Segoe UI", 9))
+    status_label.pack(anchor=tk.W)
+    
+    # Progress bar
+    progress = ttk.Progressbar(status_frame, mode="indeterminate")
+    
+    def validate_inputs():
+        # Validate all input fields
+        host = host_var.get().strip()
+        port = port_var.get().strip()
+        username = username_var.get().strip()
+        password = password_var.get().strip()
+        timeout = timeout_var.get().strip()
+        
+        if not host:
+            raise ValueError("Host/IP address is required")
+        if not port or not port.isdigit() or not (1 <= int(port) <= 65535):
+            raise ValueError("Valid port number (1-65535) is required")
+        if not username:
+            raise ValueError("Username is required")
+        if not password:
+            raise ValueError("Password is required")
+        if not timeout or not timeout.isdigit() or int(timeout) <= 0:
+            raise ValueError("Valid timeout value is required")
+            
+        return host, int(port), username, password, ssl_var.get(), int(timeout)
+    
+    def test_connection():
+        # Test the connection to the remote host
+        try:
+            host, port, username, password, use_ssl, timeout = validate_inputs()
+            
+            status_var.set("Testing connection...")
+            status_label.config(foreground="blue")
+            progress.pack(fill=tk.X, pady=(5, 0))
+            progress.start()
+            dialog.update()
+            
+            # Test connection using the remote host manager
+            success, message = test_remote_host_connection(host, port, username, password, use_ssl, timeout)
+            
+            progress.stop()
+            progress.pack_forget()
+            
+            if success:
+                status_var.set("✓ Connection successful!")
+                status_label.config(foreground="green")
+            else:
+                status_var.set(f"✗ Connection failed: {message}")
+                status_label.config(foreground="red")
+                
+        except ValueError as e:
+            progress.stop()
+            progress.pack_forget()
+            status_var.set(f"✗ Validation error: {str(e)}")
+            status_label.config(foreground="red")
+        except Exception as e:
+            progress.stop()
+            progress.pack_forget()
+            status_var.set(f"✗ Connection error: {str(e)}")
+            status_label.config(foreground="red")
+    
+    def connect_and_add():
+        # Connect and add the remote host to the dashboard
+        try:
+            host, port, username, password, use_ssl, timeout = validate_inputs()
+            
+            status_var.set("Connecting to remote host...")
+            status_label.config(foreground="blue")
+            progress.pack(fill=tk.X, pady=(5, 0))
+            progress.start()
+            dialog.update()
+            
+            # Add the remote host to the dashboard with all connection parameters
+            success = dashboard.add_remote_host(host, port, username, password, "", use_ssl, timeout)
+            
+            progress.stop()
+            progress.pack_forget()
+            
+            if success:
+                messagebox.showinfo("Success", f"Successfully connected to remote host: {host}:{port}")
+                dialog.destroy()
+            else:
+                status_var.set(f"✗ Failed to add remote host")
+                status_label.config(foreground="red")
+                
+        except ValueError as e:
+            progress.stop()
+            progress.pack_forget()
+            messagebox.showerror("Validation Error", str(e))
+        except Exception as e:
+            progress.stop()
+            progress.pack_forget()
+            logger.error(f"Error connecting to remote host: {str(e)}")
+            messagebox.showerror("Error", f"Failed to connect: {str(e)}")
+    
+    def cancel():
+        dialog.destroy()
+    
+    # Add flexible space before buttons
+    spacer_frame = ttk.Frame(main_frame)
+    spacer_frame.pack(fill=tk.BOTH, expand=True, pady=(15, 10))
+    
+    # Button frame (stays at bottom)
+    button_frame = ttk.Frame(main_frame)
+    button_frame.pack(fill=tk.X, side=tk.BOTTOM)
+    
+    # Buttons
+    test_btn = ttk.Button(button_frame, text="Test Connection", command=test_connection, width=15)
+    test_btn.pack(side=tk.LEFT, padx=(0, 10))
+    
+    connect_btn = ttk.Button(button_frame, text="Connect & Add", command=connect_and_add, width=15)
+    connect_btn.pack(side=tk.LEFT)
+    
+    cancel_btn = ttk.Button(button_frame, text="Cancel", command=cancel, width=12)
+    cancel_btn.pack(side=tk.RIGHT)
+    
+    # Focus on host entry
+    host_entry.focus()
+    
+    # Pack canvas and scrollbar
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+    
+    # Bind mouse wheel scrolling
+    def on_mousewheel(event):
+        canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    
+    # Bind mouse wheel to canvas and all child widgets
+    def bind_mousewheel(widget):
+        widget.bind("<MouseWheel>", on_mousewheel)
+        for child in widget.winfo_children():
+            bind_mousewheel(child)
+    
+    bind_mousewheel(dialog)
+    
+    # Center dialog with the new dimensions
+    center_window(dialog, 600, 650, parent)
+
+
+def test_remote_host_connection(host, port, username, password, use_ssl=False, timeout=10):
+    # Test connection to a remote Server Manager host
+    import requests
+    
+    try:
+        protocol = "https" if use_ssl else "http"
+        base_url = f"{protocol}://{host}:{port}"
+        
+        # Test basic connectivity first
+        test_url = f"{base_url}/api/status"
+        
+        response = requests.get(test_url, timeout=timeout, verify=False if use_ssl else True)
+        
+        if response.status_code == 200:
+            # Try to authenticate
+            auth_url = f"{base_url}/api/auth/login"
+            auth_data = {"username": username, "password": password}
+            
+            auth_response = requests.post(auth_url, json=auth_data, timeout=timeout, verify=False if use_ssl else True)
+            
+            if auth_response.status_code == 200:
+                return True, "Connection and authentication successful"
+            else:
+                return False, "Authentication failed - check username/password"
+        else:
+            return False, f"Server responded with status {response.status_code}"
+            
+    except requests.exceptions.ConnectionError:
+        return False, "Could not connect to remote host - check host/port"
+    except requests.exceptions.Timeout:
+        return False, "Connection timed out"
+    except Exception as e:
+        return False, f"Connection error: {str(e)}"
+
+
+class RemoteHostManager:
+    # Manages connections and operations with remote Server Manager hosts
+    
+    def __init__(self):
+        self.active_connections = {}
+        self.session_cache = {}
+    
+    def connect(self, host, port, username, password, use_ssl=False, timeout=10):
+        # Establish connection to remote host and get session token
+        import requests
+        
+        try:
+            protocol = "https" if use_ssl else "http"
+            base_url = f"{protocol}://{host}:{port}"
+            connection_id = f"{host}:{port}"
+            
+            # Create session
+            session = requests.Session()
+            session.verify = False if use_ssl else True
+            
+            # Authenticate
+            auth_url = f"{base_url}/api/auth/login"
+            auth_data = {"username": username, "password": password}
+            
+            auth_response = session.post(auth_url, json=auth_data, timeout=timeout)
+            
+            if auth_response.status_code == 200:
+                # Store session and connection info
+                self.active_connections[connection_id] = {
+                    "host": host,
+                    "port": port,
+                    "base_url": base_url,
+                    "session": session,
+                    "authenticated": True,
+                    "use_ssl": use_ssl,
+                    "timeout": timeout
+                }
+                return True, "Connected successfully"
+            else:
+                return False, "Authentication failed"
+                
+        except Exception as e:
+            return False, f"Connection failed: {str(e)}"
+    
+    def disconnect(self, host, port):
+        # Disconnect from remote host
+        connection_id = f"{host}:{port}"
+        if connection_id in self.active_connections:
+            try:
+                session = self.active_connections[connection_id]["session"]
+                base_url = self.active_connections[connection_id]["base_url"]
+                session.post(f"{base_url}/api/auth/logout", timeout=5)
+            except:
+                pass  # Ignore logout errors
+            del self.active_connections[connection_id]
+            return True
+        return False
+    
+    def get_servers(self, host, port):
+        # Get list of servers from remote host
+        connection_id = f"{host}:{port}"
+        if connection_id not in self.active_connections:
+            return False, "Not connected to remote host"
+        
+        try:
+            conn = self.active_connections[connection_id]
+            session = conn["session"]
+            base_url = conn["base_url"]
+            timeout = conn["timeout"]
+            
+            response = session.get(f"{base_url}/api/servers", timeout=timeout)
+            
+            if response.status_code == 200:
+                servers_data = response.json()
+                return True, servers_data
+            else:
+                return False, f"Failed to get servers: {response.status_code}"
+                
+        except Exception as e:
+            return False, f"Error getting servers: {str(e)}"
+    
+    def start_server(self, host, port, server_name):
+        # Start a server on remote host
+        return self._server_action(host, port, server_name, "start")
+    
+    def stop_server(self, host, port, server_name):
+        # Stop a server on remote host
+        return self._server_action(host, port, server_name, "stop")
+    
+    def restart_server(self, host, port, server_name):
+        # Restart a server on remote host
+        return self._server_action(host, port, server_name, "restart")
+    
+    def _server_action(self, host, port, server_name, action):
+        # Perform server action on remote host
+        connection_id = f"{host}:{port}"
+        if connection_id not in self.active_connections:
+            return False, "Not connected to remote host"
+        
+        try:
+            conn = self.active_connections[connection_id]
+            session = conn["session"]
+            base_url = conn["base_url"]
+            timeout = conn["timeout"]
+            
+            response = session.post(f"{base_url}/api/servers/{server_name}/{action}", timeout=timeout)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return True, result.get("message", f"Server {action} successful")
+            else:
+                return False, f"Failed to {action} server: {response.status_code}"
+                
+        except Exception as e:
+            return False, f"Error performing {action}: {str(e)}"
+    
+    def get_server_status(self, host, port, server_name):
+        # Get status of specific server on remote host
+        connection_id = f"{host}:{port}"
+        if connection_id not in self.active_connections:
+            return False, "Not connected to remote host"
+        
+        try:
+            conn = self.active_connections[connection_id]
+            session = conn["session"]
+            base_url = conn["base_url"]
+            timeout = conn["timeout"]
+            
+            response = session.get(f"{base_url}/api/servers/{server_name}/status", timeout=timeout)
+            
+            if response.status_code == 200:
+                status_data = response.json()
+                return True, status_data
+            else:
+                return False, f"Failed to get server status: {response.status_code}"
+                
+        except Exception as e:
+            return False, f"Error getting server status: {str(e)}"
+
+
+# Global remote host manager instance
+_remote_host_manager = RemoteHostManager()
+
+
+def get_remote_host_manager():
+    # Get the global remote host manager instance
+    return _remote_host_manager
+
+
 def create_server_installation_dialog(root, server_type, supported_server_types, server_manager, paths, steam_cmd_path=None):
-    """Create server installation dialog with progress tracking"""
+    # Create server installation dialog with progress tracking
     try:
         dialog = tk.Toplevel(root)
         dialog.title(f"Install {server_type} Server")
@@ -2637,7 +3092,7 @@ def create_server_installation_dialog(root, server_type, supported_server_types,
 
 
 def update_server_list_from_files(server_list, paths, variables, log_dashboard_event, format_uptime_from_start_time):
-    """Update server list from configuration files"""
+    # Update server list from configuration files
     try:
         from Modules.server_manager import ServerManager
         server_manager = ServerManager()
@@ -2668,7 +3123,7 @@ def update_server_list_from_files(server_list, paths, variables, log_dashboard_e
 
 
 def re_detect_server_type_from_config(server_config):
-    """Re-detect server type from configuration"""
+    # Re-detect server type from configuration
     try:
         install_dir = server_config.get("InstallDir", "")
         if not install_dir or not os.path.exists(install_dir):
@@ -2684,7 +3139,7 @@ def re_detect_server_type_from_config(server_config):
 
 
 def update_server_configuration_with_detection(server_config_path):
-    """Update server configuration with auto-detected information"""
+    # Update server configuration with auto-detected information
     try:
         from Modules.server_manager import ServerManager
         server_manager = ServerManager()
@@ -2709,4 +3164,497 @@ def update_server_configuration_with_detection(server_config_path):
         
     except Exception as e:
         logger.error(f"Error updating server configuration: {e}")
+
+
+def cleanup_orphaned_process_entries(server_manager, logger):
+    # Clean up orphaned process entries from server configurations
+    try:
+        if not server_manager:
+            return
+            
+        logger.info("Cleaning up orphaned process entries...")
+        
+        # Get all configured servers
+        server_configs = server_manager.get_servers()
+        cleaned_count = 0
+        
+        for server_name, server_config in server_configs.items():
+            try:
+                pid = server_config.get('ProcessId') or server_config.get('PID')
+                if pid:
+                    # Check if process is actually running
+                    try:
+                        import psutil
+                        if not psutil.pid_exists(pid):
+                            # Process is not running, clean up the entry
+                            logger.info(f"Cleaning up orphaned PID {pid} for server {server_name}")
+                            
+                            # Remove process-related entries
+                            server_config.pop('ProcessId', None)
+                            server_config.pop('PID', None)
+                            server_config.pop('StartTime', None)
+                            server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                            
+                            # Save the updated configuration
+                            server_manager.save_server_config(server_name, server_config)
+                            cleaned_count += 1
+                            
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        # Process doesn't exist, clean it up
+                        logger.info(f"Cleaning up invalid PID {pid} for server {server_name}")
+                        
+                        server_config.pop('ProcessId', None)
+                        server_config.pop('PID', None)
+                        server_config.pop('StartTime', None)
+                        server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                        
+                        server_manager.save_server_config(server_name, server_config)
+                        cleaned_count += 1
+                        
+                    except Exception as e:
+                        logger.debug(f"Error checking PID {pid} for server {server_name}: {e}")
+                        
+            except Exception as e:
+                logger.error(f"Error cleaning up process entries for server {server_name}: {e}")
+        
+        if cleaned_count > 0:
+            logger.info(f"Cleaned up {cleaned_count} orphaned process entries")
+        else:
+            logger.debug("No orphaned process entries found")
+            
+    except Exception as e:
+        logger.error(f"Error in cleanup_orphaned_process_entries: {e}")
+
+
+def reattach_to_running_servers(server_manager, console_manager, logger):
+    # Detect and reattach to running server processes with improved process discovery
+    try:
+        if not server_manager or not console_manager:
+            return
+            
+        logger.info("Detecting running server processes for console reattachment...")
+        
+        # First, clean up orphaned process entries
+        cleanup_orphaned_process_entries(server_manager, logger)
+        
+        # Get all configured servers
+        server_configs = server_manager.get_servers()
+        
+        # Second, try the old method - check stored PIDs
+        reattached_by_pid = 0
+        for server_name, server_config in server_configs.items():
+            try:
+                # Check if server process is running based on stored PID
+                pid = server_config.get('ProcessId') or server_config.get('PID')
+                if pid:
+                    try:
+                        import psutil
+                        if psutil.pid_exists(pid):
+                            process = psutil.Process(pid)
+                            if process.is_running():
+                                logger.info(f"Found running server process for {server_name} (PID: {pid}) via stored PID")
+                                
+                                # Reattach console to the running process
+                                success = console_manager.attach_console_to_process(
+                                    server_name, process, server_config
+                                )
+                                
+                                if success:
+                                    logger.info(f"Successfully reattached console to {server_name}")
+                                    reattached_by_pid += 1
+                                else:
+                                    logger.warning(f"Failed to reattach console to {server_name}")
+                    except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                        logger.debug(f"Process {pid} for {server_name} is not accessible: {e}")
+                    except Exception as e:
+                        logger.error(f"Error checking process {pid} for {server_name}: {e}")
+                        
+            except Exception as e:
+                logger.error(f"Error processing server {server_name} for reattachment: {e}")
+        
+        # Third, try improved process discovery - scan all processes
+        reattached_by_discovery = 0
+        try:
+            import psutil
+            
+            # Get all running processes
+            all_processes = psutil.process_iter(['pid', 'name', 'exe', 'cmdline', 'cwd'])
+            
+            for proc in all_processes:
+                try:
+                    # Skip system processes and our own process
+                    if proc.info['pid'] == os.getpid():
+                        continue
+                        
+                    # Check if this process matches any configured server
+                    for server_name, server_config in server_configs.items():
+                        if _process_matches_server(proc, server_name, server_config):
+                            # Check if we already reattached this server
+                            if hasattr(console_manager, 'consoles') and server_name in console_manager.consoles:
+                                logger.debug(f"Server {server_name} already has console attached")
+                                continue
+                                
+                            logger.info(f"Found running server process for {server_name} (PID: {proc.info['pid']}) via process discovery")
+                            
+                            # Reattach console to the discovered process
+                            success = console_manager.attach_console_to_process(
+                                server_name, proc, server_config
+                            )
+                            
+                            if success:
+                                logger.info(f"Successfully reattached console to {server_name} via process discovery")
+                                reattached_by_discovery += 1
+                                
+                                # Update the server config with the current PID
+                                server_config['ProcessId'] = proc.info['pid']
+                                server_config['PID'] = proc.info['pid']
+                                server_manager.save_server_config(server_name, server_config)
+                            else:
+                                logger.warning(f"Failed to reattach console to discovered process for {server_name}")
+                            break  # Found a match, no need to check other servers
+                            
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+                except Exception as e:
+                    logger.debug(f"Error checking process {proc.info['pid']}: {e}")
+                    continue
+                    
+        except ImportError:
+            logger.warning("psutil not available for enhanced process discovery")
+        except Exception as e:
+            logger.error(f"Error during enhanced process discovery: {e}")
+        
+        total_reattached = reattached_by_pid + reattached_by_discovery
+        logger.info(f"Finished detecting running server processes - Reattached {total_reattached} servers "
+                   f"({reattached_by_pid} by PID, {reattached_by_discovery} by discovery)")
+        
+    except Exception as e:
+        logger.error(f"Error in reattach_to_running_servers: {e}")
+
+
+def _process_matches_server(process, server_name, server_config):
+    # Check if a process matches a server configuration
+    try:
+        proc_info = process.info
+        install_dir = server_config.get('InstallDir', '').lower()
+        
+        # Check 1: Working directory matches install directory
+        if proc_info.get('cwd') and install_dir:
+            if os.path.normpath(proc_info['cwd'].lower()) == os.path.normpath(install_dir):
+                return True
+        
+        # Check 2: Executable path contains server name or install directory
+        exe_path = proc_info.get('exe', '').lower()
+        if exe_path and install_dir and install_dir in exe_path:
+            return True
+            
+        # Check 3: Command line contains server-specific information
+        cmdline = proc_info.get('cmdline', [])
+        if cmdline:
+            cmdline_str = ' '.join(cmdline).lower()
+            
+            # Check for server name in command line
+            if server_name.lower() in cmdline_str:
+                return True
+                
+            # Check for install directory in command line
+            if install_dir and install_dir in cmdline_str:
+                return True
+                
+            # Check for executable path from config
+            exe_config = server_config.get('ExecutablePath', '').lower()
+            if exe_config and exe_config in cmdline_str:
+                return True
+        
+        # Check 4: Process name matches known server executables
+        proc_name = proc_info.get('name', '').lower()
+        server_type = server_config.get('Type', '').lower()
+        
+        # Minecraft servers
+        if server_type == 'minecraft' and ('java' in proc_name or 'javaw' in proc_name):
+            # Additional check: look for jar file in command line
+            if cmdline and any('.jar' in arg.lower() for arg in cmdline):
+                return True
+                
+        # Steam servers
+        elif server_type == 'steam':
+            steam_executables = ['srcds', 'steamcmd', 'valheim_server', 'vrising']
+            if any(exe in proc_name for exe in steam_executables):
+                return True
+        
         return False
+        
+    except Exception as e:
+        logger.debug(f"Error matching process {proc_info.get('pid', 'unknown')} to server {server_name}: {e}")
+        return False
+
+
+def update_server_list_for_subhost(subhost_name, servers_data, server_lists, logger):
+    # Update the server list for a specific subhost
+    if subhost_name not in server_lists:
+        return
+        
+    server_list = server_lists[subhost_name]
+    
+    # Clear existing items
+    for item in server_list.get_children():
+        server_list.delete(item)
+    
+    # Add servers for this subhost
+    for server_name, server_info in servers_data.items():
+        try:
+            # Extract server information
+            status = server_info.get('status', 'Unknown')
+            pid = server_info.get('pid', '')
+            cpu = server_info.get('cpu', '0%')
+            memory = server_info.get('memory', '0 MB')
+            uptime = server_info.get('uptime', '00:00:00')
+            
+            # Insert into treeview
+            server_list.insert("", tk.END, values=(
+                server_name, status, pid, cpu, memory, uptime
+            ))
+        except Exception as e:
+            logger.error(f"Error adding server {server_name} to list: {e}")
+
+
+def get_servers_display_data(server_manager, logger):
+    # Get processed server data for display with status, pid, cpu, memory, uptime
+    try:
+        servers_data = {}
+        raw_servers = server_manager.get_all_servers()
+        
+        for server_name, server_config in raw_servers.items():
+            try:
+                # Get server config from raw_servers
+                server_config = raw_servers.get(server_name)
+                if not server_config:
+                    display_status = 'Not Found'
+                    pid = None
+                else:
+                    # Check if server has ProcessId and is running
+                    if 'ProcessId' in server_config:
+                        pid = server_config['ProcessId']
+                        try:
+                            if server_manager.is_process_running(pid):
+                                display_status = 'Running'
+                            else:
+                                display_status = 'Stopped'
+                        except Exception as e:
+                            logger.debug(f"Error checking if process {pid} is running: {e}")
+                            display_status = 'Stopped'
+                    else:
+                        display_status = 'Stopped'
+                        pid = None
+                
+                # Initialize display data
+                display_data = {
+                    'status': display_status,
+                    'pid': str(pid) if pid else '',
+                    'cpu': '0%',
+                    'memory': '0 MB',
+                    'uptime': '00:00:00'
+                }
+                
+                # Get CPU and memory usage if server is running
+                if display_status == 'Running' and pid:
+                    try:
+                        import psutil
+                        process = psutil.Process(pid)
+                        
+                        # Get CPU usage (short interval for responsiveness)
+                        cpu_percent = process.cpu_percent(interval=0.1)
+                        display_data['cpu'] = f"{cpu_percent:.1f}%"
+                        
+                        # Get memory usage
+                        memory_info = process.memory_info()
+                        memory_mb = memory_info.rss / (1024 * 1024)  # Convert to MB
+                        display_data['memory'] = f"{memory_mb:.1f} MB"
+                        
+                        # Calculate uptime
+                        if 'StartTime' in server_config:
+                            try:
+                                start_time_str = server_config['StartTime']
+                                if isinstance(start_time_str, str):
+                                    start_time = datetime.datetime.fromisoformat(start_time_str)
+                                else:
+                                    start_time = start_time_str
+                                
+                                uptime = datetime.datetime.now() - start_time
+                                hours, remainder = divmod(int(uptime.total_seconds()), 3600)
+                                minutes, seconds = divmod(remainder, 60)
+                                display_data['uptime'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                            except Exception as e:
+                                logger.debug(f"Could not calculate uptime for {server_name}: {e}")
+                        
+                    except Exception as e:
+                        logger.debug(f"Could not get process details for {server_name} (PID {pid}): {e}")
+                
+                servers_data[server_name] = display_data
+                
+            except Exception as e:
+                logger.error(f"Error processing server {server_name}: {e}")
+                # Add with default stopped status
+                servers_data[server_name] = {
+                    'status': 'Error',
+                    'pid': '',
+                    'cpu': '0%',
+                    'memory': '0 MB',
+                    'uptime': '00:00:00'
+                }
+        
+        return servers_data
+        
+    except Exception as e:
+        logger.error(f"Error getting servers display data: {e}")
+        return {}
+
+
+def refresh_subhost_servers(subhost_name, server_manager, server_lists, logger):
+    # Refresh servers for a specific subhost with async remote operations
+    try:
+        if subhost_name == "Local Host":
+            # Get processed server data for display
+            servers = get_servers_display_data(server_manager, logger)
+            update_server_list_for_subhost(subhost_name, servers, server_lists, logger)
+        else:
+            # Get servers from remote subhost asynchronously
+            _refresh_remote_subhost_async(subhost_name, server_lists, logger)
+            
+    except Exception as e:
+        logger.error(f"Error refreshing servers for subhost {subhost_name}: {e}")
+
+
+def _refresh_remote_subhost_async(subhost_name, server_lists, logger):
+    # Asynchronously refresh servers from a remote subhost
+    import threading
+    
+    def async_refresh():
+        try:
+            from Modules.agents import AgentManager
+            agent_manager = AgentManager()
+            
+            # Get node info first
+            if subhost_name not in agent_manager.nodes:
+                logger.warning(f"Node {subhost_name} not found in agent manager")
+                return
+                
+            node = agent_manager.nodes[subhost_name]
+            
+            # Try to get servers with timeout
+            servers = None
+            try:
+                import requests
+                response = requests.get(f"http://{node.ip}:8080/api/servers", timeout=5)  # Reduced timeout
+                if response.status_code == 200:
+                    servers = response.json().get('servers', [])
+                else:
+                    logger.warning(f"Failed to get servers from node {subhost_name}: HTTP {response.status_code}")
+            except requests.exceptions.Timeout:
+                logger.warning(f"Timeout getting servers from node {subhost_name}")
+            except requests.exceptions.ConnectionError:
+                logger.warning(f"Connection error getting servers from node {subhost_name}")
+            except Exception as e:
+                logger.error(f"Error getting servers from node {subhost_name}: {e}")
+            
+            # Convert to expected format
+            converted_servers = {}
+            if servers:
+                if isinstance(servers, dict):
+                    for server_name, server_info in servers.items():
+                        converted_servers[server_name] = {
+                            'status': server_info.get('status', 'Unknown'),
+                            'pid': server_info.get('pid', ''),
+                            'cpu': server_info.get('cpu', '0%'),
+                            'memory': server_info.get('memory', '0 MB'),
+                            'uptime': server_info.get('uptime', '00:00:00')
+                        }
+                elif isinstance(servers, list):
+                    for server_info in servers:
+                        if isinstance(server_info, dict) and 'name' in server_info:
+                            server_name = server_info['name']
+                            converted_servers[server_name] = {
+                                'status': server_info.get('status', 'Unknown'),
+                                'pid': server_info.get('pid', ''),
+                                'cpu': server_info.get('cpu', '0%'),
+                                'memory': server_info.get('memory', '0 MB'),
+                                'uptime': server_info.get('uptime', '00:00:00')
+                            }
+            
+            # Update the UI on the main thread
+            def update_ui():
+                try:
+                    update_server_list_for_subhost(subhost_name, converted_servers, server_lists, logger)
+                except Exception as e:
+                    logger.error(f"Error updating UI for subhost {subhost_name}: {e}")
+            
+            # Schedule UI update on main thread
+            import tkinter as tk
+            root = None
+            for widget_list in server_lists.values():
+                for widget in widget_list:
+                    if isinstance(widget, tk.Widget):
+                        root = widget.winfo_toplevel()
+                        break
+                if root:
+                    break
+            
+            if root:
+                root.after(0, update_ui)
+            else:
+                logger.warning(f"Could not find root window for UI update of subhost {subhost_name}")
+                
+        except Exception as e:
+            logger.error(f"Error in async refresh for subhost {subhost_name}: {e}")
+    
+    # Start async refresh thread
+    thread = threading.Thread(target=async_refresh, daemon=True)
+    thread.start()
+
+
+def refresh_all_subhost_servers(server_lists, server_manager, logger):
+    # Refresh servers for all subhost tabs - starts async operations for remote hosts
+    for subhost_name in server_lists.keys():
+        try:
+            refresh_subhost_servers(subhost_name, server_manager, server_lists, logger)
+        except Exception as e:
+            logger.error(f"Error initiating refresh for subhost {subhost_name}: {e}")
+
+
+def refresh_current_subhost_servers(current_subhost_func, server_manager, server_lists, logger):
+    # Refresh servers for the currently active subhost tab - handles async remote operations
+    current_subhost = current_subhost_func()
+    if current_subhost:
+        refresh_subhost_servers(current_subhost, server_manager, server_lists, logger)
+        return False  # Return False to indicate async operation started
+
+
+def update_server_list_logic(dashboard, force_refresh=False):
+    # Update server list from configuration files - business logic only
+    try:
+        # Skip update if already refreshing
+        if hasattr(dashboard, '_refreshing_server_list') and dashboard._refreshing_server_list:
+            log_dashboard_event("SERVER_LIST_UPDATE", "Skipping update - refresh already in progress", "DEBUG")
+            return
+        
+        # Skip update if it's been less than configured interval since the last update and force_refresh isn't specified
+        update_interval = dashboard.variables.get("serverListUpdateInterval", 30)
+        if not force_refresh and \
+           (dashboard.variables["lastServerListUpdate"] != datetime.datetime.min) and \
+           (datetime.datetime.now() - dashboard.variables["lastServerListUpdate"]).total_seconds() < update_interval:
+            log_dashboard_event("SERVER_LIST_UPDATE", f"Skipping update - last update was less than {update_interval} seconds ago", "DEBUG")
+            return
+        
+        # Set refreshing flag
+        dashboard._refreshing_server_list = True
+        
+        try:
+            # Update all subhost tabs
+            dashboard.refresh_all_subhost_servers()
+        finally:
+            # Always clear the refreshing flag
+            dashboard._refreshing_server_list = False
+            
+    except Exception as e:
+        logger.error(f"Error in update_server_list: {str(e)}")
+        dashboard._refreshing_server_list = False

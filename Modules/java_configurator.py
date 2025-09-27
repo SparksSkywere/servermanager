@@ -217,11 +217,11 @@ def main():
 
 
 class JavaConfigurator:
-    """Java Configuration class for server management dashboard"""
+    # Java Configuration class for server management dashboard
     
     @staticmethod
     def detect_java_installations():
-        """Detect all available Java installations on the system"""
+        # Detect all available Java installations on the system
         return detect_java_installations()
 
 

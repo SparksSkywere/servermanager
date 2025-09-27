@@ -41,7 +41,7 @@ except ImportError:
     logger.warning("OAuth libraries not available. Microsoft OAuth authentication will be disabled.")
 
 class MailServer:
-    """SMTP Mail Server class with support for various email providers and OAuth 2.0"""
+    # SMTP Mail Server class with support for various email providers and OAuth 2.0
 
     # Predefined SMTP configurations for common providers
     SMTP_CONFIGS = {
@@ -88,7 +88,7 @@ class MailServer:
     }
 
     def __init__(self, config=None):
-        """Initialize mail server with configuration"""
+        # Initialize mail server with configuration
         self.config = config or self._load_config()
         self.server = None
         self.connected = False
@@ -97,7 +97,7 @@ class MailServer:
         self.msal_app = None
 
     def _load_config(self):
-        """Load mail server configuration from registry"""
+        # Load mail server configuration from registry
         try:
             import winreg
             from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
@@ -143,7 +143,7 @@ class MailServer:
             return self._get_default_config()
 
     def _reg_value_exists(self, key, value_name):
-        """Check if registry value exists"""
+        # Check if registry value exists
         try:
             import winreg
             winreg.QueryValueEx(key, value_name)
@@ -152,7 +152,7 @@ class MailServer:
             return False
 
     def _get_default_config(self):
-        """Return default mail server configuration"""
+        # Return default mail server configuration
         return {
             'provider': 'custom',
             'server': '',
@@ -174,7 +174,7 @@ class MailServer:
         }
 
     def save_config(self, config):
-        """Save mail server configuration to registry"""
+        # Save mail server configuration to registry
         try:
             import winreg
             from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
@@ -217,7 +217,7 @@ class MailServer:
             return False
 
     def setup_oauth(self, client_id, client_secret, tenant_id=''):
-        """Setup OAuth configuration for Microsoft authentication"""
+        # Setup OAuth configuration for Microsoft authentication
         if not OAUTH_AVAILABLE:
             return False, "OAuth libraries not available"
 
@@ -239,7 +239,7 @@ class MailServer:
         return True, "OAuth setup successful"
 
     def perform_oauth_login(self):
-        """Perform interactive OAuth login for Microsoft authentication"""
+        # Perform interactive OAuth login for Microsoft authentication
         if not OAUTH_AVAILABLE or not self.msal_app:
             return False, "OAuth not configured"
 
@@ -298,7 +298,7 @@ class MailServer:
             return False, str(e)
 
     def _start_oauth_callback_server(self, port=8080):
-        """Start local server to receive OAuth callback"""
+        # Start local server to receive OAuth callback
         auth_code = []
 
         class OAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
@@ -334,14 +334,14 @@ class MailServer:
         return auth_code[0] if auth_code else None
 
     def _save_oauth_token(self):
-        """Save OAuth token to registry"""
+        # Save OAuth token to registry
         if self.oauth_token and self.token_expires_at:
             self.config['oauth_token'] = json.dumps(self.oauth_token)
             self.config['token_expires'] = int(self.token_expires_at)
             self.save_config(self.config)
 
     def _refresh_oauth_token(self):
-        """Refresh OAuth token if expired"""
+        # Refresh OAuth token if expired
         if not self.oauth_token or not self.msal_app:
             return False
 
@@ -382,7 +382,7 @@ class MailServer:
             return False
 
     def _get_valid_oauth_token(self):
-        """Get a valid OAuth token, refreshing if necessary"""
+        # Get a valid OAuth token, refreshing if necessary
         if not self.oauth_token or not isinstance(self.oauth_token, dict):
             return None
 
@@ -395,7 +395,7 @@ class MailServer:
         return self.oauth_token.get('access_token')
 
     def send_email_oauth(self, to_email, subject, body, html_body=None, attachments=None):
-        """Send email using Microsoft Graph API with OAuth"""
+        # Send email using Microsoft Graph API with OAuth
         if not OAUTH_AVAILABLE:
             return False, "OAuth libraries not available"
 
@@ -467,7 +467,7 @@ class MailServer:
             return False, str(e)
 
     def connect(self):
-        """Connect to SMTP server"""
+        # Connect to SMTP server
         if not self.config.get('enabled', False):
             logger.warning("Mail server is disabled")
             return False
@@ -506,7 +506,7 @@ class MailServer:
             return False
 
     def disconnect(self):
-        """Disconnect from SMTP server"""
+        # Disconnect from SMTP server
         if self.server and self.connected:
             try:
                 self.server.quit()
@@ -516,7 +516,7 @@ class MailServer:
                 logger.error(f"Error disconnecting from SMTP server: {e}")
 
     def send_email(self, to_email, subject, body, html_body=None, attachments=None):
-        """Send email to specified recipient"""
+        # Send email to specified recipient
         if not self.config.get('enabled', False):
             logger.warning("Mail server is disabled, cannot send email")
             return False
@@ -572,7 +572,7 @@ class MailServer:
             return False
 
     def test_connection(self):
-        """Test SMTP connection and authentication"""
+        # Test SMTP connection and authentication
         if not self.config.get('enabled', False):
             return False, "Mail server is disabled"
 
@@ -597,7 +597,7 @@ class MailServer:
             return False, f"Connection test failed: {str(e)}"
 
     def get_oauth_setup_instructions(self):
-        """Get instructions for setting up Microsoft OAuth"""
+        # Get instructions for setting up Microsoft OAuth
         instructions = """
 Microsoft OAuth Setup Instructions for Server Manager:
 
@@ -640,7 +640,7 @@ Note: For security, the app should be configured to require admin consent for th
         return instructions
 
     def is_oauth_configured(self):
-        """Check if OAuth is properly configured"""
+        # Check if OAuth is properly configured
         if not OAUTH_AVAILABLE:
             return False
 
@@ -652,15 +652,15 @@ Note: For security, the app should be configured to require admin consent for th
         return self.msal_app is not None
 
     def get_provider_config(self, provider):
-        """Get predefined configuration for a provider"""
+        # Get predefined configuration for a provider
         return self.SMTP_CONFIGS.get(provider, self.SMTP_CONFIGS['custom']).copy()
 
     def is_enabled(self):
-        """Check if mail server is enabled"""
+        # Check if mail server is enabled
         return self.config.get('enabled', False)
 
     def __del__(self):
-        """Cleanup on destruction"""
+        # Cleanup on destruction
         self.disconnect()
 
 

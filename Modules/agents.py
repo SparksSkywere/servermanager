@@ -91,6 +91,18 @@ class AgentManager:
             logger.error(f"Error joining cluster: {e}")
             return False
     
+    def check_join_status(self):
+        # Check if our join request has been approved
+        if not self.cluster_manager:
+            return None
+        return self.cluster_manager.check_join_status()
+    
+    def complete_cluster_join(self, approval_token):
+        # Complete the cluster join process
+        if not self.cluster_manager:
+            return False
+        return self.cluster_manager.complete_cluster_join(approval_token)
+    
     def add_node(self, name: str, ip: str) -> bool:
         if name in self.nodes:
             return False
@@ -484,16 +496,63 @@ class ClusterManagementDialog:
                 return
             
             if self.agent_manager.join_cluster(master_ip):
-                messagebox.showinfo("Success", f"Successfully joined cluster managed by {master_ip}")
-                if self.dialog:
-                    self.dialog.destroy()
-                show_agent_management_dialog(self.parent, self.agent_manager)
+                messagebox.showinfo("Success", f"Join request sent to cluster managed by {master_ip}. Awaiting approval from cluster administrator.")
+                # Start checking for approval status
+                self.start_approval_check()
             else:
-                messagebox.showerror("Error", f"Failed to join cluster. Check the Master Host IP address.")
+                messagebox.showerror("Error", f"Failed to send join request to cluster. Check the Master Host IP address.")
                 
         except Exception as e:
             logger.error(f"Error joining cluster: {e}")
             messagebox.showerror("Error", f"Failed to join cluster: {str(e)}")
+    
+    def start_approval_check(self):
+        # Start a background thread to check for approval status
+        import threading
+        import time
+        
+        def check_approval():
+            while True:
+                try:
+                    status = self.agent_manager.check_join_status()
+                    if status:
+                        if status.get("approved") and status.get("approval_token"):
+                            # Join request was approved
+                            if self.agent_manager.complete_cluster_join(status["approval_token"]):
+                                logger.info("Cluster join completed successfully")
+                                # Update the dialog
+                                if self.dialog and self.dialog.winfo_exists():
+                                    message = status.get("message", "Join completed successfully.") if status else "Join completed successfully."
+                                    self.dialog.after(0, lambda: self.on_join_completed(message))
+                                break
+                            else:
+                                logger.error("Failed to complete cluster join")
+                        elif status.get("status") == "rejected":
+                            # Join request was rejected
+                            if self.dialog and self.dialog.winfo_exists():
+                                message = status.get("message", "Join request rejected.") if status else "Join request rejected."
+                                self.dialog.after(0, lambda: self.on_join_rejected(message))
+                            break
+                    
+                    time.sleep(5)  # Check every 5 seconds
+                    
+                except Exception as e:
+                    logger.error(f"Error checking approval status: {e}")
+                    time.sleep(10)  # Wait longer on error
+        
+        thread = threading.Thread(target=check_approval, daemon=True)
+        thread.start()
+    
+    def on_join_completed(self, message):
+        # Called when join is completed
+        messagebox.showinfo("Success", f"Cluster join completed!\n\n{message}")
+        if self.dialog:
+            self.dialog.destroy()
+        show_agent_management_dialog(self.parent, self.agent_manager)
+    
+    def on_join_rejected(self, message):
+        # Called when join is rejected
+        messagebox.showwarning("Rejected", f"Cluster join request was rejected.\n\n{message}")
     
     def refresh_pending_requests(self):
         # Refresh the pending requests treeview

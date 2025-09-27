@@ -39,7 +39,7 @@ def get_subhost_info(subhost_id):
     if node and node['node_type'] == 'subhost':
         return {
             "id": node['name'],
-            "info": {},  # Legacy compatibility - info not stored in new schema
+            "info": {},  # Legacy compatibility: info field no longer stored in new schema
             "last_seen": node['last_ping'] or node['added_at'],
             "registered_at": node['added_at'],
             "ip_address": node['ip_address'],
@@ -58,8 +58,8 @@ def require_cluster_auth(f):
             logger.debug("Allowing unauthenticated access to cluster role endpoint")
             return f(*args, **kwargs)
             
-        # In simplified cluster system, authentication is automatic
-        # Just log the access and allow the request
+        # In simplified cluster system, authentication is handled automatically
+        # Log the access and allow the request to proceed
         logger.debug(f"Cluster API access from {request.remote_addr}")
         return f(*args, **kwargs)
     return decorated_function
@@ -92,7 +92,7 @@ def api_cluster_role():
 @cluster_api.route("/api/cluster/register", methods=["POST"])
 @require_cluster_auth
 def api_register_subhost():
-    # Register a subhost with the host - deprecated, use approval workflow instead
+    # Register a subhost with the host (DEPRECATED - use approval workflow instead)
     try:
         data = request.get_json()
         if not data:
@@ -116,13 +116,13 @@ def api_register_subhost():
                 "message": f"Subhost {subhost_id} registration updated"
             })
         
-        # Add new node (legacy path, should use approval workflow)
+        # Add new node using legacy registration path (should use approval workflow)
         info = data.get("info", {})
         success = cluster_db.add_cluster_node(
             name=subhost_id,
             ip_address=request.remote_addr or "unknown",
             node_type="subhost",
-            cluster_token=""  # No token for legacy registration
+            cluster_token=""  # No token required for legacy registration
         )
         
         if success:
@@ -153,7 +153,7 @@ def api_request_join():
         if not subhost_id:
             return jsonify({"error": "subhost_id is required"}), 400
         
-        # Extract request information
+        # Extract subhost information from the join request
         info = data.get("info", {})
         machine_name = info.get("machine_name", "")
         os_info = info.get("os", "")
@@ -401,7 +401,7 @@ def api_subhost_heartbeat():
             cluster_db.update_node_status(subhost_id, "active", datetime.now())
             logger.debug(f"Heartbeat received from registered subhost: {subhost_id}")
         else:
-            # Auto-register if not already registered (for backward compatibility)
+            # Auto-register unregistered subhosts for backward compatibility
             info = data.get("info", {})
             machine_name = info.get("machine_name", "")
             
@@ -457,7 +457,7 @@ def api_list_subhosts():
                         time_diff = current_time - last_ping_time
                         seconds_ago = int(time_diff.total_seconds())
                         
-                        # Mark as active if seen in last 5 minutes
+                        # Mark as active if last seen within 5 minutes
                         if seconds_ago < 300:  # 5 minutes
                             status = "active"
                         else:
@@ -477,7 +477,7 @@ def api_list_subhosts():
                 # Convert to legacy format
                 active_subhosts[subhost_id] = {
                     "id": subhost_id,
-                    "info": {},  # Info not stored in new schema
+                    "info": {},  # Legacy compatibility: info field no longer stored
                     "last_seen": node['last_ping'] or node['added_at'],
                     "registered_at": node['added_at'],
                     "status": status,
@@ -486,7 +486,7 @@ def api_list_subhosts():
                     "port": node['port']
                 }
         
-        # Clean up very old inactive subhosts (over 1 hour inactive)
+        # Clean up inactive subhosts that haven't been seen for over 1 hour
         old_count = len(active_subhosts)
         nodes_to_remove = []
         for subhost_id, data in active_subhosts.items():
@@ -577,7 +577,7 @@ def api_cluster_status():
 
 @cluster_api.route("/api/cluster/host-status", methods=["GET"])
 def api_get_host_status():
-    # Get current host status for subhosts to check availability
+    # Get current host status - available without authentication for subhost health checks
     try:
         # This endpoint is available without authentication for subhosts to check host status
         host_status = cluster_db.get_host_status()
@@ -837,3 +837,285 @@ def api_cluster_nodes():
     except Exception as e:
         logger.error(f"Error getting cluster nodes: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+
+# ====== REMOTE HOST API ENDPOINTS (Separate from Cluster) ======
+# These endpoints handle one-time remote connections without cluster membership
+
+@cluster_api.route("/api/status", methods=["GET"])
+def api_server_status():
+    # Get server status - used for remote host connectivity testing
+    try:
+        return jsonify({
+            "success": True,
+            "status": "online",
+            "server": "Server Manager",
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error getting server status: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@cluster_api.route("/api/auth/login", methods=["POST"])
+def api_remote_login():
+    # Authenticate remote host connection (separate from cluster auth)
+    try:
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            return jsonify({"success": False, "error": "Username and password required"}), 400
+        
+        # Import user management for authentication
+        try:
+            from Modules.Database.user_database import initialize_user_manager
+            engine, user_manager = initialize_user_manager()
+            
+            # Authenticate user
+            user = user_manager.authenticate_user(username, password)
+            if user:
+                # For simplicity, return success without complex session management
+                # In production environments, proper session tokens should be used
+                logger.info(f"Remote host authentication successful for user: {username}")
+                return jsonify({
+                    "success": True,
+                    "message": "Authentication successful",
+                    "user": {"username": username, "role": getattr(user, 'role', 'user')}
+                })
+            else:
+                return jsonify({"success": False, "error": "Invalid credentials"}), 401
+                
+        except Exception as auth_error:
+            logger.error(f"Authentication error: {str(auth_error)}")
+            return jsonify({"success": False, "error": "Authentication system error"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in remote login: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@cluster_api.route("/api/auth/logout", methods=["POST"])
+def api_remote_logout():
+    # Logout from remote host connection
+    try:
+        # For now, just return success status
+        # In production environments, session tokens should be invalidated here
+        return jsonify({"success": True, "message": "Logged out successfully"})
+    except Exception as e:
+        logger.error(f"Error in remote logout: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@cluster_api.route("/api/servers", methods=["GET"])
+def api_get_servers():
+    # Get list of all servers for remote host access
+    try:
+        # Import server manager
+        from Modules.server_manager import ServerManager
+        server_manager = ServerManager()
+        server_manager.load_config()
+        server_manager.load_servers()
+        
+        # Get all servers with their current status
+        servers = server_manager.get_all_servers()
+        result = []
+        
+        for server_name, server_config in servers.items():
+            try:
+                # Get server status
+                status, pid = server_manager.get_server_status(server_name)
+                
+                server_info = {
+                    "name": server_name,
+                    "status": status,
+                    "pid": pid,
+                    "type": server_config.get('Type', 'Unknown'),
+                    "install_dir": server_config.get('InstallDir', ''),
+                    "app_id": server_config.get('AppID', ''),
+                    "executable": server_config.get('ExecutablePath', ''),
+                    "args": server_config.get('LaunchArgs', ''),
+                    "last_started": server_config.get('StartTime', ''),
+                    "auto_start": server_config.get('AutoStart', False)
+                }
+                result.append(server_info)
+                
+            except Exception as server_error:
+                logger.debug(f"Error getting status for server {server_name}: {str(server_error)}")
+                # Add server with error status if status check fails
+                result.append({
+                    "name": server_name,
+                    "status": "Error",
+                    "pid": None,
+                    "type": server_config.get('Type', 'Unknown'),
+                    "error": str(server_error)
+                })
+        
+        return jsonify({
+            "success": True,
+            "servers": result,
+            "count": len(result)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting servers: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@cluster_api.route("/api/servers/<server_name>/status", methods=["GET"])
+def api_get_server_status(server_name):
+    # Get status of a specific server
+    try:
+        from Modules.server_manager import ServerManager
+        server_manager = ServerManager()
+        server_manager.load_config()
+        server_manager.load_servers()
+        
+        # Check if server exists
+        server_config = server_manager.get_server_config(server_name)
+        if not server_config:
+            return jsonify({"success": False, "error": "Server not found"}), 404
+        
+        # Get server status
+        status, pid = server_manager.get_server_status(server_name)
+        
+        # Get additional process details if the server is currently running
+        process_info = {}
+        if status == "Running" and pid:
+            try:
+                import psutil
+                process = psutil.Process(pid)
+                process_info = {
+                    "cpu_percent": process.cpu_percent(),
+                    "memory_mb": process.memory_info().rss / 1024 / 1024,
+                    "create_time": process.create_time()
+                }
+            except:
+                pass
+        
+        result = {
+            "name": server_name,
+            "status": status,
+            "pid": pid,
+            "type": server_config.get('Type', 'Unknown'),
+            "process_info": process_info
+        }
+        
+        return jsonify({"success": True, "server": result})
+        
+    except Exception as e:
+        logger.error(f"Error getting server status for {server_name}: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@cluster_api.route("/api/servers/<server_name>/start", methods=["POST"])
+def api_start_server(server_name):
+    # Start a specific server
+    try:
+        from Modules.server_manager import ServerManager
+        server_manager = ServerManager()
+        server_manager.load_config()
+        server_manager.load_servers()
+        
+        # Check if server exists
+        server_config = server_manager.get_server_config(server_name)
+        if not server_config:
+            return jsonify({"success": False, "error": "Server not found"}), 404
+        
+        # Start the server
+        success = server_manager.start_server_advanced(server_name)
+        
+        if success:
+            logger.info(f"Remote request: Started server {server_name}")
+            return jsonify({
+                "success": True,
+                "message": f"Server '{server_name}' started successfully"
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": f"Failed to start server '{server_name}'"
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error starting server {server_name}: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@cluster_api.route("/api/servers/<server_name>/stop", methods=["POST"])
+def api_stop_server(server_name):
+    # Stop a specific server
+    try:
+        from Modules.server_manager import ServerManager
+        server_manager = ServerManager()
+        server_manager.load_config()
+        server_manager.load_servers()
+        
+        # Check if server exists
+        server_config = server_manager.get_server_config(server_name)
+        if not server_config:
+            return jsonify({"success": False, "error": "Server not found"}), 404
+        
+        # Stop the server
+        success = server_manager.stop_server(server_name)
+        
+        if success:
+            logger.info(f"Remote request: Stopped server {server_name}")
+            return jsonify({
+                "success": True,
+                "message": f"Server '{server_name}' stopped successfully"
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": f"Failed to stop server '{server_name}'"
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error stopping server {server_name}: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@cluster_api.route("/api/servers/<server_name>/restart", methods=["POST"])
+def api_restart_server(server_name):
+    # Restart a specific server
+    try:
+        from Modules.server_manager import ServerManager
+        server_manager = ServerManager()
+        server_manager.load_config()
+        server_manager.load_servers()
+        
+        # Check if server exists
+        server_config = server_manager.get_server_config(server_name)
+        if not server_config:
+            return jsonify({"success": False, "error": "Server not found"}), 404
+        
+        # Restart the server (stop then start)
+        stop_success = server_manager.stop_server(server_name)
+        if stop_success:
+            # Wait a moment before starting
+            import time
+            time.sleep(2)
+            start_success = server_manager.start_server_advanced(server_name)
+            
+            if start_success:
+                logger.info(f"Remote request: Restarted server {server_name}")
+                return jsonify({
+                    "success": True,
+                    "message": f"Server '{server_name}' restarted successfully"
+                })
+            else:
+                return jsonify({
+                    "success": False,
+                    "error": f"Server stopped but failed to start again"
+                }), 500
+        else:
+            return jsonify({
+                "success": False,
+                "error": f"Failed to stop server for restart"
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error restarting server {server_name}: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
