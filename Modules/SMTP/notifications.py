@@ -1,6 +1,7 @@
 # Notifications Module for Server Manager
 # Handles different types of email notifications with templates
 import os
+import re
 import sys
 from datetime import datetime
 
@@ -24,215 +25,90 @@ class NotificationManager:
     def __init__(self):
         self.templates = self._load_templates()
         self.automated_notifications = self._load_automated_settings()
+        self.css_content = self._load_css()
+
+    def _load_css(self):
+        # Load the CSS file for embedding in HTML emails
+        css_file = os.path.join(os.path.dirname(__file__), 'Mail-Templates', 'mail-template.css')
+        try:
+            with open(css_file, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            logger.warning(f"Failed to load CSS file: {e}")
+            return ""
+
+    def _embed_css_in_html(self, html_content):
+        # Replace CSS link with embedded styles
+        css_link_pattern = r'<link[^>]*href="mail-template\.css"[^>]*>'
+        css_embed = f'<style>\n{self.css_content}\n</style>'
+        html_content = re.sub(css_link_pattern, css_embed, html_content, flags=re.IGNORECASE)
+        return html_content
 
     def _load_templates(self):
-        # Load email templates
-        return {
+        # Load email templates from files
+        template_dir = os.path.join(os.path.dirname(__file__), 'Mail-Templates')
+        templates = {}
+        
+        template_types = ['welcome', 'password_reset', 'account_locked', 'server_alert', 'maintenance', 'custom']
+        
+        for template_type in template_types:
+            try:
+                subject_file = os.path.join(template_dir, f'{template_type}_subject.txt')
+                text_file = os.path.join(template_dir, f'{template_type}_text.txt')
+                html_file = os.path.join(template_dir, f'{template_type}_html.html')
+                
+                with open(subject_file, 'r', encoding='utf-8') as f:
+                    subject = f.read().strip()
+                
+                with open(text_file, 'r', encoding='utf-8') as f:
+                    text_template = f.read()
+                
+                with open(html_file, 'r', encoding='utf-8') as f:
+                    html_template = f.read()
+                
+                templates[template_type] = {
+                    'subject': subject,
+                    'text_template': text_template,
+                    'html_template': html_template
+                }
+                
+            except FileNotFoundError as e:
+                logger.error(f"Template file not found for {template_type}: {e}")
+                # Fall back to default templates if files are missing
+                templates[template_type] = self._get_default_template(template_type)
+            except Exception as e:
+                logger.error(f"Error loading template {template_type}: {e}")
+                templates[template_type] = self._get_default_template(template_type)
+        
+        return templates
+
+    def _get_default_template(self, template_type):
+        # Fallback default templates in case files are missing
+        defaults = {
             'welcome': {
                 'subject': 'Welcome to Server Manager',
-                'text_template': """
-Welcome {username}!
-
-Your account has been created successfully on Server Manager.
-
-Username: {username}
-Email: {email}
-Created: {created_at}
-
-Please keep this information safe. You can log in using your username and the password you set.
-
-If you have any questions, please contact your administrator.
-
-Best regards,
-Server Manager Team
-                """,
-                'html_template': """
-<html>
-<body>
-    <h2>Welcome {username}!</h2>
-    <p>Your account has been created successfully on Server Manager.</p>
-    <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
-        <strong>Account Details:</strong><br>
-        Username: {username}<br>
-        Email: {email}<br>
-        Created: {created_at}
-    </div>
-    <p>Please keep this information safe. You can log in using your username and the password you set.</p>
-    <p>If you have any questions, please contact your administrator.</p>
-    <br>
-    <p>Best regards,<br>Server Manager Team</p>
-</body>
-</html>
-                """
+                'text_template': 'Welcome {username}! Your account has been created.',
+                'html_template': '<html><body><h2>Welcome {username}!</h2></body></html>'
             },
             'password_reset': {
                 'subject': 'Password Reset - Server Manager',
-                'text_template': """
-Password Reset Request
-
-Hello {username},
-
-A password reset has been requested for your Server Manager account.
-
-If you requested this reset, please use the following temporary password to log in:
-Temporary Password: {temp_password}
-
-Please change your password immediately after logging in.
-
-If you did not request this reset, please ignore this email and contact your administrator.
-
-This temporary password will expire in 24 hours.
-
-Best regards,
-Server Manager Team
-                """,
-                'html_template': """
-<html>
-<body>
-    <h2>Password Reset Request</h2>
-    <p>Hello {username},</p>
-    <p>A password reset has been requested for your Server Manager account.</p>
-
-    <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 20px 0;">
-        <strong>If you requested this reset, please use the following temporary password to log in:</strong><br>
-        <span style="font-family: monospace; font-size: 16px; background-color: #f8f9fa; padding: 5px; border-radius: 3px;">{temp_password}</span>
-    </div>
-
-    <p style="color: #dc3545;"><strong>Please change your password immediately after logging in.</strong></p>
-
-    <p>If you did not request this reset, please ignore this email and contact your administrator.</p>
-
-    <p><em>This temporary password will expire in 24 hours.</em></p>
-
-    <br>
-    <p>Best regards,<br>Server Manager Team</p>
-</body>
-</html>
-                """
+                'text_template': 'Password reset for {username}. Temp password: {temp_password}',
+                'html_template': '<html><body><h2>Password Reset</h2><p>Temp password: {temp_password}</p></body></html>'
             },
             'account_locked': {
                 'subject': 'Account Locked - Server Manager',
-                'text_template': """
-Account Locked Notice
-
-Hello {username},
-
-Your Server Manager account has been locked due to multiple failed login attempts.
-
-To unlock your account, please contact your administrator or use the password reset feature if available.
-
-If you need immediate assistance, please contact support.
-
-Best regards,
-Server Manager Team
-                """,
-                'html_template': """
-<html>
-<body>
-    <h2>Account Locked Notice</h2>
-    <p>Hello {username},</p>
-    <p>Your Server Manager account has been locked due to multiple failed login attempts.</p>
-
-    <div style="background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 5px; margin: 20px 0;">
-        <strong>To unlock your account:</strong>
-        <ul>
-            <li>Contact your administrator</li>
-            <li>Use the password reset feature if available</li>
-        </ul>
-    </div>
-
-    <p>If you need immediate assistance, please contact support.</p>
-
-    <br>
-    <p>Best regards,<br>Server Manager Team</p>
-</body>
-</html>
-                """
+                'text_template': 'Account locked for {username}.',
+                'html_template': '<html><body><h2>Account Locked</h2></body></html>'
             },
             'server_alert': {
                 'subject': 'Server Alert - {server_name}',
-                'text_template': """
-Server Alert: {server_name}
-
-Status: {status}
-Message: {message}
-
-Server: {server_name}
-Time: {timestamp}
-
-Please check the server status and take appropriate action if needed.
-
-Best regards,
-Server Manager Monitoring
-                """,
-                'html_template': """
-<html>
-<body>
-    <h2>Server Alert: {server_name}</h2>
-    <div style="background-color: {alert_color}; border: 1px solid {border_color}; padding: 15px; border-radius: 5px; margin: 20px 0;">
-        <strong>Status:</strong> {status}<br>
-        <strong>Message:</strong> {message}<br>
-        <strong>Server:</strong> {server_name}<br>
-        <strong>Time:</strong> {timestamp}
-    </div>
-    <p>Please check the server status and take appropriate action if needed.</p>
-    <br>
-    <p>Best regards,<br>Server Manager Monitoring</p>
-</body>
-</html>
-                """
+                'text_template': 'Server alert for {server_name}: {status} - {message}',
+                'html_template': '<html><body><h2>Server Alert</h2><p>{status}: {message}</p></body></html>'
             },
             'maintenance': {
                 'subject': 'Scheduled Maintenance - Server Manager',
-                'text_template': """
-Scheduled Maintenance Notice
-
-Hello {username},
-
-Server Manager will undergo scheduled maintenance:
-
-Start Time: {start_time}
-End Time: {end_time}
-Duration: {duration}
-
-During this maintenance window:
-- The web interface may be unavailable
-- Server management features may be limited
-- Automated processes will be paused
-
-We apologize for any inconvenience this may cause.
-
-Best regards,
-Server Manager Team
-                """,
-                'html_template': """
-<html>
-<body>
-    <h2>Scheduled Maintenance Notice</h2>
-    <p>Hello {username},</p>
-    <p>Server Manager will undergo scheduled maintenance:</p>
-
-    <div style="background-color: #e7f3ff; border: 1px solid #b3d7ff; padding: 15px; border-radius: 5px; margin: 20px 0;">
-        <strong>Maintenance Schedule:</strong><br>
-        Start Time: {start_time}<br>
-        End Time: {end_time}<br>
-        Duration: {duration}
-    </div>
-
-    <p><strong>During this maintenance window:</strong></p>
-    <ul>
-        <li>The web interface may be unavailable</li>
-        <li>Server management features may be limited</li>
-        <li>Automated processes will be paused</li>
-    </ul>
-
-    <p>We apologize for any inconvenience this may cause.</p>
-
-    <br>
-    <p>Best regards,<br>Server Manager Team</p>
-</body>
-</html>
-                """
+                'text_template': 'Maintenance from {start_time} to {end_time}.',
+                'html_template': '<html><body><h2>Maintenance</h2><p>{start_time} to {end_time}</p></body></html>'
             },
             'custom': {
                 'subject': '{custom_subject}',
@@ -240,6 +116,7 @@ Server Manager Team
                 'html_template': '<html><body><p>{custom_message}</p></body></html>'
             }
         }
+        return defaults.get(template_type, defaults['custom'])
 
     def _load_automated_settings(self):
         # Load automated notification settings from registry
@@ -327,6 +204,9 @@ Server Manager Team
             kwargs['border_color'] = border_color
 
         html_body = template['html_template'].format(**kwargs)
+        
+        # Embed CSS in HTML for email compatibility
+        html_body = self._embed_css_in_html(html_body)
 
         # Send email
         return mail_server.send_email(recipient_email, subject, text_body, html_body)

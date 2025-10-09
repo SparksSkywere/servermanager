@@ -1,5 +1,4 @@
 # Debug Manager - System diagnostics and debugging tools for Server Manager
-# Provides GUI interface for debugging, system information, and diagnostic functions
 import os
 import sys
 import json
@@ -107,7 +106,6 @@ class DebugManagerGUI:
     
     def create_ui(self):
         # Create the UI elements
-        # Create group boxes for different debug areas
         self.create_system_group()
         self.create_misc_group()
     

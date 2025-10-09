@@ -1,0 +1,12 @@
+Server Alert: {server_name}
+
+Status: {status}
+Message: {message}
+
+Server: {server_name}
+Time: {timestamp}
+
+Please check the server status and take appropriate action if needed.
+
+Best regards,
+Server Manager Monitoring

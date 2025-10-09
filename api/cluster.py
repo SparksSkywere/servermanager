@@ -2,6 +2,9 @@ import os
 import sys
 import winreg
 import json
+import requests
+import psutil
+import time
 from datetime import datetime
 from functools import wraps
 from flask import Blueprint, jsonify, request
@@ -17,6 +20,10 @@ from Modules.network_security import NetworkSecurityManager, require_cluster_net
 
 # Import database for persistent cluster data
 from Modules.Database.cluster_database import ClusterDatabase
+
+# Import server manager and user database
+from Modules.server_manager import ServerManager
+from Modules.Database.user_database import initialize_user_manager
 
 # Import standardized logging
 from Modules.server_logging import get_component_logger
@@ -79,6 +86,132 @@ def get_cluster_role():
     except Exception as e:
         logger.error(f"Failed to get cluster role from registry: {str(e)}")
         return "Unknown", None
+
+def _check_host_role():
+    # Check if current instance is host, return error response if not
+    role, _ = get_cluster_role()
+    if role != "Host":
+        return jsonify({"error": "This operation is only available on host instances"}), 403
+    return None
+
+def _validate_subhost(subhost_id):
+    # Validate subhost exists and return info, or error response
+    if not is_subhost_registered(subhost_id):
+        return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
+    
+    subhost_info = get_subhost_info(subhost_id)
+    if not subhost_info:
+        return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
+    
+    return subhost_info
+
+def _get_subhost_api_url(subhost_info):
+    # Build API URL for subhost
+    return f"http://{subhost_info['ip_address']}:{subhost_info['port']}"
+
+def _forward_request_to_subhost(url, method='GET', json_data=None, headers=None, timeout=15):
+    # Forward request to subhost with error handling
+    try:
+        if headers is None:
+            headers = {}
+        
+        if method.upper() == 'GET':
+            response = requests.get(url, headers=headers, timeout=timeout)
+        elif method.upper() == 'POST':
+            response = requests.post(url, json=json_data, headers=headers, timeout=timeout)
+        elif method.upper() == 'DELETE':
+            response = requests.delete(url, headers=headers, timeout=timeout)
+        else:
+            return jsonify({"error": f"Unsupported method: {method}"}), 400
+            
+        if response.status_code == 200:
+            return jsonify(response.json()), 200
+        else:
+            return jsonify({"error": f"Subhost returned error: {response.status_code}"}), response.status_code
+            
+    except requests.RequestException as e:
+        logger.error(f"Failed to connect to subhost: {str(e)}")
+        return jsonify({"error": f"Failed to connect to subhost: {str(e)}"}), 503
+
+def _create_server_manager():
+    # Create and initialize server manager instance
+    server_manager = ServerManager()
+    server_manager.load_config()
+    server_manager.load_servers()
+    return server_manager
+
+def _calculate_subhost_status(last_ping, current_time):
+    # Calculate subhost status based on last ping time
+    if last_ping:
+        try:
+            last_ping_time = datetime.fromisoformat(last_ping)
+            time_diff = current_time - last_ping_time
+            seconds_ago = int(time_diff.total_seconds())
+            
+            # Mark as active if last seen within 5 minutes
+            if seconds_ago < 300:  # 5 minutes
+                status = "active"
+            else:
+                status = "inactive"
+                
+            last_seen_ago = f"{seconds_ago} seconds ago"
+            return status, last_seen_ago, seconds_ago
+        except:
+            return "unknown", "unknown", 999999
+    else:
+        return "unknown", "never", 999999
+
+def _cleanup_old_subhosts(active_subhosts, current_time):
+    # Clean up inactive subhosts that haven't been seen for over 1 hour
+    old_count = len(active_subhosts)
+    nodes_to_remove = []
+    
+    for subhost_id, data in active_subhosts.items():
+        if data['status'] == 'inactive':
+            last_ping = data['last_seen']
+            if last_ping and last_ping != 'never':
+                try:
+                    last_ping_time = datetime.fromisoformat(last_ping)
+                    time_diff = current_time - last_ping_time
+                    if time_diff.total_seconds() > 3600:  # 1 hour
+                        nodes_to_remove.append(subhost_id)
+                except:
+                    pass
+    
+    # Remove old nodes
+    for subhost_id in nodes_to_remove:
+        cluster_db.remove_cluster_node(subhost_id)
+        active_subhosts.pop(subhost_id, None)
+    
+    cleanup_count = old_count - len(active_subhosts)
+    if cleanup_count > 0:
+        logger.info(f"Cleaned up {cleanup_count} old subhost entries")
+    
+    return cleanup_count
+
+def _build_server_info(server_name, server_config, status, pid, error=None):
+    # Build server info dictionary efficiently
+    base_info = {
+        "name": server_name,
+        "status": status,
+        "pid": pid,
+        "type": server_config.get('Type', 'Unknown'),
+        "install_dir": server_config.get('InstallDir', ''),
+        "app_id": server_config.get('AppID', ''),
+        "executable": server_config.get('ExecutablePath', ''),
+        "args": server_config.get('LaunchArgs', ''),
+        "last_started": server_config.get('StartTime', ''),
+        "auto_start": server_config.get('AutoStart', False)
+    }
+    
+    if error:
+        base_info.update({
+            "status": "Error",
+            "pid": None,
+            "error": error
+        })
+    
+    return base_info
 
 @cluster_api.route("/api/cluster/role", methods=["GET"])
 def api_cluster_role():
@@ -450,29 +583,10 @@ def api_list_subhosts():
                 subhost_id = node['name']
                 last_ping = node['last_ping']
                 
-                # Calculate time since last ping
-                if last_ping:
-                    try:
-                        last_ping_time = datetime.fromisoformat(last_ping)
-                        time_diff = current_time - last_ping_time
-                        seconds_ago = int(time_diff.total_seconds())
-                        
-                        # Mark as active if last seen within 5 minutes
-                        if seconds_ago < 300:  # 5 minutes
-                            status = "active"
-                        else:
-                            status = "inactive"
-                            inactive_count += 1
-                            
-                        last_seen_ago = f"{seconds_ago} seconds ago"
-                    except:
-                        status = "unknown"
-                        last_seen_ago = "unknown"
-                        seconds_ago = 999999
-                else:
-                    status = "unknown"
-                    last_seen_ago = "never"
-                    seconds_ago = 999999
+                # Calculate subhost status
+                status, last_seen_ago, _ = _calculate_subhost_status(last_ping, current_time)
+                if status == "inactive":
+                    inactive_count += 1
                 
                 # Convert to legacy format
                 active_subhosts[subhost_id] = {
@@ -486,29 +600,8 @@ def api_list_subhosts():
                     "port": node['port']
                 }
         
-        # Clean up inactive subhosts that haven't been seen for over 1 hour
-        old_count = len(active_subhosts)
-        nodes_to_remove = []
-        for subhost_id, data in active_subhosts.items():
-            if data['status'] == 'inactive':
-                last_ping = data['last_seen']
-                if last_ping and last_ping != 'never':
-                    try:
-                        last_ping_time = datetime.fromisoformat(last_ping)
-                        time_diff = current_time - last_ping_time
-                        if time_diff.total_seconds() > 3600:  # 1 hour
-                            nodes_to_remove.append(subhost_id)
-                    except:
-                        pass
-        
-        # Remove old nodes
-        for subhost_id in nodes_to_remove:
-            cluster_db.remove_cluster_node(subhost_id)
-            active_subhosts.pop(subhost_id, None)
-        
-        cleanup_count = old_count - len(active_subhosts)
-        if cleanup_count > 0:
-            logger.info(f"Cleaned up {cleanup_count} old subhost entries")
+        # Clean up old inactive subhosts
+        _cleanup_old_subhosts(active_subhosts, current_time)
         
         logger.debug(f"Listed {len(active_subhosts)} subhosts ({inactive_count} inactive)")
         
@@ -618,33 +711,17 @@ def api_get_host_status():
 def api_get_subhost_servers(subhost_id):
     # Get servers from a specific subhost
     try:
-        role, _ = get_cluster_role()
-        if role != "Host":
-            return jsonify({"error": "This operation is only available on host instances"}), 403
+        host_check = _check_host_role()
+        if host_check:
+            return host_check
             
-        if not is_subhost_registered(subhost_id):
-            return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
+        subhost_info = _validate_subhost(subhost_id)
+        if isinstance(subhost_info, tuple):  # Error response
+            return subhost_info
             
-        subhost_info = get_subhost_info(subhost_id)
-        if not subhost_info:
-            return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
-            
-        # Use subhost IP address from database
-        subhost_ip = subhost_info['ip_address']
-        subhost_port = subhost_info['port']
-        subhost_api_url = f"http://{subhost_ip}:{subhost_port}"
-        
-        # Make request to subhost API
-        import requests
-        try:
-            response = requests.get(f"{subhost_api_url}/api/servers", timeout=10)
-            if response.status_code == 200:
-                return jsonify(response.json())
-            else:
-                return jsonify({"error": f"Subhost returned error: {response.status_code}"}), response.status_code
-        except requests.RequestException as e:
-            logger.error(f"Failed to connect to subhost {subhost_id}: {str(e)}")
-            return jsonify({"error": f"Failed to connect to subhost: {str(e)}"}), 503
+        subhost_api_url = _get_subhost_api_url(subhost_info)
+        result, status_code = _forward_request_to_subhost(f"{subhost_api_url}/api/servers", timeout=10)
+        return result, status_code
             
     except Exception as e:
         logger.error(f"Error getting subhost servers: {str(e)}")
@@ -696,41 +773,27 @@ def api_restart_subhost_server(subhost_id, server_name):
 def api_install_subhost_server(subhost_id):
     # Install a new server on a specific subhost
     try:
-        role, _ = get_cluster_role()
-        if role != "Host":
-            return jsonify({"error": "This operation is only available on host instances"}), 403
-            
-        if not is_subhost_registered(subhost_id):
-            return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
+        host_check = _check_host_role()
+        if host_check:
+            return host_check
             
         data = request.get_json()
         if not data:
             return jsonify({"error": "No installation data provided"}), 400
             
-        subhost_info = get_subhost_info(subhost_id)
-        if not subhost_info:
-            return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
+        subhost_info = _validate_subhost(subhost_id)
+        if isinstance(subhost_info, tuple):  # Error response
+            return subhost_info
             
-        subhost_ip = subhost_info['ip_address']
-        subhost_port = subhost_info['port']
-        subhost_api_url = f"http://{subhost_ip}:{subhost_port}"
+        subhost_api_url = _get_subhost_api_url(subhost_info)
+        headers = {"Content-Type": "application/json"}
         
-        # Forward the installation request to the subhost
-        import requests
-        try:
-            headers = {"Content-Type": "application/json"}
-            # No authorization headers needed in simplified cluster system
-                
-            response = requests.post(f"{subhost_api_url}/api/servers", 
-                                   json=data, headers=headers, timeout=30)
-            if response.status_code == 200:
-                logger.info(f"Successfully initiated server installation on subhost {subhost_id}")
-                return jsonify(response.json())
-            else:
-                return jsonify({"error": f"Subhost returned error: {response.status_code}"}), response.status_code
-        except requests.RequestException as e:
-            logger.error(f"Failed to connect to subhost {subhost_id} for installation: {str(e)}")
-            return jsonify({"error": f"Failed to connect to subhost: {str(e)}"}), 503
+        result, status_code = _forward_request_to_subhost(f"{subhost_api_url}/api/servers", 
+                                           method='POST', json_data=data, 
+                                           headers=headers, timeout=30)
+        if status_code == 200:  # Success
+            logger.info(f"Successfully initiated server installation on subhost {subhost_id}")
+        return result, status_code
             
     except Exception as e:
         logger.error(f"Error installing server on subhost: {str(e)}")
@@ -740,37 +803,20 @@ def api_install_subhost_server(subhost_id):
 def api_remove_subhost_server(subhost_id, server_name):
     # Remove a server from a specific subhost
     try:
-        role, _ = get_cluster_role()
-        if role != "Host":
-            return jsonify({"error": "This operation is only available on host instances"}), 403
+        host_check = _check_host_role()
+        if host_check:
+            return host_check
             
-        if not is_subhost_registered(subhost_id):
-            return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
+        subhost_info = _validate_subhost(subhost_id)
+        if isinstance(subhost_info, tuple):  # Error response
+            return subhost_info
             
-        subhost_info = get_subhost_info(subhost_id)
-        if not subhost_info:
-            return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
-            
-        subhost_ip = subhost_info['ip_address']
-        subhost_port = subhost_info['port']
-        subhost_api_url = f"http://{subhost_ip}:{subhost_port}"
-        
-        # Forward the deletion request to the subhost
-        import requests
-        try:
-            headers = {}
-            # No authorization headers needed in simplified cluster system
-                
-            response = requests.delete(f"{subhost_api_url}/api/servers/{server_name}", 
-                                     headers=headers, timeout=15)
-            if response.status_code == 200:
-                logger.info(f"Successfully removed server {server_name} from subhost {subhost_id}")
-                return jsonify(response.json())
-            else:
-                return jsonify({"error": f"Subhost returned error: {response.status_code}"}), response.status_code
-        except requests.RequestException as e:
-            logger.error(f"Failed to connect to subhost {subhost_id} for server removal: {str(e)}")
-            return jsonify({"error": f"Failed to connect to subhost: {str(e)}"}), 503
+        subhost_api_url = _get_subhost_api_url(subhost_info)
+        result, status_code = _forward_request_to_subhost(f"{subhost_api_url}/api/servers/{server_name}", 
+                                                        method='DELETE', timeout=15)
+        if status_code == 200:  # Success
+            logger.info(f"Successfully removed server {server_name} from subhost {subhost_id}")
+        return result, status_code
             
     except Exception as e:
         logger.error(f"Error removing server from subhost: {str(e)}")
@@ -778,42 +824,25 @@ def api_remove_subhost_server(subhost_id, server_name):
 
 def _execute_subhost_server_command(subhost_id, server_name, action):
     # Helper function to execute server commands on subhost
-    if not is_subhost_registered(subhost_id):
-        return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
+    subhost_info = _validate_subhost(subhost_id)
+    if isinstance(subhost_info, tuple):  # Error response
+        return subhost_info
         
-    subhost_info = get_subhost_info(subhost_id)
-    if not subhost_info:
-        return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
-        
-    subhost_ip = subhost_info['ip_address']
-    subhost_port = subhost_info['port']
-    subhost_api_url = f"http://{subhost_ip}:{subhost_port}"
-    
-    # Make request to subhost API
-    import requests
-    try:
-        headers = {}
-        # No authorization headers needed in simplified cluster system
-            
-        response = requests.post(f"{subhost_api_url}/api/servers/{server_name}/{action}", 
-                               headers=headers, timeout=15)
-        if response.status_code == 200:
-            logger.info(f"Successfully executed {action} on server {server_name} on subhost {subhost_id}")
-            return jsonify(response.json())
-        else:
-            return jsonify({"error": f"Subhost returned error: {response.status_code}"}), response.status_code
-    except requests.RequestException as e:
-        logger.error(f"Failed to connect to subhost {subhost_id} for {action}: {str(e)}")
-        return jsonify({"error": f"Failed to connect to subhost: {str(e)}"}), 503
+    subhost_api_url = _get_subhost_api_url(subhost_info)
+    result, status_code = _forward_request_to_subhost(f"{subhost_api_url}/api/servers/{server_name}/{action}", 
+                                                     method='POST', timeout=15)
+    if status_code == 200:  # Success
+        logger.info(f"Successfully executed {action} on server {server_name} on subhost {subhost_id}")
+    return result, status_code
 
 @cluster_api.route("/api/cluster/nodes", methods=["GET"])
 @require_cluster_auth
 def api_cluster_nodes():
     # Get all approved cluster nodes
     try:
-        role, _ = get_cluster_role()
-        if role != "Host":
-            return jsonify({"error": "This operation is only available on host instances"}), 403
+        host_check = _check_host_role()
+        if host_check:
+            return host_check
             
         # Get all registered subhosts from database
         all_nodes = cluster_db.get_all_cluster_nodes()
@@ -870,7 +899,6 @@ def api_remote_login():
         
         # Import user management for authentication
         try:
-            from Modules.Database.user_database import initialize_user_manager
             engine, user_manager = initialize_user_manager()
             
             # Authenticate user
@@ -913,10 +941,7 @@ def api_get_servers():
     # Get list of all servers for remote host access
     try:
         # Import server manager
-        from Modules.server_manager import ServerManager
-        server_manager = ServerManager()
-        server_manager.load_config()
-        server_manager.load_servers()
+        server_manager = _create_server_manager()
         
         # Get all servers with their current status
         servers = server_manager.get_all_servers()
@@ -926,31 +951,14 @@ def api_get_servers():
             try:
                 # Get server status
                 status, pid = server_manager.get_server_status(server_name)
-                
-                server_info = {
-                    "name": server_name,
-                    "status": status,
-                    "pid": pid,
-                    "type": server_config.get('Type', 'Unknown'),
-                    "install_dir": server_config.get('InstallDir', ''),
-                    "app_id": server_config.get('AppID', ''),
-                    "executable": server_config.get('ExecutablePath', ''),
-                    "args": server_config.get('LaunchArgs', ''),
-                    "last_started": server_config.get('StartTime', ''),
-                    "auto_start": server_config.get('AutoStart', False)
-                }
+                server_info = _build_server_info(server_name, server_config, status, pid)
                 result.append(server_info)
                 
             except Exception as server_error:
                 logger.debug(f"Error getting status for server {server_name}: {str(server_error)}")
                 # Add server with error status if status check fails
-                result.append({
-                    "name": server_name,
-                    "status": "Error",
-                    "pid": None,
-                    "type": server_config.get('Type', 'Unknown'),
-                    "error": str(server_error)
-                })
+                server_info = _build_server_info(server_name, server_config, "Error", None, str(server_error))
+                result.append(server_info)
         
         return jsonify({
             "success": True,
@@ -967,10 +975,7 @@ def api_get_servers():
 def api_get_server_status(server_name):
     # Get status of a specific server
     try:
-        from Modules.server_manager import ServerManager
-        server_manager = ServerManager()
-        server_manager.load_config()
-        server_manager.load_servers()
+        server_manager = _create_server_manager()
         
         # Check if server exists
         server_config = server_manager.get_server_config(server_name)
@@ -984,7 +989,6 @@ def api_get_server_status(server_name):
         process_info = {}
         if status == "Running" and pid:
             try:
-                import psutil
                 process = psutil.Process(pid)
                 process_info = {
                     "cpu_percent": process.cpu_percent(),
@@ -1013,10 +1017,7 @@ def api_get_server_status(server_name):
 def api_start_server(server_name):
     # Start a specific server
     try:
-        from Modules.server_manager import ServerManager
-        server_manager = ServerManager()
-        server_manager.load_config()
-        server_manager.load_servers()
+        server_manager = _create_server_manager()
         
         # Check if server exists
         server_config = server_manager.get_server_config(server_name)
@@ -1047,10 +1048,7 @@ def api_start_server(server_name):
 def api_stop_server(server_name):
     # Stop a specific server
     try:
-        from Modules.server_manager import ServerManager
-        server_manager = ServerManager()
-        server_manager.load_config()
-        server_manager.load_servers()
+        server_manager = _create_server_manager()
         
         # Check if server exists
         server_config = server_manager.get_server_config(server_name)
@@ -1081,10 +1079,7 @@ def api_stop_server(server_name):
 def api_restart_server(server_name):
     # Restart a specific server
     try:
-        from Modules.server_manager import ServerManager
-        server_manager = ServerManager()
-        server_manager.load_config()
-        server_manager.load_servers()
+        server_manager = _create_server_manager()
         
         # Check if server exists
         server_config = server_manager.get_server_config(server_name)
@@ -1095,7 +1090,6 @@ def api_restart_server(server_name):
         stop_success = server_manager.stop_server(server_name)
         if stop_success:
             # Wait a moment before starting
-            import time
             time.sleep(2)
             start_success = server_manager.start_server_advanced(server_name)
             

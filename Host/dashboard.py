@@ -180,6 +180,7 @@ class ServerManagerDashboard(ServerManagerModule):
         
         # Create root window (temporarily hidden for login)
         self.root = tk.Tk()
+        self.root.resizable(True, True)
         
         # On Windows, when launched from trayicon (detached process), ensure proper window handling
         if os.name == 'nt' and '--debug' not in sys.argv:
@@ -209,7 +210,7 @@ class ServerManagerDashboard(ServerManagerModule):
         # Now configure the UI with user information
         username = getattr(self.current_user, 'username', 'Unknown') if self.current_user else 'Unknown'
         self.root.title(f"Server Manager Dashboard (Logged in as: {username})")
-        self.root.minsize(1000, 700)
+        self.root.minsize(800, 600)
         
         # Ensure the main window is properly visible
         self.root.deiconify()
@@ -223,7 +224,11 @@ class ServerManagerDashboard(ServerManagerModule):
         logger.info("Dashboard window brought to front and focused")
         
         # Center the main window on screen
-        center_window(self.root, 1400, 900)
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        width = int(screen_width * 0.8)
+        height = int(screen_height * 0.8)
+        center_window(self.root, width, height)
         logger.info("Dashboard window centered on screen")
         
         self.setup_ui()
@@ -366,8 +371,8 @@ class ServerManagerDashboard(ServerManagerModule):
         
         # Configure servers frame for proper resizing
         self.servers_frame.columnconfigure(0, weight=1)
-        self.servers_frame.rowconfigure(0, weight=0)  # Tab navigation
-        self.servers_frame.rowconfigure(1, weight=1)  # Notebook
+        self.servers_frame.rowconfigure(0, weight=0)
+        self.servers_frame.rowconfigure(1, weight=1)
         
         # Create tab navigation frame
         self.tab_nav_frame = ttk.Frame(self.servers_frame)
@@ -376,12 +381,12 @@ class ServerManagerDashboard(ServerManagerModule):
         # Left arrow button for tab navigation
         self.left_arrow = ttk.Button(self.tab_nav_frame, text="◀", width=3, command=self.scroll_tabs_left)
         self.left_arrow.pack(side=tk.LEFT, padx=(0, 2))
-        self.left_arrow.config(state=tk.DISABLED)  # Initially disabled
+        self.left_arrow.config(state=tk.DISABLED)
         
         # Right arrow button for tab navigation
         self.right_arrow = ttk.Button(self.tab_nav_frame, text="▶", width=3, command=self.scroll_tabs_right)
         self.right_arrow.pack(side=tk.RIGHT, padx=(2, 0))
-        self.right_arrow.config(state=tk.DISABLED)  # Initially disabled
+        self.right_arrow.config(state=tk.DISABLED)
         
         # Tab notebook
         self.server_notebook = ttk.Notebook(self.servers_frame)
@@ -408,12 +413,12 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_context_menu.add_command(label="Restart Server", command=self.restart_server)
         self.server_context_menu.add_command(label="View Process Details", command=self.view_process_details)
         self.server_context_menu.add_command(label="Show Console", command=self.show_server_console)
-        self.server_context_menu.add_command(label="Console Manager", command=self.show_console_manager)
         self.server_context_menu.add_command(label="Configure Server", command=self.configure_server)
         self.server_context_menu.add_separator()
         self.server_context_menu.add_command(label="Check for Updates", command=self.check_server_updates)
         self.server_context_menu.add_command(label="Update Server", command=self.update_server)
         self.server_context_menu.add_command(label="Schedule", command=self.show_server_schedule)
+        self.server_context_menu.add_command(label="Console Manager", command=self.show_console_manager)
         self.server_context_menu.add_separator()
         self.server_context_menu.add_command(label="Export Server", command=self.export_server)
         self.server_context_menu.add_command(label="Open Folder Directory", command=self.open_server_directory)
@@ -755,7 +760,9 @@ class ServerManagerDashboard(ServerManagerModule):
         dialog.title(f"Create {server_type} Server")
         dialog.transient(self.root)
         dialog.grab_set()
-        dialog.minsize(950, 700)  # Set minimum size for proper text wrapping
+        dialog_width = min(950, int(self.root.winfo_screenwidth() * 0.9))
+        dialog_height = min(700, int(self.root.winfo_screenheight() * 0.8))
+        dialog.minsize(dialog_width, dialog_height)
         
         # Main frame
         main_frame = ttk.Frame(dialog, padding=15)
@@ -1348,7 +1355,7 @@ class ServerManagerDashboard(ServerManagerModule):
         dialog.protocol("WM_DELETE_WINDOW", on_close)
         
         # Center dialog relative to parent with proper size for new layout
-        center_window(dialog, 950, 700, self.root)
+        center_window(dialog, dialog_width, dialog_height, self.root)
 
     def update_server_list(self, force_refresh=False):
         # Update server list from configuration files - thread-safe
@@ -2190,7 +2197,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Configure Server: {server_name}")
-        dialog.geometry("900x850")
+        dialog_width = min(900, int(self.root.winfo_screenwidth() * 0.9))
+        dialog_height = min(850, int(self.root.winfo_screenheight() * 0.8))
+        dialog.geometry(f"{dialog_width}x{dialog_height}")
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -2984,7 +2993,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         ttk.Button(button_frame, text="Save Configuration", command=save_configuration).pack(side=tk.RIGHT)
 
         # Center dialog relative to parent
-        center_window(dialog, 950, 850, self.root)
+        center_window(dialog, dialog_width, dialog_height, self.root)
 
     def configure_java(self):
         # Open Java configuration dialog for selected server
@@ -3978,20 +3987,32 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                         if has_updates:
                             result = messagebox.askyesno("Updates Available", 
                                 f"Updates are available for {server_name}.\n\nWould you like to update now?")
+                            # Close progress dialog automatically after user responds
+                            progress_dialog.complete("Check completed", auto_close=True)
                             if result:
                                 self.update_server_now(server_name, server_config)
                         else:
                             messagebox.showinfo("No Updates", f"{server_name} is up to date.")
+                            # Close progress dialog automatically after user clicks OK
+                            progress_dialog.complete("Check completed", auto_close=True)
                     
                     self.root.after(0, show_result)
                 else:
                     progress_callback(f"[ERROR] {message}")
-                    self.root.after(0, lambda: messagebox.showerror("Update Check Failed", message))
+                    def show_error():
+                        messagebox.showerror("Update Check Failed", message)
+                        # Close progress dialog automatically after user clicks OK
+                        progress_dialog.complete("Check failed", auto_close=True)
+                    self.root.after(0, show_error)
                 
             except Exception as e:
                 error_msg = f"Update check failed: {str(e)}"
                 logger.error(error_msg)
-                self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
+                def show_exception_error():
+                    messagebox.showerror("Error", error_msg)
+                    # Close progress dialog automatically after user clicks OK
+                    progress_dialog.complete("Check failed", auto_close=True)
+                self.root.after(0, show_exception_error)
         
         # Start check in background thread
         import threading
@@ -4067,18 +4088,29 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 
                 if success:
                     progress_callback(f"[SUCCESS] {message}")
-                    self.root.after(0, lambda: messagebox.showinfo("Update Complete", 
-                        f"{server_name} has been updated successfully!"))
-                    # Refresh server list
-                    self.root.after(0, self.update_server_list)
+                    def show_success():
+                        messagebox.showinfo("Update Complete", f"{server_name} has been updated successfully!")
+                        # Close progress dialog automatically after user clicks OK
+                        progress_dialog.complete("Update completed", auto_close=True)
+                        # Refresh server list
+                        self.update_server_list()
+                    self.root.after(0, show_success)
                 else:
                     progress_callback(f"[ERROR] {message}")
-                    self.root.after(0, lambda: messagebox.showerror("Update Failed", message))
+                    def show_error():
+                        messagebox.showerror("Update Failed", message)
+                        # Close progress dialog automatically after user clicks OK
+                        progress_dialog.complete("Update failed", auto_close=True)
+                    self.root.after(0, show_error)
                 
             except Exception as e:
                 error_msg = f"Server update failed: {str(e)}"
                 logger.error(error_msg)
-                self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
+                def show_exception_error():
+                    messagebox.showerror("Error", error_msg)
+                    # Close progress dialog automatically after user clicks OK
+                    progress_dialog.complete("Update failed", auto_close=True)
+                self.root.after(0, show_exception_error)
         
         # Start update in background thread
         import threading
@@ -4099,38 +4131,48 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             return
         self.timer_manager.show_schedules_manager()
     
-    def update_all_servers(self):
+    def update_all_servers(self, scheduled=False):
         # Update all Steam servers
+        # scheduled: bool - If True, skip confirmation dialogs and close progress dialog automatically
         if not self.update_manager:
-            messagebox.showerror("Error", "Update manager not available.")
+            if not scheduled:
+                messagebox.showerror("Error", "Update manager not available.")
             return
         
-        # Confirm update
-        result = messagebox.askyesno("Confirm Update All", 
-            "Are you sure you want to update all Steam servers?\n\n"
-            "This will stop all running Steam servers during the update process.")
+        # Confirm update only for manual updates
+        if not scheduled:
+            result = messagebox.askyesno("Confirm Update All", 
+                "Are you sure you want to update all Steam servers?\n\n"
+                "This will stop all running Steam servers during the update process.")
+            
+            if not result:
+                return
         
-        if not result:
-            return
-        
-        # Show progress dialog
-        progress_dialog = create_progress_dialog_with_console(self.root, "Updating All Steam Servers")
+        # Show progress dialog only for manual updates
+        progress_dialog = None
+        if not scheduled:
+            progress_dialog = create_progress_dialog_with_console(self.root, "Updating All Steam Servers")
         
         def update_all_worker():
             try:
                 def progress_callback(message):
                     try:
-                        # Use the update_console method which is more robust
-                        if hasattr(progress_dialog, 'update_console'):
+                        if progress_dialog and hasattr(progress_dialog, 'update_console'):
                             progress_dialog.update_console(message)
-                        else:
+                        elif not scheduled:
+                            # For manual updates without progress dialog, print to console
                             print(message)
+                        # For scheduled updates, log messages but don't show dialogs
+                        if scheduled:
+                            logger.info(message)
                     except Exception as e:
-                        print(f"Console callback error: {e}, message: {message}")
+                        if not scheduled:
+                            print(f"Console callback error: {e}, message: {message}")
+                        logger.error(f"Console callback error: {e}, message: {message}")
 
                 if self.update_manager:
-                    # Use scheduled=False to ensure full console output for manual batch updates
-                    results = self.update_manager.update_all_steam_servers(progress_callback=progress_callback, scheduled=False)
+                    # Use scheduled parameter to control dialog behavior in update manager
+                    results = self.update_manager.update_all_steam_servers(progress_callback=progress_callback, scheduled=scheduled)
                 else:
                     results = {"error": (False, "Update manager not available")}
                 
@@ -4138,20 +4180,34 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 successes = len([r for r in results.values() if r[0]])
                 failures = len([r for r in results.values() if not r[0]])
                 
-                progress_callback(f"\n[SUMMARY] Updates complete: {successes} successful, {failures} failed")
+                if progress_callback:
+                    progress_callback(f"\n[SUMMARY] Updates complete: {successes} successful, {failures} failed")
                 
-                # Show detailed results
+                # Show detailed results only for manual updates
                 def show_results():
-                    if failures > 0:
-                        failed_servers = [name for name, (success, _) in results.items() if not success]
-                        messagebox.showwarning("Some Updates Failed", 
-                            f"Update completed with some failures.\n\n"
-                            f"Successful: {successes}\nFailed: {failures}\n\n"
-                            f"Failed servers: {', '.join(failed_servers)}")
+                    if not scheduled:
+                        # For manual updates, show results dialog
+                        if failures > 0:
+                            failed_servers = [name for name, (success, _) in results.items() if not success]
+                            messagebox.showwarning("Some Updates Failed", 
+                                f"Update completed with some failures.\n\n"
+                                f"Successful: {successes}\nFailed: {failures}\n\n"
+                                f"Failed servers: {', '.join(failed_servers)}")
+                        else:
+                            messagebox.showinfo("Updates Complete", 
+                                f"All Steam servers updated successfully!\n\n"
+                                f"Updated {successes} servers.")
+                        
+                        # Close progress dialog automatically after user clicks OK on results dialog
+                        if progress_dialog:
+                            progress_dialog.complete("Updates completed", auto_close=True)
                     else:
-                        messagebox.showinfo("Updates Complete", 
-                            f"All Steam servers updated successfully!\n\n"
-                            f"Updated {successes} servers.")
+                        # For scheduled updates, just log the results
+                        if failures > 0:
+                            failed_servers = [name for name, (success, _) in results.items() if not success]
+                            logger.warning(f"Scheduled update completed with failures. Successful: {successes}, Failed: {failures}. Failed servers: {', '.join(failed_servers)}")
+                        else:
+                            logger.info(f"Scheduled update completed successfully. Updated {successes} servers.")
                     
                     # Refresh server list
                     self.update_server_list()
@@ -4161,7 +4217,13 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             except Exception as e:
                 error_msg = f"Batch update failed: {str(e)}"
                 logger.error(error_msg)
-                self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
+                if not scheduled:
+                    def show_exception_error():
+                        messagebox.showerror("Error", error_msg)
+                        # Close progress dialog automatically after user clicks OK
+                        if progress_dialog:
+                            progress_dialog.complete("Update failed", auto_close=True)
+                    self.root.after(0, show_exception_error)
         
         # Start update in background thread
         import threading
@@ -4232,6 +4294,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                             f"All servers restarted successfully!\n\n"
                             f"Restarted {successes} servers.")
                     
+                    # Close progress dialog automatically after user clicks OK on results dialog
+                    progress_dialog.complete("Restarts completed", auto_close=True)
+                    
                     # Refresh server list
                     self.update_server_list()
                 
@@ -4240,7 +4305,11 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             except Exception as e:
                 error_msg = f"Batch restart failed: {str(e)}"
                 logger.error(error_msg)
-                self.root.after(0, lambda: messagebox.showerror("Error", error_msg))
+                def show_exception_error():
+                    messagebox.showerror("Error", error_msg)
+                    # Close progress dialog automatically after user clicks OK
+                    progress_dialog.complete("Restart failed", auto_close=True)
+                self.root.after(0, show_exception_error)
         
         # Start restart in background thread
         import threading

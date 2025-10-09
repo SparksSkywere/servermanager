@@ -1,7 +1,4 @@
 # Cluster Agent Management Module
-# Manages cluster nodes, handles join requests, provides GUI for cluster administration
-# Supports both master and subhost configurations with database persistence
-
 import os
 import sys
 import requests
@@ -385,7 +382,7 @@ class ClusterManagementDialog:
         pending_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Create treeview for pending requests
-        columns = ("Host", "IP Address", "Request Time", "Status")
+        columns = ("id", "Host", "IP Address", "Request Time", "Status")
         self.pending_tree = ttk.Treeview(pending_frame, columns=columns, show="headings", height=6)
         
         # Configure column headings and widths
@@ -394,6 +391,7 @@ class ClusterManagementDialog:
         self.pending_tree.heading("Request Time", text="Request Time")
         self.pending_tree.heading("Status", text="Status")
         
+        self.pending_tree.column("id", width=0, stretch=False)  # Hidden column for ID
         self.pending_tree.column("Host", width=150)
         self.pending_tree.column("IP Address", width=120)
         self.pending_tree.column("Request Time", width=150)
@@ -534,11 +532,11 @@ class ClusterManagementDialog:
                                 self.dialog.after(0, lambda: self.on_join_rejected(message))
                             break
                     
-                    time.sleep(5)  # Check every 5 seconds
+                    time.sleep(5)
                     
                 except Exception as e:
                     logger.error(f"Error checking approval status: {e}")
-                    time.sleep(10)  # Wait longer on error
+                    time.sleep(10)
         
         thread = threading.Thread(target=check_approval, daemon=True)
         thread.start()
@@ -578,6 +576,7 @@ class ClusterManagementDialog:
                         pass
                 
                 self.pending_tree.insert('', 'end', values=(
+                    request.get('id', 0),
                     request.get('node_name', 'Unknown'),
                     request.get('ip_address', 'Unknown'), 
                     request_time,
@@ -596,17 +595,18 @@ class ClusterManagementDialog:
         # Get selected item data
         item = self.pending_tree.item(selection[0])
         values = item['values']
-        if not values:
+        if not values or len(values) < 2:
             return
             
-        host_name = values[0]
-        host_ip = values[1]
+        request_id = int(values[0])
+        host_name = values[1]
+        host_ip = values[2]
         
         try:
-            if self.agent_manager.approve_request(host_ip):
+            if self.agent_manager.approve_request(request_id):
                 messagebox.showinfo("Success", f"Approved cluster join request from {host_name} ({host_ip})")
                 self.refresh_pending_requests()
-                self.refresh_nodes()  # Refresh the nodes list too
+                self.refresh_nodes()
             else:
                 messagebox.showerror("Error", f"Failed to approve request from {host_name}")
         except Exception as e:
@@ -623,11 +623,12 @@ class ClusterManagementDialog:
         # Get selected item data
         item = self.pending_tree.item(selection[0])
         values = item['values']
-        if not values:
+        if not values or len(values) < 2:
             return
             
-        host_name = values[0]
-        host_ip = values[1]
+        request_id = int(values[0])
+        host_name = values[1]
+        host_ip = values[2]
         
         # Confirm rejection
         if not messagebox.askyesno("Confirm Rejection", 
@@ -635,7 +636,7 @@ class ClusterManagementDialog:
             return
         
         try:
-            if self.agent_manager.reject_request(host_ip):
+            if self.agent_manager.reject_request(request_id):
                 messagebox.showinfo("Success", f"Rejected cluster join request from {host_name} ({host_ip})")
                 self.refresh_pending_requests()
             else:

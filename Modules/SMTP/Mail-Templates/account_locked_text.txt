@@ -1,0 +1,12 @@
+Account Locked Notice
+
+Hello {username},
+
+Your Server Manager account has been locked due to multiple failed login attempts.
+
+To unlock your account, please contact your administrator or use the password reset feature if available.
+
+If you need immediate assistance, please contact support.
+
+Best regards,
+Server Manager Team

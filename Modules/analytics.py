@@ -1,7 +1,4 @@
 # Analytics and Metrics Collection Module
-# Provides system monitoring, server statistics, and health metrics
-# Supports Prometheus, SNMP, Grafana integration with background collection
-
 import os
 import sys
 import json
@@ -22,10 +19,12 @@ except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger("Analytics")
 
+# Import SNMP and Grafana modules (lazy loading to prevent circular imports)
+_snmp_manager = None
+_grafana_manager = None
+
 class AnalyticsCollector(ServerManagerModule):
     # Analytics module for collecting system and server statistics
-    # Provides metrics for SNMP, Grafana, and other monitoring tools
-    # Supports background collection with 24-hour history retention
     
     def __init__(self):
         try:
@@ -38,7 +37,7 @@ class AnalyticsCollector(ServerManagerModule):
             self.logger = logging.getLogger("Analytics")
         
         # Metrics storage
-        self.metrics_history = defaultdict(lambda: deque(maxlen=1440))  # 24 hours at 1min intervals
+        self.metrics_history = defaultdict(lambda: deque(maxlen=1440))
         self.last_collection = datetime.now()
         self.collection_interval = 60  # seconds
         self.lock = threading.Lock()
@@ -61,7 +60,6 @@ class AnalyticsCollector(ServerManagerModule):
 
     def initialize_integrations(self):
         # Initialize integrations with server manager and dashboard tracker
-        # Enables collection of server-specific and application metrics
         try:
             # Import server manager
             from Modules.server_manager import ServerManager
@@ -389,18 +387,7 @@ class AnalyticsCollector(ServerManagerModule):
                     
             return history
 
-    def get_prometheus_metrics(self):
-        # Get metrics in Prometheus format for Grafana integration
-        # Converts dot notation to underscores for compatibility
-        current_metrics = self.get_current_metrics()
-        prometheus_output = []
-        
-        for metric_name, value in current_metrics.items():
-            # Convert metric name to Prometheus format
-            prom_name = metric_name.replace('.', '_')
-            prometheus_output.append(f"{prom_name} {value}")
-            
-        return '\n'.join(prometheus_output)
+
 
     def get_json_metrics(self):
         # Get all metrics in JSON format with metadata
@@ -522,35 +509,16 @@ class AnalyticsCollector(ServerManagerModule):
                 'system': {}
             }
 
-    def get_snmp_metrics(self):
-        # Get metrics formatted for SNMP monitoring with OID structure
-        current_metrics = self.get_current_metrics()
-        health = self.get_system_health()
-        server_summary = self.get_server_summary()
-        
-        # Format for SNMP (OID-like structure)
-        snmp_metrics = {
-            # System metrics (1.3.6.1.4.1.enterprise.1.x)
-            '1.3.6.1.4.1.12345.1.1': health['health_score'],  # Overall health score
-            '1.3.6.1.4.1.12345.1.2': current_metrics.get('system.cpu.percent', 0),
-            '1.3.6.1.4.1.12345.1.3': current_metrics.get('system.memory.percent', 0),
-            '1.3.6.1.4.1.12345.1.4': current_metrics.get('system.disk.percent', 0),
-            '1.3.6.1.4.1.12345.1.5': current_metrics.get('system.uptime', 0),
-            
-            # Server metrics (1.3.6.1.4.1.enterprise.2.x)
-            '1.3.6.1.4.1.12345.2.1': server_summary['total_servers'],
-            '1.3.6.1.4.1.12345.2.2': server_summary['running_servers'],
-            '1.3.6.1.4.1.12345.2.3': server_summary['offline_servers'],
-            '1.3.6.1.4.1.12345.2.4': server_summary['error_servers'],
-            
-            # Application metrics (1.3.6.1.4.1.enterprise.3.x)
-            '1.3.6.1.4.1.12345.3.1': current_metrics.get('application.webserver.cpu_percent', 0),
-            '1.3.6.1.4.1.12345.3.2': current_metrics.get('application.webserver.memory_rss', 0),
-            '1.3.6.1.4.1.12345.3.3': current_metrics.get('application.webserver.connections', 0),
-            '1.3.6.1.4.1.12345.3.4': current_metrics.get('application.dashboards.count', 0),
-        }
-        
-        return snmp_metrics
+    # Backward compatibility methods - these delegate to module-level functions
+    def get_prometheus_metrics(self, enabled=True):
+        """Backward compatibility: Get Prometheus metrics"""
+        from Modules.analytics import get_prometheus_metrics as _get_prometheus_metrics
+        return _get_prometheus_metrics(self, enabled)
+    
+    def get_snmp_metrics(self, enabled=True):
+        """Backward compatibility: Get SNMP metrics"""
+        from Modules.analytics import get_snmp_metrics as _get_snmp_metrics
+        return _get_snmp_metrics(self, enabled)
 
 # Create global analytics instance
 analytics = AnalyticsCollector()
@@ -567,3 +535,80 @@ def start_analytics():
 def stop_analytics():
     # Stop analytics collection
     analytics.stop_collection()
+
+# Conditional helper functions for SNMP and Grafana integration
+def get_prometheus_metrics(analytics_instance=None, enabled=True):
+    """
+    Get Prometheus metrics for Grafana integration
+    Can be called conditionally based on user configuration
+    """
+    if not enabled:
+        return ""
+        
+    try:
+        global _grafana_manager
+        if _grafana_manager is None:
+            from Modules.SMNP.graphana import get_grafana_manager
+            _grafana_manager = get_grafana_manager(analytics_instance or analytics)
+        return _grafana_manager.get_prometheus_metrics()
+    except Exception as e:
+        logger.error(f"Error getting Prometheus metrics: {e}")
+        return ""
+
+def get_snmp_metrics(analytics_instance=None, enabled=True):
+    """
+    Get SNMP metrics with OID structure
+    Can be called conditionally based on user configuration
+    """
+    if not enabled:
+        return {}
+        
+    try:
+        global _snmp_manager
+        if _snmp_manager is None:
+            from Modules.SMNP.snmp_manager import get_snmp_manager
+            _snmp_manager = get_snmp_manager(analytics_instance or analytics)
+        return _snmp_manager.get_snmp_metrics()
+    except Exception as e:
+        logger.error(f"Error getting SNMP metrics: {e}")
+        return {}
+
+def initialize_snmp_module(analytics_instance=None):
+    """Initialize SNMP module if user has enabled SNMP monitoring"""
+    global _snmp_manager
+    try:
+        from Modules.SMNP.snmp_manager import initialize_snmp
+        _snmp_manager = initialize_snmp(analytics_instance or analytics)
+        logger.info("SNMP module initialized")
+        return _snmp_manager
+    except Exception as e:
+        logger.error(f"Failed to initialize SNMP module: {e}")
+        return None
+
+def initialize_grafana_module(analytics_instance=None):
+    """Initialize Grafana module if user has enabled Grafana integration"""
+    global _grafana_manager
+    try:
+        from Modules.SMNP.graphana import initialize_grafana
+        _grafana_manager = initialize_grafana(analytics_instance or analytics)
+        logger.info("Grafana module initialized")
+        return _grafana_manager
+    except Exception as e:
+        logger.error(f"Failed to initialize Grafana module: {e}")
+        return None
+
+def get_snmp_manager():
+    """Get the SNMP manager instance (if initialized)"""
+    return _snmp_manager
+
+def get_grafana_manager():
+    """Get the Grafana manager instance (if initialized)"""
+    return _grafana_manager
+
+def is_snmp_enabled():
+    """Check if SNMP module is initialized and available"""
+    return _snmp_manager is not None
+
+def is_grafana_enabled():
+    """Check if Grafana module is initialized and available"""
+    return _grafana_manager is not None

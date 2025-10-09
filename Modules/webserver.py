@@ -262,33 +262,34 @@ class SQLAuthentication:
     def authenticate(self, username, password):
         if self.user_manager is None:
             return None
-        user = self.user_manager.get_user(username)
-        if not user or not getattr(user, 'is_active', True):
+        
+        # Use the same authentication method as the Python dashboard
+        user = self.user_manager.authenticate_user(username, password)
+        if not user:
             return None
-        if self._check_password(password, user.password):
-            # Check if password was SHA256 and upgrade to bcrypt
+        
+        # Check if password was SHA256 and upgrade to bcrypt (same logic as UserManager)
+        try:
+            bcrypt.checkpw(password.encode(), user.password.encode())
+        except Exception:
+            # Password was SHA256, upgrade to bcrypt
             try:
-                bcrypt.checkpw(password.encode(), user.password.encode())
-            except Exception:
-                # Password was SHA256, upgrade to bcrypt
-                try:
-                    self.user_manager.update_user(username, password=password)
-                    logger.info(f"Upgraded password hash to bcrypt for user: {username}")
-                except Exception as e:
-                    logger.warning(f"Failed to upgrade password hash: {e}")
-            
-            token = str(uuid.uuid4())
-            self.tokens[token] = {
-                "username": username,
-                "created": datetime.datetime.now().isoformat(),
-                "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat()
-            }
-            return {
-                "token": token, 
-                "username": username,
-                "isAdmin": getattr(user, 'is_admin', False)
-            }
-        return None
+                self.user_manager.update_user(username, password=password)
+                logger.info(f"Upgraded password hash to bcrypt for user: {username}")
+            except Exception as e:
+                logger.warning(f"Failed to upgrade password hash: {e}")
+        
+        token = str(uuid.uuid4())
+        self.tokens[token] = {
+            "username": username,
+            "created": datetime.datetime.now().isoformat(),
+            "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat()
+        }
+        return {
+            "token": token, 
+            "username": username,
+            "isAdmin": getattr(user, 'is_admin', False)
+        }
 
     def verify_token(self, token):
         if token in self.tokens:
@@ -760,7 +761,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 if spec and spec.loader:
                     cluster_module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(cluster_module)
-                    app.register_blueprint(cluster_module.cluster_api)
+                    app.register_blueprint(cluster_module.cluster_api, url_prefix='/cluster')
                     logger.info("Cluster API registered successfully on main server")
                 else:
                     logger.warning("Failed to create module spec for cluster API")
@@ -807,7 +808,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 return None
             else:
                 # For other methods, use the original logic
-                auth_instance = kwargs.get('auth_instance', self.auth)
+                auth_instance = kwargs.pop('auth_instance', self.auth)
                 if auth_instance and hasattr(auth_instance, method_name):
                     method = getattr(auth_instance, method_name)
                     return method(*args, **kwargs)
@@ -827,18 +828,7 @@ class ServerManagerWebServer(ServerManagerModule):
 
                 logger.info(f"Login attempt for user: {username} with auth type: {auth_type}")
 
-                if auth_type == "Database" and self.sql_available and self.sql_auth:
-                    auth_result = self.sql_auth.authenticate(username, password)
-                    if auth_result:
-                        logger.info(f"Successful SQL login for user: {username}")
-                        return jsonify({
-                            "token": auth_result["token"],
-                            "username": auth_result["username"],
-                            "isAdmin": auth_result["isAdmin"]
-                        })
-                    logger.warning(f"SQL authentication failed for user: {username}")
-
-                # Try SQL authentication if available
+                # Try SQL authentication first (same as dashboard)
                 if self.sql_auth:
                     sql_result = safe_auth_call('authenticate', username, password, auth_instance=self.sql_auth)
                     if sql_result:
@@ -848,16 +838,18 @@ class ServerManagerWebServer(ServerManagerModule):
                             "username": sql_result["username"],
                             "isAdmin": sql_result["isAdmin"]
                         })
+                    logger.warning(f"SQL authentication failed for user: {username}")
 
-                # Try file-based authentication
-                auth_result = safe_auth_call('authenticate', username, password)
-                if auth_result:
-                    logger.info(f"Successful file-based authentication for user: {username}")
-                    return jsonify({
-                        "token": auth_result["token"],
-                        "username": auth_result["username"],
-                        "isAdmin": auth_result["isAdmin"]
-                    })
+                # Fallback to file-based authentication only if SQL is not available
+                if not self.sql_auth:
+                    auth_result = safe_auth_call('authenticate', username, password)
+                    if auth_result:
+                        logger.info(f"Successful file-based authentication for user: {username}")
+                        return jsonify({
+                            "token": auth_result["token"],
+                            "username": auth_result["username"],
+                            "isAdmin": auth_result["isAdmin"]
+                        })
 
                 try:
                     import getpass

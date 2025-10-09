@@ -1,0 +1,14 @@
+Welcome {username}!
+
+Your account has been created successfully on Server Manager.
+
+Username: {username}
+Email: {email}
+Created: {created_at}
+
+Please keep this information safe. You can log in using your username and the password you set.
+
+If you have any questions, please contact your administrator.
+
+Best regards,
+Server Manager Team

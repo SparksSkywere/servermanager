@@ -444,10 +444,21 @@ function Remove-ServerManagerFirewallRules {
 # Define global variables first
 $global:logMemory = @()
 $global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Install-Log.txt"
-$CurrentVersion = "0.8"
+$CurrentVersion = "0.9"
 $steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
 $gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"
+
+# Add this function after global variable definitions
+function Prompt-Reinstall {
+    $result = [System.Windows.Forms.MessageBox]::Show(
+        "An existing Server Manager installation was detected. Do you want to reinstall (this will overwrite previous settings)?",
+        "Reinstall Server Manager",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question
+    )
+    return $result -eq [System.Windows.Forms.DialogResult]::Yes
+}
 
 # Add this function after global variable definitions
 function Test-ExistingInstallation {
@@ -1511,14 +1522,14 @@ Click Next to continue, or Cancel to exit Setup.
 
     # Master Host IP for cluster nodes
     $hostAddrLabel = New-Object System.Windows.Forms.Label
-    $hostAddrLabel.Text = "Master Host IP Address:"
-    $hostAddrLabel.Location = New-Object System.Drawing.Point(300, 50)
-    $hostAddrLabel.Size = New-Object System.Drawing.Size(150, 20)
+    $hostAddrLabel.Text = "Host IP Address:"
+    $hostAddrLabel.Location = New-Object System.Drawing.Point(320, 50)
+    $hostAddrLabel.Size = New-Object System.Drawing.Size(100, 20)
     $hostAddrLabel.Visible = $false
     $hostGroupBox.Controls.Add($hostAddrLabel)
 
     $hostAddrBox = New-Object System.Windows.Forms.TextBox
-    $hostAddrBox.Location = New-Object System.Drawing.Point(450, 48)
+    $hostAddrBox.Location = New-Object System.Drawing.Point(420, 48)
     $hostAddrBox.Size = New-Object System.Drawing.Size(100, 20)
     $hostAddrBox.Visible = $false
     $hostAddrBox.Text = ""
@@ -2136,11 +2147,13 @@ try:
     master_ip = '$($Settings.HostAddress)' if '$($Settings.HostAddress)' else None
     cluster_name = 'ServerManager-Cluster'
     
-    # Generate cluster secret for master hosts
+    # Generate cluster secret for master hosts, use approval token for subhosts
     cluster_secret = None
     if host_type == 'Host':
         import secrets
         cluster_secret = secrets.token_urlsafe(32)
+    elif host_type == 'Subhost':
+        cluster_secret = '$($Settings.ClusterToken)' if '$($Settings.ClusterToken)' else None
     
     success = cluster_db.set_cluster_config(host_type, cluster_name, cluster_secret, master_ip)
     if success:
@@ -2160,11 +2173,14 @@ except Exception as e:
                 Remove-Item $tempClusterInitPy -Force -Confirm:$false
                 Write-Log "Cluster database initialization result: $clusterInitResult"
                 
-                # Extract cluster secret if generated
+                # Extract cluster secret if generated (for hosts) or use approval token (for subhosts)
                 if ($clusterInitResult -match "CLUSTER_SECRET: (.+)") {
                     $GeneratedClusterSecret = $matches[1]
                     $registryValues['ClusterSecret'] = $GeneratedClusterSecret
                     Write-Log "Cluster secret stored in database and registry"
+                } elseif ($Settings.HostType -eq 'Subhost' -and $Settings.ClusterToken) {
+                    $registryValues['ClusterSecret'] = $Settings.ClusterToken
+                    Write-Log "Subhost cluster token stored in registry"
                 }
             }
         } catch {
@@ -2175,7 +2191,7 @@ except Exception as e:
         try {
             # Environment file creation removed - using registry-based configuration only
         } catch {
-            if (-not (Show-StepError "Configuration Files" "Failed to create configuration files: $($_.Exception.Message)`n`nYou may need to configure the application manually.")) {
+            if (-not (Show-StepError "Configuration Files" "Failed to create configuration files: $($_.Exception.Message)")) {
                 throw "Installation cancelled by user after configuration file creation failed"
             }
         }
@@ -2426,95 +2442,56 @@ function Show-ClusterApprovalDialog {
                     throw "Invalid response from master host"
                 }
             } else {
-                # Check host status first before checking approval
+                # Check approval status using the dedicated endpoint
                 try {
-                    $hostStatus = Invoke-RestMethod -Uri "http://$($Settings.HostAddress):8080/api/cluster/status" -Method GET -TimeoutSec 10
+                    $approvalResponse = Invoke-RestMethod -Uri "http://$($Settings.HostAddress):8080/api/cluster/check-approval/$($Settings.SubhostID)" -Method GET -TimeoutSec 10
                     
-                    if ($hostStatus.host_status -eq "offline" -or $hostStatus.dashboard_active -eq $false) {
-                        $statusLabel.Text = "Host appears to be offline. Your request is still pending...`nRequest ID: $script:approvalRequestId`n`nWaiting for host to come back online..."
-                        Write-Log "[WARNING] Host is offline during approval check. Status: $($hostStatus.host_status)"
-                        return  # Wait for next timer tick
-                    }
-                } catch {
-                    $statusLabel.Text = "Unable to contact host. Your request is still pending...`nRequest ID: $script:approvalRequestId`n`nWaiting for host connection..."
-                    Write-Log "[WARNING] Cannot contact host during approval check: $($_.Exception.Message)"
-                    return  # Wait for next timer tick
-                }
-                
-                # Check if our request was approved by getting all pending requests
-                try {
-                    $pendingResponse = Invoke-RestMethod -Uri "http://$($Settings.HostAddress):8080/api/cluster/pending" -Method GET -TimeoutSec 10
-                    
-                    # Check if our request is still pending
-                    $ourRequest = $null
-                    foreach ($requestId in $pendingResponse.pending_requests.PSObject.Properties.Name) {
-                        $request = $pendingResponse.pending_requests.$requestId
-                        if ($request.id -eq $Settings.SubhostID -or $request.request_id -eq $script:approvalRequestId) {
-                            $ourRequest = $request
-                            break
+                    if ($approvalResponse.status -eq "approved") {
+                        $timer.Stop()
+                        $statusLabel.Text = "Approved! Completing installation..."
+                        $progressBar.Style = "Continuous"
+                        $progressBar.Value = 100
+                        
+                        Write-Log "[INFO] Cluster join request approved! Token: $($approvalResponse.approval_token)"
+                        
+                        # Store the approval token for later use
+                        $Settings.ClusterToken = $approvalResponse.approval_token
+                        
+                        # Close approval dialog and continue
+                        $approvalForm.Hide()
+                        if ($OnApproved) {
+                            & $OnApproved
                         }
-                    }
-                    
-                    if ($ourRequest) {
-                        # Request is still pending
-                        $statusLabel.Text = "Still waiting for approval...`nRequest ID: $script:approvalRequestId`n`nRequest Status: $($ourRequest.status)"
-                        Write-Log "[INFO] Request still pending approval. Status: $($ourRequest.status)"
+                        $approvalForm.Close()
+                    } elseif ($approvalResponse.status -eq "rejected") {
+                        $timer.Stop()
+                        $statusLabel.Text = "Request rejected by administrator"
+                        $progressBar.Style = "Continuous"
+                        $progressBar.Value = 0
+                        
+                        Write-Log "[WARNING] Cluster join request rejected"
+                        
+                        [System.Windows.Forms.MessageBox]::Show(
+                            "Your request to join the cluster was rejected by the administrator.`n`nThe installation is complete but this host will not be part of the cluster.",
+                            "Cluster Join Rejected",
+                            [System.Windows.Forms.MessageBoxButtons]::OK,
+                            [System.Windows.Forms.MessageBoxIcon]::Warning
+                        )
+                        
+                        $approvalForm.Hide()
+                        if ($OnApproved) {
+                            & $OnApproved
+                        }
+                        $approvalForm.Close()
+                    } elseif ($approvalResponse.status -eq "pending") {
+                        $statusLabel.Text = "Still waiting for approval...`nRequest ID: $script:approvalRequestId`n`nStatus: $($approvalResponse.message)"
+                        Write-Log "[INFO] Request still pending approval"
                     } else {
-                        # Request no longer in pending list - check if we got approved by checking cluster nodes
-                        try {
-                            $nodesResponse = Invoke-RestMethod -Uri "http://$($Settings.HostAddress):8080/api/cluster/nodes" -Method GET -TimeoutSec 10
-                            
-                            $approved = $false
-                            foreach ($node in $nodesResponse) {
-                                if ($node.subhost_id -eq $Settings.SubhostID -or $node.id -eq $Settings.SubhostID) {
-                                    $approved = $true
-                                    break
-                                }
-                            }
-                            
-                            if ($approved) {
-                                $timer.Stop()
-                                $statusLabel.Text = "Approved! Completing installation..."
-                                $progressBar.Style = "Continuous"
-                                $progressBar.Value = 100
-                                
-                                Write-Log "[INFO] Cluster join request approved - found in nodes list"
-                                
-                                # Close approval dialog and continue
-                                $approvalForm.Hide()
-                                if ($OnApproved) {
-                                    & $OnApproved
-                                }
-                                $approvalForm.Close()
-                            } else {
-                                # Request was rejected
-                                $timer.Stop()
-                                $statusLabel.Text = "Request rejected by administrator"
-                                $progressBar.Style = "Continuous"
-                                $progressBar.Value = 0
-                                
-                                Write-Log "[WARNING] Cluster join request rejected - not found in nodes list"
-                                
-                                [System.Windows.Forms.MessageBox]::Show(
-                                    "Your request to join the cluster was rejected by the administrator.`n`nThe installation is complete but this host will not be part of the cluster.",
-                                    "Cluster Join Rejected",
-                                    [System.Windows.Forms.MessageBoxButtons]::OK,
-                                    [System.Windows.Forms.MessageBoxIcon]::Warning
-                                )
-                                
-                                $approvalForm.Hide()
-                                if ($OnApproved) {
-                                    & $OnApproved
-                                }
-                                $approvalForm.Close()
-                            }
-                        } catch {
-                            Write-Log "[ERROR] Error checking cluster nodes: $($_.Exception.Message)"
-                            $statusLabel.Text = "Error checking approval status. Retrying..."
-                        }
+                        $statusLabel.Text = "Unexpected status: $($approvalResponse.status)`nMessage: $($approvalResponse.message)"
+                        Write-Log "[WARNING] Unexpected approval status: $($approvalResponse.status)"
                     }
                 } catch {
-                    Write-Log "[ERROR] Error checking pending requests: $($_.Exception.Message)"
+                    Write-Log "[ERROR] Error checking approval status: $($_.Exception.Message)"
                     $statusLabel.Text = "Error checking approval status. Retrying..."
                 }
             }
@@ -2735,14 +2712,12 @@ function Set-InitialAuthConfig {
             $okButton.Text = "Create Account"
             $okButton.Location = New-Object System.Drawing.Point(230, 270)
             $okButton.Size = New-Object System.Drawing.Size(120, 35)
-            $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
             $adminForm.Controls.Add($okButton)
             
             $cancelButton = New-Object System.Windows.Forms.Button
             $cancelButton.Text = "Skip"
             $cancelButton.Location = New-Object System.Drawing.Point(360, 270)
             $cancelButton.Size = New-Object System.Drawing.Size(80, 35)
-            $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
             $adminForm.Controls.Add($cancelButton)
             
             # Form validation using FormClosing event

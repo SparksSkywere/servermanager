@@ -1,0 +1,19 @@
+Scheduled Maintenance Notice
+
+Hello {username},
+
+Server Manager will undergo scheduled maintenance:
+
+Start Time: {start_time}
+End Time: {end_time}
+Duration: {duration}
+
+During this maintenance window:
+- The web interface may be unavailable
+- Server management features may be limited
+- Automated processes will be paused
+
+We apologize for any inconvenience this may cause.
+
+Best regards,
+Server Manager Team

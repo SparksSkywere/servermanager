@@ -1,0 +1,29 @@
+<html>
+<head>
+    <link rel="stylesheet" type="text/css" href="mail-template.css">
+</head>
+<body>
+    <h2>Scheduled Maintenance Notice</h2>
+    <p>Hello {username},</p>
+    <p>Server Manager will undergo scheduled maintenance:</p>
+
+    <div class="info-box info-box-info">
+        <strong>Maintenance Schedule:</strong><br>
+        Start Time: {start_time}<br>
+        End Time: {end_time}<br>
+        Duration: {duration}
+    </div>
+
+    <p><strong>During this maintenance window:</strong></p>
+    <ul>
+        <li>The web interface may be unavailable</li>
+        <li>Server management features may be limited</li>
+        <li>Automated processes will be paused</li>
+    </ul>
+
+    <p>We apologize for any inconvenience this may cause.</p>
+
+    <br>
+    <p class="signature">Best regards,<br>Server Manager Team</p>
+</body>
+</html>

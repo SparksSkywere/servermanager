@@ -1837,7 +1837,7 @@ def create_progress_dialog_with_console(parent, title="Progress"):
             main_frame.pack(fill=tk.BOTH, expand=True)
             
             # Progress bar
-            self.progress_var = tk.StringVar(value="Initializing...")
+            self.progress_var = tk.StringVar(value="Running...")
             ttk.Label(main_frame, textvariable=self.progress_var).pack(pady=(0, 5))
             
             self.progress_bar = ttk.Progressbar(main_frame, mode='indeterminate')
@@ -1882,13 +1882,18 @@ def create_progress_dialog_with_console(parent, title="Progress"):
                 self.console_text.see(tk.END)
                 self.dialog.update_idletasks()
                 
-        def complete(self, message="Operation completed"):
+        def complete(self, message="Operation completed", auto_close=False):
             # Mark the operation as complete
             if not self.is_closed:
                 self.progress_bar.stop()
                 self.progress_var.set(message)
-                self.close_button.config(state=tk.NORMAL)
-                self.update_console(f"[COMPLETE] {message}")
+                if auto_close:
+                    # For auto-updates or when auto-close is requested, close immediately
+                    self.update_console(f"[COMPLETE] {message}")
+                    self.dialog.after(500, self.close_dialog)  # Small delay to show completion
+                else:
+                    self.close_button.config(state=tk.NORMAL)
+                    self.update_console(f"[COMPLETE] {message}")
                 
         def close_dialog(self):
             # Close the dialog
@@ -2825,7 +2830,7 @@ def test_remote_host_connection(host, port, username, password, use_ssl=False, t
         
         if response.status_code == 200:
             # Try to authenticate
-            auth_url = f"{base_url}/api/auth/login"
+            auth_url = f"{base_url}/cluster/api/auth/login"
             auth_data = {"username": username, "password": password}
             
             auth_response = requests.post(auth_url, json=auth_data, timeout=timeout, verify=False if use_ssl else True)
@@ -2866,7 +2871,7 @@ class RemoteHostManager:
             session.verify = False if use_ssl else True
             
             # Authenticate
-            auth_url = f"{base_url}/api/auth/login"
+            auth_url = f"{base_url}/cluster/api/auth/login"
             auth_data = {"username": username, "password": password}
             
             auth_response = session.post(auth_url, json=auth_data, timeout=timeout)
