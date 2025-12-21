@@ -303,7 +303,7 @@ class ServerManagerDashboard(ServerManagerModule):
         # Initialize cluster manager
         try:
             # Use database-backed cluster management (no longer using JSON)
-            agents_config_path = os.path.join(self.paths["data"], "cluster_nodes.json")  # For migration only
+            agents_config_path = None  # Migration already done
             self.agent_manager = AgentManager(agents_config_path)
             logger.debug("Cluster manager initialized")
         except Exception as e:
@@ -1939,11 +1939,20 @@ class ServerManagerDashboard(ServerManagerModule):
             # This prevents Tkinter widget updates before the event loop is running
             def delayed_initial_update():
                 try:
-                    logger.info("Starting delayed initial updates")
+                    logger.info("[SUBPROCESS_TRACE] Starting delayed initial updates - watching for console popup...")
                     # Perform heavy operations that were previously blocking __init__
+                    logger.info("[SUBPROCESS_TRACE] Calling update_system_info()...")
                     self.update_system_info()  # Initial system info update (now threaded)
+                    logger.info("[SUBPROCESS_TRACE] update_system_info() completed")
+                    
+                    logger.info("[SUBPROCESS_TRACE] Calling update_server_list()...")
                     self.update_server_list(force_refresh=True)  # Initial server list refresh
+                    logger.info("[SUBPROCESS_TRACE] update_server_list() completed")
+                    
+                    logger.info("[SUBPROCESS_TRACE] Calling _reattach_to_running_servers()...")
                     self._reattach_to_running_servers()  # Reattach to running servers
+                    logger.info("[SUBPROCESS_TRACE] _reattach_to_running_servers() completed")
+                    
                     logger.info("Delayed initial updates completed")
                 except Exception as e:
                     logger.error(f"Error in delayed initial update: {str(e)}")

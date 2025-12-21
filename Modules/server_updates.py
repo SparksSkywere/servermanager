@@ -656,6 +656,7 @@ class ServerUpdateManager(ServerManagerModule):
     def run_scheduled_updates(self, progress_callback: Optional[Callable] = None):
         # Run scheduled update checks and restarts for all configured servers
         try:
+            logger.debug("[SUBPROCESS_TRACE] run_scheduled_updates() called")
             if not self.server_manager:
                 return
             
@@ -666,6 +667,7 @@ class ServerUpdateManager(ServerManagerModule):
             # Check global update schedule first
             if self.global_schedule and self.should_check_for_updates("global", self.global_schedule):
                 logger.info("Running global scheduled updates...")
+                logger.debug("[SUBPROCESS_TRACE] Running global scheduled updates - may call subprocess")
                 
                 results = self.update_all_steam_servers(progress_callback=progress_callback, scheduled=True)
                 updates_performed += len([r for r in results.values() if r[0]])

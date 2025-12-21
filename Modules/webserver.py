@@ -1780,18 +1780,32 @@ class ServerManagerWebServer(ServerManagerModule):
                         req = urllib.request.Request(target_url, data=data, headers=headers, method=self.command)
                         
                         # Make the request
-                        with urllib.request.urlopen(req, timeout=30) as response:
-                            # Forward the response
-                            self.send_response(response.getcode())
+                        try:
+                            with urllib.request.urlopen(req, timeout=30) as response:
+                                # Forward the response
+                                self.send_response(response.getcode())
+                                
+                                # Forward response headers
+                                for header_name, header_value in response.headers.items():
+                                    if header_name.lower() not in ['server', 'date']:
+                                        self.send_header(header_name, header_value)
+                                self.end_headers()
+                                
+                                # Forward response body
+                                response_data = response.read()
+                                self.wfile.write(response_data)
+                        except urllib.request.HTTPError as e:
+                            # Handle HTTP error responses (like 304, 404, etc.)
+                            self.send_response(e.code)
                             
                             # Forward response headers
-                            for header_name, header_value in response.headers.items():
+                            for header_name, header_value in e.headers.items():
                                 if header_name.lower() not in ['server', 'date']:
                                     self.send_header(header_name, header_value)
                             self.end_headers()
                             
                             # Forward response body
-                            response_data = response.read()
+                            response_data = e.read()
                             self.wfile.write(response_data)
                             
                     except Exception as e:

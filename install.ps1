@@ -2026,6 +2026,24 @@ Provide this token to subhost administrators during their installation process.
                 # Don't fail installation if firewall rules fail
             }
             
+            # Add Windows Defender exclusions to prevent scanning interruptions
+            Write-Log "Adding Windows Defender exclusions..."
+            try {
+                $serversPath = Join-Path $ServerManagerDir "servers"
+                $serverManagerPath = $ServerManagerDir
+                
+                # Add exclusion for servers folder
+                Add-MpPreference -ExclusionPath $serversPath -ErrorAction SilentlyContinue
+                Write-Log "Added Windows Defender exclusion for servers folder: $serversPath"
+                
+                # Add exclusion for entire Server Manager directory
+                Add-MpPreference -ExclusionPath $serverManagerPath -ErrorAction SilentlyContinue
+                Write-Log "Added Windows Defender exclusion for Server Manager directory: $serverManagerPath"
+            } catch {
+                Write-Log "Warning: Windows Defender exclusion setup failed: $($_.Exception.Message)"
+                # Don't fail installation if Defender exclusions fail
+            }
+            
             # Migrate any existing databases to the new db directory
             Write-Log "Setting up database directory and migrating existing databases..."
             $migrationScript = Join-Path $ServerManagerDir "setup-db-directory.ps1"

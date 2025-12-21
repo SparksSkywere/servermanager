@@ -151,8 +151,13 @@ class ServerManagerLauncher(ServerManagerModule):
                 logger.error(f"Tray icon script not found: {tray_script}")
                 return False
                 
-            # Check Python executable
+            # Use pythonw.exe for GUI applications to prevent console window
             python_exe = sys.executable
+            if python_exe.lower().endswith("python.exe"):
+                pythonw_exe = python_exe[:-4] + "w.exe"  # Replace 'python.exe' with 'pythonw.exe'
+                if os.path.exists(pythonw_exe):
+                    python_exe = pythonw_exe
+            
             if not os.path.exists(python_exe):
                 logger.error(f"Python executable not found: {python_exe}")
                 return False

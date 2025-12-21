@@ -143,19 +143,33 @@ class ServerManager(ServerManagerModule):
                 
             for file in os.listdir(servers_dir):
                 if file.endswith(".json"):
-                    try:
-                        with open(os.path.join(servers_dir, file), 'r') as f:
-                            server_config = json.load(f)
-                            
-                        server_name = server_config.get("Name")
-                        if server_name:
-                            self.servers[server_name] = server_config
-                    except Exception as e:
-                        logger.error(f"Error loading server config {file}: {str(e)}")
+                    self._load_server_config_with_retry(os.path.join(servers_dir, file))
                         
             logger.debug(f"Loaded {len(self.servers)} server configurations")
         except Exception as e:
             logger.error(f"Error loading servers: {str(e)}")
+    
+    def _load_server_config_with_retry(self, file_path, max_retries=3, delay=0.1):
+        # Load server config with retry on file access errors
+        import time
+        for attempt in range(max_retries):
+            try:
+                with open(file_path, 'r') as f:
+                    server_config = json.load(f)
+                    
+                server_name = server_config.get("Name")
+                if server_name:
+                    self.servers[server_name] = server_config
+                return
+            except IOError as e:
+                if attempt < max_retries - 1:
+                    logger.debug(f"Retrying load of {file_path} after IOError: {str(e)}")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Failed to load server config {file_path} after {max_retries} attempts: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error loading server config {file_path}: {str(e)}")
+                return
             
     def get_server_config(self, server_name):
         # Get configuration for a specific server
@@ -165,34 +179,38 @@ class ServerManager(ServerManagerModule):
         # Try to load from file if not in memory
         config_path = os.path.join(self.paths["servers"], f"{server_name}.json")
         if os.path.exists(config_path):
-            try:
-                with open(config_path, 'r') as f:
-                    server_config = json.load(f)
-                    
-                # Cache the config
-                self.servers[server_name] = server_config
-                return server_config
-            except Exception as e:
-                logger.error(f"Error loading server config {server_name}: {str(e)}")
+            self._load_server_config_with_retry(config_path)
+            return self.servers.get(server_name)
                 
         return None
         
     def save_server_config(self, server_name, config):
         # Save configuration for a specific server
-        try:
-            config_path = os.path.join(self.paths["servers"], f"{server_name}.json")
-            
-            with open(config_path, 'w') as f:
-                json.dump(config, f, indent=4)
+        import time
+        max_retries = 3
+        delay = 0.1
+        for attempt in range(max_retries):
+            try:
+                config_path = os.path.join(self.paths["servers"], f"{server_name}.json")
                 
-            # Update cache
-            self.servers[server_name] = config
-            
-            logger.debug(f"Server configuration saved for {server_name}")
-            return True
-        except Exception as e:
-            logger.error(f"Error saving server config {server_name}: {str(e)}")
-            return False
+                with open(config_path, 'w') as f:
+                    json.dump(config, f, indent=4)
+                    
+                # Update cache
+                self.servers[server_name] = config
+                
+                logger.debug(f"Server configuration saved for {server_name}")
+                return True
+            except IOError as e:
+                if attempt < max_retries - 1:
+                    logger.debug(f"Retrying save of {server_name} after IOError: {str(e)}")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Failed to save server config {server_name} after {max_retries} attempts: {str(e)}")
+                    return False
+            except Exception as e:
+                logger.error(f"Error saving server config {server_name}: {str(e)}")
+                return False
             
     def get_server_list(self):
         # Get list of all configured servers

@@ -147,13 +147,27 @@ class NetworkManager:
     def ping_host(self, host, count=4, timeout=1000):
         # Ping a host to check connectivity
         try:
+            logger.debug(f"[SUBPROCESS_TRACE] ping_host called for host: {host}")
             # Use different ping command based on OS
             if sys.platform.startswith('win'):
                 command = ['ping', '-n', str(count), '-w', str(timeout), host]
             else:
                 command = ['ping', '-c', str(count), '-W', str(timeout / 1000), host]
             
-            result = subprocess.run(command, capture_output=True, text=True)
+            # Use CREATE_NO_WINDOW to prevent console popup on Windows
+            startupinfo = None
+            creationflags = 0
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0
+                creationflags = subprocess.CREATE_NO_WINDOW
+                logger.debug(f"[SUBPROCESS_TRACE] ping using CREATE_NO_WINDOW flag: {creationflags}")
+            
+            logger.debug(f"[SUBPROCESS_TRACE] Executing ping command: {command}")
+            result = subprocess.run(command, capture_output=True, text=True,
+                                   startupinfo=startupinfo, creationflags=creationflags)
+            logger.debug(f"[SUBPROCESS_TRACE] ping completed with returncode: {result.returncode}")
             return {
                 "success": result.returncode == 0,
                 "output": result.stdout,
@@ -170,13 +184,26 @@ class NetworkManager:
     def traceroute(self, host, max_hops=30):
         # Perform a traceroute to a host
         try:
+            logger.debug(f"[SUBPROCESS_TRACE] traceroute called for host: {host}")
             # Use different traceroute command based on OS
             if sys.platform.startswith('win'):
                 command = ['tracert', '-h', str(max_hops), host]
             else:
                 command = ['traceroute', '-m', str(max_hops), host]
             
-            result = subprocess.run(command, capture_output=True, text=True)
+            # Use CREATE_NO_WINDOW to prevent console popup on Windows
+            startupinfo = None
+            creationflags = 0
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0
+                creationflags = subprocess.CREATE_NO_WINDOW
+                logger.debug(f"[SUBPROCESS_TRACE] traceroute using CREATE_NO_WINDOW flag: {creationflags}")
+            
+            logger.debug(f"[SUBPROCESS_TRACE] Executing traceroute command: {command}")
+            result = subprocess.run(command, capture_output=True, text=True,
+                                   startupinfo=startupinfo, creationflags=creationflags)
             return {
                 "success": result.returncode == 0,
                 "output": result.stdout,
@@ -257,7 +284,14 @@ class NetworkManager:
             
             # Check Windows firewall status using netsh
             command = ['netsh', 'advfirewall', 'show', 'allprofiles']
-            result = subprocess.run(command, capture_output=True, text=True)
+            
+            # Use CREATE_NO_WINDOW to prevent console popup
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+            
+            result = subprocess.run(command, capture_output=True, text=True,
+                                   startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
             
             # Parse the output
             output = result.stdout
@@ -314,7 +348,13 @@ class NetworkManager:
                 'action=allow'
             ]
             
-            result = subprocess.run(command, capture_output=True, text=True)
+            # Use CREATE_NO_WINDOW to prevent console popup
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+            
+            result = subprocess.run(command, capture_output=True, text=True,
+                                   startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
             
             return {
                 "success": result.returncode == 0,
@@ -344,7 +384,13 @@ class NetworkManager:
                 f'name={name}'
             ]
             
-            result = subprocess.run(command, capture_output=True, text=True)
+            # Use CREATE_NO_WINDOW to prevent console popup
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+            
+            result = subprocess.run(command, capture_output=True, text=True,
+                                   startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
             
             return {
                 "success": result.returncode == 0,

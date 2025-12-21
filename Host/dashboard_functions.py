@@ -933,103 +933,68 @@ def update_system_info(metric_labels, system_name, os_info, variables):
             logger.error(f"Error getting network info: {e}")
             metric_labels["network"].config(text="Network: N/A")
 
-        # Update GPU info (enhanced detection for Intel integrated and multiple GPUs)
+        # Update GPU info - use direct nvidia-smi with CREATE_NO_WINDOW to prevent console popup
         try:
             gpu_info = "GPU: Not detected"
             
-            # Try GPUtil first (best for dedicated GPUs)
+            # Log GPU detection attempt for debugging
             try:
-                import GPUtil
-                gpus = GPUtil.getGPUs()
-                if gpus:
-                    if len(gpus) == 1:
-                        gpu = gpus[0]
-                        gpu_info = f"GPU: {gpu.name}"
-                        if hasattr(gpu, 'memoryTotal') and gpu.memoryTotal > 0:
-                            gpu_info += f" ({gpu.memoryUsed}MB/{gpu.memoryTotal}MB)"
-                    else:
-                        # Multiple GPUs
-                        gpu_names = [gpu.name for gpu in gpus]
-                        gpu_info = f"GPU: {len(gpus)} GPUs ({', '.join(gpu_names[:2])}"
-                        if len(gpu_names) > 2:
-                            gpu_info += f" +{len(gpu_names)-2} more"
-                        gpu_info += ")"
-                else:
-                    # GPUtil found no GPUs, try system detection
-                    raise ImportError("GPUtil detected no GPUs")
-            except (ImportError, Exception):
-                # GPUtil not available or no GPUs detected, try system-specific detection
-                if platform.system() == "Windows":
-                    try:
-                        # Use WMIC to get GPU information
-                        startupinfo = subprocess.STARTUPINFO()
-                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                        result = subprocess.run(
-                            ['wmic', 'path', 'win32_VideoController', 'get', 'name,adapterram', '/format:csv'],
-                            capture_output=True, text=True, timeout=5,
-                            startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
-                        )
-                        
-                        if result.returncode == 0 and result.stdout.strip():
-                            lines = result.stdout.strip().split('\n')
-                            if len(lines) > 1:  # Skip header
-                                gpu_list = []
-                                for line in lines[1:]:
-                                    if line.strip():
-                                        parts = line.split(',')
-                                        if len(parts) >= 3:  # Node,AdapterRAM,Name
-                                            gpu_name = parts[2].strip()  # Name is in the 3rd column
-                                            if gpu_name and gpu_name != "Node":
-                                                gpu_list.append(gpu_name)
-                                
-                                if gpu_list:
-                                    if len(gpu_list) == 1:
-                                        gpu_info = f"GPU: {gpu_list[0]}"
-                                    else:
-                                        gpu_info = f"GPU: {len(gpu_list)} GPUs ({', '.join(gpu_list[:2])}"
-                                        if len(gpu_list) > 2:
-                                            gpu_info += f" +{len(gpu_list)-2} more"
-                                        gpu_info += ")"
+                log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs', 'timer_trace.log')
+                with open(log_path, 'a') as f:
+                    f.write(f"{datetime.datetime.now().isoformat()} - GPU detection STARTED (nvidia-smi)\n")
+            except: pass
+            
+            # Direct nvidia-smi call with CREATE_NO_WINDOW to prevent console flash
+            try:
+                from distutils import spawn
+                nvidia_smi = spawn.find_executable('nvidia-smi')
+                if nvidia_smi is None and platform.system() == "Windows":
+                    nvidia_smi = os.path.join(os.environ.get('systemdrive', 'C:'), 
+                                             "Program Files", "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe")
+                    if not os.path.exists(nvidia_smi):
+                        nvidia_smi = None
+                
+                if nvidia_smi:
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0  # SW_HIDE
                     
-                    except subprocess.TimeoutExpired:
-                        gpu_info = "GPU: Detection timeout"
-                    except Exception as e:
-                        logger.debug(f"WMIC GPU detection failed: {e}")
-                        gpu_info = "GPU: Detection failed"
-                        
-                elif platform.system() == "Linux":
-                    try:
-                        # Try lspci for Linux
-                        startupinfo = subprocess.STARTUPINFO()
-                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                        result = subprocess.run(
-                            ['lspci', '-v'], 
-                            capture_output=True, text=True, timeout=5,
-                            startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
-                        )
-                        
-                        if result.returncode == 0:
-                            output = result.stdout.lower()
-                            gpu_count = output.count('vga compatible controller') + output.count('3d controller')
-                            
-                            if gpu_count > 0:
-                                if gpu_count == 1:
-                                    gpu_info = "GPU: 1 GPU detected"
-                                else:
-                                    gpu_info = f"GPU: {gpu_count} GPUs detected"
-                            else:
-                                gpu_info = "GPU: Not detected"
+                    result = subprocess.run(
+                        [nvidia_smi, "--query-gpu=index,name,memory.total,memory.used,utilization.gpu", 
+                         "--format=csv,noheader,nounits"],
+                        capture_output=True, text=True, timeout=5,
+                        startupinfo=startupinfo,
+                        creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
+                    )
+                    
+                    if result.returncode == 0 and result.stdout.strip():
+                        lines = result.stdout.strip().split('\n')
+                        if len(lines) == 1:
+                            parts = [p.strip() for p in lines[0].split(',')]
+                            if len(parts) >= 5:
+                                name = parts[1]
+                                mem_used = int(float(parts[3]))
+                                mem_total = int(float(parts[2]))
+                                gpu_info = f"GPU: {name} ({mem_used}MB/{mem_total}MB)"
                         else:
-                            gpu_info = "GPU: Detection failed"
+                            gpu_names = [p.strip() for p in lines[0].split(',')][1] if lines else "Unknown"
+                            gpu_info = f"GPU: {len(lines)} GPUs ({gpu_names[:20]}...)"
                             
-                    except (subprocess.TimeoutExpired, FileNotFoundError):
-                        gpu_info = "GPU: lspci not available"
-                    except Exception as e:
-                        logger.debug(f"Linux GPU detection failed: {e}")
-                        gpu_info = "GPU: Detection failed"
-                        
+                    # Log completion
+                    try:
+                        with open(log_path, 'a') as f:
+                            f.write(f"{datetime.datetime.now().isoformat()} - GPU detection COMPLETED\n")
+                    except: pass
                 else:
-                    gpu_info = "GPU: Unsupported OS"
+                    gpu_info = "GPU: nvidia-smi not found"
+            except subprocess.TimeoutExpired:
+                gpu_info = "GPU: Detection timeout"
+            except Exception as e:
+                gpu_info = "GPU: Not detected"
+                try:
+                    with open(log_path, 'a') as f:
+                        f.write(f"{datetime.datetime.now().isoformat()} - GPU detection FAILED: {e}\n")
+                except: pass
             
             metric_labels["gpu"].config(text=gpu_info)
         except Exception as e:
@@ -1062,6 +1027,7 @@ def collect_system_info_data():
     
     global _previous_network_stats, _previous_network_time
     
+    logger.debug("[SUBPROCESS_TRACE] collect_system_info_data() called")
     data = {}
     
     try:
@@ -1192,106 +1158,67 @@ def collect_system_info_data():
             data['network_display'] = "Network: N/A"
 
         # GPU info (this is the heavy operation that needs threading)
+        # Note: GPUtil uses subprocess.Popen without CREATE_NO_WINDOW which causes console flash
+        # We use a direct nvidia-smi call with CREATE_NO_WINDOW instead
         try:
             gpu_info = "GPU: Not detected"
             
-            # Try GPUtil first (best for dedicated GPUs)
+            # Direct nvidia-smi call with CREATE_NO_WINDOW to prevent console flash
             try:
-                import GPUtil
-                gpus = GPUtil.getGPUs()
-                if gpus:
-                    if len(gpus) == 1:
-                        gpu = gpus[0]
-                        gpu_info = f"GPU: {gpu.name}"
-                        if hasattr(gpu, 'memoryTotal') and gpu.memoryTotal > 0:
-                            used_mb = int(gpu.memoryUsed)
-                            total_mb = int(gpu.memoryTotal)
-                            gpu_info += f"\n{used_mb}MB/{total_mb}MB ({gpu.memoryUtil*100:.1f}%)"
-                    else:
-                        # Multiple GPUs - format for wrapping
-                        gpu_info = f"GPU: {len(gpus)} GPUs detected"
-                        for i, gpu in enumerate(gpus):
-                            name = gpu.name.replace("NVIDIA GeForce ", "").replace("AMD Radeon ", "")
-                            gpu_info += f"\n• {name}"
-                            if hasattr(gpu, 'memoryTotal') and gpu.memoryTotal > 0:
-                                used_mb = int(gpu.memoryUsed)
-                                total_mb = int(gpu.memoryTotal)
-                                gpu_info += f" ({used_mb}MB/{total_mb}MB)"
-                else:
-                    # GPUtil found no GPUs, try system detection
-                    raise ImportError("GPUtil detected no GPUs")
-            except (ImportError, Exception):
-                # GPUtil not available or no GPUs detected, try system-specific detection
-                if platform.system() == "Windows":
-                    try:
-                        # Use WMIC to get GPU information (this is the blocking operation)
-                        startupinfo = subprocess.STARTUPINFO()
-                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                        result = subprocess.run(
-                            ['wmic', 'path', 'win32_VideoController', 'get', 'name,adapterram', '/format:csv'],
-                            capture_output=True, text=True, timeout=5,
-                            startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
-                        )
-                        
-                        if result.returncode == 0 and result.stdout.strip():
-                            lines = result.stdout.strip().split('\n')
-                            if len(lines) > 1:  # Skip header
-                                gpu_list = []
-                                for line in lines[1:]:
-                                    if line.strip():
-                                        parts = line.split(',')
-                                        if len(parts) >= 3:  # Node,AdapterRAM,Name
-                                            gpu_name = parts[2].strip()  # Name is in the 3rd column
-                                            if gpu_name and gpu_name != "Node":
-                                                gpu_list.append(gpu_name)
-                                
-                                if gpu_list:
-                                    if len(gpu_list) == 1:
-                                        gpu_info = f"GPU: {gpu_list[0]}"
-                                    else:
-                                        gpu_info = f"GPU: {len(gpu_list)} GPUs"
-                                        for gpu_name in gpu_list:
-                                            gpu_info += f"\n• {gpu_name}"
+                from distutils import spawn
+                nvidia_smi = spawn.find_executable('nvidia-smi')
+                if nvidia_smi is None and platform.system() == "Windows":
+                    # Try default NVIDIA installation path
+                    nvidia_smi = os.path.join(os.environ.get('systemdrive', 'C:'), 
+                                             "Program Files", "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe")
+                    if not os.path.exists(nvidia_smi):
+                        nvidia_smi = None
+                
+                if nvidia_smi:
+                    # Use CREATE_NO_WINDOW to prevent console flash
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0  # SW_HIDE
                     
-                    except subprocess.TimeoutExpired:
-                        gpu_info = "GPU: Detection timeout"
-                    except Exception as e:
-                        logger.debug(f"WMIC GPU detection failed: {e}")
-                        gpu_info = "GPU: Detection failed"
-                        
-                elif platform.system() == "Linux":
-                    try:
-                        # Try lspci for Linux
-                        startupinfo = subprocess.STARTUPINFO()
-                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                        result = subprocess.run(
-                            ['lspci', '-v'], 
-                            capture_output=True, text=True, timeout=5,
-                            startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW
-                        )
-                        
-                        if result.returncode == 0:
-                            output = result.stdout.lower()
-                            gpu_count = output.count('vga compatible controller') + output.count('3d controller')
-                            
-                            if gpu_count > 0:
-                                if gpu_count == 1:
-                                    gpu_info = "GPU: 1 GPU detected"
-                                else:
-                                    gpu_info = f"GPU: {gpu_count} GPUs detected"
-                            else:
-                                gpu_info = "GPU: Not detected"
+                    result = subprocess.run(
+                        [nvidia_smi, "--query-gpu=index,name,memory.total,memory.used,utilization.gpu", 
+                         "--format=csv,noheader,nounits"],
+                        capture_output=True, text=True, timeout=5,
+                        startupinfo=startupinfo,
+                        creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
+                    )
+                    
+                    if result.returncode == 0 and result.stdout.strip():
+                        lines = result.stdout.strip().split('\n')
+                        if len(lines) == 1:
+                            # Single GPU
+                            parts = [p.strip() for p in lines[0].split(',')]
+                            if len(parts) >= 5:
+                                name = parts[1]
+                                mem_total = float(parts[2])
+                                mem_used = float(parts[3])
+                                gpu_util = float(parts[4])
+                                mem_util = (mem_used / mem_total * 100) if mem_total > 0 else 0
+                                gpu_info = f"GPU: {name}\n{int(mem_used)}MB/{int(mem_total)}MB ({mem_util:.1f}%)"
                         else:
-                            gpu_info = "GPU: Detection failed"
-                            
-                    except (subprocess.TimeoutExpired, FileNotFoundError):
-                        gpu_info = "GPU: lspci not available"
-                    except Exception as e:
-                        logger.debug(f"Linux GPU detection failed: {e}")
-                        gpu_info = "GPU: Detection failed"
-                        
+                            # Multiple GPUs
+                            gpu_info = f"GPU: {len(lines)} GPUs detected"
+                            for line in lines:
+                                parts = [p.strip() for p in line.split(',')]
+                                if len(parts) >= 5:
+                                    name = parts[1].replace("NVIDIA GeForce ", "").replace("AMD Radeon ", "")
+                                    mem_used = int(float(parts[3]))
+                                    mem_total = int(float(parts[2]))
+                                    gpu_info += f"\n• {name} ({mem_used}MB/{mem_total}MB)"
+                    else:
+                        gpu_info = "GPU: nvidia-smi failed"
                 else:
-                    gpu_info = "GPU: Unsupported OS"
+                    gpu_info = "GPU: nvidia-smi not found"
+            except subprocess.TimeoutExpired:
+                gpu_info = "GPU: Detection timeout"
+            except Exception as e:
+                logger.debug(f"nvidia-smi GPU detection failed: {e}")
+                gpu_info = "GPU: Not detected"
             
             data['gpu_info'] = gpu_info
         except Exception as e:
@@ -3487,7 +3414,7 @@ def _process_matches_server(process, server_name, server_config):
         return False
         
     except Exception as e:
-        logger.debug(f"Error matching process {proc_info.get('pid', 'unknown')} to server {server_name}: {e}")
+        logger.debug(f"Error matching process {process.pid} to server {server_name}: {e}")
         return False
 
 

@@ -241,9 +241,11 @@ try:
     process = subprocess.Popen(
         [sys.executable, launcher_path, "--debug"], 
         startupinfo=startupinfo,
+        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
         cwd=script_dir,  # Set working directory to the Server Manager root
         stderr=subprocess.PIPE,
-        stdout=subprocess.PIPE
+        stdout=subprocess.PIPE,
+        stdin=subprocess.DEVNULL
     )
     
     # Give the process more time to start properly

@@ -21,7 +21,21 @@ def get_java_version(java_path="java"):
     # Args: java_path (str): Path to the Java executable (default: "java" from PATH)
     # Returns: tuple: (major_version, full_version_string) or (None, None) if Java not found
     try:
-        result = subprocess.run([java_path, '-version'], capture_output=True, text=True, timeout=10)
+        logger.debug(f"[SUBPROCESS_TRACE] get_java_version called with path: {java_path}")
+        # Use CREATE_NO_WINDOW to prevent console popup on Windows
+        startupinfo = None
+        creationflags = 0
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+            creationflags = subprocess.CREATE_NO_WINDOW
+            logger.debug(f"[SUBPROCESS_TRACE] Using CREATE_NO_WINDOW flag: {creationflags}")
+        
+        logger.debug(f"[SUBPROCESS_TRACE] Executing: java -version")
+        result = subprocess.run([java_path, '-version'], capture_output=True, text=True, timeout=10,
+                               startupinfo=startupinfo, creationflags=creationflags)
+        logger.debug(f"[SUBPROCESS_TRACE] java -version completed with returncode: {result.returncode}")
         # Java version output goes to stderr
         version_output = result.stderr
         

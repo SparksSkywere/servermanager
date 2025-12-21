@@ -180,6 +180,7 @@ class AutoUpdater:
         # Uses SteamCMD app_info_print to detect available updates
         try:
             logger.info(f"Checking for updates for AppID: {app_id}")
+            logger.debug(f"[SUBPROCESS_TRACE] check_for_updates called for AppID: {app_id}")
             
             # Run SteamCMD to check for updates
             cmd = [
@@ -190,7 +191,20 @@ class AutoUpdater:
                 "+quit"
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Use CREATE_NO_WINDOW to prevent console popup on Windows
+            startupinfo = None
+            creationflags = 0
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0
+                creationflags = subprocess.CREATE_NO_WINDOW
+                logger.debug(f"[SUBPROCESS_TRACE] SteamCMD using CREATE_NO_WINDOW flag: {creationflags}")
+            
+            logger.debug(f"[SUBPROCESS_TRACE] Executing SteamCMD: {cmd[0]}")
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                   startupinfo=startupinfo, creationflags=creationflags)
+            logger.debug(f"[SUBPROCESS_TRACE] SteamCMD completed with returncode: {result.returncode}")
             
             # Check if there was an error
             if result.returncode != 0:
@@ -257,6 +271,17 @@ class AutoUpdater:
             ]
             
             logger.info(f"Running update command: {' '.join(cmd)}")
+            logger.debug(f"[SUBPROCESS_TRACE] Running SteamCMD update for {server_name}")
+            
+            # Use CREATE_NO_WINDOW to prevent console popup on Windows
+            startupinfo = None
+            creationflags = 0
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0
+                creationflags = subprocess.CREATE_NO_WINDOW
+                logger.debug(f"[SUBPROCESS_TRACE] SteamCMD update using CREATE_NO_WINDOW flag: {creationflags}")
             
             # Run the update
             with open(log_file, 'w') as f:
@@ -265,7 +290,9 @@ class AutoUpdater:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
-                    universal_newlines=True
+                    universal_newlines=True,
+                    startupinfo=startupinfo,
+                    creationflags=creationflags
                 )
                 
                 # Capture and log output in real-time
@@ -330,7 +357,17 @@ class AutoUpdater:
             script_path = os.path.join(self.paths["scripts"], "stop_server.py")
             
             if os.path.exists(script_path):
-                subprocess.run([sys.executable, script_path, server_name], check=True)
+                # Use CREATE_NO_WINDOW to prevent console popup on Windows
+                startupinfo = None
+                creationflags = 0
+                if os.name == 'nt':
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0
+                    creationflags = subprocess.CREATE_NO_WINDOW
+                
+                subprocess.run([sys.executable, script_path, server_name], check=True,
+                              startupinfo=startupinfo, creationflags=creationflags)
                 logger.info(f"Server stopped: {server_name}")
                 return True
             else:
@@ -347,7 +384,17 @@ class AutoUpdater:
             script_path = os.path.join(self.paths["scripts"], "start_server.py")
             
             if os.path.exists(script_path):
-                subprocess.run([sys.executable, script_path, server_name], check=True)
+                # Use CREATE_NO_WINDOW to prevent console popup on Windows
+                startupinfo = None
+                creationflags = 0
+                if os.name == 'nt':
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0
+                    creationflags = subprocess.CREATE_NO_WINDOW
+                
+                subprocess.run([sys.executable, script_path, server_name], check=True,
+                              startupinfo=startupinfo, creationflags=creationflags)
                 logger.info(f"Server started: {server_name}")
                 return True
             else:

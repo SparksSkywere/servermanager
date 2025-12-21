@@ -68,8 +68,24 @@ class SchedulerManager:
     def system_info_timer(self):
         # Timer function for system info updates
         try:
+            # Direct file logging for debugging console flash
+            import datetime
+            try:
+                log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs', 'timer_trace.log')
+                with open(log_path, 'a') as f:
+                    f.write(f"{datetime.datetime.now().isoformat()} - system_info_timer STARTED\n")
+            except: pass
+            
+            logger.debug("[SUBPROCESS_TRACE] system_info_timer fired")
             if self.dashboard and hasattr(self.dashboard, 'update_system_info'):
                 self.dashboard.update_system_info()
+            
+            # Log completion
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(f"{datetime.datetime.now().isoformat()} - system_info_timer COMPLETED\n")
+            except: pass
+            
             system_interval = self.dashboard.variables["systemInfoUpdateInterval"] * 1000
             self.dashboard.root.after(system_interval, self.system_info_timer)
         except Exception as e:
@@ -78,10 +94,26 @@ class SchedulerManager:
     def server_list_timer(self):
         # Timer function for server list updates
         try:
+            # Direct file logging for debugging console flash
+            import datetime
+            try:
+                log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs', 'timer_trace.log')
+                with open(log_path, 'a') as f:
+                    f.write(f"{datetime.datetime.now().isoformat()} - server_list_timer STARTED\n")
+            except: pass
+            
+            logger.debug("[SUBPROCESS_TRACE] server_list_timer fired")
             if self.dashboard and hasattr(self.dashboard, 'periodic_server_list_refresh'):
                 self.dashboard.periodic_server_list_refresh()
             elif self.dashboard and hasattr(self.dashboard, 'refresh_server_list'):
                 self.dashboard.refresh_server_list()
+            
+            # Log completion
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(f"{datetime.datetime.now().isoformat()} - server_list_timer COMPLETED\n")
+            except: pass
+            
             server_interval = self.dashboard.variables["serverListUpdateInterval"] * 1000
             self.dashboard.root.after(server_interval, self.server_list_timer)
         except Exception as e:
@@ -90,12 +122,14 @@ class SchedulerManager:
     def update_check_timer(self):
         # Timer function for scheduled update checks
         try:
+            logger.debug("[SUBPROCESS_TRACE] update_check_timer fired")
             current_time = datetime.datetime.now()
             
             # Check if enough time has passed since last check
             time_diff = (current_time - self.last_update_check).total_seconds()
             if time_diff >= self.update_check_interval:
                 # Run scheduled updates
+                logger.debug("[SUBPROCESS_TRACE] Running scheduled updates...")
                 if self.update_manager:
                     threading.Thread(target=self.update_manager.run_scheduled_updates, daemon=True).start()
                 self.last_update_check = current_time

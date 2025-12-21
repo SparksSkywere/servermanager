@@ -307,9 +307,19 @@ class ServerManagerTrayIcon(ServerManagerModule):
             try:
                 webserver_script = os.path.join(self.paths["scripts"], "start_webserver.py")
                 if os.path.exists(webserver_script):
-                    subprocess.Popen([sys.executable, webserver_script], 
-                                   creationflags=subprocess.DETACHED_PROCESS if os.name == 'nt' else 0,
-                                   start_new_session=True)
+                    if os.name == 'nt':
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        startupinfo.wShowWindow = 0  # SW_HIDE
+                        subprocess.Popen([sys.executable, webserver_script], 
+                                       creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                                       startupinfo=startupinfo,
+                                       stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL,
+                                       stdin=subprocess.DEVNULL)
+                    else:
+                        subprocess.Popen([sys.executable, webserver_script], 
+                                       start_new_session=True)
                     logger.info("Webserver restarted")
             except Exception as e:
                 logger.error(f"Error restarting webserver: {str(e)}")
@@ -620,7 +630,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 
                 if not os.path.exists(dashboard_script):
                     # Try another alternative - relative to server_manager_dir
-                    dashboard_script = os.path.join(self.server_manager_dir, "Host", "dashboard.py")
+                    dashboard_script = os.path.join(str(self.server_manager_dir or ""), "Host", "dashboard.py")
                     
                     if not os.path.exists(dashboard_script):
                         logger.error("Dashboard script not found in any location!")
@@ -631,12 +641,14 @@ class ServerManagerTrayIcon(ServerManagerModule):
             # Normalize the path
             dashboard_script = os.path.normpath(dashboard_script)
             
-            # Use python.exe instead of pythonw.exe for dashboard to ensure GUI windows display properly
+            # Use pythonw.exe for GUI applications to prevent console window
             python_exe = sys.executable
-            if python_exe.lower().endswith("pythonw.exe"):
-                python_exe = python_exe[:-5] + ".exe"  # Replace 'pythonw.exe' with 'python.exe'
+            if python_exe.lower().endswith("python.exe"):
+                pythonw_exe = python_exe[:-4] + "w.exe"  # Replace 'python.exe' with 'pythonw.exe'
+                if os.path.exists(pythonw_exe):
+                    python_exe = pythonw_exe
             
-            # Verify python.exe exists
+            # Verify python executable exists
             if not os.path.exists(python_exe):
                 logger.error(f"Python executable does not exist: {python_exe}")
                 return
@@ -649,13 +661,13 @@ class ServerManagerTrayIcon(ServerManagerModule):
             logger.debug(f"Starting dashboard: {' '.join(cmd)}")
             
             if sys.platform == 'win32':
-                # For GUI applications like dashboard, use proper window display
+                # For GUI applications like dashboard, hide console window
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = 1  # SW_SHOWNORMAL
+                startupinfo.wShowWindow = 0  # SW_HIDE - hide the console window
                 
-                # Use DETACHED_PROCESS and CREATE_NEW_PROCESS_GROUP
-                creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+                # Use DETACHED_PROCESS and CREATE_NO_WINDOW to prevent console
+                creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
                 
                 try:
                     self.dashboard_process = subprocess.Popen(
@@ -816,26 +828,34 @@ class ServerManagerTrayIcon(ServerManagerModule):
                     return
             
             # Build command with debug flag if needed
-            cmd = [sys.executable, admin_script]
+            # Use pythonw.exe for GUI applications to prevent console window
+            python_exe = sys.executable
+            if python_exe.lower().endswith("python.exe"):
+                pythonw_exe = python_exe[:-4] + "w.exe"
+                if os.path.exists(pythonw_exe):
+                    python_exe = pythonw_exe
+            
+            cmd = [python_exe, admin_script]
             if self.debug_mode:
                 cmd.append("--debug")
             
-            # Launch admin dashboard process - don't hide console for GUI apps
+            # Launch admin dashboard process - hide console for GUI apps
             logger.info(f"Starting admin dashboard: {' '.join(cmd)}")
             
             if sys.platform == 'win32':
-                # For GUI applications like admin dashboard, don't use CREATE_NO_WINDOW
-                # as it can interfere with Tkinter window creation and event loop
+                # For GUI applications like admin dashboard, use CREATE_NO_WINDOW and pythonw.exe
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = 1  # SW_SHOWNORMAL - Show window normally
-                logger.info("Launching admin dashboard with SW_SHOWNORMAL")
+                startupinfo.wShowWindow = 0  # SW_HIDE - hide console window
+                logger.info("Launching admin dashboard with SW_HIDE")
                 
                 self.admin_dashboard_process = subprocess.Popen(
                     cmd, 
-                    creationflags=subprocess.DETACHED_PROCESS,  # Keep detached but allow console
+                    creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
                     startupinfo=startupinfo,
-                    # Don't redirect stdout/stderr for GUI apps to prevent blocking
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
                     close_fds=True
                 )
             else:
@@ -982,7 +1002,17 @@ class ServerManagerTrayIcon(ServerManagerModule):
         try:
             stop_script = os.path.join(self.paths["scripts"], "stop_servermanager.py")
             if os.path.exists(stop_script):
-                subprocess.run([sys.executable, stop_script], timeout=10)
+                # Use CREATE_NO_WINDOW to prevent console popup on Windows
+                startupinfo = None
+                creationflags = 0
+                if os.name == 'nt':
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0
+                    creationflags = subprocess.CREATE_NO_WINDOW
+                
+                subprocess.run([sys.executable, stop_script], timeout=10,
+                              startupinfo=startupinfo, creationflags=creationflags)
                 logger.info("Executed stop_servermanager.py")
         except Exception as e:
             logger.error(f"Error running stop_servermanager.py: {str(e)}")
