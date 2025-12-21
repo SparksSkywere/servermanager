@@ -81,38 +81,55 @@ class ServerManager(ServerManagerModule):
         return self.servers
         
     def load_config(self):
-        # Load configuration from file
+        # Load configuration from database
         try:
-            config_file = os.path.join(self.paths["config"], "config.json")
+            from Modules.Database.cluster_database import ClusterDatabase
+            db = ClusterDatabase()
             
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    config_data = json.load(f)
-                # Update the inherited config
-                self._config_manager.config.update(config_data)
-                logger.info(f"Configuration loaded from {config_file}")
-            else:
-                # Create default configuration
-                default_config = {
-                    "version": "1.0.0",
-                    "web_port": 8080,
-                    "log_level": "INFO",
-                    "steam_cmd_path": os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), "SteamCMD"),
-                    "auto_update_check_interval": 3600,  # seconds
-                    "max_log_files": 10,
-                    "max_log_size": 10 * 1024 * 1024  # 10 MB
-                }
-                
-                # Update the inherited config
-                self._config_manager.config.update(default_config)
-                
-                # Save default configuration
-                with open(config_file, 'w') as f:
-                    json.dump(default_config, f, indent=4)
-                    
-                logger.info(f"Default configuration created at {config_file}")
+            # Get main config from database
+            config_data = db.get_main_config()
+            
+            # Migrate from JSON if database is empty
+            if not config_data:
+                # Try to find config.json in the server manager directory
+                config_file = os.path.join(self.server_manager_dir, "config", "config.json")
+                if os.path.exists(config_file):
+                    logger.debug("Migrating main config from JSON to database")
+                    db.migrate_main_config_from_json(config_file)
+                    # Reload after migration
+                    config_data = db.get_main_config()
+            
+            # Update the inherited config
+            self._config_manager.config.update(config_data)
+            logger.debug("Configuration loaded from database")
+            
         except Exception as e:
-            logger.error(f"Error loading configuration: {str(e)}")
+            logger.error(f"Error loading configuration from database: {str(e)}")
+            # Create default configuration in database
+            self.create_default_config()
+            
+    def create_default_config(self):
+        # Create default configuration in database
+        try:
+            from Modules.Database.cluster_database import ClusterDatabase
+            db = ClusterDatabase()
+            
+            default_config = {
+                "version": "1.0.0",
+                "web_port": 8080,
+                "log_level": "INFO",
+                "steam_cmd_path": os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), "SteamCMD"),
+                "auto_update_check_interval": 3600,  # seconds
+                "max_log_files": 10,
+                "max_log_size": 10 * 1024 * 1024  # 10 MB
+            }
+            
+            db.set_main_config(default_config)
+            self._config_manager.config.update(default_config)
+            logger.debug("Default configuration created in database")
+            
+        except Exception as e:
+            logger.error(f"Error creating default configuration: {str(e)}")
             
     def load_servers(self):
         # Load list of servers from config directory
@@ -121,7 +138,7 @@ class ServerManager(ServerManagerModule):
             
             if not os.path.exists(servers_dir):
                 os.makedirs(servers_dir, exist_ok=True)
-                logger.info(f"Created servers directory: {servers_dir}")
+                logger.debug(f"Created servers directory: {servers_dir}")
                 return
                 
             for file in os.listdir(servers_dir):
@@ -136,7 +153,7 @@ class ServerManager(ServerManagerModule):
                     except Exception as e:
                         logger.error(f"Error loading server config {file}: {str(e)}")
                         
-            logger.info(f"Loaded {len(self.servers)} server configurations")
+            logger.debug(f"Loaded {len(self.servers)} server configurations")
         except Exception as e:
             logger.error(f"Error loading servers: {str(e)}")
             
@@ -171,7 +188,7 @@ class ServerManager(ServerManagerModule):
             # Update cache
             self.servers[server_name] = config
             
-            logger.info(f"Server configuration saved for {server_name}")
+            logger.debug(f"Server configuration saved for {server_name}")
             return True
         except Exception as e:
             logger.error(f"Error saving server config {server_name}: {str(e)}")
@@ -267,7 +284,7 @@ class ServerManager(ServerManagerModule):
                     return False, f"Server '{server_name}' is already running with PID {server_config['ProcessId']}."
                 else:
                     # Clean up dead process ID
-                    logger.info(f"Cleaning up dead process ID {server_config['ProcessId']} for server '{server_name}'")
+                    logger.debug(f"Cleaning up dead process ID {server_config['ProcessId']} for server '{server_name}'")
                     server_config.pop('ProcessId', None)
                     server_config.pop('StartTime', None)
                     server_config['LastUpdate'] = datetime.now().isoformat()
@@ -314,7 +331,7 @@ class ServerManager(ServerManagerModule):
                 if config_file_path and config_argument and config_full:
                     if os.path.exists(config_full):
                         cmd_parts.append(f'{config_argument} "{config_full}"')
-                        logger.info(f"Using config file: {config_full}")
+                        logger.debug(f"Using config file: {config_full}")
                     else:
                         logger.warning(f"Config file not found: {config_full}, starting without config file")
             else:
@@ -414,7 +431,7 @@ class ServerManager(ServerManagerModule):
             stdout_log = os.path.join(server_logs_dir, f"server_stdout_{timestamp}.log")
             stderr_log = os.path.join(server_logs_dir, f"server_stderr_{timestamp}.log")
             
-            logger.info(f"Starting server '{server_name}' with command: {cmd}")
+            logger.debug(f"Starting server '{server_name}' with command: {cmd}")
             
             if callback:
                 callback(f"Starting server '{server_name}'...")
@@ -570,7 +587,7 @@ class ServerManager(ServerManagerModule):
                     stop_cmd = server_config['StopCommand']
                     install_dir = server_config.get('InstallDir', '')
                     
-                    logger.info(f"Executing custom stop command: {stop_cmd}")
+                    logger.debug(f"Executing custom stop command: {stop_cmd}")
                     
                     # Execute stop command with timeout
                     stop_process = subprocess.Popen(
@@ -624,7 +641,7 @@ class ServerManager(ServerManagerModule):
                 # First try graceful termination
                 try:
                     process.terminate()
-                    logger.info(f"Sent termination signal to process {process_id}")
+                    logger.debug(f"Sent termination signal to process {process_id}")
                 except:
                     logger.warning(f"Failed to terminate process {process_id}")
                 
@@ -635,6 +652,15 @@ class ServerManager(ServerManagerModule):
                     # If it doesn't terminate, kill it forcefully
                     logger.warning(f"Process {process_id} did not terminate gracefully, using force kill")
                     process.kill()
+                    
+                    # On Windows, use taskkill as backup for stubborn processes
+                    if sys.platform == 'win32':
+                        try:
+                            subprocess.call(['taskkill', '/F', '/T', '/PID', str(process_id)],
+                                           stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL)
+                        except Exception:
+                            pass
                 
                 # Terminate any remaining child processes
                 if children:
@@ -642,11 +668,32 @@ class ServerManager(ServerManagerModule):
                         try:
                             if child.is_running():
                                 child.kill()
-                                logger.info(f"Killed child process with PID {child.pid}")
+                                # Backup with taskkill on Windows
+                                if sys.platform == 'win32':
+                                    try:
+                                        subprocess.call(['taskkill', '/F', '/PID', str(child.pid)],
+                                                       stdout=subprocess.DEVNULL,
+                                                       stderr=subprocess.DEVNULL)
+                                    except Exception:
+                                        pass
+                                logger.debug(f"Killed child process with PID {child.pid}")
                         except:
                             pass
                 
-                logger.info(f"Terminated process PID {process_id}")
+                # Verify all processes are dead
+                time.sleep(0.5)
+                if self.is_process_running(process_id):
+                    logger.warning(f"Process {process_id} still running after kill, forcing with taskkill")
+                    if sys.platform == 'win32':
+                        subprocess.call(['taskkill', '/F', '/T', '/PID', str(process_id)],
+                                       stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL)
+                    time.sleep(0.5)
+                    if self.is_process_running(process_id):
+                        logger.error(f"Failed to kill process {process_id}")
+                        return False, f"Failed to stop server process {process_id}"
+                
+                logger.debug(f"Terminated process PID {process_id}")
                 
                 # Update server configuration
                 server_config.pop('ProcessId', None)
@@ -706,7 +753,7 @@ class ServerManager(ServerManagerModule):
                             stop_cmd = server_config['StopCommand']
                             install_dir = server_config.get('InstallDir', '')
                             
-                            logger.info(f"Executing custom stop command for restart: {stop_cmd}")
+                            logger.debug(f"Executing custom stop command for restart: {stop_cmd}")
                             
                             # Execute stop command with timeout
                             stop_process = subprocess.Popen(
@@ -755,7 +802,7 @@ class ServerManager(ServerManagerModule):
                         # First try graceful termination
                         try:
                             process.terminate()
-                            logger.info(f"Sent termination signal to process {process_id} for restart")
+                            logger.debug(f"Sent termination signal to process {process_id} for restart")
                         except:
                             logger.warning(f"Failed to terminate process {process_id}")
                         
@@ -766,6 +813,15 @@ class ServerManager(ServerManagerModule):
                             # If it doesn't terminate, kill it forcefully
                             logger.warning(f"Process {process_id} did not terminate gracefully, using force kill")
                             process.kill()
+                            
+                            # On Windows, use taskkill as backup for stubborn processes
+                            if sys.platform == 'win32':
+                                try:
+                                    subprocess.call(['taskkill', '/F', '/T', '/PID', str(process_id)],
+                                                   stdout=subprocess.DEVNULL,
+                                                   stderr=subprocess.DEVNULL)
+                                except Exception:
+                                    pass
                         
                         # Terminate any remaining child processes
                         if children:
@@ -773,9 +829,26 @@ class ServerManager(ServerManagerModule):
                                 try:
                                     if child.is_running():
                                         child.kill()
-                                        logger.info(f"Killed child process with PID {child.pid}")
+                                        # Backup with taskkill on Windows
+                                        if sys.platform == 'win32':
+                                            try:
+                                                subprocess.call(['taskkill', '/F', '/PID', str(child.pid)],
+                                                               stdout=subprocess.DEVNULL,
+                                                               stderr=subprocess.DEVNULL)
+                                            except Exception:
+                                                pass
+                                        logger.debug(f"Killed child process with PID {child.pid}")
                                 except:
                                     pass
+                        
+                        # Verify process is dead before restarting
+                        time.sleep(0.5)
+                        if self.is_process_running(process_id):
+                            logger.warning(f"Process {process_id} still running, forcing with taskkill")
+                            if sys.platform == 'win32':
+                                subprocess.call(['taskkill', '/F', '/T', '/PID', str(process_id)],
+                                               stdout=subprocess.DEVNULL,
+                                               stderr=subprocess.DEVNULL)
                 
                 except Exception as e:
                     logger.error(f"Failed to stop server process during restart: {str(e)}")
@@ -897,7 +970,7 @@ class ServerManager(ServerManagerModule):
                     exec_type, detected_path = mc_manager.detect_server_executable(install_dir)
                     if detected_path:
                         executable_path = os.path.basename(detected_path)
-                        logger.info(f"Auto-detected Minecraft executable: {executable_path}")
+                        logger.debug(f"Auto-detected Minecraft executable: {executable_path}")
                 except ImportError:
                     logger.warning("Minecraft module not available for auto-detection")
             
@@ -906,7 +979,7 @@ class ServerManager(ServerManagerModule):
                 detected_files = self.auto_detect_server_executable(install_dir)
                 if detected_files:
                     executable_path = detected_files[0]
-                    logger.info(f"Auto-detected executable: {executable_path}")
+                    logger.debug(f"Auto-detected executable: {executable_path}")
             
             # Validate executable path
             if executable_path:
@@ -1511,7 +1584,7 @@ class ServerManager(ServerManagerModule):
                                 
                                 if progress_callback:
                                     progress_callback(f"[INFO] Auto-detected installation directory: {install_dir}")
-                                logger.info(f"Auto-detected Steam server installation directory: {install_dir}")
+                                logger.debug(f"Auto-detected Steam server installation directory: {install_dir}")
                             else:
                                 # No directories found, use steamapps/common as fallback
                                 install_dir = steamapps_common
@@ -1531,7 +1604,7 @@ class ServerManager(ServerManagerModule):
                             install_dir = steamapps_common
                             if progress_callback:
                                 progress_callback(f"[INFO] Created steamapps/common directory: {install_dir}")
-                            logger.info(f"Created steamapps/common directory: {install_dir}")
+                            logger.debug(f"Created steamapps/common directory: {install_dir}")
                         except Exception as e:
                             # Final fallback: use steamcmd root
                             install_dir = steam_cmd_path

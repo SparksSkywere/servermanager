@@ -2,6 +2,7 @@
 import os
 import sys
 import logging
+import time
 from datetime import datetime
 import hashlib
 # Check if pyotp is available
@@ -253,58 +254,68 @@ class UserManager:
 
     def authenticate_user(self, username, password):
         # Authenticate a user with username and password
-        try:
-            user = self.get_user(username)
-            if not user:
-                logger.warning(f"User not found: {username}")
-                return None
-            
-            # Check if user is active
-            if not getattr(user, 'is_active', True):
-                logger.warning(f"Inactive user attempted login: {username}")
-                return None
-            
-            # Verify password - try bcrypt first, fallback to SHA256 for backward compatibility
-            stored_password = getattr(user, 'password', None)
-            if not stored_password:
-                logger.warning(f"No password stored for user: {username}")
-                return None
-            
-            authenticated = False
-            
-            # Try bcrypt first
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                import bcrypt
-                if bcrypt.checkpw(password.encode(), stored_password.encode()):
-                    authenticated = True
-            except Exception:
-                # If bcrypt fails, try SHA256 for backward compatibility
-                hashed_password = hashlib.sha256(password.encode()).hexdigest()
-                if stored_password == hashed_password:
-                    authenticated = True
-                    # Optionally update to bcrypt on successful login
-                    try:
-                        self.update_user(username, password=password)
-                        logger.info(f"Updated password hash to bcrypt for user: {username}")
-                    except Exception as e:
-                        logger.warning(f"Failed to update password hash: {e}")
-            
-            if not authenticated:
-                logger.warning(f"Invalid password for user: {username}")
-                return None
-            
-            # Update last login time
-            try:
-                self.update_user(username, last_login=datetime.now())
+                user = self.get_user(username)
+                if not user:
+                    logger.warning(f"User not found: {username}")
+                    return None
+                
+                # Check if user is active
+                if not getattr(user, 'is_active', True):
+                    logger.warning(f"Inactive user attempted login: {username}")
+                    return None
+                
+                # Verify password - try bcrypt first, fallback to SHA256 for backward compatibility
+                stored_password = getattr(user, 'password', None)
+                if not stored_password:
+                    logger.warning(f"No password stored for user: {username}")
+                    return None
+                
+                authenticated = False
+                
+                # Try bcrypt first
+                try:
+                    import bcrypt
+                    if bcrypt.checkpw(password.encode(), stored_password.encode()):
+                        authenticated = True
+                except Exception:
+                    # If bcrypt fails, try SHA256 for backward compatibility
+                    hashed_password = hashlib.sha256(password.encode()).hexdigest()
+                    if stored_password == hashed_password:
+                        authenticated = True
+                        # Optionally update to bcrypt on successful login
+                        try:
+                            self.update_user(username, password=password)
+                            logger.info(f"Updated password hash to bcrypt for user: {username}")
+                        except Exception as e:
+                            logger.warning(f"Failed to update password hash: {e}")
+                
+                if not authenticated:
+                    logger.warning(f"Invalid password for user: {username}")
+                    return None
+                
+                # Update last login time
+                try:
+                    self.update_user(username, last_login=datetime.now())
+                except Exception as e:
+                    logger.warning(f"Failed to update last login time: {e}")
+                
+                logger.info(f"Successfully authenticated user: {username}")
+                return user
+                
             except Exception as e:
-                logger.warning(f"Failed to update last login time: {e}")
-            
-            logger.info(f"Successfully authenticated user: {username}")
-            return user
-            
-        except Exception as e:
-            logger.error(f"Error authenticating user {username}: {e}")
-            return None
+                error_msg = str(e).lower()
+                if "database is locked" in error_msg or "database locked" in error_msg:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Database locked, retrying authentication (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(0.5)  # Wait before retry
+                        continue
+                    else:
+                        logger.error(f"Database still locked after {max_retries} attempts")
+                logger.error(f"Error authenticating user {username}: {e}")
+                return None
 
     def verify_2fa(self, username, token, admin_override=False):
         # Verify 2FA token for user

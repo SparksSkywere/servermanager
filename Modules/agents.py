@@ -7,19 +7,15 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import tkinter as tk
 from tkinter import ttk, messagebox
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from Modules.server_logging import get_dashboard_logger
 from Modules.Database.cluster_database import ClusterDatabase
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 try:
     from Modules.cluster_security import SimpleClusterManager
 except ImportError:
     SimpleClusterManager = None
-
 logger = get_dashboard_logger()
-
 
 class ClusterNode:
     def __init__(self, name: str, ip: str, status: str = "unknown"):
@@ -30,7 +26,6 @@ class ClusterNode:
         self.last_ping: Optional[datetime] = None
         self.server_count = 0
         self.is_online = False
-
 
 class AgentManager:
     def __init__(self, config_path: Optional[str] = None):
@@ -289,12 +284,10 @@ class AgentManager:
         except Exception as e:
             logger.error(f"Error migrating from JSON: {e}")
 
-
 def show_agent_management_dialog(parent, agent_manager: AgentManager):
     # Show the cluster management GUI dialog
     dialog = ClusterManagementDialog(parent, agent_manager)
     dialog.show_dialog()
-
 
 class ClusterManagementDialog:
     def __init__(self, parent, agent_manager: AgentManager):

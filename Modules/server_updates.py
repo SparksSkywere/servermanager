@@ -45,31 +45,55 @@ class ServerUpdateManager(ServerManagerModule):
         self.steam_cmd_path = steam_cmd_path
     
     def load_update_config(self):
-        # Load update and restart configuration from file
+        # Load update and restart configuration from database
         try:
-            server_dir = self.server_manager_dir or os.getcwd()
-            config_file = os.path.join(server_dir, "data", "update_config.json")
-            if os.path.exists(config_file):
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self.update_schedules = data.get("server_schedules", {})
-                    self.restart_schedules = data.get("restart_schedules", {})
-                    self.global_schedule = data.get("global_schedule", None)
-                    self.global_restart_schedule = data.get("global_restart_schedule", None)
-                    self.last_update_check = data.get("last_update_check", {})
-                    self.last_restart = data.get("last_restart", {})
-            else:
-                # Create default config
-                self.save_update_config()
+            from Modules.Database.cluster_database import ClusterDatabase
+            db = ClusterDatabase()
+            
+            # Get config from database
+            config_data = db.get_update_config()
+            full_config = config_data.get("full_config", {})
+            
+            if isinstance(full_config, str):
+                import json
+                full_config = json.loads(full_config)
+            
+            # Migrate from JSON if database is empty
+            if not full_config:
+                server_dir = self.server_manager_dir or os.getcwd()
+                config_file = os.path.join(server_dir, "data", "update_config.json")
+                if os.path.exists(config_file):
+                    logger.info("Migrating update config from JSON to database")
+                    db.migrate_update_config_from_json(config_file)
+                    # Reload after migration
+                    config_data = db.get_update_config()
+                    full_config = config_data.get("full_config", {})
+                    if isinstance(full_config, str):
+                        full_config = json.loads(full_config)
+            
+            # Load config values
+            self.update_schedules = full_config.get("server_schedules", {})
+            self.restart_schedules = full_config.get("restart_schedules", {})
+            self.global_schedule = full_config.get("global_schedule", None)
+            self.global_restart_schedule = full_config.get("global_restart_schedule", None)
+            self.last_update_check = full_config.get("last_update_check", {})
+            self.last_restart = full_config.get("last_restart", {})
+            
         except Exception as e:
-            logger.error(f"Error loading update config: {str(e)}")
+            logger.error(f"Error loading update config from database: {str(e)}")
+            # Initialize with defaults
+            self.update_schedules = {}
+            self.restart_schedules = {}
+            self.global_schedule = None
+            self.global_restart_schedule = None
+            self.last_update_check = {}
+            self.last_restart = {}
     
     def save_update_config(self):
-        # Save update and restart configuration to file
+        # Save update and restart configuration to database
         try:
-            server_dir = self.server_manager_dir or os.getcwd()
-            config_file = os.path.join(server_dir, "data", "update_config.json")
-            os.makedirs(os.path.dirname(config_file), exist_ok=True)
+            from Modules.Database.cluster_database import ClusterDatabase
+            db = ClusterDatabase()
             
             data = {
                 "server_schedules": self.update_schedules,
@@ -81,10 +105,11 @@ class ServerUpdateManager(ServerManagerModule):
                 "last_saved": datetime.datetime.now().isoformat()
             }
             
-            with open(config_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            db.set_update_config("full_config", data, "json", "schedules")
+            logger.debug("Update config saved to database")
+            
         except Exception as e:
-            logger.error(f"Error saving update config: {str(e)}")
+            logger.error(f"Error saving update config to database: {str(e)}")
     
     def check_for_updates(self, server_name: str, app_id: str, credentials: Optional[Dict] = None,
                          progress_callback: Optional[Callable] = None) -> Tuple[bool, str, bool]:

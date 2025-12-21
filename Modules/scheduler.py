@@ -9,6 +9,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Dict, List, Optional, Callable
+import requests
 
 # Add project root to sys.path for module resolution
 import sys
@@ -28,10 +29,20 @@ class SchedulerManager:
         self.scheduled_tasks = {}
         self.update_check_interval = 300  # 5 minutes in seconds
         self.last_update_check = datetime.datetime.min
+        
+        # Database syncing configuration
+        self.database_sync_enabled = False
+        self.database_sync_interval = 600  # 10 minutes default
+        self.last_database_sync = datetime.datetime.min
+        self.agent_manager = None
     
     def set_update_manager(self, update_manager):
         # Set the server update manager instance
         self.update_manager = update_manager
+    
+    def set_agent_manager(self, agent_manager):
+        # Set the cluster agent manager instance for database syncing
+        self.agent_manager = agent_manager
     
     def start_timers(self):
         # Start all update timers using configuration values
@@ -49,6 +60,10 @@ class SchedulerManager:
         # Update check timer
         update_interval = self.dashboard.variables["updateCheckInterval"] * 1000
         self.dashboard.root.after(update_interval, self.update_check_timer)
+        
+        # Database sync timer (if cluster is enabled)
+        if self.agent_manager and self.database_sync_enabled:
+            self.dashboard.root.after(30000, self.database_sync_timer)  # Start after 30 seconds
     
     def system_info_timer(self):
         # Timer function for system info updates
@@ -90,6 +105,176 @@ class SchedulerManager:
             self.dashboard.root.after(update_interval, self.update_check_timer)
         except Exception as e:
             logger.error(f"Update check timer error: {str(e)}")
+    
+    def database_sync_timer(self):
+        # Timer function for scheduled database syncing across cluster nodes
+        try:
+            if not self.agent_manager or not self.database_sync_enabled:
+                return
+                
+            current_time = datetime.datetime.now()
+            
+            # Check if enough time has passed since last sync
+            time_diff = (current_time - self.last_database_sync).total_seconds()
+            if time_diff >= self.database_sync_interval:
+                # Run database sync in background thread
+                threading.Thread(target=self.sync_cluster_databases, daemon=True).start()
+                self.last_database_sync = current_time
+            
+            # Schedule next sync
+            self.dashboard.root.after(self.database_sync_interval * 1000, self.database_sync_timer)
+        except Exception as e:
+            logger.error(f"Database sync timer error: {str(e)}")
+    
+    def enable_database_sync(self, interval_seconds: int = 600):
+        # Enable database syncing across cluster nodes
+        self.database_sync_enabled = True
+        self.database_sync_interval = max(60, interval_seconds)  # Minimum 1 minute
+        logger.info(f"Database syncing enabled with {self.database_sync_interval} second interval")
+    
+    def disable_database_sync(self):
+        # Disable database syncing
+        self.database_sync_enabled = False
+        logger.info("Database syncing disabled")
+    
+    def sync_cluster_databases(self):
+        # Sync database changes across cluster nodes
+        try:
+            if not self.agent_manager:
+                logger.warning("No agent manager available for database syncing")
+                return
+            
+            # Only sync if this is a master host or if we're configured to sync
+            cluster_status = self.agent_manager.get_cluster_status()
+            if cluster_status.get('error'):
+                logger.debug("Cluster not configured, skipping database sync")
+                return
+            
+            # Get all online cluster nodes
+            online_nodes = []
+            for node in self.agent_manager.get_all_nodes():
+                if node.is_online and node.status == "online":
+                    online_nodes.append(node)
+            
+            if not online_nodes:
+                logger.debug("No online cluster nodes found for syncing")
+                return
+            
+            logger.info(f"Starting database sync with {len(online_nodes)} cluster nodes")
+            
+            # Sync different types of data
+            self._sync_server_configurations(online_nodes)
+            self._sync_user_data(online_nodes)
+            self._sync_cluster_settings(online_nodes)
+            
+            logger.info("Database sync completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Database sync failed: {str(e)}")
+    
+    def _sync_server_configurations(self, nodes):
+        # Sync server configurations across cluster nodes
+        try:
+            if not hasattr(self.dashboard, 'server_manager') or not self.dashboard.server_manager:
+                return
+            
+            # Get local server configurations
+            local_servers = self.dashboard.server_manager.get_all_servers()
+            
+            for node in nodes:
+                try:
+                    # Get server's configurations via API
+                    response = requests.get(f"http://{node.ip}:8080/api/servers", timeout=10)
+                    if response.status_code == 200:
+                        remote_servers = response.json().get('servers', [])
+                        
+                        # Compare and sync missing configurations
+                        for server_name, server_config in local_servers.items():
+                            # Check if remote node has this server
+                            remote_server = next((s for s in remote_servers if s.get('name') == server_name), None)
+                            
+                            if not remote_server:
+                                # Remote node doesn't have this server, send configuration
+                                self._send_server_config_to_node(node, server_name, server_config)
+                            
+                except Exception as e:
+                    logger.error(f"Failed to sync server configs with {node.name}: {str(e)}")
+                    
+        except Exception as e:
+            logger.error(f"Server configuration sync error: {str(e)}")
+    
+    def _sync_user_data(self, nodes):
+        # Sync user management data across cluster nodes
+        try:
+            # This would sync user accounts, permissions, etc.
+            # Implementation depends on user management system structure
+            # For now, just log that this feature is available
+            logger.debug("User data sync placeholder - implement based on user management system")
+            
+        except Exception as e:
+            logger.error(f"User data sync error: {str(e)}")
+    
+    def _sync_cluster_settings(self, nodes):
+        # Sync cluster-wide settings and configurations
+        try:
+            if not self.agent_manager or not hasattr(self.agent_manager, 'cluster_db'):
+                return
+            
+            # Get local cluster configuration
+            local_config = self.agent_manager.cluster_db.get_cluster_config()
+            
+            for node in nodes:
+                try:
+                    # Send cluster config to remote node
+                    config_data = {
+                        'action': 'sync_cluster_config',
+                        'config': local_config,
+                        'timestamp': datetime.datetime.now().isoformat()
+                    }
+                    
+                    response = requests.post(f"http://{node.ip}:8080/api/cluster/sync",
+                                           json=config_data, timeout=10)
+                    
+                    if response.status_code == 200:
+                        logger.debug(f"Cluster config synced to {node.name}")
+                    else:
+                        logger.warning(f"Failed to sync cluster config to {node.name}: {response.status_code}")
+                        
+                except Exception as e:
+                    logger.error(f"Failed to sync cluster settings with {node.name}: {str(e)}")
+                    
+        except Exception as e:
+            logger.error(f"Cluster settings sync error: {str(e)}")
+    
+    def _send_server_config_to_node(self, node, server_name, server_config):
+        # Send a server configuration to a remote cluster node
+        try:
+            config_data = {
+                'action': 'sync_server_config',
+                'server_name': server_name,
+                'server_config': server_config,
+                'timestamp': datetime.datetime.now().isoformat()
+            }
+            
+            response = requests.post(f"http://{node.ip}:8080/api/servers/sync",
+                                   json=config_data, timeout=15)
+            
+            if response.status_code == 200:
+                logger.info(f"Server config '{server_name}' synced to {node.name}")
+            else:
+                logger.warning(f"Failed to sync server config '{server_name}' to {node.name}: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"Failed to send server config to {node.name}: {str(e)}")
+    
+    def get_database_sync_status(self):
+        # Get the current status of database syncing
+        return {
+            'enabled': self.database_sync_enabled,
+            'interval_seconds': self.database_sync_interval,
+            'last_sync': self.last_database_sync.isoformat() if self.last_database_sync != datetime.datetime.min else None,
+            'next_sync': (self.last_database_sync + datetime.timedelta(seconds=self.database_sync_interval)).isoformat() if self.database_sync_enabled and self.last_database_sync != datetime.datetime.min else None
+        }
     
     def _start_cpu_monitoring(self):
         # Start background CPU monitoring for servers

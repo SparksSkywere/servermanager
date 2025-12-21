@@ -78,7 +78,7 @@ try:
     if os.path.exists(services_path):
         sys.path.insert(0, server_manager_dir)
     from services.dashboard_tracker import tracker
-    logger.info("Dashboard tracker imported successfully")
+    logger.debug("Dashboard tracker imported successfully")
 except ImportError as e:
     logger.warning(f"Dashboard tracker not available: {e}")
     tracker = DummyDashboardTracker()
@@ -89,9 +89,9 @@ except NameError:
 
 # Import Flask dependencies - removed duplicate imports and handled CORS fallback
 try:
-    logger.info("Flask imported successfully")
+    logger.debug("Flask imported successfully")
     # CORS is already imported at the top
-    logger.info("Flask-CORS imported successfully")
+    logger.debug("Flask-CORS imported successfully")
 except ImportError:
     logger.warning("Flask-CORS not installed. Running without CORS support.")
     # Create a dummy CORS class if import fails
@@ -112,7 +112,7 @@ try:
     from Modules.user_management import User, UserManager
     # Import server manager
     from Modules.server_manager import ServerManager as CoreServerManager
-    logger.info("SQL modules imported successfully")
+    logger.debug("SQL modules imported successfully")
 except ImportError as e:
     logger.error(f"Failed to import SQL modules: {e}")
     logger.error(f"SQL import traceback:\n{traceback.format_exc()}")
@@ -138,18 +138,12 @@ class Authentication:
         return bcrypt.checkpw(password.encode(), hashed.encode())
 
     def _load_users(self):
+        # Legacy file-based user loading - no longer creating config folder
+        # All authentication should use SQL database now
         try:
             users_file = os.path.join(self.config_path, "users.json")
             if not os.path.exists(users_file):
-                logger.warning("Users file not found. Creating empty users file.")
-                # Create empty users file with proper permissions
-                try:
-                    os.makedirs(self.config_path, exist_ok=True)
-                    with open(users_file, 'w') as f:
-                        json.dump({}, f)
-                    logger.info(f"Created empty users file: {users_file}")
-                except Exception as e:
-                    logger.error(f"Failed to create users file: {e}")
+                logger.warning("Users file not found. File-based auth is deprecated - use SQL authentication.")
                 return {}
             
             # Try to read the users file with error handling for permissions
@@ -168,15 +162,10 @@ class Authentication:
             return {}
 
     def _save_users(self):
-        try:
-            users_file = os.path.join(self.config_path, "users.json")
-            os.makedirs(os.path.dirname(users_file), exist_ok=True)
-            with open(users_file, 'w') as f:
-                json.dump(self.users, f, indent=4)
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save users: {e}")
-            return False
+        # Legacy file-based user saving - deprecated, no longer creating folders
+        # All authentication should use SQL database now
+        logger.warning("File-based user save attempted - this is deprecated. Use SQL authentication.")
+        return False
 
     def authenticate(self, username, password):
         if username in self.users:
@@ -275,7 +264,7 @@ class SQLAuthentication:
             # Password was SHA256, upgrade to bcrypt
             try:
                 self.user_manager.update_user(username, password=password)
-                logger.info(f"Upgraded password hash to bcrypt for user: {username}")
+                logger.debug(f"Upgraded password hash to bcrypt for user: {username}")
             except Exception as e:
                 logger.warning(f"Failed to upgrade password hash: {e}")
         
@@ -453,10 +442,10 @@ from Modules.common import ServerManagerModule
 
 class ServerManagerWebServer(ServerManagerModule):
     def __init__(self):
-        logger.info("Initializing ServerManagerWebServer...")
+        logger.debug("Initializing ServerManagerWebServer...")
         try:
             super().__init__("ServerManagerWebServer")
-            logger.info("Base ServerManagerModule initialized successfully")
+            logger.debug("Base ServerManagerModule initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize base ServerManagerModule: {e}")
             import traceback
@@ -483,17 +472,17 @@ class ServerManagerWebServer(ServerManagerModule):
         # Read from environment first, fall back to inherited web_port property or default
         try:
             base_port = self.web_port if hasattr(self, 'web_port') else 8080
-            logger.info(f"Base port from property: {base_port}")
+            logger.debug(f"Base port from property: {base_port}")
         except Exception as e:
             logger.warning(f"Could not get web_port property, using default: {e}")
             base_port = 8080
             
         self._web_port = int(os.getenv("WEB_PORT", str(base_port)))
-        logger.info(f"Web port set to: {self._web_port}")
+        logger.debug(f"Web port set to: {self._web_port}")
         
         # Cluster API port (separate from web port for security)
         self._cluster_port = int(os.getenv("CLUSTER_PORT", "5001"))
-        logger.info(f"Cluster API port set to: {self._cluster_port}")
+        logger.debug(f"Cluster API port set to: {self._cluster_port}")
         # Read host type and address from environment
         self.host_type = os.getenv("HOST_TYPE", "Unknown")
         self.host_address = os.getenv("HOST_ADDRESS", None)
@@ -508,7 +497,7 @@ class ServerManagerWebServer(ServerManagerModule):
 
         # Override host type and address from environment if available
         if os.getenv("SERVERMANAGER_DIR"):
-            logger.info("Using configuration from environment variables")
+            logger.debug("Using configuration from environment variables")
         else:
             # Try to read host type from registry for additional info
             try:
@@ -523,13 +512,13 @@ class ServerManagerWebServer(ServerManagerModule):
                 except:
                     pass
                 winreg.CloseKey(key)
-                logger.info("Using configuration from registry")
+                logger.debug("Using configuration from registry")
             except:
-                logger.info("Using default configuration")
+                logger.debug("Using default configuration")
 
-        logger.info(f"Initialized webserver. Server Manager directory: {self.server_manager_dir}")
-        logger.info(f"Web server port: {self.web_port}")
-        logger.info(f"Cluster role: {self.host_type}" + (f", HostAddress: {self.host_address}" if self.host_address else ""))
+        logger.debug(f"Initialized webserver. Server Manager directory: {self.server_manager_dir}")
+        logger.debug(f"Web server port: {self.web_port}")
+        logger.debug(f"Cluster role: {self.host_type}" + (f", HostAddress: {self.host_address}" if self.host_address else ""))
 
         # Initialize Flask app first
         self.app = Flask(
@@ -558,11 +547,12 @@ class ServerManagerWebServer(ServerManagerModule):
                 self.engine = get_user_engine()
                 self.sql_auth = SQLAuthentication(self.engine)
                 self.auth = self.sql_auth  # Set auth to point to sql_auth for consistent interface
-                logger.info("SQL authentication system initialized successfully")
+                logger.debug("SQL authentication system initialized successfully")
             else:
-                self.auth = Authentication(self.paths["config"])
+                # File-based authentication no longer supported (config folder removed)
+                self.auth = self.create_fallback_auth()
                 self.sql_auth = None
-                logger.warning("SQL not available, using file-based authentication")
+                logger.warning("File-based authentication not available (config folder removed), using fallback auth")
         except Exception as e:
             logger.error(f"Failed to initialize authentication: {e}")
             self.auth = self.create_fallback_auth()
@@ -584,7 +574,7 @@ class ServerManagerWebServer(ServerManagerModule):
             # Start host heartbeat thread
             self.start_host_heartbeat()
             
-            logger.info("Cluster database initialized successfully")
+            logger.debug("Cluster database initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize cluster database: {e}")
             self.cluster_db = None
@@ -592,7 +582,7 @@ class ServerManagerWebServer(ServerManagerModule):
         # Initialize server manager
         try:
             self.server_manager = ServerManager(self.paths["servers"])
-            logger.info("Server manager initialized successfully")
+            logger.debug("Server manager initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize server manager: {e}")
             self.server_manager = None
@@ -602,7 +592,7 @@ class ServerManagerWebServer(ServerManagerModule):
             from Modules.analytics import AnalyticsCollector
             self.analytics = AnalyticsCollector()
             self.analytics.start_collection()
-            logger.info("Analytics module initialized and started successfully")
+            logger.debug("Analytics module initialized and started successfully")
         except Exception as e:
             logger.error(f"Failed to initialize analytics module: {e}")
             self.analytics = None
@@ -616,7 +606,7 @@ class ServerManagerWebServer(ServerManagerModule):
         if self.tracker:
             try:
                 self.tracker.start_auto_refresh()
-                logger.info("Dashboard tracker started in background thread")
+                logger.debug("Dashboard tracker started in background thread")
             except Exception as e:
                 logger.warning(f"Failed to start dashboard tracker: {e}")
                 self.tracker = DummyDashboardTracker()
@@ -624,7 +614,7 @@ class ServerManagerWebServer(ServerManagerModule):
         # Start subhost communication thread
         self.subhost_thread = threading.Thread(target=self.subhost_communication_loop, daemon=True)
         self.subhost_thread.start()
-        logger.info("Subhost communication thread started")
+        logger.debug("Subhost communication thread started")
 
     @property
     def web_port(self):
@@ -640,20 +630,20 @@ class ServerManagerWebServer(ServerManagerModule):
         try:
             if get_user_engine and get_user_sql_config_from_registry and build_user_db_url:
                 sql_conf = get_user_sql_config_from_registry()
-                logger.info(f"SQL config from registry: {sql_conf}")
+                logger.debug(f"SQL config from registry: {sql_conf}")
                 db_url = build_user_db_url(sql_conf)
-                logger.info(f"SQLAlchemy DB URL: {db_url}")
+                logger.debug(f"SQLAlchemy DB URL: {db_url}")
                 if sql_conf["type"].lower() == "sqlite":
                     db_path = sql_conf["db_path"]
                     if not os.path.isabs(db_path):
                         db_path = os.path.abspath(db_path)
-                        logger.info(f"Resolved absolute SQLite DB path: {db_path}")
+                        logger.debug(f"Resolved absolute SQLite DB path: {db_path}")
                     if not os.path.exists(db_path):
                         logger.error(f"SQLite DB file does not exist: {db_path}")
                         raise FileNotFoundError(f"Database file missing: {db_path}")
                     try:
                         with open(db_path, "rb"):
-                            logger.info(f"SQLite DB file exists and is readable: {db_path}")
+                            logger.debug(f"SQLite DB file exists and is readable: {db_path}")
                     except Exception as e:
                         logger.error(f"SQLite DB file exists but is not readable: {e}")
                         raise
@@ -661,9 +651,9 @@ class ServerManagerWebServer(ServerManagerModule):
                 from sqlalchemy import text
                 with self.engine.connect() as conn:
                     result = conn.execute(text("SELECT 1")).fetchone()
-                    logger.info(f"SQL connection test result: {result}")
+                    logger.debug(f"SQL connection test result: {result}")
                 self.sql_available = True
-                logger.info("SQL connection available")
+                logger.debug("SQL connection available")
             else:
                 self.sql_available = False
                 logger.warning("SQL modules not available")
@@ -675,11 +665,10 @@ class ServerManagerWebServer(ServerManagerModule):
 
     def create_fallback_auth(self):
         class FallbackAuth:
-            def __init__(self, config_path):
-                self.config_path = config_path
+            def __init__(self):
                 self.users = {}
                 self.tokens = {}
-                logger.info("Using fallback authentication system")
+                logger.debug("Using fallback authentication system")
 
             def authenticate(self, username, password):
                 return None
@@ -702,7 +691,7 @@ class ServerManagerWebServer(ServerManagerModule):
             def change_password(self, username, new_password):
                 return False
 
-        return FallbackAuth(self.paths["config"])
+        return FallbackAuth()
 
     def subhost_communication_loop(self):
         while True:
@@ -762,7 +751,7 @@ class ServerManagerWebServer(ServerManagerModule):
                     cluster_module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(cluster_module)
                     app.register_blueprint(cluster_module.cluster_api, url_prefix='/cluster')
-                    logger.info("Cluster API registered successfully on main server")
+                    logger.debug("Cluster API registered successfully on main server")
                 else:
                     logger.warning("Failed to create module spec for cluster API")
             else:
@@ -826,13 +815,13 @@ class ServerManagerWebServer(ServerManagerModule):
                 if not username or not password or not isinstance(username, str) or not isinstance(password, str):
                     return jsonify({"error": "Username and password must be non-empty strings"}), 400
 
-                logger.info(f"Login attempt for user: {username} with auth type: {auth_type}")
+                logger.debug(f"Login attempt for user: {username} with auth type: {auth_type}")
 
                 # Try SQL authentication first (same as dashboard)
                 if self.sql_auth:
                     sql_result = safe_auth_call('authenticate', username, password, auth_instance=self.sql_auth)
                     if sql_result:
-                        logger.info(f"Successful SQL authentication for user: {username}")
+                        logger.debug(f"Successful SQL authentication for user: {username}")
                         return jsonify({
                             "token": sql_result["token"],
                             "username": sql_result["username"],
@@ -844,7 +833,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 if not self.sql_auth:
                     auth_result = safe_auth_call('authenticate', username, password)
                     if auth_result:
-                        logger.info(f"Successful file-based authentication for user: {username}")
+                        logger.debug(f"Successful file-based authentication for user: {username}")
                         return jsonify({
                             "token": auth_result["token"],
                             "username": auth_result["username"],
@@ -871,7 +860,7 @@ class ServerManagerWebServer(ServerManagerModule):
                                 "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat(),
                                 "isAdmin": True
                             }
-                            logger.info(f"Successful Windows authentication for user: {username}")
+                            logger.debug(f"Successful Windows authentication for user: {username}")
                             return jsonify({
                                 "token": token,
                                 "username": username,
@@ -1625,7 +1614,7 @@ class ServerManagerWebServer(ServerManagerModule):
 
     def run(self):
         try:
-            logger.info(f"Starting web server on port {self.web_port}")
+            logger.debug(f"Starting web server on port {self.web_port}")
             
             # Start cluster API server in a separate thread if cluster is enabled
             cluster_thread = None
@@ -1636,13 +1625,13 @@ class ServerManagerWebServer(ServerManagerModule):
                 winreg.CloseKey(key)
                 
                 if host_type == "Host":
-                    logger.info("Starting cluster API server on port 5001")
+                    logger.debug("Starting cluster API server on port 5001")
                     cluster_thread = threading.Thread(target=self._run_cluster_server, daemon=True)
                     cluster_thread.start()
                     # Give the cluster server a moment to start
                     import time
                     time.sleep(2)
-                    logger.info("Cluster API server thread started")
+                    logger.debug("Cluster API server thread started")
             except Exception as e:
                 logger.error(f"Cluster API startup failed: {e}")
                 import traceback
@@ -1652,16 +1641,16 @@ class ServerManagerWebServer(ServerManagerModule):
             # Default to localhost only for security
             default_host = "127.0.0.1"  # Secure default - localhost only
             
-            # Load security configuration
+            # Load security configuration from database (TODO: implement security_config table)
             security_config = None
-            try:
-                config_path = os.path.join(self.server_manager_dir or "", "config", "security_config.json")
-                if os.path.exists(config_path):
-                    with open(config_path, 'r') as f:
-                        security_config = json.load(f)
-                        logger.info("Loaded security configuration from file")
-            except Exception as e:
-                logger.debug(f"Could not load security config file: {e}")
+            # try:
+            #     config_path = os.path.join(self.server_manager_dir or "", "config", "security_config.json")
+            #     if os.path.exists(config_path):
+            #         with open(config_path, 'r') as f:
+            #             security_config = json.load(f)
+            #             logger.info("Loaded security configuration from file")
+            # except Exception as e:
+            #     logger.debug(f"Could not load security config file: {e}")
             
             # Check if this is a cluster host that needs external access
             try:
@@ -1681,13 +1670,13 @@ class ServerManagerWebServer(ServerManagerModule):
                     bind_localhost_only = security_config.get("security", {}).get("bind_localhost_only", True)
                     
                     if bind_localhost_only:
-                        logger.info("SECURITY: Security config enforcing localhost-only binding")
+                        logger.debug("SECURITY: Security config enforcing localhost-only binding")
                     elif host_type == "Host" and cluster_enabled:
                         # For cluster hosts, allow external binding but log security warning
                         default_host = "0.0.0.0"
                         logger.warning("SECURITY: Binding to all interfaces (0.0.0.0) for cluster host - ensure firewall is configured!")
                     else:
-                        logger.info("SECURITY: Using secure default localhost binding (127.0.0.1)")
+                        logger.debug("SECURITY: Using secure default localhost binding (127.0.0.1)")
                 else:
                     # Legacy behavior - only bind to all interfaces if explicitly configured as cluster host
                     if host_type == "Host" and cluster_enabled:
@@ -1695,13 +1684,13 @@ class ServerManagerWebServer(ServerManagerModule):
                         default_host = "0.0.0.0"
                         logger.warning("SECURITY: Binding to all interfaces (0.0.0.0) for cluster host - ensure firewall is configured!")
                     else:
-                        logger.info("SECURITY: Using secure default localhost binding (127.0.0.1)")
+                        logger.debug("SECURITY: Using secure default localhost binding (127.0.0.1)")
             except Exception as e:
                 logger.debug(f"Could not read cluster config from registry: {e}")
                 if security_config and security_config.get("security", {}).get("bind_localhost_only", True):
-                    logger.info("SECURITY: Security config enforcing localhost-only binding")
+                    logger.debug("SECURITY: Security config enforcing localhost-only binding")
                 else:
-                    logger.info("SECURITY: Using secure default localhost binding (127.0.0.1)")
+                    logger.debug("SECURITY: Using secure default localhost binding (127.0.0.1)")
             
             # Allow override via environment variable (with security warning)
             host = os.getenv("WEB_HOST", default_host)
@@ -1724,12 +1713,12 @@ class ServerManagerWebServer(ServerManagerModule):
                         'ssl_cert': cert_path,
                         'ssl_key': key_path
                     })
-                    logger.info(f"SSL enabled with certificate and key files on {host}:{self.web_port}")
+                    logger.debug(f"SSL enabled with certificate and key files on {host}:{self.web_port}")
                 else:
                     logger.warning("SSL enabled but certificate or key file missing/invalid - falling back to HTTP")
-                    logger.info(f"SSL disabled - running HTTP only on {host}:{self.web_port}")
+                    logger.debug(f"SSL disabled - running HTTP only on {host}:{self.web_port}")
             else:
-                logger.info(f"SSL disabled - running HTTP only on {host}:{self.web_port}")
+                logger.debug(f"SSL disabled - running HTTP only on {host}:{self.web_port}")
             
             if not self.app:
                 logger.error("Flask app not initialized - cannot start server")

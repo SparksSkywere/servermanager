@@ -79,6 +79,15 @@ class ServerManagerStopper(ServerManagerModule):
             process = psutil.Process(pid)
             logger.info(f"Stopping process: {process.name()} (PID: {pid})")
             
+            # Get child processes first before killing parent
+            children = []
+            try:
+                children = process.children(recursive=True)
+                if children:
+                    logger.debug(f"Found {len(children)} child processes for PID {pid}")
+            except Exception:
+                pass
+            
             # Try graceful termination first
             process.terminate()
             
@@ -86,33 +95,51 @@ class ServerManagerStopper(ServerManagerModule):
             try:
                 process.wait(timeout=5)
                 logger.info(f"Process {pid} terminated gracefully")
-                return True
             except psutil.TimeoutExpired:
                 # Use more forceful approaches depending on platform
-                if self.force_stop or True:  # Always force kill if process doesn't terminate
-                    logger.warning(f"Process {pid} did not terminate gracefully, killing forcefully")
-                    try:
+                logger.warning(f"Process {pid} did not terminate gracefully, killing forcefully")
+                try:
+                    if sys.platform == 'win32':
+                        # On Windows, use taskkill with /T to kill entire process tree
+                        subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)], 
+                                       stdout=subprocess.DEVNULL, 
+                                       stderr=subprocess.DEVNULL)
+                    else:
+                        # On Unix, use SIGKILL
+                        os.kill(pid, signal.SIGKILL)
+                except Exception as e:
+                    logger.error(f"Error forcefully killing process {pid}: {str(e)}")
+            
+            # Kill any remaining child processes
+            for child in children:
+                try:
+                    if child.is_running():
                         if sys.platform == 'win32':
-                            # On Windows, use taskkill which is more forceful
-                            subprocess.call(['taskkill', '/F', '/PID', str(pid)], 
-                                           stdout=subprocess.DEVNULL, 
+                            subprocess.call(['taskkill', '/F', '/PID', str(child.pid)],
+                                           stdout=subprocess.DEVNULL,
                                            stderr=subprocess.DEVNULL)
                         else:
-                            # On Unix, use SIGKILL
-                            os.kill(pid, signal.SIGKILL)
-                        
-                        # Verify process is terminated
-                        time.sleep(0.5)
-                        if psutil.pid_exists(pid):
-                            logger.error(f"Failed to kill process {pid} forcefully")
-                            return False
-                        return True
-                    except Exception as e:
-                        logger.error(f"Error forcefully killing process {pid}: {str(e)}")
-                        return False
-                else:
-                    logger.warning(f"Process {pid} did not terminate gracefully")
+                            child.kill()
+                        logger.debug(f"Killed child process {child.pid}")
+                except Exception:
+                    pass
+            
+            # Verify process is terminated
+            time.sleep(0.5)
+            if psutil.pid_exists(pid):
+                # Final attempt with taskkill /T
+                logger.warning(f"Process {pid} still running, final kill attempt")
+                if sys.platform == 'win32':
+                    subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)],
+                                   stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL)
+                time.sleep(0.5)
+                if psutil.pid_exists(pid):
+                    logger.error(f"Failed to kill process {pid} forcefully")
                     return False
+            
+            return True
+            
         except psutil.NoSuchProcess:
             logger.debug(f"Process {pid} does not exist")
             return True

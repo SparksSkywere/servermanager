@@ -11,6 +11,7 @@ import logging
 import signal
 import glob
 import select
+import json
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
@@ -45,6 +46,7 @@ class RealTimeConsole:
         self.error_thread = None
         self.input_thread = None
         self.log_monitor_thread = None  # Additional thread for log file monitoring
+        self.state_save_thread = None  # Thread for periodic state saving
         self.stop_event = threading.Event()
         
         # Command handling
@@ -63,9 +65,185 @@ class RealTimeConsole:
         self.server_log_paths = []  # Additional server-specific log files to monitor
         self.log_file_positions = {}  # Track positions in log files
         
+        # State persistence for crash recovery
+        self._state_file_path = self._get_state_file_path()
+        self._last_state_save_count = 0  # Track buffer size at last save
+        self._state_save_interval = 10  # Save state every 10 seconds
+    
+    def _get_state_file_path(self):
+        # Get the path to the console state file for this server
+        try:
+            # Use the temp directory in the server manager directory
+            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            temp_dir = os.path.join(script_dir, "temp", "console_states")
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # Sanitize server name for filename
+            safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in self.server_name)
+            safe_name = safe_name.replace(' ', '_')
+            
+            return os.path.join(temp_dir, f"{safe_name}_console_state.json")
+        except Exception as e:
+            logger.error(f"Error getting state file path for {self.server_name}: {e}")
+            return None
+    
+    def save_console_state(self):
+        # Save current console state to file for crash recovery
+        try:
+            if not self._state_file_path:
+                return False
+            
+            with self.buffer_lock:
+                # Only save if there's new content
+                current_count = len(self.output_buffer)
+                if current_count == self._last_state_save_count and current_count > 0:
+                    return True  # No changes, skip save
+                
+                state = {
+                    'server_name': self.server_name,
+                    'timestamp': datetime.now().isoformat(),
+                    'process_id': self.process.pid if self.process and hasattr(self.process, 'pid') else None,
+                    'is_active': self.is_active,
+                    'output_buffer': self.output_buffer[-self.max_buffer_size:],  # Save last max_buffer_size entries
+                    'command_history': self.command_history[-100:],  # Save last 100 commands
+                }
+            
+            # Write to temp file first, then rename for atomic write
+            temp_file = self._state_file_path + '.tmp'
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(state, f, indent=2, default=str)
+            
+            # Atomic rename
+            if os.path.exists(self._state_file_path):
+                os.remove(self._state_file_path)
+            os.rename(temp_file, self._state_file_path)
+            
+            self._last_state_save_count = current_count
+            logger.debug(f"Saved console state for {self.server_name} ({current_count} entries)")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving console state for {self.server_name}: {e}")
+            return False
+    
+    def load_console_state(self):
+        # Load console state from file (for crash recovery)
+        try:
+            if not self._state_file_path or not os.path.exists(self._state_file_path):
+                return False
+            
+            # Check if state file is recent (within last hour)
+            file_age = time.time() - os.path.getmtime(self._state_file_path)
+            if file_age > 3600:  # 1 hour
+                logger.debug(f"Console state file for {self.server_name} is too old ({file_age:.0f}s), skipping")
+                return False
+            
+            with open(self._state_file_path, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+            
+            # Verify this state is for the same server
+            if state.get('server_name') != self.server_name:
+                logger.warning(f"Console state file mismatch for {self.server_name}")
+                return False
+            
+            # Load command history
+            self.command_history = state.get('command_history', [])
+            
+            # Load output buffer
+            saved_buffer = state.get('output_buffer', [])
+            if saved_buffer:
+                with self.buffer_lock:
+                    # Clear existing buffer and load saved state
+                    self.output_buffer = saved_buffer
+                    self._last_state_save_count = len(self.output_buffer)
+                
+                logger.debug(f"Loaded console state for {self.server_name} ({len(saved_buffer)} entries)")
+                return True
+            
+            return False
+            
+        except json.JSONDecodeError as e:
+            logger.warning(f"Corrupt console state file for {self.server_name}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error loading console state for {self.server_name}: {e}")
+            return False
+    
+    def _start_state_save_thread(self):
+        # Start periodic state saving thread
+        try:
+            if self.state_save_thread and self.state_save_thread.is_alive():
+                return  # Already running
+            
+            self.state_save_thread = threading.Thread(
+                target=self._periodic_state_save,
+                daemon=True,
+                name=f"Console-{self.server_name}-StateSave"
+            )
+            self.state_save_thread.start()
+            logger.debug(f"Started state save thread for {self.server_name}")
+        except Exception as e:
+            logger.error(f"Error starting state save thread for {self.server_name}: {e}")
+    
+    def _periodic_state_save(self):
+        # Periodically save console state
+        try:
+            while self.is_active and not self.stop_event.is_set():
+                # Wait for the save interval
+                if self.stop_event.wait(timeout=self._state_save_interval):
+                    break  # Stop event was set
+                
+                # Save state
+                if self.is_active:
+                    self.save_console_state()
+                    
+        except Exception as e:
+            logger.error(f"Error in periodic state save for {self.server_name}: {e}")
+    
+    def clear_console_state(self):
+        # Remove the console state file (called when server is properly stopped)
+        try:
+            if self._state_file_path and os.path.exists(self._state_file_path):
+                os.remove(self._state_file_path)
+                logger.debug(f"Cleared console state file for {self.server_name}")
+        except Exception as e:
+            logger.error(f"Error clearing console state file for {self.server_name}: {e}")
+    
+    def cleanup_on_server_stop(self):
+        # Clean up console when server is properly stopped (not crashed)
+        # This clears state and buffer so old data doesn't persist
+        try:
+            self.is_active = False
+            pid = self.process.pid if self.process and hasattr(self.process, 'pid') else 'Unknown'
+            
+            # Clear the console state file - we don't want to restore old state
+            self.clear_console_state()
+            
+            # Clear the output buffer
+            with self.buffer_lock:
+                self.output_buffer.clear()
+            
+            # Clear command history
+            self.command_history.clear()
+            
+            # Close log files
+            self._close_log_files()
+            
+            # Stop monitoring threads
+            self.stop_event.set()
+            
+            # Clear process reference
+            self.process = None
+            
+            logger.debug(f"Cleaned up console for {self.server_name} (PID: {pid}) after server stop")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up console on stop for {self.server_name}: {e}")
+        
     def attach_to_process(self, process):
         # Attach console to an existing process object (subprocess.Popen or psutil.Process)
         try:
+            logger.debug(f"DEBUG: Attempting to attach console to process for {self.server_name}")
             if not process:
                 logger.error(f"Cannot attach console to {self.server_name}: No process provided")
                 return False
@@ -77,8 +255,15 @@ class RealTimeConsole:
             # Open log files if specified
             self._open_log_files()
             
-            # Load historical output from log files before starting new monitoring
-            self._load_historical_output()
+            # Try to load saved console state first (for crash recovery)
+            state_loaded = self.load_console_state()
+            
+            # If no saved state, load historical output from log files
+            if not state_loaded:
+                self._load_historical_output()
+            else:
+                # State was loaded - add a reconnection message
+                self._add_output(f"=== Console state restored from previous session ===", "system")
             
             # Add session start message
             pid = process.pid if hasattr(process, 'pid') else 'Unknown'
@@ -87,7 +272,10 @@ class RealTimeConsole:
             # Start monitoring threads (only if process has stdout/stderr)
             self._start_monitoring_threads()
             
-            logger.info(f"Console attached to {self.server_name} (PID: {pid})")
+            # Start periodic state saving for crash recovery
+            self._start_state_save_thread()
+            
+            logger.debug(f"Console attached to {self.server_name} (PID: {pid})")
             return True
             
         except Exception as e:
@@ -127,7 +315,10 @@ class RealTimeConsole:
                 self.is_active = False
                 pid = self.process.pid if self.process and hasattr(self.process, 'pid') else 'Unknown'
                 self._add_output(f"=== Process {self.server_name} (PID: {pid}) has ended ===", "system")
-                logger.info(f"Process {self.server_name} (PID: {pid}) has ended")
+                logger.debug(f"Process {self.server_name} (PID: {pid}) has ended")
+                
+                # Save final console state before cleanup
+                self.save_console_state()
                 
                 # Close log files
                 self._close_log_files()
@@ -146,16 +337,27 @@ class RealTimeConsole:
                 
             # For subprocess.Popen objects
             if hasattr(self.process, 'poll'):
-                return self.process.poll() is None
+                try:
+                    return self.process.poll() is None
+                except (OSError, AttributeError):
+                    # Process object became invalid
+                    return False
             # For psutil.Process objects
             elif hasattr(self.process, 'is_running'):
-                return self.process.is_running()
+                try:
+                    return self.process.is_running()
+                except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
+                    # Process no longer exists or access denied
+                    return False
             else:
                 # Fallback - try to get process info
                 try:
-                    self.process.pid
-                    return True
-                except:
+                    pid = self.process.pid
+                    if pid:
+                        # Quick check if process exists
+                        os.kill(pid, 0)  # Signal 0 just checks if process exists
+                        return True
+                except (OSError, AttributeError, ProcessLookupError):
                     return False
         except Exception as e:
             logger.debug(f"Error checking if process is running: {e}")
@@ -212,7 +414,8 @@ class RealTimeConsole:
             
             while self.is_active and not self.stop_event.is_set():
                 try:
-                    if self.process and hasattr(self.process, 'stdout') and self.process.stdout:
+                    if (self.process and hasattr(self.process, 'stdout') and 
+                        self.process.stdout and not self.process.stdout.closed):
                         # On Windows, use non-blocking read with polling
                         if sys.platform == 'win32':
                             try:
@@ -232,9 +435,11 @@ class RealTimeConsole:
                                 else:
                                     # Small sleep to prevent excessive CPU usage
                                     time.sleep(0.01)
-                            except Exception as e:
-                                logger.debug(f"Windows stdout read error: {e}")
-                                time.sleep(0.1)
+                            except (OSError, ValueError, AttributeError) as e:
+                                # Process stdout became invalid
+                                logger.debug(f"Stdout became invalid for {self.server_name}: {e}")
+                                self._handle_process_termination()
+                                break
                         else:
                             # Unix systems - use select for non-blocking reads
                             try:
@@ -253,22 +458,16 @@ class RealTimeConsole:
                                     if not self._is_process_running():
                                         self._handle_process_termination()
                                         break
-                            except ImportError:
-                                # Fallback without select
-                                line = self.process.stdout.readline()
-                                if line:
-                                    line = line.strip()
-                                    if line:
-                                        self._add_output(line, "stdout")
-                                        if self.stdout_log:
-                                            self.stdout_log.write(f"{datetime.now().isoformat()} {line}\n")
-                                            self.stdout_log.flush()
-                                elif not self._is_process_running():
-                                    self._handle_process_termination()
-                                    break
-                                else:
-                                    time.sleep(0.05)
+                            except (OSError, ValueError, AttributeError, select.error) as e:
+                                # Process stdout became invalid or select failed
+                                logger.debug(f"Stdout monitoring failed for {self.server_name}: {e}")
+                                self._handle_process_termination()
+                                break
                     else:
+                        # Check if process ended
+                        if not self._is_process_running():
+                            self._handle_process_termination()
+                            break
                         time.sleep(0.1)
                         
                 except Exception as e:
@@ -287,7 +486,9 @@ class RealTimeConsole:
             
             while self.is_active and not self.stop_event.is_set():
                 try:
-                    if self.process and hasattr(self.process, 'stderr') and self.process.stderr:
+                    if (self.process and hasattr(self.process, 'stderr') and 
+                        self.process.stderr and not self.process.stderr.closed and
+                        self.process.stderr != self.process.stdout):
                         # Use select/poll for non-blocking reads if available
                         try:
                             if hasattr(select, 'select'):
@@ -321,22 +522,16 @@ class RealTimeConsole:
                                     break
                                 else:
                                     time.sleep(0.05)  # Shorter sleep for more responsive output
-                        except ImportError:
-                            # Fallback for systems without select
-                            line = self.process.stderr.readline()
-                            if line:
-                                line = line.strip()
-                                if line:
-                                    self._add_output(line, "stderr")
-                                    if self.stderr_log:
-                                        self.stderr_log.write(f"{datetime.now().isoformat()} {line}\n")
-                                        self.stderr_log.flush()
-                            elif not self._is_process_running():
-                                self._handle_process_termination()
-                                break
-                            else:
-                                time.sleep(0.05)
+                        except (OSError, ValueError, AttributeError, select.error) as e:
+                            # Process stderr became invalid or select failed
+                            logger.debug(f"Stderr monitoring failed for {self.server_name}: {e}")
+                            self._handle_process_termination()
+                            break
                     else:
+                        # Check if process ended
+                        if not self._is_process_running():
+                            self._handle_process_termination()
+                            break
                         time.sleep(0.1)
                         
                 except Exception as e:
@@ -351,14 +546,16 @@ class RealTimeConsole:
     def _handle_commands(self):
         # Handle command input to server process
         try:
-            logger.debug(f"Started command handler for {self.server_name}")
+            logger.debug(f"DEBUG: Starting command handler for {self.server_name}")
             
             while self.is_active and not self.stop_event.is_set():
                 try:
                     # Wait for command with timeout
                     command = self.command_queue.get(timeout=1.0)
+                    logger.debug(f"DEBUG: Retrieved command from queue for {self.server_name}: '{command}'")
                     
-                    if command and self.process and hasattr(self.process, 'stdin') and self.process.stdin:
+                    if (command and self.process and hasattr(self.process, 'stdin') and 
+                        self.process.stdin and not self.process.stdin.closed):
                         try:
                             # Send command to process
                             command_with_newline = f"{command}\n"
@@ -382,10 +579,13 @@ class RealTimeConsole:
                                     self.command_history.pop(0)
                             
                             logger.debug(f"Command sent successfully to {self.server_name}: {command}")
-                        except Exception as e:
+                        except (OSError, ValueError, BrokenPipeError) as e:
                             logger.error(f"Error sending command '{command}' to {self.server_name}: {e}")
+                            # Process stdin became invalid, terminate
+                            self._handle_process_termination()
+                            break
                     else:
-                        logger.warning(f"Cannot send command to {self.server_name}: process or stdin not available")
+                        logger.warning(f"Cannot send command to {self.server_name}: process or stdin not available (process={self.process is not None}, has_stdin={hasattr(self.process, 'stdin') if self.process else False}, stdin_closed={self.process.stdin.closed if self.process and hasattr(self.process, 'stdin') and self.process.stdin else 'N/A'})")
                     
                     self.command_queue.task_done()
                     
@@ -543,12 +743,54 @@ class RealTimeConsole:
         except Exception as e:
             logger.debug(f"Error adding output for {self.server_name}: {e}")
     
+    def _get_status_text(self):
+        # Get status text for the console
+        try:
+            if self.process and self._is_process_running():
+                pid = self.process.pid if hasattr(self.process, 'pid') else 'Unknown'
+                return f"Status: Running (PID: {pid})"
+            else:
+                return "Status: Stopped (Read-only mode)"
+        except Exception as e:
+            logger.debug(f"Error getting status text: {e}")
+            return "Status: Unknown"
+    
+    def _start_status_updates(self):
+        # Start periodic status updates
+        try:
+            def update_status():
+                try:
+                    if self.window and self.window.winfo_exists() and hasattr(self, 'status_label'):
+                        self.status_label.config(text=self._get_status_text())
+                        
+                        # Enable/disable command input based on process status
+                        is_running = self.process and self._is_process_running()
+                        if hasattr(self, 'command_entry') and self.command_entry:
+                            self.command_entry.config(state=tk.NORMAL if is_running else tk.DISABLED)
+                        
+                        # Schedule next update
+                        self.window.after(2000, update_status)  # Update every 2 seconds
+                except tk.TclError:
+                    # Window was destroyed
+                    pass
+                except Exception as e:
+                    logger.debug(f"Error updating status: {e}")
+            
+            # Start the update cycle
+            if self.window and self.window.winfo_exists():
+                self.window.after(1000, update_status)  # First update after 1 second
+                
+        except Exception as e:
+            logger.debug(f"Error starting status updates: {e}")
+    
     def _update_gui_output(self, text, msg_type):
         # Update GUI with new output in thread-safe manner
         try:
             def update():
-                if self.text_widget and self.window and self.window.winfo_exists():
-                    try:
+                try:
+                    # Double-check window exists before updating
+                    if (self.window and self.window.winfo_exists() and 
+                        self.text_widget and hasattr(self.text_widget, 'config')):
                         self.text_widget.config(state=tk.NORMAL)
                         self.text_widget.insert(tk.END, text + "\n", msg_type)
                         self.text_widget.see(tk.END)
@@ -559,11 +801,21 @@ class RealTimeConsole:
                             self.text_widget.delete(1.0, f"{lines-1000}.0")
                         
                         self.text_widget.config(state=tk.DISABLED)
-                    except Exception as e:
-                        logger.debug(f"GUI update error: {e}")
+                    # If window doesn't exist, silently ignore
+                except tk.TclError:
+                    # Window was destroyed, ignore
+                    pass
+                except Exception as e:
+                    logger.debug(f"GUI update error: {e}")
             
-            if self.window:
-                self.window.after(0, update)
+            # Check window exists before scheduling update
+            if self.window and self.window.winfo_exists():
+                try:
+                    self.window.after(0, update)
+                except tk.TclError:
+                    # Window was destroyed between check and after() call
+                    pass
+            # If no window, silently ignore
                 
         except Exception as e:
             logger.debug(f"Error scheduling GUI update: {e}")
@@ -571,17 +823,24 @@ class RealTimeConsole:
     def send_command(self, command):
         # Send command to server process
         try:
+            logger.debug(f"DEBUG: send_command called for {self.server_name} with command: '{command}'")
             if self.is_active and command.strip():
+                logger.debug(f"DEBUG: Console is active for {self.server_name}, attempting to send command")
                 self.command_queue.put(command.strip())
                 return True
-            return False
+            else:
+                logger.warning(f"DEBUG: Console not active for {self.server_name} (is_active={self.is_active}) or empty command")
+                return False
         except Exception as e:
             logger.error(f"Error sending command to {self.server_name}: {e}")
+            import traceback
+            logger.error(f"DEBUG: send_command error traceback: {traceback.format_exc()}")
             return False
     
     def show_window(self, parent=None):
         # Show the console window
         try:
+            logger.debug(f"DEBUG: Attempting to show console window for {self.server_name}")
             if self.window and self.window.winfo_exists():
                 self.window.lift()
                 self.window.focus_set()
@@ -603,6 +862,16 @@ class RealTimeConsole:
             # Console output area
             output_frame = ttk.LabelFrame(main_frame, text="Server Output", padding=5)
             output_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+            
+            # Status indicator
+            status_frame = ttk.Frame(output_frame)
+            status_frame.pack(fill=tk.X, pady=(0, 5))
+            
+            self.status_label = ttk.Label(status_frame, text=self._get_status_text(), font=("Segoe UI", 9))
+            self.status_label.pack(side=tk.LEFT)
+            
+            # Update status periodically
+            self._start_status_updates()
             
             # Text widget with scrollbar
             self.text_widget = scrolledtext.ScrolledText(
@@ -635,6 +904,11 @@ class RealTimeConsole:
             send_btn = ttk.Button(cmd_frame, text="Send", command=self._send_command_gui)
             send_btn.pack(side=tk.RIGHT)
             
+            # Disable command input if no process is running
+            if not self.process or not self._is_process_running():
+                self.command_entry.config(state=tk.DISABLED)
+                send_btn.config(state=tk.DISABLED)
+            
             # Button frame
             btn_frame = ttk.Frame(main_frame)
             btn_frame.pack(fill=tk.X)
@@ -655,8 +929,12 @@ class RealTimeConsole:
             # Focus command entry
             self.command_entry.focus_set()
             
+            logger.debug(f"DEBUG: Console window created successfully for {self.server_name}")
+            
         except Exception as e:
             logger.error(f"Error showing console window for {self.server_name}: {e}")
+            import traceback
+            logger.error(f"DEBUG: Console window creation traceback: {traceback.format_exc()}")
     
     def _populate_existing_output(self):
         # Populate console with existing output buffer and historical log data
@@ -707,7 +985,22 @@ class RealTimeConsole:
     def _load_log_file(self, log_file_path, msg_type):
         # Load output from a specific log file
         try:
+            # Check file size first - skip if too large to prevent memory issues
+            file_size = os.path.getsize(log_file_path)
+            if file_size > 10 * 1024 * 1024:  # 10MB limit
+                logger.debug(f"Skipping historical load for large log file: {log_file_path} ({file_size} bytes)")
+                return
+                
             with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                # Read lines more efficiently - don't load entire file for large files
+                if file_size > 1024 * 1024:  # For files > 1MB, seek to approximate end
+                    # Estimate position for last ~1000 lines (assuming average 100 chars per line)
+                    estimated_lines_size = 100 * 1000
+                    if file_size > estimated_lines_size:
+                        f.seek(file_size - estimated_lines_size)
+                        # Skip first line as it might be partial
+                        f.readline()
+                
                 lines = f.readlines()
                 
                 # Only load the last 500 lines to avoid overwhelming the console
@@ -753,18 +1046,28 @@ class RealTimeConsole:
     def _send_command_gui(self):
         # Send command from GUI entry
         try:
+            logger.debug(f"DEBUG: Attempting to send command from GUI for {self.server_name}")
             if not self.command_entry:
+                logger.warning(f"DEBUG: No command entry widget for {self.server_name}")
                 return
                 
             command = self.command_entry.get().strip()
             if command:
+                logger.debug(f"DEBUG: Sending command '{command}' to {self.server_name}")
                 if self.send_command(command):
                     self.command_entry.delete(0, tk.END)
                     self.history_index = -1
                 else:
-                    messagebox.showwarning("Command Error", "Failed to send command. Server may not be running.")
+                    logger.warning(f"DEBUG: Failed to send command to {self.server_name}")
+                    # Enhanced error message for stopped servers
+                    if not self.process:
+                        messagebox.showwarning("Command Error", f"Cannot send commands to '{self.server_name}' - no server process is running.\n\nPlease start the server first.")
+                    else:
+                        messagebox.showwarning("Command Error", "Failed to send command. Server may not be running.")
         except Exception as e:
             logger.error(f"Error sending command from GUI: {e}")
+            import traceback
+            logger.error(f"DEBUG: Command GUI error traceback: {traceback.format_exc()}")
     
     def _prev_command(self, event):
         # Navigate to previous command in history
@@ -843,8 +1146,11 @@ class RealTimeConsole:
     def force_close_window(self):
         # Force close console window (for stuck windows)
         try:
+            # Save console state before closing
+            self.save_console_state()
+            
             if self.window and self.window.winfo_exists():
-                logger.info(f"Force closing console window for {self.server_name}")
+                logger.debug(f"Force closing console window for {self.server_name}")
                 self.window.destroy()
                 self.window = None
                 self.text_widget = None
@@ -879,16 +1185,27 @@ class RealTimeConsole:
             
             logger.info(f"Forcefully killing process {pid} for {self.server_name}")
             
+            # Get child processes first before killing parent (using psutil if available)
+            children = []
+            try:
+                import psutil
+                if psutil.pid_exists(pid):
+                    parent = psutil.Process(pid)
+                    children = parent.children(recursive=True)
+                    logger.debug(f"Found {len(children)} child processes for {pid}")
+            except Exception as e:
+                logger.debug(f"Could not get child processes: {e}")
+            
             # Try graceful termination first
             try:
                 # Check if process object has terminate method (subprocess.Popen)
                 if hasattr(self.process, 'terminate') and callable(getattr(self.process, 'terminate')) and not isinstance(self.process, int):
                     self.process.terminate()
-                    logger.info(f"Sent terminate signal to process {pid}")
+                    logger.debug(f"Sent terminate signal to process {pid}")
                 else:
                     # Fallback to os.kill with SIGTERM
                     os.kill(pid, signal.SIGTERM)
-                    logger.info(f"Sent SIGTERM to process {pid}")
+                    logger.debug(f"Sent SIGTERM to process {pid}")
                 
                 # Wait a moment for graceful shutdown
                 time.sleep(2)
@@ -896,31 +1213,64 @@ class RealTimeConsole:
                 # Check if process is still running
                 if self._is_process_running():
                     logger.warning(f"Process {pid} still running after terminate, forcing kill")
-                    # Check if process object has kill method
-                    if hasattr(self.process, 'kill') and callable(getattr(self.process, 'kill')) and not isinstance(self.process, int):
-                        self.process.kill()
-                    else:
-                        # Force kill with os.kill - use SIGKILL on Unix, SIGTERM on Windows
-                        try:
-                            if os.name == 'nt':
-                                # On Windows, SIGKILL doesn't exist, use SIGTERM again
-                                os.kill(pid, signal.SIGTERM)
-                            else:
-                                os.kill(pid, signal.SIGKILL)
-                        except (OSError, ProcessLookupError):
-                            # Process might have already exited
-                            pass
                     
-                    logger.info(f"Force killed process {pid}")
+                    # On Windows, use taskkill /F /T which is more reliable for killing process tree
+                    if os.name == 'nt':
+                        try:
+                            subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)],
+                                           stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL)
+                        except Exception as e:
+                            logger.debug(f"taskkill failed: {e}")
+                    else:
+                        # Check if process object has kill method
+                        if hasattr(self.process, 'kill') and callable(getattr(self.process, 'kill')) and not isinstance(self.process, int):
+                            self.process.kill()
+                        else:
+                            # Force kill with os.kill - use SIGKILL on Unix
+                            try:
+                                os.kill(pid, signal.SIGKILL)
+                            except (OSError, ProcessLookupError):
+                                # Process might have already exited
+                                pass
+                    
+                    logger.debug(f"Force killed process {pid}")
             
             except (OSError, ProcessLookupError) as e:
                 logger.warning(f"Process {pid} may have already exited: {e}")
             
-            # Handle process termination in console
-            self._handle_process_termination()
+            # Kill any remaining child processes
+            for child in children:
+                try:
+                    if child.is_running():
+                        if os.name == 'nt':
+                            subprocess.call(['taskkill', '/F', '/PID', str(child.pid)],
+                                           stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL)
+                        else:
+                            child.kill()
+                        logger.debug(f"Killed child process {child.pid}")
+                except Exception:
+                    pass
             
-            # Add kill message to console
-            self._add_output(f"=== Process {self.server_name} (PID: {pid}) was forcefully killed ===", "system")
+            # Verify process is dead
+            time.sleep(0.5)
+            if self._is_process_running():
+                logger.error(f"Process {pid} still running after force kill - attempting final cleanup")
+                # Final attempt with taskkill /F /T on Windows
+                if os.name == 'nt':
+                    try:
+                        subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)],
+                                       stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
+            
+            # Clean up console state since server was properly killed
+            # This clears state file and buffer so old data doesn't persist
+            self.cleanup_on_server_stop()
+            
+            logger.info(f"Process {self.server_name} (PID: {pid}) was forcefully killed and console cleaned up")
             
             return True
             
@@ -944,7 +1294,7 @@ class ConsoleManager:
                 if server_name not in self.consoles:
                     console = RealTimeConsole(server_name, server_config) 
                     self.consoles[server_name] = console
-                    logger.info(f"Created console for {server_name}")
+                    logger.debug(f"Created console for {server_name}")
                     return console
                 else:
                     return self.consoles[server_name]
@@ -979,24 +1329,31 @@ class ConsoleManager:
     def show_console(self, server_name, parent=None):
         # Show console window for a server
         try:
+            logger.debug(f"DEBUG: show_console called for server: {server_name}")
             with self.lock:
                 console = self.consoles.get(server_name)
                 if console:
+                    logger.debug(f"DEBUG: Found existing console for {server_name}")
                     console.show_window(parent)
                     return True
                 else:
+                    logger.debug(f"DEBUG: No existing console for {server_name}, attempting to create one")
                     # Try to create console if server exists
                     if self.server_manager:
                         try:
                             server_config = self.server_manager.get_server_config(server_name)
                             if server_config:
+                                logger.debug(f"DEBUG: Got server config for {server_name}, creating console")
                                 console = RealTimeConsole(server_name, server_config)
                                 self.consoles[server_name] = console
                                 console.show_window(parent)
                                 return True
+                            else:
+                                logger.warning(f"DEBUG: No server config found for {server_name}")
                         except Exception as e:
                             logger.warning(f"Could not create console for {server_name}: {e}")
                     
+                    logger.error(f"DEBUG: Failed to create console for {server_name}")
                     messagebox.showerror("Console Error", 
                                        f"No console available for server '{server_name}'. "
                                        f"Please start the server first.")
@@ -1004,6 +1361,8 @@ class ConsoleManager:
                     
         except Exception as e:
             logger.error(f"Error showing console for {server_name}: {e}")
+            import traceback
+            logger.error(f"DEBUG: show_console error traceback: {traceback.format_exc()}")
             return False
     
     def send_command(self, server_name, command):
@@ -1034,6 +1393,30 @@ class ConsoleManager:
             logger.error(f"Error killing process for {server_name}: {e}")
             return False
     
+    def cleanup_console_on_stop(self, server_name):
+        # Clean up a console when a server is properly stopped
+        # This clears state file and buffer so old PIDs don't cause issues
+        try:
+            with self.lock:
+                console = self.consoles.get(server_name)
+                if console:
+                    console.cleanup_on_server_stop()
+                    logger.debug(f"Cleaned up console for {server_name} on server stop")
+                    return True
+                else:
+                    # No console exists, but try to clear any leftover state file
+                    # by creating a temporary console just to clear state
+                    try:
+                        temp_console = RealTimeConsole(server_name, {})
+                        temp_console.clear_console_state()
+                        logger.debug(f"Cleared leftover console state for {server_name}")
+                    except Exception:
+                        pass
+                    return False
+        except Exception as e:
+            logger.error(f"Error cleaning up console for {server_name}: {e}")
+            return False
+    
     def force_close_console(self, server_name):
         # Force close console window for a specific server
         try:
@@ -1048,18 +1431,40 @@ class ConsoleManager:
             logger.error(f"Error force closing console for {server_name}: {e}")
             return False
     
+    def save_all_console_states(self):
+        # Save states for all active consoles (for dashboard close/crash recovery)
+        try:
+            with self.lock:
+                saved_count = 0
+                for server_name, console in list(self.consoles.items()):
+                    try:
+                        if console.save_console_state():
+                            saved_count += 1
+                    except Exception as e:
+                        logger.error(f"Error saving console state for {server_name}: {e}")
+                
+                if saved_count > 0:
+                    logger.debug(f"Saved {saved_count} console states")
+                return saved_count
+                
+        except Exception as e:
+            logger.error(f"Error saving all console states: {e}")
+            return 0
+    
     def cleanup_all_consoles(self):
         # Cleanup all consoles
         try:
             with self.lock:
                 for server_name, console in list(self.consoles.items()):
                     try:
+                        # Save console state before closing (for crash recovery)
+                        console.save_console_state()
                         console.force_close_window()
                     except Exception as e:
                         logger.error(f"Error closing console window {server_name}: {e}")
                 
                 self.consoles.clear()
-                logger.info("All consoles cleaned up")
+                logger.debug("All consoles cleaned up")
                 
         except Exception as e:
             logger.error(f"Error cleaning up consoles: {e}")

@@ -37,20 +37,19 @@ def initialize_paths_from_registry(registry_path):
         # Clean up path
         server_manager_dir = server_manager_dir.strip('"').strip()
         
-        # Define paths structure
+        # Define paths structure (excluding config and data folders since we use database now)
         paths = {
             "root": server_manager_dir,
             "logs": os.path.join(server_manager_dir, "logs"),
-            "config": os.path.join(server_manager_dir, "config"),
             "temp": os.path.join(server_manager_dir, "temp"),
             "servers": os.path.join(server_manager_dir, "servers"),
-            "modules": os.path.join(server_manager_dir, "modules"),
-            "data": os.path.join(server_manager_dir, "data")
+            "modules": os.path.join(server_manager_dir, "modules")
         }
         
-        # Ensure directories exist
-        for path in paths.values():
-            os.makedirs(path, exist_ok=True)
+        # Ensure directories exist (excluding config and data)
+        for path_key, path in paths.items():
+            if path_key not in ["config", "data"]:  # Skip config and data directories
+                os.makedirs(path, exist_ok=True)
         
         logger.info(f"Basic initialization complete. Server Manager directory: {server_manager_dir}")
         return True, server_manager_dir, paths
@@ -139,20 +138,18 @@ class ServerManagerPaths:
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             
-            # Define paths structure
+            # Define paths structure (excluding config and data folders since we use database now)
             self.paths = {
                 "root": self.server_manager_dir,
                 "project_root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config"),
                 "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
                 "scripts": os.path.join(self.server_manager_dir, "Modules"),
                 "modules": os.path.join(self.server_manager_dir, "Modules"),
                 "static": os.path.join(self.server_manager_dir, "static"),
                 "templates": os.path.join(self.server_manager_dir, "templates"),
-                "icons": os.path.join(self.server_manager_dir, "icons"),
-                "data": os.path.join(self.server_manager_dir, "data")
+                "icons": os.path.join(self.server_manager_dir, "icons")
             }
             
             # Define PID file paths
@@ -163,9 +160,10 @@ class ServerManagerPaths:
                 "dashboard": os.path.join(self.paths["temp"], "dashboard.pid")
             }
             
-            # Ensure all directories exist
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
+            # Ensure all directories exist (excluding config and data)
+            for path_key, path in self.paths.items():
+                if path_key not in ["config", "data"]:  # Skip config and data directories
+                    os.makedirs(path, exist_ok=True)
                 
             self.initialized = True
             logger.info(f"Paths initialized from registry. Server Manager directory: {self.server_manager_dir}")
@@ -185,20 +183,18 @@ class ServerManagerPaths:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             self.server_manager_dir = os.path.dirname(script_dir)
             
-            # Define paths structure
+            # Define paths structure (excluding config and data folders since we use database now)
             self.paths = {
                 "root": self.server_manager_dir,
                 "project_root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config"),
                 "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
                 "scripts": os.path.join(self.server_manager_dir, "Modules"),
                 "modules": os.path.join(self.server_manager_dir, "Modules"),
                 "static": os.path.join(self.server_manager_dir, "static"),
                 "templates": os.path.join(self.server_manager_dir, "templates"),
-                "icons": os.path.join(self.server_manager_dir, "icons"),
-                "data": os.path.join(self.server_manager_dir, "data")
+                "icons": os.path.join(self.server_manager_dir, "icons")
             }
             
             # Define PID file paths
@@ -209,9 +205,10 @@ class ServerManagerPaths:
                 "dashboard": os.path.join(self.paths["temp"], "dashboard.pid")
             }
             
-            # Ensure all directories exist
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
+            # Ensure all directories exist (excluding config and data)
+            for path_key, path in self.paths.items():
+                if path_key not in ["config", "data"]:  # Skip config and data directories
+                    os.makedirs(path, exist_ok=True)
                 
             self.initialized = True
             logger.warning(f"Using fallback paths. Server Manager directory: {self.server_manager_dir}")
@@ -345,22 +342,33 @@ class ConfigManager:
     def __init__(self, paths_manager):
         self.paths_manager = paths_manager
         self.config = {}
-        self.config_file = os.path.join(paths_manager.get_path("config"), "config.json")
         
-        # Load configuration
+        # Load configuration from database
         self.load_config()
         
     def load_config(self):
-        # Load configuration from file
+        # Load configuration from database
         try:
-            if os.path.exists(self.config_file):
-                with open(self.config_file, 'r') as f:
-                    self.config = json.load(f)
-                logger.debug(f"Configuration loaded from {self.config_file}")
-            else:
-                logger.warning(f"Configuration file not found: {self.config_file}")
-                self.create_default_config()
-                
+            from Modules.Database.cluster_database import ClusterDatabase
+            db = ClusterDatabase()
+            
+            # Get main config from database
+            config_data = db.get_main_config()
+            
+            # Migrate from JSON if database is empty (check old config location)
+            if not config_data:
+                # Check if old config folder exists for migration
+                old_config_folder = os.path.join(self.paths_manager.server_manager_dir, "config")
+                config_file = os.path.join(old_config_folder, "config.json")
+                if os.path.exists(config_file):
+                    logger.info("Migrating main config from JSON to database")
+                    db.migrate_main_config_from_json(config_file)
+                    # Reload after migration
+                    config_data = db.get_main_config()
+            
+            # Update config with database values
+            self.config.update(config_data)
+            
             # Always try to merge current registry values
             try:
                 success, steam_cmd, webserver_port, registry_values = initialize_registry_values(
@@ -374,9 +382,10 @@ class ConfigManager:
             except Exception as e:
                 logger.warning(f"Could not load current registry values: {str(e)}")
                 
+            logger.debug("Configuration loaded from database")
             return True
         except Exception as e:
-            logger.error(f"Failed to load configuration: {str(e)}")
+            logger.error(f"Failed to load configuration from database: {str(e)}")
             self.create_default_config()
             return False
             
@@ -420,15 +429,33 @@ class ConfigManager:
             return False
             
     def save_config(self):
-        # Save configuration to file
+        # Save configuration to database
         try:
-            with open(self.config_file, 'w') as f:
-                json.dump(self.config, f, indent=4)
+            from Modules.Database.cluster_database import ClusterDatabase
+            db = ClusterDatabase()
+            
+            # Define integer config keys
+            integer_keys = {'web_port', 'check_updates_interval', 'max_log_size', 'max_log_files'}
+            boolean_keys = {'enable_auto_updates', 'enable_tray_icon'}
+            
+            # Save all config values to database with proper types
+            for key, value in self.config.items():
+                if key in integer_keys:
+                    try:
+                        db.set_main_config(key, int(value) if value else 0, config_type='integer')
+                    except (ValueError, TypeError):
+                        db.set_main_config(key, value)
+                elif key in boolean_keys:
+                    db.set_main_config(key, value, config_type='boolean')
+                elif isinstance(value, (dict, list)):
+                    db.set_main_config(key, value, config_type='json')
+                else:
+                    db.set_main_config(key, value)
                 
-            logger.debug(f"Configuration saved to {self.config_file}")
+            logger.debug("Configuration saved to database")
             return True
         except Exception as e:
-            logger.error(f"Failed to save configuration: {str(e)}")
+            logger.error(f"Failed to save configuration to database: {str(e)}")
             return False
             
     def get(self, key, default=None):
@@ -558,13 +585,20 @@ class ServerManagerModule:
         
     @property
     def web_port(self):
-        # Get the web server port from configuration
-        return self.get_config_value("web_port", 8080)
+        # Get the web server port from configuration (always return int)
+        port = self.get_config_value("web_port", 8080)
+        try:
+            return int(port) if port else 8080
+        except (ValueError, TypeError):
+            return 8080
         
     @web_port.setter
     def web_port(self, value):
-        # Set the web server port in configuration
-        self.set_config_value("web_port", value)
+        # Set the web server port in configuration (always store as int)
+        try:
+            self.set_config_value("web_port", int(value) if value else 8080)
+        except (ValueError, TypeError):
+            self.set_config_value("web_port", 8080)
         
     def is_process_running(self, pid):
         # Check if a process with the given PID is running

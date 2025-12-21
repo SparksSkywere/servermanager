@@ -8,6 +8,10 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+.vscode/
+logs/
+servers/
+temp/
 build/
 develop-eggs/
 dist/
@@ -24,6 +28,17 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+# Development Environment files
+Install-log.txt
+pip-log.txt
+pip-delete-this-directory.txt
+todo
+todo.txt
+dev-requirements.txt
+db/servermanager_users.db
+db/servermanager.db
+data/update_config.json
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

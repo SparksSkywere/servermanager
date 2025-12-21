@@ -42,6 +42,27 @@ if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.setLevel(logging.DEBUG)
     logger.debug("TrayIcon debug mode enabled via environment")
 
+
+def is_another_trayicon_running():
+    """Check if another trayicon instance is already running"""
+    try:
+        current_pid = os.getpid()
+        for proc in psutil.process_iter(['pid', 'cmdline', 'name']):
+            try:
+                cmdline = proc.info.get('cmdline')
+                if cmdline and proc.info['pid'] != current_pid:
+                    cmdline_str = ' '.join(cmdline).lower() if cmdline else ''
+                    if 'trayicon.py' in cmdline_str and ('python' in proc.info['name'].lower() or 'pythonw' in proc.info['name'].lower()):
+                        logger.warning(f"Found existing trayicon process: PID={proc.info['pid']}, cmdline={cmdline}")
+                        return True, proc.info['pid']
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+        return False, None
+    except Exception as e:
+        logger.error(f"Error checking for existing trayicon: {e}")
+        return False, None
+
+
 class ServerManagerTrayIcon(ServerManagerModule):
     def __init__(self):
         super().__init__("TrayIcon")
@@ -61,7 +82,16 @@ class ServerManagerTrayIcon(ServerManagerModule):
         parser.add_argument('--logpath', help='Path to log file')
         parser.add_argument('--standalone', action='store_true', help='Run in standalone mode')
         parser.add_argument('--notifications', action='store_true', help='Enable notification toasts')
+        parser.add_argument('--force', action='store_true', help='Force start even if another instance is running')
         args = parser.parse_args()
+        
+        # Check for existing trayicon instance (unless --force is used)
+        if not args.force:
+            already_running, existing_pid = is_another_trayicon_running()
+            if already_running:
+                logger.warning(f"Another trayicon instance is already running (PID: {existing_pid}). Exiting to prevent duplicates.")
+                print(f"Server Manager tray icon is already running (PID: {existing_pid}). Use --force to start anyway.")
+                sys.exit(0)
         
         # Configure logging based on arguments
         if args.debug:
@@ -117,7 +147,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
         return None
 
     def configure_file_logging(self, log_path=None):
-        # Set up logging to file
+        # Set up logging to file with comprehensive DEBUG level logging
         try:
             if not log_path:
                 log_path = os.path.join(self.paths["logs"], "trayicon.log")
@@ -125,12 +155,32 @@ class ServerManagerTrayIcon(ServerManagerModule):
             # Ensure the directory exists
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             
-            # Add file handler to logger
-            file_handler = logging.FileHandler(log_path)
-            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            # Remove any existing file handlers to avoid duplicates
+            for handler in logger.handlers[:]:
+                if isinstance(handler, logging.FileHandler):
+                    logger.removeHandler(handler)
+            
+            # Add file handler to logger - use INFO level to reduce spam, DEBUG only if explicitly enabled
+            file_handler = logging.FileHandler(log_path, mode='a', encoding='utf-8')
+            file_handler.setLevel(logging.INFO if not self.debug_mode else logging.DEBUG)
+            file_handler.setFormatter(logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
+            ))
             logger.addHandler(file_handler)
             
-            logger.info(f"File logging configured: {log_path}")
+            # Set logger level based on debug mode
+            logger.setLevel(logging.INFO if not self.debug_mode else logging.DEBUG)
+            
+            # Add a console handler for debugging (if not running as pythonw and in debug mode)
+            if not sys.executable.lower().endswith('pythonw.exe') and self.debug_mode:
+                console_handler = logging.StreamHandler()
+                console_handler.setLevel(logging.DEBUG)
+                console_handler.setFormatter(logging.Formatter(
+                    '%(asctime)s - %(levelname)s - %(message)s'
+                ))
+                logger.addHandler(console_handler)
+            
+            logger.debug(f"File logging configured: {log_path}")
         except Exception as e:
             logger.error(f"Failed to configure file logging: {str(e)}")
     
@@ -298,11 +348,11 @@ class ServerManagerTrayIcon(ServerManagerModule):
             # Check web server status
             self.check_webserver_status()
             
+            # Update icon if it exists and is valid
             if self.icon:
-                # Check if icon is still valid
                 try:
-                    # Try to access icon properties to check if it's still valid
-                    _ = self.icon.title
+                    # Check if icon is still valid by trying to access a property
+                    _ = self.icon._icon
                     # Update with status
                     status_text = f"Running servers ({running_count}) | Webserver ({self.webserver_status})"
                     self.icon.title = f"Server Manager - {status_text}"
@@ -310,14 +360,10 @@ class ServerManagerTrayIcon(ServerManagerModule):
                     # Recreate the entire menu with updated status
                     self.icon.menu = self.create_menu()
                     logger.debug(f"Updated tray icon menu: {status_text}")
-                except Exception as icon_error:
+                except (AttributeError, RuntimeError, Exception) as icon_error:
                     logger.error(f"Tray icon is invalid, cannot update: {str(icon_error)}")
-                    # Try to recreate the icon
-                    try:
-                        self.icon = pystray.Icon("Server Manager", self.create_icon_image(), menu=self.create_menu())
-                        logger.info("Recreated tray icon")
-                    except Exception as recreate_error:
-                        logger.error(f"Failed to recreate tray icon: {str(recreate_error)}")
+                    # Don't try to recreate the icon here as it might cause more issues
+                    # Just log the error and continue
             else:
                 logger.warning("Tray icon is None, cannot update menu")
         except Exception as e:
@@ -325,9 +371,19 @@ class ServerManagerTrayIcon(ServerManagerModule):
         
         # Schedule next update - always reschedule even if there's an error
         try:
-            threading.Timer(10.0, self.update_server_status).start()
+            # Use a safer threading approach
+            timer = threading.Timer(10.0, self.update_server_status)
+            timer.daemon = True  # Make sure timer thread doesn't prevent shutdown
+            timer.start()
         except Exception as e:
             logger.error(f"Error scheduling next status update: {str(e)}")
+            # If we can't schedule the next update, try again in 30 seconds
+            try:
+                timer = threading.Timer(30.0, self.update_server_status)
+                timer.daemon = True
+                timer.start()
+            except Exception as retry_error:
+                logger.error(f"Failed to reschedule status update even with retry: {str(retry_error)}")
 
     def check_webserver_status(self):
         # Check if the web server is running and update status
@@ -503,16 +559,29 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 self.icon.notify(f"Failed to open web interface: {str(e)}", "Server Manager Error")
 
     def open_dashboard(self):
-        # Open the Python dashboard instead of web dashboard
+        """Open the Python dashboard - runs in background thread to avoid blocking trayicon"""
         try:
+            logger.debug("open_dashboard() called")
+            # Run the actual launch in a background thread to prevent trayicon from freezing
+            launch_thread = threading.Thread(target=self._open_dashboard_async, daemon=True)
+            launch_thread.start()
+        except Exception as e:
+            logger.error(f"Failed to open dashboard: {e}")
+            logger.error(traceback.format_exc())
+    
+    def _open_dashboard_async(self):
+        """Async implementation of dashboard launch - runs in background thread"""
+        try:
+            logger.debug("Starting dashboard launch...")
+            
             if not self.offline_mode and self.webserver_status != "Connected":
-                logger.info("Web server not running, starting it for dashboard API support...")
-                import threading
+                logger.debug("Starting webserver for dashboard API support...")
                 webserver_thread = threading.Thread(target=self.start_webserver_for_dashboard, daemon=True)
                 webserver_thread.start()
             
             # Check if dashboard is already running
             dashboard_pid_file = os.path.join(self.paths["temp"], "dashboard.pid")
+            
             if os.path.exists(dashboard_pid_file):
                 try:
                     with open(dashboard_pid_file, 'r') as f:
@@ -520,56 +589,90 @@ class ServerManagerTrayIcon(ServerManagerModule):
                     
                     pid = pid_info.get("ProcessId")
                     if pid and self.is_process_running(pid):
-                        logger.info("Dashboard already running, bringing to front")
+                        logger.debug(f"Dashboard already running with PID {pid}, bringing to front")
                         try:
                             import ctypes
                             hwnd = self._find_window_by_title("Server Manager Dashboard")
                             if hwnd:
-                                logger.info(f"Found dashboard window (hwnd: {hwnd}), bringing to front")
                                 ctypes.windll.user32.ShowWindow(hwnd, 9)
                                 ctypes.windll.user32.SetForegroundWindow(hwnd)
+                                return  # Successfully brought to front
                             else:
-                                logger.warning("Could not find dashboard window to bring to front")
+                                logger.debug("Could not find dashboard window, starting new instance")
                         except Exception as e:
-                            logger.warning(f"Could not bring dashboard window to front: {e}")
-                        return
+                            logger.debug(f"Could not bring dashboard window to front: {e}")
+                        # Remove the old PID file to avoid conflicts
+                        try:
+                            os.remove(dashboard_pid_file)
+                        except Exception:
+                            pass
+                    else:
+                        logger.debug(f"PID {pid} is not running, will start new dashboard")
                 except Exception as e:
-                    logger.error(f"Error checking dashboard PID file: {str(e)}")
+                    logger.warning(f"Error checking dashboard PID file: {str(e)}")
             
             # Launch the dashboard script
             dashboard_script = os.path.join(self.paths["scripts"], "..", "Host", "dashboard.py")
+            
             if not os.path.exists(dashboard_script):
                 # Try alternative path
                 dashboard_script = os.path.join(self.paths["scripts"], "dashboard.py")
+                
                 if not os.path.exists(dashboard_script):
-                    logger.error(f"Dashboard script not found: {dashboard_script}")
-                    if self.icon and self.notifications_enabled:
-                        self.icon.notify("Dashboard script not found", "Server Manager Error")
-                    return
+                    # Try another alternative - relative to server_manager_dir
+                    dashboard_script = os.path.join(self.server_manager_dir, "Host", "dashboard.py")
+                    
+                    if not os.path.exists(dashboard_script):
+                        logger.error("Dashboard script not found in any location!")
+                        if self.icon and self.notifications_enabled:
+                            self.icon.notify("Dashboard script not found", "Server Manager Error")
+                        return
+            
+            # Normalize the path
+            dashboard_script = os.path.normpath(dashboard_script)
+            
+            # Use python.exe instead of pythonw.exe for dashboard to ensure GUI windows display properly
+            python_exe = sys.executable
+            if python_exe.lower().endswith("pythonw.exe"):
+                python_exe = python_exe[:-5] + ".exe"  # Replace 'pythonw.exe' with 'python.exe'
+            
+            # Verify python.exe exists
+            if not os.path.exists(python_exe):
+                logger.error(f"Python executable does not exist: {python_exe}")
+                return
             
             # Build command with debug flag if needed
-            cmd = [sys.executable, dashboard_script]
+            cmd = [python_exe, dashboard_script]
             if self.debug_mode:
                 cmd.append("--debug")
             
-            # Launch dashboard process - don't hide console for GUI apps
-            logger.info(f"Starting dashboard: {' '.join(cmd)}")
+            logger.debug(f"Starting dashboard: {' '.join(cmd)}")
             
             if sys.platform == 'win32':
-                # For GUI applications like dashboard, use CREATE_NEW_PROCESS_GROUP and DETACHED_PROCESS
-                # to ensure it's fully detached from the parent process
+                # For GUI applications like dashboard, use proper window display
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = 1  # SW_SHOWNORMAL - Show window normally
-                logger.info("Launching dashboard with SW_SHOWNORMAL and detached process")
+                startupinfo.wShowWindow = 1  # SW_SHOWNORMAL
                 
-                self.dashboard_process = subprocess.Popen(
-                    cmd, 
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
-                    startupinfo=startupinfo,
-                    # Don't redirect stdout/stderr for GUI apps to prevent blocking
-                    close_fds=True
-                )
+                # Use DETACHED_PROCESS and CREATE_NEW_PROCESS_GROUP
+                creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+                
+                try:
+                    self.dashboard_process = subprocess.Popen(
+                        cmd, 
+                        cwd=self.server_manager_dir,
+                        creationflags=creation_flags,
+                        startupinfo=startupinfo,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL,
+                        close_fds=True
+                    )
+                    logger.info(f"Dashboard started with PID: {self.dashboard_process.pid}")
+                        
+                except Exception as e:
+                    logger.error(f"Failed to create dashboard process: {e}")
+                    raise
             else:
                 # On Unix, use start_new_session
                 self.dashboard_process = subprocess.Popen(
@@ -580,8 +683,14 @@ class ServerManagerTrayIcon(ServerManagerModule):
                     stdin=subprocess.PIPE,
                     close_fds=True
                 )
+                logger.info(f"Dashboard started with PID: {self.dashboard_process.pid}")
             
-            logger.info(f"Dashboard started with PID: {self.dashboard_process.pid}")
+            # Quick check if process started successfully (non-blocking)
+            time.sleep(0.5)
+            
+            poll_result = self.dashboard_process.poll()
+            if poll_result is not None:
+                logger.error(f"Dashboard process exited immediately with return code: {poll_result}")
             
             # Show notification only if enabled
             if self.icon and self.notifications_enabled:
@@ -589,6 +698,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 
         except Exception as e:
             logger.error(f"Failed to open dashboard: {str(e)}")
+            logger.error(traceback.format_exc())
             if self.icon and self.notifications_enabled:
                 self.icon.notify(f"Failed to open dashboard: {str(e)}", "Server Manager Error")
 
@@ -896,12 +1006,15 @@ class ServerManagerTrayIcon(ServerManagerModule):
             
             # Show notification on startup only if enabled
             def setup(icon):
-                icon.visible = True
-                if self.notifications_enabled:
-                    icon.notify("Server Manager started", "Tray Icon")
-                logger.info("Tray icon is now visible and running")
-                # Start server status update thread after icon is visible
-                self.update_server_status()
+                try:
+                    icon.visible = True
+                    if self.notifications_enabled:
+                        icon.notify("Server Manager started", "Tray Icon")
+                    logger.info("Tray icon is now visible and running")
+                    # Start server status update thread after icon is visible
+                    self.update_server_status()
+                except Exception as setup_error:
+                    logger.error(f"Error in tray icon setup: {str(setup_error)}")
             
             # Run the icon
             logger.info("Starting tray icon")
@@ -913,6 +1026,10 @@ class ServerManagerTrayIcon(ServerManagerModule):
             # Run the icon (this is blocking)
             self.icon.run(setup=setup)
             
+        except ImportError as e:
+            logger.error(f"Required modules not available: {str(e)}")
+            print(f"ERROR: Required modules not available. Please install pystray and pillow: pip install pystray pillow", file=sys.stderr)
+            return False
         except Exception as e:
             logger.error(f"Error running tray icon: {str(e)}")
             # Print to stderr for immediate visibility

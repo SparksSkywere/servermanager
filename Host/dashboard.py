@@ -1,32 +1,62 @@
 # -*- coding: utf-8 -*-
-import argparse
+# Early crash logging - catches import errors before main() runs
 import os
 import sys
-import subprocess
-import threading
-import json
-import time
-import datetime
+import datetime as _dt
 
-# GUI imports
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, scrolledtext
+def _early_crash_log(msg):
+    """Write to early crash log before any imports that might fail"""
+    try:
+        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, 'dashboard_early_crash.log')
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(f"{_dt.datetime.now().isoformat()} - {msg}\n")
+    except:
+        pass
 
-# Add project root to sys.path for module resolution
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+_early_crash_log(f"Dashboard module loading started - Python {sys.version}")
+_early_crash_log(f"sys.executable: {sys.executable}")
+_early_crash_log(f"Working directory: {os.getcwd()}")
 
-# Import user management system
-from Modules.Database.user_database import initialize_user_manager
+try:
+    import argparse
+    import subprocess
+    import threading
+    import json
+    import time
+    import datetime
 
-# Import server management components
-from Modules.server_manager import ServerManager
-from Modules.minecraft import MinecraftServerManager
+    # GUI imports
+    import tkinter as tk
+    from tkinter import ttk, messagebox, filedialog, scrolledtext, simpledialog
+    _early_crash_log("Standard library imports successful")
 
-# Import logging components
-from Modules.server_logging import (
-    get_dashboard_logger, configure_dashboard_logging,
-    log_dashboard_event
-)
+    # Add project root to sys.path for module resolution
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+    # Import user management system
+    from Modules.Database.user_database import initialize_user_manager
+    _early_crash_log("User database import successful")
+
+    # Import server management components
+    from Modules.server_manager import ServerManager
+    from Modules.minecraft import MinecraftServerManager
+    _early_crash_log("Server management imports successful")
+
+    # Import logging components
+    from Modules.server_logging import (
+        get_dashboard_logger, configure_dashboard_logging,
+        log_dashboard_event
+    )
+    _early_crash_log("All imports successful")
+
+except Exception as e:
+    import traceback
+    _early_crash_log(f"FATAL IMPORT ERROR: {e}")
+    _early_crash_log(f"Traceback:\n{traceback.format_exc()}")
+    # Re-raise to let the crash show
+    raise
 
 # Import scheduling components
 from Modules.scheduler import SchedulerManager
@@ -51,7 +81,8 @@ from Host.dashboard_functions import (
     get_current_server_list, get_current_subhost,
     reattach_to_running_servers, update_server_list_for_subhost,
     refresh_all_subhost_servers, refresh_current_subhost_servers, refresh_subhost_servers,
-    create_remote_host_connection_dialog, RemoteHostManager
+    create_remote_host_connection_dialog, RemoteHostManager,
+    load_categories, save_categories
 )
 
 # Import cluster management
@@ -158,7 +189,7 @@ class ServerManagerDashboard(ServerManagerModule):
         # Initialize server manager
         try:
             self.server_manager = ServerManager()
-            logger.info("Server manager initialized successfully")
+            logger.debug("Server manager initialized")
         except Exception as e:
             logger.error(f"Failed to initialize server manager: {e}")
             # Continue without server manager but show warning
@@ -170,7 +201,7 @@ class ServerManagerDashboard(ServerManagerModule):
         # Initialize server console manager
         try:
             self.console_manager = ConsoleManager(self.server_manager)
-            logger.info("Server console manager initialized successfully")
+            logger.debug("Server console manager initialized")
         except Exception as e:
             logger.error(f"Failed to initialize server console manager: {e}")
             self.console_manager = None
@@ -210,33 +241,41 @@ class ServerManagerDashboard(ServerManagerModule):
         # Now configure the UI with user information
         username = getattr(self.current_user, 'username', 'Unknown') if self.current_user else 'Unknown'
         self.root.title(f"Server Manager Dashboard (Logged in as: {username})")
-        self.root.minsize(800, 600)
+        
+        # Set dynamic minimum size based on screen size (reasonable minimums)
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        min_width = min(800, int(screen_width * 0.6))  # Max 60% of screen width, min 800px
+        min_height = min(600, int(screen_height * 0.6))  # Max 60% of screen height, min 600px
+        self.root.minsize(min_width, min_height)
         
         # Ensure the main window is properly visible
         self.root.deiconify()
-        logger.info("Dashboard window deiconified")
+        logger.debug("Dashboard window deiconified")
         
         # Bring window to front and give it focus
         self.root.lift()
         self.root.focus_force()
         self.root.attributes('-topmost', True)
         self.root.after(100, lambda: self.root.attributes('-topmost', False))
-        logger.info("Dashboard window brought to front and focused")
+        logger.debug("Dashboard window brought to front")
         
-        # Center the main window on screen
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        width = int(screen_width * 0.8)
-        height = int(screen_height * 0.8)
+        # Center the main window on screen with adaptive sizing
+        # Use 85% of screen on large screens, but ensure minimum usable size
+        width = max(min_width, int(screen_width * 0.85))
+        height = max(min_height, int(screen_height * 0.85))
+        # Cap at 90% to leave some space for taskbar/other UI elements
+        width = min(width, int(screen_width * 0.9))
+        height = min(height, int(screen_height * 0.9))
         center_window(self.root, width, height)
-        logger.info("Dashboard window centered on screen")
+        logger.debug("Dashboard window centered")
         
         self.setup_ui()
         
         # Initial server list refresh to populate the UI
         try:
             self.update_server_list(force_refresh=True)
-            logger.info("Initial server list refresh completed")
+            logger.debug("Initial server list refresh completed")
         except Exception as e:
             logger.error(f"Error during initial server list refresh: {e}")
         
@@ -246,13 +285,17 @@ class ServerManagerDashboard(ServerManagerModule):
         # Initialize timer manager (now using SchedulerManager)
         self.timer_manager = SchedulerManager(self)
         
+        # Set agent manager for database syncing
+        if hasattr(self, 'agent_manager') and self.agent_manager:
+            self.timer_manager.set_agent_manager(self.agent_manager)
+        
         # Initialize server update manager
         try:
             self.update_manager = ServerUpdateManager(self.server_manager_dir, self.config)
             self.update_manager.set_server_manager(self.server_manager)
             self.update_manager.set_steam_cmd_path(self.steam_cmd_path)
             self.timer_manager.set_update_manager(self.update_manager)
-            logger.info("Server update manager initialized successfully")
+            logger.debug("Server update manager initialized")
         except Exception as e:
             logger.error(f"Failed to initialize server update manager: {str(e)}")
             self.update_manager = None
@@ -262,17 +305,17 @@ class ServerManagerDashboard(ServerManagerModule):
             # Use database-backed cluster management (no longer using JSON)
             agents_config_path = os.path.join(self.paths["data"], "cluster_nodes.json")  # For migration only
             self.agent_manager = AgentManager(agents_config_path)
-            logger.info("Cluster manager initialized successfully with database backend")
+            logger.debug("Cluster manager initialized")
         except Exception as e:
             logger.error(f"Failed to initialize cluster manager: {str(e)}")
             self.agent_manager = None
         
         # Initialize system info and timers - defer UI updates until after mainloop starts
-        self.update_system_info()  # Initial system info update
+        # Note: Heavy operations like server list refresh and system info collection are deferred
         self.timer_manager.start_timers()
         
-        # Detect and reattach to running server processes
-        self._reattach_to_running_servers()
+        # Detect and reattach to running server processes (deferred to avoid blocking)
+        # This will be called after mainloop starts
         
         # Get supported server types from server manager
         if self.server_manager:
@@ -311,6 +354,7 @@ class ServerManagerDashboard(ServerManagerModule):
         tools_menu.add_command(label="Refresh All", command=self.refresh_all)
         tools_menu.add_separator()
         tools_menu.add_command(label="Update Server Types", command=self.batch_update_server_types)
+        tools_menu.add_command(label="Database Sync Manager", command=self.show_database_sync_manager)
         tools_menu.add_separator()
         tools_menu.add_command(label="Cluster", command=self.add_agent)
         
@@ -326,31 +370,44 @@ class ServerManagerDashboard(ServerManagerModule):
         self.top_frame = ttk.Frame(self.root)
         self.top_frame.pack(fill=tk.X, padx=15, pady=(15, 10))
         
-        # Add About and Help buttons to top right
-        self.help_button = ttk.Button(self.top_frame, text="Help", command=self.show_help, width=10)
+        # Add About, Settings and Help buttons to top right
+        # Adjust button widths based on screen size
+        screen_width = self.root.winfo_screenwidth()
+        button_width_help = 8 if screen_width < 1366 else 10
+        button_width_about = 8 if screen_width < 1366 else 10
+        button_width_settings = 10 if screen_width < 1366 else 12
+        
+        self.help_button = ttk.Button(self.top_frame, text="Help", command=self.show_help, width=button_width_help)
         self.help_button.pack(side=tk.RIGHT, padx=(0, 10))
         
-        self.about_button = ttk.Button(self.top_frame, text="About", command=self.show_about, width=10)
+        self.settings_button = ttk.Button(self.top_frame, text="Settings", command=self.show_settings_dialog, width=button_width_settings)
+        self.settings_button.pack(side=tk.RIGHT, padx=(0, 10))
+        
+        self.about_button = ttk.Button(self.top_frame, text="About", command=self.show_about, width=button_width_about)
         self.about_button.pack(side=tk.RIGHT)
         
-        # Add quick update buttons to top left with consistent spacing
+        # Add quick update buttons to top left with responsive spacing and widths
+        button_width_main = 10 if screen_width < 1366 else 12
+        button_spacing = 5 if screen_width < 1366 else 8
+        
         self.update_all_button = ttk.Button(self.top_frame, text="Update All", 
-                                          command=self.update_all_servers, width=12)
-        self.update_all_button.pack(side=tk.LEFT, padx=(0, 8))
+                                          command=self.update_all_servers, width=button_width_main)
+        self.update_all_button.pack(side=tk.LEFT, padx=(0, button_spacing))
         
         self.schedules_button = ttk.Button(self.top_frame, text="Schedules", 
-                                         command=self.show_schedule_manager, width=12)
-        self.schedules_button.pack(side=tk.LEFT, padx=(0, 8))
+                                         command=self.show_schedule_manager, width=button_width_main)
+        self.schedules_button.pack(side=tk.LEFT, padx=(0, button_spacing))
         
         # Add console management button
         self.console_button = ttk.Button(self.top_frame, text="Consoles", 
-                                       command=self.show_console_manager, width=12)
-        self.console_button.pack(side=tk.LEFT, padx=(0, 8))
+                                       command=self.show_console_manager, width=button_width_main)
+        self.console_button.pack(side=tk.LEFT, padx=(0, button_spacing))
         
-        # Add remote host button
+        # Add remote host button with responsive width
+        remote_width = 12 if screen_width < 1366 else 14
         self.remote_host_button = ttk.Button(self.top_frame, text="Remote Host", 
-                                           command=self.connect_remote_host, width=14)
-        self.remote_host_button.pack(side=tk.LEFT, padx=(0, 8))
+                                           command=self.connect_remote_host, width=remote_width)
+        self.remote_host_button.pack(side=tk.LEFT, padx=(0, button_spacing))
         
         # Main container
         self.container_frame = ttk.Frame(self.root, padding=(15, 10, 15, 15))
@@ -367,7 +424,17 @@ class ServerManagerDashboard(ServerManagerModule):
         
         # Server tabs frame (left side) - Tabbed interface for subhosts
         self.servers_frame = ttk.LabelFrame(self.main_pane, text="Host Servers", padding=10)
-        self.main_pane.add(self.servers_frame, weight=70)
+        
+        # Adjust pane weights based on screen size for better responsiveness
+        screen_width = self.root.winfo_screenwidth()
+        if screen_width < 1366:  # Smaller screens
+            server_weight = 75  # Give more space to servers on small screens
+            system_weight = 25
+        else:  # Larger screens
+            server_weight = 70
+            system_weight = 30
+        
+        self.main_pane.add(self.servers_frame, weight=server_weight)
         
         # Configure servers frame for proper resizing
         self.servers_frame.columnconfigure(0, weight=1)
@@ -388,6 +455,16 @@ class ServerManagerDashboard(ServerManagerModule):
         self.right_arrow.pack(side=tk.RIGHT, padx=(2, 0))
         self.right_arrow.config(state=tk.DISABLED)
         
+        # Category control buttons
+        self.category_frame = ttk.Frame(self.tab_nav_frame)
+        self.category_frame.pack(side=tk.RIGHT, padx=(10, 0))
+        
+        self.expand_all_btn = ttk.Button(self.category_frame, text="Expand All", width=10, command=self.expand_all_categories)
+        self.expand_all_btn.pack(side=tk.LEFT, padx=(0, 2))
+        
+        self.collapse_all_btn = ttk.Button(self.category_frame, text="Collapse All", width=10, command=self.collapse_all_categories)
+        self.collapse_all_btn.pack(side=tk.LEFT)
+        
         # Tab notebook
         self.server_notebook = ttk.Notebook(self.servers_frame)
         self.server_notebook.pack(fill=tk.BOTH, expand=True)
@@ -406,6 +483,10 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_context_menu = tk.Menu(self.root, tearoff=0)
         self.server_context_menu.add_command(label="Add Server", command=self.add_server)
         self.server_context_menu.add_command(label="Refresh", command=self.refresh_all)
+        self.server_context_menu.add_separator()
+        self.server_context_menu.add_command(label="Create Category", command=self.create_category)
+        self.server_context_menu.add_command(label="Rename Category", command=self.rename_category)
+        self.server_context_menu.add_command(label="Delete Category", command=self.delete_category)
         self.server_context_menu.add_separator()
         self.server_context_menu.add_command(label="Start Server", command=self.start_server)
         self.server_context_menu.add_command(label="Stop Server", command=self.stop_server)
@@ -426,7 +507,7 @@ class ServerManagerDashboard(ServerManagerModule):
         
         # System info frame (right side)
         self.system_frame = ttk.LabelFrame(self.main_pane, text="System Information", padding=10)
-        self.main_pane.add(self.system_frame, weight=30)
+        self.main_pane.add(self.system_frame, weight=system_weight)
         
         # Configure system frame for proper resizing
         self.system_frame.columnconfigure(0, weight=1)
@@ -492,16 +573,25 @@ class ServerManagerDashboard(ServerManagerModule):
         ]
         
         for metric in metrics:
-            # Create frame with fixed minimum height and proper padding
+            # Create frame with responsive sizing
             frame = ttk.LabelFrame(self.metrics_frame, text=f"{metric['icon']} {metric['title']}", padding=8)
             frame.grid(row=metric["row"], column=metric["col"], padx=3, pady=3, sticky="nsew")
             
-            # Ensure frame doesn't shrink below minimum size
-            frame.grid_propagate(False)
-            frame.configure(height=80)
+            # Allow frame to shrink on small screens but maintain reasonable minimum height
+            # Only set minimum height on larger screens
+            screen_height = self.root.winfo_screenheight()
+            if screen_height > 768:  # Only enforce minimum height on larger screens
+                frame.grid_propagate(False)
+                frame.configure(height=80)
             
-            # Create value label with proper wrapping
-            wrap_width = 180 if metric["name"] == "gpu" else 150  # Extra width for GPU to handle multiple GPUs
+            # Create value label with responsive wrapping
+            # Adjust wrap width based on screen size
+            screen_width = self.root.winfo_screenwidth()
+            if screen_width < 1366:  # Smaller screens
+                wrap_width = 120 if metric["name"] == "gpu" else 100
+            else:  # Larger screens
+                wrap_width = 180 if metric["name"] == "gpu" else 150
+            
             value = ttk.Label(frame, text="Loading...", font=("Segoe UI", 9), wraplength=wrap_width, justify=tk.LEFT)
             value.pack(anchor=tk.W, fill=tk.BOTH, expand=True)
             
@@ -551,9 +641,10 @@ class ServerManagerDashboard(ServerManagerModule):
         
         # Create server list for this tab
         columns = ("name", "status", "pid", "cpu", "memory", "uptime")
-        server_list = ttk.Treeview(tab_frame, columns=columns, show="headings")
+        server_list = ttk.Treeview(tab_frame, columns=columns, show="tree headings")
         
         # Column headings
+        server_list.heading("#0", text="Categories")
         server_list.heading("name", text="Server Name")
         server_list.heading("status", text="Status")
         server_list.heading("pid", text="PID")
@@ -561,13 +652,30 @@ class ServerManagerDashboard(ServerManagerModule):
         server_list.heading("memory", text="Memory Usage")
         server_list.heading("uptime", text="Uptime")
 
-        # Column widths
-        server_list.column("name", width=200, minwidth=150, anchor=tk.W)
-        server_list.column("status", width=100, minwidth=80, anchor=tk.CENTER)
-        server_list.column("pid", width=80, minwidth=60, anchor=tk.CENTER)
-        server_list.column("cpu", width=100, minwidth=80, anchor=tk.CENTER)
-        server_list.column("memory", width=120, minwidth=100, anchor=tk.CENTER)
-        server_list.column("uptime", width=160, minwidth=120, anchor=tk.CENTER)
+        # Column widths - adjust based on screen size
+        screen_width = self.root.winfo_screenwidth()
+        if screen_width < 1366:  # Smaller screens
+            name_width, name_min = 150, 120
+            status_width, status_min = 80, 60
+            pid_width, pid_min = 60, 50
+            cpu_width, cpu_min = 80, 60
+            memory_width, memory_min = 100, 80
+            uptime_width, uptime_min = 120, 100
+        else:  # Larger screens
+            name_width, name_min = 200, 150
+            status_width, status_min = 100, 80
+            pid_width, pid_min = 80, 60
+            cpu_width, cpu_min = 100, 80
+            memory_width, memory_min = 120, 100
+            uptime_width, uptime_min = 160, 120
+        
+        server_list.column("#0", width=200, minwidth=150, anchor=tk.W)
+        server_list.column("name", width=name_width, minwidth=name_min, anchor=tk.W)
+        server_list.column("status", width=status_width, minwidth=status_min, anchor=tk.CENTER)
+        server_list.column("pid", width=pid_width, minwidth=pid_min, anchor=tk.CENTER)
+        server_list.column("cpu", width=cpu_width, minwidth=cpu_min, anchor=tk.CENTER)
+        server_list.column("memory", width=memory_width, minwidth=memory_min, anchor=tk.CENTER)
+        server_list.column("uptime", width=uptime_width, minwidth=uptime_min, anchor=tk.CENTER)
         
         # Add scrollbar
         server_scroll = ttk.Scrollbar(tab_frame, orient=tk.VERTICAL, command=server_list.yview)
@@ -580,6 +688,11 @@ class ServerManagerDashboard(ServerManagerModule):
         server_list.bind("<Button-3>", self.show_server_context_menu)
         server_list.bind("<Button-1>", self.on_server_list_click)
         server_list.bind("<Double-1>", self.on_server_double_click)
+        
+        # Bind drag-and-drop events for category management
+        server_list.bind("<ButtonPress-1>", self.on_drag_start)
+        server_list.bind("<B1-Motion>", self.on_drag_motion)
+        server_list.bind("<ButtonRelease-1>", self.on_drag_release)
         
         # Store reference
         self.server_lists[subhost_name] = server_list
@@ -650,6 +763,76 @@ class ServerManagerDashboard(ServerManagerModule):
         if current_tab < len(self.server_notebook.tabs()) - 1:
             self.server_notebook.select(current_tab + 1)
     
+    def expand_all_categories(self):
+        # Expand all categories in the current server list
+        # Debounce check to prevent rapid clicking issues
+        if hasattr(self, '_expanding_categories') and self._expanding_categories:
+            return
+        self._expanding_categories = True
+        
+        try:
+            current_list = self.get_current_server_list()
+            if not current_list:
+                return
+            
+            # Disable button during operation to prevent rapid clicks
+            if hasattr(self, 'expand_all_btn'):
+                self.expand_all_btn.config(state=tk.DISABLED)
+            
+            # Find all category items (items with no server name)
+            for item in current_list.get_children():
+                try:
+                    if current_list.exists(item):
+                        item_values = current_list.item(item)['values']
+                        if item_values and not item_values[1]:  # No server name = category
+                            current_list.item(item, open=True)
+                except tk.TclError:
+                    # Item may have been deleted during iteration
+                    continue
+                    
+        except Exception as e:
+            logger.error(f"Error expanding categories: {str(e)}")
+        finally:
+            self._expanding_categories = False
+            # Re-enable button after a short delay
+            if hasattr(self, 'expand_all_btn'):
+                self.root.after(100, lambda: self.expand_all_btn.config(state=tk.NORMAL))
+    
+    def collapse_all_categories(self):
+        # Collapse all categories in the current server list
+        # Debounce check to prevent rapid clicking issues
+        if hasattr(self, '_collapsing_categories') and self._collapsing_categories:
+            return
+        self._collapsing_categories = True
+        
+        try:
+            current_list = self.get_current_server_list()
+            if not current_list:
+                return
+            
+            # Disable button during operation to prevent rapid clicks
+            if hasattr(self, 'collapse_all_btn'):
+                self.collapse_all_btn.config(state=tk.DISABLED)
+            
+            # Find all category items (items with no server name)
+            for item in current_list.get_children():
+                try:
+                    if current_list.exists(item):
+                        item_values = current_list.item(item)['values']
+                        if item_values and not item_values[1]:  # No server name = category
+                            current_list.item(item, open=False)
+                except tk.TclError:
+                    # Item may have been deleted during iteration
+                    continue
+                    
+        except Exception as e:
+            logger.error(f"Error collapsing categories: {str(e)}")
+        finally:
+            self._collapsing_categories = False
+            # Re-enable button after a short delay
+            if hasattr(self, 'collapse_all_btn'):
+                self.root.after(100, lambda: self.collapse_all_btn.config(state=tk.NORMAL))
+    
     def get_current_server_list(self):
         # Get the server list for the currently active tab
         return get_current_server_list(self)
@@ -660,19 +843,19 @@ class ServerManagerDashboard(ServerManagerModule):
     
     def update_server_list_for_subhost(self, subhost_name, servers_data):
         # Update the server list for a specific subhost
-        update_server_list_for_subhost(subhost_name, servers_data, self.server_lists, logger)
+        update_server_list_for_subhost(subhost_name, servers_data, self.server_lists, self.server_manager_dir, logger)
     
     def refresh_all_subhost_servers(self):
         # Refresh servers for all subhost tabs
-        refresh_all_subhost_servers(self.server_lists, self.server_manager, logger)
+        refresh_all_subhost_servers(self.server_lists, self.server_manager, self.server_manager_dir, logger)
     
     def refresh_current_subhost_servers(self):
         # Refresh servers for the currently active subhost tab
-        refresh_current_subhost_servers(self.get_current_subhost, self.server_manager, self.server_lists, logger)
+        refresh_current_subhost_servers(self.get_current_subhost, self.server_manager, self.server_lists, self.server_manager_dir, logger)
     
     def refresh_subhost_servers(self, subhost_name):
         # Refresh servers for a specific subhost
-        refresh_subhost_servers(subhost_name, self.server_manager, self.server_lists, logger)
+        refresh_subhost_servers(subhost_name, self.server_manager, self.server_lists, self.server_manager_dir, logger)
 
     def show_server_context_menu(self, event):
         # Show context menu on right-click in server list
@@ -694,6 +877,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.server_context_menu.entryconfigure("Show Console", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("Configure Server", state=tk.NORMAL)
             self.server_context_menu.entryconfigure("Export Server", state=tk.NORMAL)
+            self.server_context_menu.entryconfigure("Kill Process", state=tk.NORMAL)
         else:
             # Disable server-specific options
             self.server_context_menu.entryconfigure("Open Folder Directory", state=tk.DISABLED)
@@ -705,6 +889,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.server_context_menu.entryconfigure("Show Console", state=tk.DISABLED)
             self.server_context_menu.entryconfigure("Configure Server", state=tk.DISABLED)
             self.server_context_menu.entryconfigure("Export Server", state=tk.DISABLED)
+            self.server_context_menu.entryconfigure("Kill Process", state=tk.DISABLED)
             
         # Show context menu
         self.server_context_menu.tk_popup(event.x_root, event.y_root)
@@ -719,8 +904,10 @@ class ServerManagerDashboard(ServerManagerModule):
         
         if not item:
             # Clicked on empty space - clear all selections (like Windows Explorer)
-            current_list.selection_remove(current_list.selection())
-            logger.debug("Cleared server list selection due to empty space click")
+            # Only clear if there are actually items in the list and not during refresh
+            if current_list.get_children() and not getattr(self, '_refreshing_server_list', False):
+                current_list.selection_remove(current_list.selection())
+                logger.debug("Cleared server list selection due to empty space click")
 
     def on_server_double_click(self, event):
         # Handle double-click on server list - open configuration dialog
@@ -734,6 +921,315 @@ class ServerManagerDashboard(ServerManagerModule):
             # Double-clicked on a server - open configuration
             current_list.selection_set(item)
             self.configure_server()
+
+    def on_drag_start(self, event):
+        # Handle drag start for server/category movement
+        current_list = self.get_current_server_list()
+        if not current_list:
+            return
+            
+        # Get the region where the click occurred
+        region = current_list.identify_region(event.x, event.y)
+        
+        # Only allow dragging from data cells, not tree column
+        if region != "cell":
+            return
+            
+        item = current_list.identify_row(event.y)
+        if not item:
+            return
+        
+        # Get item values
+        item_values = current_list.item(item)['values']
+        
+        # Only allow dragging servers, not categories
+        if not item_values or not item_values[1]:  # No server name = category
+            return
+            
+        # Store drag information
+        self._drag_item = item
+        self._drag_start_y = event.y
+        self._drag_data = item_values
+        self._drag_active = False  # Will be set to True when drag threshold is exceeded
+        self._highlighted_category = None
+        
+        # Highlight the dragged item
+        current_list.selection_set(item)
+        
+    def on_drag_motion(self, event):
+        # Handle drag motion - provide visual feedback
+        if not hasattr(self, '_drag_item') or not self._drag_item:
+            return
+            
+        current_list = self.get_current_server_list()
+        if not current_list:
+            return
+        
+        # Check if we've moved enough to start the drag
+        if not getattr(self, '_drag_active', False):
+            if abs(event.y - self._drag_start_y) > 5:  # 5 pixel threshold
+                self._drag_active = True
+                # Create floating drag indicator
+                self._create_drag_indicator(current_list, self._drag_data[0] if self._drag_data else "")
+            else:
+                return
+        
+        # Update drag indicator position
+        if hasattr(self, '_drag_indicator') and self._drag_indicator:
+            try:
+                # Position indicator near cursor
+                x = current_list.winfo_rootx() + event.x + 15
+                y = current_list.winfo_rooty() + event.y + 10
+                self._drag_indicator.geometry(f"+{x}+{y}")
+            except:
+                pass
+            
+        # Get the region where the mouse is
+        region = current_list.identify_region(event.x, event.y)
+        
+        # Clear previous highlight
+        self._clear_category_highlight(current_list)
+        
+        # Only provide feedback for cell regions
+        if region != "cell":
+            current_list.config(cursor="no")
+            self._update_drag_indicator(False, "")
+            return
+            
+        # Get current position
+        current_item = current_list.identify_row(event.y)
+        
+        # Provide visual feedback
+        if current_item and current_item != self._drag_item:
+            # Check if this is a valid drop target (category or item under category)
+            target_values = current_list.item(current_item)['values']
+            
+            # Find the parent category for the target
+            parent = current_list.parent(current_item)
+            if not target_values[1]:  # No server name = this IS a category
+                category_item = current_item
+                category_name = target_values[0]
+            elif parent:  # Server under a category
+                category_item = parent
+                category_name = current_list.item(parent)['values'][0]
+            else:
+                category_item = None
+                category_name = ""
+            
+            if category_item:
+                current_list.config(cursor="hand2")  # Hand cursor for valid drop
+                self._highlight_category(current_list, category_item)
+                self._update_drag_indicator(True, category_name)
+            else:
+                current_list.config(cursor="no")  # No cursor for invalid drop
+                self._update_drag_indicator(False, "")
+        else:
+            current_list.config(cursor="")
+            self._update_drag_indicator(False, "")
+    
+    def _create_drag_indicator(self, parent, server_name):
+        # Create a floating drag indicator window
+        try:
+            # Destroy existing indicator if any
+            if hasattr(self, '_drag_indicator') and self._drag_indicator:
+                try:
+                    self._drag_indicator.destroy()
+                except:
+                    pass
+            
+            # Create toplevel window for drag indicator
+            self._drag_indicator = tk.Toplevel(self.root)
+            self._drag_indicator.overrideredirect(True)  # No window decorations
+            self._drag_indicator.attributes('-alpha', 0.85)  # Slightly transparent
+            self._drag_indicator.attributes('-topmost', True)
+            
+            # Create frame with border
+            frame = tk.Frame(self._drag_indicator, bg='#4a90d9', padx=2, pady=2)
+            frame.pack(fill=tk.BOTH, expand=True)
+            
+            inner_frame = tk.Frame(frame, bg='#f0f0f0', padx=8, pady=4)
+            inner_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Server name label
+            self._drag_label = tk.Label(inner_frame, text=f"📦 {server_name}", 
+                                        bg='#f0f0f0', fg='#333333',
+                                        font=('Segoe UI', 9, 'bold'))
+            self._drag_label.pack(side=tk.LEFT)
+            
+            # Target category label
+            self._drag_target_label = tk.Label(inner_frame, text="", 
+                                               bg='#f0f0f0', fg='#666666',
+                                               font=('Segoe UI', 8))
+            self._drag_target_label.pack(side=tk.LEFT, padx=(10, 0))
+            
+        except Exception as e:
+            logger.debug(f"Error creating drag indicator: {e}")
+    
+    def _update_drag_indicator(self, valid, category_name):
+        # Update the drag indicator to show target status
+        try:
+            if hasattr(self, '_drag_target_label') and self._drag_target_label:
+                if valid and category_name:
+                    self._drag_target_label.config(text=f"→ {category_name}", fg='#2e7d32')  # Green
+                elif not valid:
+                    self._drag_target_label.config(text="✗ Invalid target", fg='#c62828')  # Red
+                else:
+                    self._drag_target_label.config(text="")
+        except:
+            pass
+    
+    def _destroy_drag_indicator(self):
+        # Destroy the drag indicator window
+        try:
+            if hasattr(self, '_drag_indicator') and self._drag_indicator:
+                self._drag_indicator.destroy()
+                self._drag_indicator = None
+        except:
+            pass
+    
+    def _highlight_category(self, treeview, category_item):
+        # Highlight a category row to show it's a valid drop target
+        try:
+            # Store the highlighted category
+            self._highlighted_category = category_item
+            
+            # Add highlight tag
+            current_tags = list(treeview.item(category_item, 'tags'))
+            if 'drop_target' not in current_tags:
+                current_tags.append('drop_target')
+                treeview.item(category_item, tags=current_tags)
+            
+            # Configure the drop_target tag style
+            treeview.tag_configure('drop_target', background='#c8e6c9')  # Light green
+            
+        except Exception as e:
+            logger.debug(f"Error highlighting category: {e}")
+    
+    def _clear_category_highlight(self, treeview):
+        # Clear any category highlighting
+        try:
+            if hasattr(self, '_highlighted_category') and self._highlighted_category:
+                try:
+                    current_tags = list(treeview.item(self._highlighted_category, 'tags'))
+                    if 'drop_target' in current_tags:
+                        current_tags.remove('drop_target')
+                        treeview.item(self._highlighted_category, tags=current_tags)
+                except:
+                    pass
+            self._highlighted_category = None
+        except:
+            pass
+            
+    def on_drag_release(self, event):
+        # Handle drag release - move server to new category
+        current_list = self.get_current_server_list()
+        
+        try:
+            # Clean up visual elements first
+            if current_list:
+                current_list.config(cursor="")
+                self._clear_category_highlight(current_list)
+            self._destroy_drag_indicator()
+            
+            # Check if we were actually dragging
+            if not hasattr(self, '_drag_item') or not self._drag_item:
+                return
+            
+            if not getattr(self, '_drag_active', False):
+                # Was just a click, not a drag
+                self._drag_item = None
+                self._drag_data = None
+                self._drag_active = False
+                return
+                
+            if not current_list:
+                return
+            
+            # Check if we're releasing over a valid drop region
+            region = current_list.identify_region(event.x, event.y)
+            
+            # Get drop target
+            drop_item = current_list.identify_row(event.y)
+            if not drop_item or drop_item == self._drag_item:
+                return
+            
+            # Find the target category
+            drop_values = current_list.item(drop_item)['values']
+            parent = current_list.parent(drop_item)
+            
+            if not drop_values[1]:  # No server name = this IS a category
+                target_category = drop_values[0]
+            elif parent:  # Server under a category - use parent category
+                parent_values = current_list.item(parent)['values']
+                target_category = parent_values[0]
+            else:
+                messagebox.showinfo("Invalid Target", "Please drop onto a category.")
+                return
+                
+            # Get source data
+            source_values = self._drag_data
+            if not source_values or not source_values[1]:  # Not a server
+                return
+                
+            server_name = source_values[0]
+            
+            # Get current category from parent of dragged item
+            drag_parent = current_list.parent(self._drag_item)
+            if drag_parent:
+                current_category = current_list.item(drag_parent)['values'][0]
+            else:
+                current_category = "Uncategorized"
+            
+            # Don't move if already in target category
+            if current_category == target_category:
+                return
+                
+            # Move server to new category
+            self._move_server_to_category(server_name, target_category)
+            
+            # Refresh categories immediately for instant visual feedback
+            self.refresh_categories()
+            
+            logger.info(f"Moved server '{server_name}' from '{current_category}' to category '{target_category}'")
+                
+        except Exception as e:
+            logger.error(f"Error during drag-and-drop: {str(e)}")
+            messagebox.showerror("Error", f"Failed to move item: {str(e)}")
+            
+        finally:
+            # Always clear drag state
+            self._drag_item = None
+            self._drag_data = None
+            self._drag_active = False
+            self._highlighted_category = None
+
+    def _move_server_to_category(self, server_name, new_category):
+        # Move a server to a new category by updating its configuration
+        try:
+            servers_path = self.paths["servers"]
+            if not os.path.exists(servers_path):
+                return
+                
+            config_file = os.path.join(servers_path, f"{server_name}.json")
+            if not os.path.exists(config_file):
+                return
+                
+            # Read current configuration
+            with open(config_file, 'r', encoding='utf-8') as f:
+                server_config = json.load(f)
+                
+            # Update category
+            server_config['Category'] = new_category
+            
+            # Save updated configuration
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(server_config, f, indent=2, ensure_ascii=False)
+                
+            logger.info(f"Updated category for server '{server_name}' to '{new_category}'")
+            
+        except Exception as e:
+            logger.error(f"Error updating server category: {str(e)}")
+            raise
 
     def add_server(self):
         # Add a new game server (Steam, Minecraft, or Other)
@@ -1444,8 +1940,10 @@ class ServerManagerDashboard(ServerManagerModule):
             def delayed_initial_update():
                 try:
                     logger.info("Starting delayed initial updates")
-                    self.update_system_info()
-                    self.update_server_list(force_refresh=True)
+                    # Perform heavy operations that were previously blocking __init__
+                    self.update_system_info()  # Initial system info update (now threaded)
+                    self.update_server_list(force_refresh=True)  # Initial server list refresh
+                    self._reattach_to_running_servers()  # Reattach to running servers
                     logger.info("Delayed initial updates completed")
                 except Exception as e:
                     logger.error(f"Error in delayed initial update: {str(e)}")
@@ -1472,6 +1970,11 @@ class ServerManagerDashboard(ServerManagerModule):
 
         # Clean up resources
         try:
+            # Save all console states first for crash recovery
+            if hasattr(self, 'console_manager') and self.console_manager:
+                self.console_manager.save_all_console_states()
+                logger.debug("Saved all console states")
+            
             # Close all console windows
             if hasattr(self, 'console_manager') and self.console_manager:
                 self.console_manager.cleanup_all_consoles()
@@ -1744,6 +2247,14 @@ class ServerManagerDashboard(ServerManagerModule):
                     server_name,
                     callback=lambda status: self.update_server_status(server_name, status)
                 )
+                
+                # Clean up console state when server is stopped
+                # This prevents old PID data from causing issues with reused PIDs
+                if success and hasattr(self, 'console_manager') and self.console_manager:
+                    try:
+                        self.console_manager.cleanup_console_on_stop(server_name)
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup console on stop: {e}")
                 
                 # Update UI on main thread
                 def update_ui():
@@ -2186,14 +2697,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             return
             
         install_dir = server_config.get('InstallDir','')
-        if not install_dir or not os.path.exists(install_dir):
-            messagebox.showerror("Server Installation Directory Missing", 
-                               f"Server installation directory is missing or invalid.\n\n"
-                               f"Server: {server_name}\n"
-                               f"Expected Directory: {install_dir or '(not set)'}\n\n"
-                               f"The server installation may have been incomplete or the files were moved.\n"
-                               f"Please reinstall the server to resolve this issue.")
-            return
+        # REMOVED: Directory existence check - allow configuration even if directory doesn't exist
+        # Users can now update the InstallDir in the configuration dialog
 
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Configure Server: {server_name}")
@@ -2434,10 +2939,75 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         appid_help = ttk.Label(identity_frame, text="(Steam servers only)", foreground="gray", font=("Segoe UI", 8))
         appid_help.grid(row=2, column=3, padx=5, pady=5, sticky=tk.W)
         
-        # Install directory (read-only display)
+        # Install directory (now editable)
         ttk.Label(identity_frame, text="Install Directory:", font=("Segoe UI", 10, "bold")).grid(row=3, column=0, padx=10, pady=5, sticky=tk.W)
-        dir_label = ttk.Label(identity_frame, text=install_dir, font=("Segoe UI", 9), foreground="gray")
-        dir_label.grid(row=3, column=1, columnspan=2, padx=10, pady=5, sticky=tk.W)
+        install_dir_var = tk.StringVar(value=install_dir)
+        install_dir_entry = ttk.Entry(identity_frame, textvariable=install_dir_var, width=25, font=("Segoe UI", 9))
+        install_dir_entry.grid(row=3, column=1, padx=10, pady=5, sticky=tk.EW)
+        
+        def browse_install_dir():
+            current_dir = install_dir_var.get()
+            if not os.path.exists(current_dir):
+                current_dir = os.path.dirname(current_dir) if current_dir else ""
+            
+            selected_dir = filedialog.askdirectory(initialdir=current_dir, title="Select Server Installation Directory")
+            if selected_dir:
+                # Check if directory changed
+                old_dir = install_dir_var.get()
+                if old_dir != selected_dir:
+                    install_dir_var.set(selected_dir)
+                    # Update relative paths when install directory changes
+                    update_paths_for_new_install_dir(old_dir, selected_dir)
+        
+        ttk.Button(identity_frame, text="Browse", command=browse_install_dir, width=8).grid(row=3, column=2, padx=5, pady=5)
+        
+        def update_paths_for_new_install_dir(old_dir, new_dir):
+            """Update relative paths when install directory changes"""
+            try:
+                # Only update if both directories exist and are different
+                if not old_dir or not new_dir or old_dir == new_dir:
+                    return
+                
+                # Update executable path if it's relative
+                exe_path = exe_var.get().strip()
+                if exe_path and not os.path.isabs(exe_path):
+                    # Try to find the same relative file in the new directory
+                    old_full_path = os.path.join(old_dir, exe_path)
+                    if os.path.exists(old_full_path):
+                        # File exists in old location, keep relative path
+                        pass  # Keep the relative path as is
+                    else:
+                        # File doesn't exist in old location, try to find it in new directory
+                        new_full_path = os.path.join(new_dir, os.path.basename(exe_path))
+                        if os.path.exists(new_full_path):
+                            exe_var.set(os.path.basename(exe_path))
+                
+                # Update config file path if it's relative
+                config_path = config_file_var.get().strip()
+                if config_path and not os.path.isabs(config_path):
+                    old_config_full = os.path.join(old_dir, config_path)
+                    if os.path.exists(old_config_full):
+                        # File exists in old location, keep relative path
+                        pass  # Keep the relative path as is
+                    else:
+                        # Try to find config files in new directory
+                        for ext in ['.cfg', '.conf', '.ini', '.json', '.yaml', '.yml', '.properties', '.txt']:
+                            potential_config = os.path.join(new_dir, f"server{ext}")
+                            if os.path.exists(potential_config):
+                                config_file_var.set(f"server{ext}")
+                                break
+                
+                # Update preview
+                update_preview()
+                
+            except Exception as e:
+                logger.warning(f"Error updating paths for new install directory: {str(e)}")
+        
+        # Bind install directory change event
+        def on_install_dir_change(*args):
+            update_preview()
+        
+        install_dir_var.trace('w', on_install_dir_change)
         
         # Configure grid
         identity_frame.grid_columnconfigure(1, weight=1)
@@ -2805,7 +3375,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             
             try:
                 # Validate executable path
-                exe_abs = exe_path if os.path.isabs(exe_path) else os.path.join(install_dir, exe_path)
+                exe_abs = exe_path if os.path.isabs(exe_path) else os.path.join(install_dir_var.get(), exe_path)
                 if not os.path.exists(exe_abs):
                     if not messagebox.askyesno("Warning", f"Executable not found: {exe_abs}\nSave anyway?"):
                         return
@@ -2826,7 +3396,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                     
                     # Validate config file if enabled
                     if config_file_path:
-                        config_abs = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
+                        config_abs = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir_var.get(), config_file_path)
                         if not os.path.exists(config_abs):
                             if not messagebox.askyesno("Warning", f"Config file not found: {config_abs}\nSave anyway?"):
                                 return
@@ -2892,12 +3462,32 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 # Update startup configuration
                 if self.server_manager:
                     success, message = self.server_manager.update_server_config(
-                        current_server_name, exe_path, startup_args, stop_cmd, use_config, 
-                        config_file_path, config_arg, additional_args
+                        current_server_name, exe_path, startup_args, stop_cmd, use_config_file=use_config, 
+                        config_file_path=config_file_path, config_argument=config_arg, additional_args=additional_args
                     )
                 else:
                     success = False
                     message = "Server manager not available"
+                
+                # Update InstallDir in server configuration if it changed
+                if success and install_dir_var.get() != server_config.get('InstallDir'):
+                    try:
+                        # Read current config file
+                        config_file = os.path.join(self.paths["servers"], f"{current_server_name}.json")
+                        with open(config_file, 'r', encoding='utf-8') as f:
+                            current_config = json.load(f)
+                        
+                        # Update InstallDir
+                        current_config['InstallDir'] = install_dir_var.get()
+                        
+                        # Save updated config
+                        with open(config_file, 'w', encoding='utf-8') as f:
+                            json.dump(current_config, f, indent=2, ensure_ascii=False)
+                        
+                        logger.info(f"Updated InstallDir for server '{current_server_name}' to: {install_dir_var.get()}")
+                    except Exception as e:
+                        logger.warning(f"Failed to update InstallDir: {str(e)}")
+                        # Don't fail the entire operation for this
                 
                 # Handle server-type-specific configurations
                 if success and new_type:
@@ -2981,7 +3571,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 messagebox.showinfo("Test", "No executable path specified. You can set this later after the server files are downloaded.")
                 return
                 
-            exe_abs = exe_path if os.path.isabs(exe_path) else os.path.join(install_dir, exe_path)
+            exe_abs = exe_path if os.path.isabs(exe_path) else os.path.join(install_dir_var.get(), exe_path)
             if os.path.exists(exe_abs):
                 messagebox.showinfo("Test OK", f"Executable found: {exe_abs}")
             else:
@@ -4131,6 +4721,131 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             return
         self.timer_manager.show_schedules_manager()
     
+    def show_database_sync_manager(self):
+        # Show database sync configuration dialog
+        if not self.timer_manager:
+            messagebox.showerror("Error", "Scheduler not available.")
+            return
+        
+        if not self.agent_manager:
+            messagebox.showerror("Error", "Cluster manager not available. Database syncing requires cluster configuration.")
+            return
+        
+        # Create dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Database Sync Manager")
+        dialog.geometry("500x400")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        main_frame = ttk.Frame(dialog, padding=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = ttk.Label(main_frame, text="Database Synchronization", font=("Segoe UI", 14, "bold"))
+        title_label.pack(pady=(0, 20))
+        
+        # Status section
+        status_frame = ttk.LabelFrame(main_frame, text="Current Status", padding=10)
+        status_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Status variables
+        sync_status = self.timer_manager.get_database_sync_status()
+        
+        status_text = "Enabled" if sync_status['enabled'] else "Disabled"
+        status_color = "green" if sync_status['enabled'] else "red"
+        
+        status_label = ttk.Label(status_frame, text=f"Status: {status_text}", foreground=status_color)
+        status_label.pack(anchor=tk.W)
+        
+        interval_label = ttk.Label(status_frame, text=f"Sync Interval: {sync_status['interval_seconds']} seconds")
+        interval_label.pack(anchor=tk.W, pady=(5, 0))
+        
+        if sync_status['last_sync']:
+            last_sync_label = ttk.Label(status_frame, text=f"Last Sync: {sync_status['last_sync']}")
+            last_sync_label.pack(anchor=tk.W, pady=(5, 0))
+        
+        if sync_status['next_sync']:
+            next_sync_label = ttk.Label(status_frame, text=f"Next Sync: {sync_status['next_sync']}")
+            next_sync_label.pack(anchor=tk.W, pady=(5, 0))
+        
+        # Configuration section
+        config_frame = ttk.LabelFrame(main_frame, text="Configuration", padding=10)
+        config_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Enable/Disable checkbox
+        enabled_var = tk.BooleanVar(value=sync_status['enabled'])
+        enabled_cb = ttk.Checkbutton(config_frame, text="Enable database synchronization", 
+                                   variable=enabled_var)
+        enabled_cb.pack(anchor=tk.W, pady=(0, 10))
+        
+        # Interval setting
+        interval_frame = ttk.Frame(config_frame)
+        interval_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(interval_frame, text="Sync interval (seconds):").pack(side=tk.LEFT)
+        interval_var = tk.StringVar(value=str(sync_status['interval_seconds']))
+        interval_entry = ttk.Entry(interval_frame, textvariable=interval_var, width=10)
+        interval_entry.pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Info text
+        info_text = ("Database synchronization will periodically sync server configurations, "
+                    "user data, and cluster settings across all online cluster nodes.\n\n"
+                    "This ensures consistency across your cluster and prevents configuration drift.")
+        
+        info_label = ttk.Label(config_frame, text=info_text, wraplength=400, justify=tk.LEFT)
+        info_label.pack(anchor=tk.W, pady=(10, 0))
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(20, 0))
+        
+        def apply_settings():
+            try:
+                interval = int(interval_var.get())
+                if interval < 60:
+                    messagebox.showerror("Error", "Sync interval must be at least 60 seconds.")
+                    return
+                
+                if enabled_var.get():
+                    self.timer_manager.enable_database_sync(interval)
+                    messagebox.showinfo("Success", "Database synchronization enabled.")
+                else:
+                    self.timer_manager.disable_database_sync()
+                    messagebox.showinfo("Success", "Database synchronization disabled.")
+                
+                dialog.destroy()
+                
+            except ValueError:
+                messagebox.showerror("Error", "Invalid interval value. Please enter a number.")
+        
+        def sync_now():
+            if not sync_status['enabled']:
+                messagebox.showerror("Error", "Database synchronization is disabled.")
+                return
+            
+            # Run sync immediately
+            import threading
+            sync_thread = threading.Thread(target=self.timer_manager.sync_cluster_databases, daemon=True)
+            sync_thread.start()
+            
+            messagebox.showinfo("Sync Started", "Database synchronization started in background.")
+        
+        apply_btn = ttk.Button(button_frame, text="Apply Settings", command=apply_settings)
+        apply_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        sync_btn = ttk.Button(button_frame, text="Sync Now", command=sync_now)
+        sync_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        cancel_btn = ttk.Button(button_frame, text="Cancel", command=dialog.destroy)
+        cancel_btn.pack(side=tk.RIGHT)
+        
+        # Center dialog
+        dialog.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+    
     def update_all_servers(self, scheduled=False):
         # Update all Steam servers
         # scheduled: bool - If True, skip confirmation dialogs and close progress dialog automatically
@@ -4443,6 +5158,18 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         # Try to kill via console manager first
         if self.console_manager and hasattr(self.console_manager, 'kill_process'):
             if self.console_manager.kill_process(server_name):
+                # Also clean up the server config to remove stale PID
+                if self.server_manager:
+                    try:
+                        server_config = self.server_manager.get_server_config(server_name)
+                        if server_config:
+                            server_config.pop('ProcessId', None)
+                            server_config.pop('PID', None)
+                            server_config.pop('StartTime', None)
+                            self.server_manager.save_server_config(server_name, server_config)
+                    except Exception as e:
+                        logger.warning(f"Failed to clear PID from config after kill: {e}")
+                
                 messagebox.showinfo("Success", f"Process for '{server_name}' has been killed.", parent=self.root)
                 self.update_server_list()
                 return
@@ -4471,6 +5198,19 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                                 continue
                         
                         if killed:
+                            # Clear PID from config and console state
+                            server_config.pop('ProcessId', None)
+                            server_config.pop('PID', None)
+                            server_config.pop('StartTime', None)
+                            self.server_manager.save_server_config(server_name, server_config)
+                            
+                            # Clean up console state
+                            if self.console_manager:
+                                try:
+                                    self.console_manager.cleanup_console_on_stop(server_name)
+                                except Exception:
+                                    pass
+                            
                             messagebox.showinfo("Success", f"Process for '{server_name}' has been killed.", parent=self.root)
                             self.update_server_list()
                             return
@@ -4481,9 +5221,521 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             logger.error(f"Error killing process for {server_name}: {e}")
             messagebox.showerror("Error", f"Failed to kill process: {str(e)}", parent=self.root)
 
+    def create_category(self):
+        # Create a new server category
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+
+        # Prompt for category name
+        category_name = simpledialog.askstring("Create Category", "Enter category name:", parent=self.root)
+        if not category_name or not category_name.strip():
+            return
+
+        category_name = category_name.strip()
+
+        # Check if category already exists
+        categories = load_categories(self.server_manager_dir)
+        if category_name in categories:
+            messagebox.showerror("Error", f"Category '{category_name}' already exists.")
+            return
+
+        # Add category to database
+        from Modules.Database.cluster_database import ClusterDatabase
+        db = ClusterDatabase()
+        if db.add_category(category_name):
+            # Refresh categories in the UI
+            self.refresh_categories()
+            logger.info(f"Created category: {category_name}")
+        else:
+            messagebox.showerror("Error", f"Failed to create category '{category_name}'.")
+
+    def rename_category(self):
+        # Rename an existing category
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+
+        selected_items = current_list.selection()
+        if not selected_items:
+            messagebox.showinfo("No Selection", "Please select a category first.")
+            return
+
+        item = selected_items[0]
+        item_values = current_list.item(item)['values']
+
+        # Check if this is a category (no server name in second column)
+        if item_values[1]:  # Has server name, so it's a server
+            messagebox.showerror("Error", "Please select a category, not a server.")
+            return
+
+        current_name = item_values[0]
+
+        # Prompt for new category name
+        new_name = simpledialog.askstring("Rename Category", "Enter new category name:", initialvalue=current_name, parent=self.root)
+        if not new_name or not new_name.strip() or new_name.strip() == current_name:
+            return
+
+        new_name = new_name.strip()
+
+        # Check if new name already exists
+        categories = load_categories(self.server_manager_dir)
+        if new_name in categories:
+            messagebox.showerror("Error", f"Category '{new_name}' already exists.")
+            return
+
+        # Rename category in database
+        from Modules.Database.cluster_database import ClusterDatabase
+        db = ClusterDatabase()
+        if db.rename_category(current_name, new_name):
+            # Update server configurations
+            self._update_servers_category(current_name, new_name)
+
+            # Refresh categories in the UI
+            self.refresh_categories()
+
+            logger.info(f"Renamed category from '{current_name}' to '{new_name}'")
+        else:
+            messagebox.showerror("Error", f"Failed to rename category '{current_name}'.")
+
+    def delete_category(self):
+        # Delete a category and move all servers to "Uncategorized"
+        current_list = self.get_current_server_list()
+        if not current_list:
+            messagebox.showinfo("No Selection", "No server list available.")
+            return
+
+        selected_items = current_list.selection()
+        if not selected_items:
+            messagebox.showinfo("No Selection", "Please select a category first.")
+            return
+
+        item = selected_items[0]
+        item_values = current_list.item(item)['values']
+
+        # Check if this is a category (no server name in second column)
+        if item_values[1]:  # Has server name, so it's a server
+            messagebox.showerror("Error", "Please select a category, not a server.")
+            return
+
+        category_name = item_values[0]
+
+        # Don't allow deleting "Uncategorized"
+        if category_name == "Uncategorized":
+            messagebox.showerror("Error", "Cannot delete the 'Uncategorized' category.")
+            return
+
+        # Confirm deletion
+        if not messagebox.askyesno("Delete Category", 
+                                 f"Are you sure you want to delete the category '{category_name}'?\n\nAll servers in this category will be moved to 'Uncategorized'.",
+                                 parent=self.root):
+            return
+
+        # Delete category from database
+        from Modules.Database.cluster_database import ClusterDatabase
+        db = ClusterDatabase()
+        if db.delete_category(category_name):
+            # Update server configurations
+            self._update_servers_category(category_name, "Uncategorized")
+
+            # Refresh categories in the UI
+            self.refresh_categories()
+
+            logger.info(f"Deleted category '{category_name}', moved servers to 'Uncategorized'")
+        else:
+            messagebox.showerror("Error", f"Failed to delete category '{category_name}'.")
+
+    def _update_servers_category(self, old_category, new_category):
+        # Update the category for all servers in the old category to the new category
+        try:
+            servers_path = self.paths["servers"]
+            if not os.path.exists(servers_path):
+                return
+
+            updated_count = 0
+            for file in os.listdir(servers_path):
+                if file.endswith(".json"):
+                    try:
+                        file_path = os.path.join(servers_path, file)
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            server_config = json.load(f)
+
+                        # Update category if it matches the old category
+                        if server_config.get('Category') == old_category:
+                            server_config['Category'] = new_category
+
+                            # Save updated configuration
+                            with open(file_path, 'w', encoding='utf-8') as f:
+                                json.dump(server_config, f, indent=2, ensure_ascii=False)
+
+                            updated_count += 1
+
+                    except Exception as e:
+                        logger.error(f"Error updating category for server {file}: {str(e)}")
+
+            if updated_count > 0:
+                logger.info(f"Updated category from '{old_category}' to '{new_category}' for {updated_count} servers")
+
+        except Exception as e:
+            logger.error(f"Error updating server categories: {str(e)}")
+
+    def refresh_categories(self):
+        # Refresh only the category structure in the current server list without full server refresh
+        current_list = self.get_current_server_list()
+        if not current_list:
+            logger.warning("refresh_categories: No current server list available")
+            return
+
+        logger.debug("refresh_categories: Starting category refresh")
+
+        # Get current servers data (preserve existing data)
+        # We need to iterate through category items and their children
+        current_servers = {}
+        for category_item in current_list.get_children():
+            try:
+                # Get children (servers) of this category
+                for server_item in current_list.get_children(category_item):
+                    try:
+                        item = current_list.item(server_item)
+                        if item and 'values' in item and len(item['values']) >= 1:
+                            values = item['values']
+                            server_name = values[0]
+                            if server_name and len(values) > 1 and values[1]:  # Has server name and status
+                                current_servers[server_name] = {
+                                    'status': values[1] if len(values) > 1 else 'Unknown',
+                                    'pid': values[2] if len(values) > 2 else '',
+                                    'cpu': values[3] if len(values) > 3 else '0%',
+                                    'memory': values[4] if len(values) > 4 else '0 MB',
+                                    'uptime': values[5] if len(values) > 5 else '00:00:00',
+                                    'category': 'Uncategorized'  # Will be updated from server config
+                                }
+                    except Exception as e:
+                        logger.debug(f"Error processing server item {server_item}: {e}")
+            except Exception as e:
+                logger.debug(f"Error processing category item {category_item}: {e}")
+
+        logger.debug(f"refresh_categories: Found {len(current_servers)} servers to reorganize")
+
+        # Get updated categories from database
+        from Host.dashboard_functions import load_categories
+        all_categories = load_categories(self.server_manager_dir)
+        logger.debug(f"refresh_categories: Loaded {len(all_categories)} categories from database")
+
+        # Clear existing items
+        for item in current_list.get_children():
+            current_list.delete(item)
+
+        # Group servers by category
+        categories = {}
+        for category in all_categories:
+            categories[category] = []
+
+        # Get server categories from their configurations (re-read from disk to get updated values)
+        for server_name in current_servers.keys():
+            try:
+                # Read category directly from server config file for fresh data
+                servers_path = self.paths.get("servers", "")
+                config_file = os.path.join(servers_path, f"{server_name}.json")
+                if os.path.exists(config_file):
+                    with open(config_file, 'r', encoding='utf-8') as f:
+                        server_config = json.load(f)
+                    category = server_config.get('Category', 'Uncategorized')
+                else:
+                    category = 'Uncategorized'
+                current_servers[server_name]['category'] = category
+                logger.debug(f"refresh_categories: Server '{server_name}' -> category '{category}'")
+            except Exception as e:
+                logger.debug(f"Error getting category for {server_name}: {e}")
+                current_servers[server_name]['category'] = 'Uncategorized'
+
+        for server_name, server_info in current_servers.items():
+            category = server_info.get('category', 'Uncategorized')
+            if category not in categories:
+                categories[category] = []
+            categories[category].append((server_name, server_info))
+
+        # Add categories and servers to Treeview
+        for category_name in all_categories:
+            servers = categories.get(category_name, [])
+
+            # Insert category as parent (even if empty)
+            category_item = current_list.insert("", tk.END, text=category_name,
+                                             values=(category_name, "", "", "", "", ""),
+                                             open=True, tags=('category',))
+
+            # Add servers under category
+            for server_name, server_info in servers:
+                try:
+                    status = server_info.get('status', 'Unknown')
+                    pid = server_info.get('pid', '')
+                    cpu = server_info.get('cpu', '0%')
+                    memory = server_info.get('memory', '0 MB')
+                    uptime = server_info.get('uptime', '00:00:00')
+
+                    current_list.insert(category_item, tk.END, values=(
+                        server_name, status, pid, cpu, memory, uptime
+                    ), tags=('server',))
+                except Exception as e:
+                    logger.error(f"Error adding server {server_name} to category refresh: {e}")
+
+        logger.info(f"Categories refreshed successfully - {len(current_servers)} servers in {len(all_categories)} categories")
+
     def show_help(self):
         # Show help dialog using the documentation module
         show_help_dialog(self.root, logger)
+
+    def show_settings_dialog(self):
+        # Show settings dialog for editing configuration
+        import tkinter as tk
+        from tkinter import ttk, messagebox
+        
+        # Create settings dialog
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("Settings")
+        settings_window.geometry("800x600")
+        settings_window.resizable(True, True)
+        settings_window.transient(self.root)
+        settings_window.grab_set()
+        
+        # Center the dialog
+        settings_window.update_idletasks()
+        x = (settings_window.winfo_screenwidth() // 2) - (settings_window.winfo_width() // 2)
+        y = (settings_window.winfo_screenheight() // 2) - (settings_window.winfo_height() // 2)
+        settings_window.geometry(f"+{x}+{y}")
+        
+        # Create notebook for different settings categories
+        notebook = ttk.Notebook(settings_window)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Dashboard Settings Tab
+        dashboard_frame = ttk.Frame(notebook)
+        notebook.add(dashboard_frame, text="Dashboard")
+        
+        # Update Settings Tab
+        update_frame = ttk.Frame(notebook)
+        notebook.add(update_frame, text="Updates")
+        
+        # System Settings Tab
+        system_frame = ttk.Frame(notebook)
+        notebook.add(system_frame, text="System")
+        
+        # Load current configurations
+        try:
+            from Modules.Database.cluster_database import ClusterDatabase
+            db = ClusterDatabase()
+            
+            dashboard_config = db.get_dashboard_config()
+            update_config = db.get_update_config()
+            main_config = db.get_main_config()
+            
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Failed to load settings: {e}")
+            settings_window.destroy()
+            return
+        
+        # Dashboard Settings
+        self._create_dashboard_settings_tab(dashboard_frame, dashboard_config, db)
+        
+        # Update Settings
+        self._create_update_settings_tab(update_frame, update_config, db)
+        
+        # System Settings
+        self._create_system_settings_tab(system_frame, main_config, db)
+        
+        # Buttons
+        button_frame = ttk.Frame(settings_window)
+        button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        
+        ttk.Button(button_frame, text="Save", command=lambda: self._save_settings(settings_window, db)).pack(side=tk.RIGHT, padx=(5, 0))
+        ttk.Button(button_frame, text="Cancel", command=settings_window.destroy).pack(side=tk.RIGHT)
+        
+        # Store reference to prevent garbage collection
+        self.settings_window = settings_window
+    
+    def _create_dashboard_settings_tab(self, parent, config, db):
+        # Create dashboard settings controls
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Dashboard settings
+        settings = [
+            ("Debug Mode", "configuration.debugMode", config.get("configuration.debugMode", False), "boolean"),
+            ("Offline Mode", "configuration.offlineMode", config.get("configuration.offlineMode", False), "boolean"),
+            ("Hide Server Consoles", "configuration.hideServerConsoles", config.get("configuration.hideServerConsoles", True), "boolean"),
+            ("System Refresh Interval", "configuration.systemRefreshInterval", config.get("configuration.systemRefreshInterval", 4), "integer"),
+            ("Process Monitoring Interval", "configuration.processMonitoringInterval", config.get("configuration.processMonitoringInterval", 5), "integer"),
+            ("Network Update Interval", "configuration.networkUpdateInterval", config.get("configuration.networkUpdateInterval", 5), "integer"),
+            ("Server List Update Interval", "configuration.serverListUpdateInterval", config.get("configuration.serverListUpdateInterval", 30), "integer"),
+            ("Window Width", "ui.windowWidth", config.get("ui.windowWidth", 1200), "integer"),
+            ("Window Height", "ui.windowHeight", config.get("ui.windowHeight", 700), "integer"),
+        ]
+        
+        self._create_settings_controls(scrollable_frame, settings, "dashboard")
+    
+    def _create_update_settings_tab(self, parent, config, db):
+        # Create update settings controls
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Update settings - for now just show the raw JSON
+        ttk.Label(scrollable_frame, text="Update Configuration (JSON):", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(10, 5))
+        
+        text_frame = ttk.Frame(scrollable_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        
+        text_widget = tk.Text(text_frame, height=20, wrap=tk.WORD)
+        text_scrollbar = ttk.Scrollbar(text_frame, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=text_scrollbar.set)
+        
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Load current update config
+        full_config = config.get("full_config", {})
+        if isinstance(full_config, str):
+            try:
+                import json
+                full_config = json.loads(full_config)
+            except:
+                full_config = {}
+        
+        import json
+        text_widget.insert(tk.END, json.dumps(full_config, indent=2))
+        
+        # Store reference for saving
+        self.update_config_text = text_widget
+    
+    def _create_system_settings_tab(self, parent, config, db):
+        # Create system settings controls
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # System settings
+        settings = [
+            ("Version", "version", config.get("version", "0.1"), "string"),
+            ("Web Port", "web_port", config.get("web_port", 8080), "integer"),
+            ("Enable Auto Updates", "enable_auto_updates", config.get("enable_auto_updates", True), "boolean"),
+            ("Enable Tray Icon", "enable_tray_icon", config.get("enable_tray_icon", True), "boolean"),
+            ("Check Updates Interval", "check_updates_interval", config.get("check_updates_interval", 3600), "integer"),
+            ("Log Level", "log_level", config.get("log_level", "INFO"), "string"),
+            ("Max Log Size", "max_log_size", config.get("max_log_size", 10485760), "integer"),
+            ("Max Log Files", "max_log_files", config.get("max_log_files", 10), "integer"),
+        ]
+        
+        self._create_settings_controls(scrollable_frame, settings, "main")
+    
+    def _create_settings_controls(self, parent, settings, config_type):
+        # Create form controls for settings
+        self.settings_vars = getattr(self, 'settings_vars', {})
+        self.settings_vars[config_type] = {}
+        
+        for label_text, key, default_value, value_type in settings:
+            frame = ttk.Frame(parent)
+            frame.pack(fill=tk.X, padx=10, pady=2)
+            
+            ttk.Label(frame, text=f"{label_text}:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+            
+            if value_type == "boolean":
+                var = tk.BooleanVar(value=default_value)
+                control = ttk.Checkbutton(frame, variable=var)
+                control.pack(side=tk.LEFT)
+            elif value_type == "integer":
+                var = tk.StringVar(value=str(default_value))
+                control = ttk.Entry(frame, textvariable=var, width=20)
+                control.pack(side=tk.LEFT)
+            else:  # string
+                var = tk.StringVar(value=str(default_value))
+                control = ttk.Entry(frame, textvariable=var, width=30)
+                control.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            
+            self.settings_vars[config_type][key] = (var, value_type)
+    
+    def _save_settings(self, window, db):
+        # Save all settings to database
+        try:
+            # Save dashboard settings
+            if "dashboard" in self.settings_vars:
+                for key, (var, value_type) in self.settings_vars["dashboard"].items():
+                    if value_type == "boolean":
+                        value = var.get()
+                    elif value_type == "integer":
+                        try:
+                            value = int(var.get())
+                        except ValueError:
+                            value = 0
+                    else:
+                        value = var.get()
+                    
+                    db.set_dashboard_config(key, value, value_type, "settings")
+            
+            # Save update settings
+            if hasattr(self, 'update_config_text'):
+                import json
+                try:
+                    config_data = json.loads(self.update_config_text.get(1.0, tk.END))
+                    db.set_update_config("full_config", config_data, "json", "settings")
+                except json.JSONDecodeError as e:
+                    messagebox.showerror("JSON Error", f"Invalid JSON in update config: {e}")
+                    return
+            
+            # Save system settings
+            if "main" in self.settings_vars:
+                for key, (var, value_type) in self.settings_vars["main"].items():
+                    if value_type == "boolean":
+                        value = var.get()
+                    elif value_type == "integer":
+                        try:
+                            value = int(var.get())
+                        except ValueError:
+                            value = 0
+                    else:
+                        value = var.get()
+                    
+                    db.set_main_config(key, value, value_type, "settings")
+            
+            messagebox.showinfo("Settings Saved", "Settings have been saved successfully!")
+            window.destroy()
+            
+        except Exception as e:
+            messagebox.showerror("Save Error", f"Failed to save settings: {e}")
 
     def show_about(self):
         # Show about dialog using the documentation module
@@ -4491,12 +5743,50 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
 def main():
     # Parse command line arguments and create/run dashboard
-    parser = argparse.ArgumentParser(description='Server Manager Dashboard')
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
-    args = parser.parse_args()
+    import logging
+    import traceback as tb
+    
+    # Set up early crash logging BEFORE anything else
+    early_log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'logs', 'dashboard_startup.log')
+    os.makedirs(os.path.dirname(early_log_path), exist_ok=True)
+    
+    # Configure early logging - only keep last startup log
+    early_logger = logging.getLogger('dashboard.startup')
+    early_logger.setLevel(logging.INFO)
+    early_handler = logging.FileHandler(early_log_path, mode='w', encoding='utf-8')
+    early_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    early_logger.addHandler(early_handler)
+    
+    early_logger.info("Dashboard startup initiated")
+    early_logger.debug(f"Python: {sys.executable} ({sys.version.split()[0]})")
+    
+    try:
+        parser = argparse.ArgumentParser(description='Server Manager Dashboard')
+        parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+        args = parser.parse_args()
 
-    # Create and run dashboard
-    dashboard = ServerManagerDashboard(debug_mode=args.debug)
-    dashboard.run()
+        # Create and run dashboard
+        dashboard = ServerManagerDashboard(debug_mode=args.debug)
+        early_logger.info("Dashboard started successfully")
+        
+        dashboard.run()
+        early_logger.info("Dashboard closed normally")
+        
+    except Exception as e:
+        early_logger.error(f"FATAL ERROR during dashboard startup: {e}")
+        early_logger.error(f"Traceback:\n{tb.format_exc()}")
+        
+        # Also try to show a message box for fatal errors
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror("Dashboard Startup Error", f"Failed to start dashboard:\n\n{e}\n\nCheck logs\\dashboard_startup.log for details.")
+            root.destroy()
+        except:
+            pass
+        
+        raise
 
 main()

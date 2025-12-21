@@ -170,6 +170,62 @@ class ClusterDatabase:
                     )
                 ''')
                 
+                # Server categories for organization
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS server_categories (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL UNIQUE,
+                        display_order INTEGER DEFAULT 0,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Dashboard configuration settings
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS dashboard_config (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        config_key TEXT NOT NULL UNIQUE,
+                        config_value TEXT,
+                        config_type TEXT DEFAULT 'string',
+                        category TEXT DEFAULT 'general',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Update configuration settings
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS update_config (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        config_key TEXT NOT NULL UNIQUE,
+                        config_value TEXT,
+                        config_type TEXT DEFAULT 'json',
+                        category TEXT DEFAULT 'schedules',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Main configuration settings
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS main_config (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        config_key TEXT NOT NULL UNIQUE,
+                        config_value TEXT,
+                        config_type TEXT DEFAULT 'string',
+                        category TEXT DEFAULT 'system',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Insert default "Uncategorized" category if it doesn't exist
+                cursor.execute('''
+                    INSERT OR IGNORE INTO server_categories (name, display_order)
+                    VALUES ('Uncategorized', 0)
+                ''')
+                
                 conn.commit()
                 logger.info(f"Cluster database initialized at: {self.db_path}")
                 
@@ -747,4 +803,404 @@ class ClusterDatabase:
                 
         except Exception as e:
             logger.error(f"Failed to update heartbeat: {e}")
+            return False
+    
+    # Category management methods
+    def get_categories(self) -> List[str]:
+        # Get all categories ordered by display_order, then by name
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT name FROM server_categories 
+                    ORDER BY display_order ASC, name ASC
+                ''')
+                categories = [row[0] for row in cursor.fetchall()]
+                return categories
+                
+        except Exception as e:
+            logger.error(f"Failed to get categories: {e}")
+            return ["Uncategorized"]
+    
+    def add_category(self, name: str, display_order: int = 0) -> bool:
+        # Add a new category
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO server_categories (name, display_order, updated_at)
+                    VALUES (?, ?, ?)
+                ''', (name, display_order, datetime.now().isoformat()))
+                conn.commit()
+                logger.info(f"Added category: {name}")
+                return True
+                
+        except sqlite3.IntegrityError:
+            logger.warning(f"Category '{name}' already exists")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to add category '{name}': {e}")
+            return False
+    
+    def rename_category(self, old_name: str, new_name: str) -> bool:
+        # Rename a category
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE server_categories 
+                    SET name = ?, updated_at = ?
+                    WHERE name = ?
+                ''', (new_name, datetime.now().isoformat(), old_name))
+                
+                if cursor.rowcount > 0:
+                    conn.commit()
+                    logger.info(f"Renamed category from '{old_name}' to '{new_name}'")
+                    return True
+                else:
+                    logger.warning(f"Category '{old_name}' not found")
+                    return False
+                
+        except sqlite3.IntegrityError:
+            logger.warning(f"Category '{new_name}' already exists")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to rename category '{old_name}' to '{new_name}': {e}")
+            return False
+    
+    def delete_category(self, name: str) -> bool:
+        # Delete a category (don't allow deleting "Uncategorized")
+        if name == "Uncategorized":
+            logger.warning("Cannot delete 'Uncategorized' category")
+            return False
+            
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM server_categories WHERE name = ?', (name,))
+                
+                if cursor.rowcount > 0:
+                    conn.commit()
+                    logger.info(f"Deleted category: {name}")
+                    return True
+                else:
+                    logger.warning(f"Category '{name}' not found")
+                    return False
+                
+        except Exception as e:
+            logger.error(f"Failed to delete category '{name}': {e}")
+            return False
+    
+    def reorder_categories(self, category_order: List[str]) -> bool:
+        # Update display order for all categories
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                for i, category_name in enumerate(category_order):
+                    cursor.execute('''
+                        UPDATE server_categories 
+                        SET display_order = ?, updated_at = ?
+                        WHERE name = ?
+                    ''', (i, datetime.now().isoformat(), category_name))
+                conn.commit()
+                logger.info(f"Reordered categories: {category_order}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to reorder categories: {e}")
+            return False
+    
+    # ===== CONFIGURATION MANAGEMENT METHODS =====
+    
+    def get_dashboard_config(self) -> Dict:
+        # Get all dashboard configuration settings
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT config_key, config_value, config_type FROM dashboard_config')
+                rows = cursor.fetchall()
+                
+                config = {}
+                for key, value, config_type in rows:
+                    if config_type == 'json' and value:
+                        try:
+                            config[key] = json.loads(value)
+                        except json.JSONDecodeError:
+                            config[key] = value
+                    elif config_type == 'boolean':
+                        config[key] = value.lower() in ('true', '1', 'yes')
+                    elif config_type == 'integer' and value:
+                        try:
+                            config[key] = int(value)
+                        except ValueError:
+                            config[key] = value
+                    else:
+                        config[key] = value
+                
+                logger.debug(f"Retrieved {len(config)} dashboard config settings")
+                return config
+                
+        except Exception as e:
+            logger.error(f"Failed to get dashboard config: {e}")
+            return {}
+    
+    def set_dashboard_config(self, key: str, value, config_type: str = 'string', category: str = 'general') -> bool:
+        # Set a dashboard configuration value
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Convert value based on type
+                if config_type == 'json':
+                    value_str = json.dumps(value) if value is not None else None
+                elif config_type == 'boolean':
+                    value_str = 'true' if value else 'false'
+                else:
+                    value_str = str(value) if value is not None else None
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO dashboard_config 
+                    (config_key, config_value, config_type, category, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (key, value_str, config_type, category, datetime.now().isoformat()))
+                
+                conn.commit()
+                logger.debug(f"Set dashboard config {key} = {value}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to set dashboard config {key}: {e}")
+            return False
+    
+    def migrate_dashboard_config_from_json(self, json_file_path: str) -> bool:
+        # Migrate dashboard config from JSON file to database
+        try:
+            if not os.path.exists(json_file_path):
+                logger.info(f"No JSON file to migrate from: {json_file_path}")
+                return True
+            
+            with open(json_file_path, 'r') as f:
+                config_data = json.load(f)
+            
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Flatten nested config structure
+                def flatten_config(data, prefix=''):
+                    items = []
+                    for key, value in data.items():
+                        full_key = f"{prefix}.{key}" if prefix else key
+                        if isinstance(value, dict):
+                            items.extend(flatten_config(value, full_key))
+                        else:
+                            config_type = 'boolean' if isinstance(value, bool) else 'integer' if isinstance(value, int) else 'string'
+                            items.append((full_key, value, config_type, 'migrated'))
+                    return items
+                
+                config_items = flatten_config(config_data)
+                
+                for key, value, config_type, category in config_items:
+                    if config_type == 'boolean':
+                        value_str = 'true' if value else 'false'
+                    else:
+                        value_str = str(value)
+                    
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO dashboard_config 
+                        (config_key, config_value, config_type, category, updated_at)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (key, value_str, config_type, category, datetime.now().isoformat()))
+                
+                conn.commit()
+                logger.info(f"Migrated {len(config_items)} dashboard config items from JSON")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to migrate dashboard config from JSON: {e}")
+            return False
+    
+    def get_update_config(self) -> Dict:
+        # Get all update configuration settings
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT config_key, config_value, config_type FROM update_config')
+                rows = cursor.fetchall()
+                
+                config = {}
+                for key, value, config_type in rows:
+                    if config_type == 'json' and value:
+                        try:
+                            config[key] = json.loads(value)
+                        except json.JSONDecodeError:
+                            config[key] = value
+                    else:
+                        config[key] = value
+                
+                logger.debug(f"Retrieved {len(config)} update config settings")
+                return config
+                
+        except Exception as e:
+            logger.error(f"Failed to get update config: {e}")
+            return {}
+    
+    def set_update_config(self, key: str, value, config_type: str = 'json', category: str = 'schedules') -> bool:
+        # Set an update configuration value
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Convert value based on type
+                if config_type == 'json':
+                    value_str = json.dumps(value) if value is not None else None
+                else:
+                    value_str = str(value) if value is not None else None
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO update_config 
+                    (config_key, config_value, config_type, category, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (key, value_str, config_type, category, datetime.now().isoformat()))
+                
+                conn.commit()
+                logger.debug(f"Set update config {key} = {value}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to set update config {key}: {e}")
+            return False
+    
+    def migrate_update_config_from_json(self, json_file_path: str) -> bool:
+        # Migrate update config from JSON file to database
+        try:
+            if not os.path.exists(json_file_path):
+                logger.info(f"No JSON file to migrate from: {json_file_path}")
+                return True
+            
+            with open(json_file_path, 'r') as f:
+                config_data = json.load(f)
+            
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Store the entire config as JSON for complex structures
+                cursor.execute('''
+                    INSERT OR REPLACE INTO update_config 
+                    (config_key, config_value, config_type, category, updated_at)
+                    VALUES (?, ?, 'json', 'migrated', ?)
+                ''', ('full_config', json.dumps(config_data), datetime.now().isoformat()))
+                
+                conn.commit()
+                logger.info("Migrated update config from JSON")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to migrate update config from JSON: {e}")
+            return False
+    
+    def get_main_config(self) -> Dict:
+        # Get all main configuration settings
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT config_key, config_value, config_type FROM main_config')
+                rows = cursor.fetchall()
+                
+                config = {}
+                for key, value, config_type in rows:
+                    if config_type == 'json' and value:
+                        try:
+                            config[key] = json.loads(value)
+                        except json.JSONDecodeError:
+                            config[key] = value
+                    elif config_type == 'boolean':
+                        config[key] = value.lower() in ('true', '1', 'yes')
+                    elif config_type == 'integer' and value:
+                        try:
+                            config[key] = int(value)
+                        except ValueError:
+                            config[key] = value
+                    else:
+                        config[key] = value
+                
+                logger.debug(f"Retrieved {len(config)} main config settings")
+                return config
+                
+        except Exception as e:
+            logger.error(f"Failed to get main config: {e}")
+            return {}
+    
+    def set_main_config(self, key: str, value, config_type: str = 'string', category: str = 'system') -> bool:
+        # Set a main configuration value
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Convert value based on type
+                if config_type == 'json':
+                    value_str = json.dumps(value) if value is not None else None
+                elif config_type == 'boolean':
+                    value_str = 'true' if value else 'false'
+                else:
+                    value_str = str(value) if value is not None else None
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO main_config 
+                    (config_key, config_value, config_type, category, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (key, value_str, config_type, category, datetime.now().isoformat()))
+                
+                conn.commit()
+                logger.debug(f"Set main config {key} = {value}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to set main config {key}: {e}")
+            return False
+    
+    def migrate_main_config_from_json(self, json_file_path: str) -> bool:
+        # Migrate main config from JSON file to database
+        try:
+            if not os.path.exists(json_file_path):
+                logger.info(f"No JSON file to migrate from: {json_file_path}")
+                return True
+            
+            with open(json_file_path, 'r') as f:
+                config_data = json.load(f)
+            
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Flatten nested config structure
+                def flatten_config(data, prefix=''):
+                    items = []
+                    for key, value in data.items():
+                        full_key = f"{prefix}.{key}" if prefix else key
+                        if isinstance(value, dict):
+                            items.extend(flatten_config(value, full_key))
+                        else:
+                            config_type = 'boolean' if isinstance(value, bool) else 'integer' if isinstance(value, int) else 'string'
+                            items.append((full_key, value, config_type, 'migrated'))
+                    return items
+                
+                config_items = flatten_config(config_data)
+                
+                for key, value, config_type, category in config_items:
+                    if config_type == 'boolean':
+                        value_str = 'true' if value else 'false'
+                    else:
+                        value_str = str(value)
+                    
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO main_config 
+                        (config_key, config_value, config_type, category, updated_at)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (key, value_str, config_type, category, datetime.now().isoformat()))
+                
+                conn.commit()
+                logger.info(f"Migrated {len(config_items)} main config items from JSON")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to migrate main config from JSON: {e}")
             return False

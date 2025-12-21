@@ -105,11 +105,10 @@ class AutoUpdater:
             self.steam_cmd_path = os.path.join(steam_cmd_dir, "steamcmd.exe")
             winreg.CloseKey(key)
             
-            # Define paths structure
+            # Define paths structure (config/data folders removed - all config is database-backed)
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config"),
                 "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
                 "scripts": os.path.join(self.server_manager_dir, "Modules")

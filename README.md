@@ -43,12 +43,7 @@ pip install -r requirements.txt
 - Windows 10 or Windows Server 2016+
 - Python 3.8+
 - 4GB RAM (8GB+ recommended)
-- Administrator privileges for installation
 
 ## Configuration
 
 Configure database connections and server settings through the GUI or web interface. Supports SQLite, MySQL, and PostgreSQL.
-
-## License
-
-GNU General Public License v3.0

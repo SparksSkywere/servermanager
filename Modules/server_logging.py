@@ -1,5 +1,4 @@
 # Centralized logging management with rotation, compression, and statistics
-
 import os
 import sys
 import traceback
@@ -28,7 +27,7 @@ class LogManager:
         self.registry_path = REGISTRY_PATH
         self.server_manager_dir = None
         self.paths = {}
-        self.log_level = logging.INFO
+        self.log_level = logging.WARNING  # Default to WARNING to reduce log spam
         self.formatters = {}
         self.handlers = {}
         self.loggers = {}
@@ -67,16 +66,14 @@ class LogManager:
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             
-            # Define paths structure
+            # Define paths structure (config/data folders removed - all config is database-backed)
             self.paths = {
                 "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config")
+                "logs": os.path.join(self.server_manager_dir, "logs")
             }
             
-            # Ensure directories exist
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
+            # Ensure log directory exists
+            os.makedirs(self.paths["logs"], exist_ok=True)
             
             # Setup main application logger
             self._setup_main_logger()
@@ -86,13 +83,11 @@ class LogManager:
             self.server_manager_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             self.paths = {
                 "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config")
+                "logs": os.path.join(self.server_manager_dir, "logs")
             }
             
-            # Ensure directories exist
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
+            # Ensure log directory exists
+            os.makedirs(self.paths["logs"], exist_ok=True)
             
             # Log the fallback initialization
             print(f"Registry initialization failed, using fallback path: {self.server_manager_dir}")
@@ -514,48 +509,33 @@ log_manager = LogManager()
 def get_logger(name, log_file=None, level=None, formatter_name="default", 
                max_size=DEFAULT_MAX_SIZE, backup_count=DEFAULT_BACKUP_COUNT):
     return log_manager.get_logger(name, log_file, level, formatter_name, max_size, backup_count)
-
 def get_server_logger(server_name):
     return log_manager.get_server_logger(server_name)
-
 def get_component_logger(component_name):
     return log_manager.get_component_logger(component_name)
-
 def get_debug_logger(debug_module_name="debug"):
     return log_manager.get_debug_logger(debug_module_name)
-
 def get_error_logger():
     return log_manager.get_error_logger()
-
 def get_dashboard_logger():
     return log_manager.get_dashboard_logger()
-
 def log_exception(logger, message="An exception occurred", exc_info=None):
     log_manager.log_exception(logger, message, exc_info)
-
 def log_system_state(component, state, details=None):
     log_manager.log_system_state(component, state, details)
-
 def start_log_maintenance():
     return log_manager.start_log_maintenance()
-
 def get_log_statistics():
     return log_manager.get_log_statistics()
-
 def configure_dashboard_logging(debug_mode=False, config=None):
     return log_manager.configure_dashboard_logging(debug_mode, config)
-
 def write_pid_file(process_type, pid, temp_path):
     return log_manager.write_pid_file(process_type, pid, temp_path)
-
 def log_server_action(server_name, action, result="SUCCESS", details=None):
     log_manager.log_server_action(server_name, action, result, details)
-
 def log_installation_progress(server_name, stage, message):
     log_manager.log_installation_progress(server_name, stage, message)
-
 def log_process_monitoring(message, level="INFO"):
     log_manager.log_process_monitoring(message, level)
-
 def log_dashboard_event(event_type, message, level="INFO"):
     log_manager.log_dashboard_event(event_type, message, level)

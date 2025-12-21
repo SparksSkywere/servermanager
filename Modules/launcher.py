@@ -65,9 +65,9 @@ class ServerManagerLauncher(ServerManagerModule):
         logger.addHandler(file_handler)
         
         # Log cluster role information
-        logger.info(f"Cluster role detected: {self.cluster_role}")
+        logger.debug(f"Cluster role detected: {self.cluster_role}")
         if self.host_address:
-            logger.info(f"Host address: {self.host_address}")
+            logger.debug(f"Host address: {self.host_address}")
         
         # Write PID file for launcher
         self.write_pid_file("launcher", os.getpid())
@@ -211,7 +211,7 @@ class ServerManagerLauncher(ServerManagerModule):
             self.processes["tray_icon"] = tray_process
             self.write_pid_file("trayicon", tray_process.pid)
             
-            logger.info(f"Tray icon process started (PID: {tray_process.pid})")
+            logger.debug(f"Tray icon process started (PID: {tray_process.pid})")
             return True
             
         except Exception as e:
@@ -244,7 +244,7 @@ class ServerManagerLauncher(ServerManagerModule):
                 startupinfo.wShowWindow = 0  # SW_HIDE - completely hidden
                 
                 # Use direct Python execution for better reliability and no console windows
-                logger.info("Starting web server directly with Python")
+                logger.debug("Starting web server directly with Python")
                 web_process = subprocess.Popen(
                     [sys.executable, web_script],
                     creationflags=subprocess.CREATE_NO_WINDOW,
@@ -289,11 +289,11 @@ class ServerManagerLauncher(ServerManagerModule):
             except:
                 logger.warning("Could not get web port from registry, using default 8080")
             
-            logger.info(f"Checking if web server is listening on port {web_port}...")
+            logger.debug(f"Checking if web server is listening on port {web_port}...")
             for attempt in range(15):  # Increased timeout
                 time.sleep(2)
                 if self.is_port_open('localhost', web_port):
-                    logger.info(f"Web server successfully started and listening on port {web_port}")
+                    logger.debug(f"Web server successfully started and listening on port {web_port}")
                     return True
                 logger.debug(f"Attempt {attempt+1}/15: Web server not yet listening")
                 
@@ -325,7 +325,7 @@ class ServerManagerLauncher(ServerManagerModule):
                 except Exception as e:
                     logger.error(f"Error terminating web server process: {e}")
             else:
-                logger.info(f"Web server successfully started and listening on port {web_port}")
+                logger.debug(f"Web server successfully started and listening on port {web_port}")
                 return True
             
             return True  # Return True anyway to keep the process managed if it didn't crash immediately
@@ -350,7 +350,7 @@ class ServerManagerLauncher(ServerManagerModule):
                 logger.error(f"Python executable not found: {python_exe}")
                 return False
                 
-            logger.info(f"Starting subhost dashboard...")
+            logger.debug(f"Starting subhost dashboard...")
             logger.debug(f"Using Python executable: {python_exe}")
             logger.debug(f"Subhost script path: {subhost_script}")
             
@@ -358,7 +358,7 @@ class ServerManagerLauncher(ServerManagerModule):
             env = os.environ.copy()
             if self.host_address:
                 env["CLUSTER_HOST_URL"] = f"http://{self.host_address}:5001"
-                logger.info(f"Connecting to host at: {self.host_address}")
+                logger.debug(f"Connecting to host at: {self.host_address}")
             
             # Start subhost dashboard process
             if sys.platform == 'win32':
@@ -390,7 +390,7 @@ class ServerManagerLauncher(ServerManagerModule):
             self.processes["subhost_dashboard"] = subhost_process
             self.write_pid_file("subhost_dashboard", subhost_process.pid)
             
-            logger.info(f"Subhost dashboard started with PID: {subhost_process.pid}")
+            logger.debug(f"Subhost dashboard started with PID: {subhost_process.pid}")
             
             # Wait a moment and check if it started successfully
             time.sleep(2)
@@ -399,7 +399,7 @@ class ServerManagerLauncher(ServerManagerModule):
             for attempt in range(15):  # Check for 15 seconds
                 time.sleep(1)
                 if self.is_port_open('localhost', 5002):
-                    logger.info(f"Subhost dashboard successfully started and listening on port 5002")
+                    logger.debug(f"Subhost dashboard successfully started and listening on port 5002")
                     return True
                 logger.debug(f"Attempt {attempt+1}/15: Subhost dashboard not yet listening")
                 # Check if process is still running
@@ -430,12 +430,12 @@ class ServerManagerLauncher(ServerManagerModule):
     def check_dependencies(self):
         # Check if required dependencies are installed
         try:
-            logger.info("Checking for required dependencies...")
+            logger.debug("Checking for required dependencies...")
             
             # Check if Flask is installed
             try:
                 import flask
-                logger.info("Flask is installed")
+                logger.debug("Flask is installed")
             except ImportError:
                 logger.error("Flask is not installed")
                 return False
@@ -443,7 +443,7 @@ class ServerManagerLauncher(ServerManagerModule):
             # Check if Flask-CORS is installed
             try:
                 import flask_cors
-                logger.info("Flask-CORS is installed")
+                logger.debug("Flask-CORS is installed")
             except ImportError:
                 logger.warning("Flask-CORS is not installed - some features may not work")
                 
@@ -451,7 +451,7 @@ class ServerManagerLauncher(ServerManagerModule):
             for module in ["pystray", "PIL"]:
                 try:
                     __import__(module)
-                    logger.info(f"{module} is installed")
+                    logger.debug(f"{module} is installed")
                 except ImportError:
                     logger.error(f"{module} is not installed")
                     return False
@@ -475,7 +475,7 @@ class ServerManagerLauncher(ServerManagerModule):
                 logger.error(f"Setup script not found: {setup_script}")
                 return False
                 
-            logger.info("Running setup script to install dependencies...")
+            logger.debug("Running setup script to install dependencies...")
             
             if sys.platform == 'win32':
                 # On Windows, use CREATE_NO_WINDOW to hide console
@@ -501,7 +501,7 @@ class ServerManagerLauncher(ServerManagerModule):
                 logger.error(f"Failed to install dependencies: {result.stderr}")
                 return False
                 
-            logger.info("Dependencies installed successfully")
+            logger.debug("Dependencies installed successfully")
             return True
             
         except Exception as e:
@@ -517,19 +517,19 @@ class ServerManagerLauncher(ServerManagerModule):
                 if not self.install_dependencies():
                     logger.error("Failed to install dependencies, some components may not work")
             
-            logger.info(f"Starting processes for cluster role: {self.cluster_role}")
+            logger.debug(f"Starting processes for cluster role: {self.cluster_role}")
             
             # Start components based on cluster role
             if self.cluster_role == "Host":
                 # Host should run all components
-                logger.info("Starting as Host - launching all components")
+                logger.debug("Starting as Host - launching all components")
                 
                 # Start tray icon (only if not running as service)
                 if not self.is_service:
                     if not self.start_tray_icon():
                         logger.warning("Failed to start tray icon, continuing anyway")
                 else:
-                    logger.info("Running as service - skipping tray icon")
+                    logger.debug("Running as service - skipping tray icon")
                     
                 # Start web server
                 if not self.start_web_server():
@@ -537,14 +537,14 @@ class ServerManagerLauncher(ServerManagerModule):
                     
             elif self.cluster_role == "Subhost":
                 # Subhost should only run minimal components and connect to host
-                logger.info("Starting as Subhost - launching minimal components")
+                logger.debug("Starting as Subhost - launching minimal components")
                 
                 # Start tray icon (only if not running as service)
                 if not self.is_service:
                     if not self.start_tray_icon():
                         logger.warning("Failed to start tray icon, continuing anyway")
                 else:
-                    logger.info("Running as service - skipping tray icon")
+                    logger.debug("Running as service - skipping tray icon")
                 
                 # Start subhost dashboard instead of main web server
                 if not self.start_subhost_dashboard():
@@ -563,7 +563,7 @@ class ServerManagerLauncher(ServerManagerModule):
                 if not self.start_web_server():
                     logger.warning("Failed to start web server, continuing anyway")
                 
-            logger.info("All processes started")
+            logger.debug("All processes started")
             return True
             
         except Exception as e:
@@ -626,7 +626,7 @@ class ServerManagerLauncher(ServerManagerModule):
                 time.sleep(5)
                 
             except KeyboardInterrupt:
-                logger.info("Keyboard interrupt received, shutting down...")
+                logger.debug("Keyboard interrupt received, shutting down...")
                 self.running = False
                 break
                 
@@ -636,24 +636,64 @@ class ServerManagerLauncher(ServerManagerModule):
                 
     def cleanup(self):
         # Clean up resources and terminate processes
-        logger.info("Cleaning up resources...")
+        logger.debug("Cleaning up resources...")
         
         # Terminate child processes with more aggressive approach
         for name, process in self.processes.items():
             try:
                 if process.poll() is None:
-                    logger.info(f"Terminating {name} process (PID: {process.pid})")
+                    logger.debug(f"Terminating {name} process (PID: {process.pid})")
+                    
+                    # Get child processes first using psutil
+                    children = []
+                    try:
+                        import psutil
+                        if psutil.pid_exists(process.pid):
+                            parent = psutil.Process(process.pid)
+                            children = parent.children(recursive=True)
+                    except Exception:
+                        pass
+                    
                     process.terminate()
                     try:
                         # Wait for process to terminate
                         process.wait(timeout=3)
                     except subprocess.TimeoutExpired:
-                        # If termination times out, force kill
+                        # If termination times out, force kill with process tree
                         logger.warning(f"{name} process did not terminate gracefully, killing forcefully")
                         if sys.platform == 'win32':
-                            subprocess.call(['taskkill', '/F', '/PID', str(process.pid)])
+                            # Use /T flag to kill entire process tree
+                            subprocess.call(['taskkill', '/F', '/T', '/PID', str(process.pid)],
+                                           stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL)
                         else:
                             os.kill(process.pid, signal.SIGKILL)
+                    
+                    # Kill any remaining child processes
+                    for child in children:
+                        try:
+                            if child.is_running():
+                                if sys.platform == 'win32':
+                                    subprocess.call(['taskkill', '/F', '/PID', str(child.pid)],
+                                                   stdout=subprocess.DEVNULL,
+                                                   stderr=subprocess.DEVNULL)
+                                else:
+                                    child.kill()
+                        except Exception:
+                            pass
+                    
+                    # Verify process is dead
+                    try:
+                        import psutil
+                        if psutil.pid_exists(process.pid):
+                            logger.warning(f"{name} process still running, final kill attempt")
+                            if sys.platform == 'win32':
+                                subprocess.call(['taskkill', '/F', '/T', '/PID', str(process.pid)],
+                                               stdout=subprocess.DEVNULL,
+                                               stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
+                        
             except Exception as e:
                 logger.error(f"Error terminating {name} process: {str(e)}")
                 

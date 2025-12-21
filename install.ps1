@@ -2117,12 +2117,8 @@ Provide this token to subhost administrators during their installation process.
 
         Update-Progress "Setting up database..."
         try {
-            $DataFolder = Join-Path $ServerManagerDir "data"
-            if (-not (Test-Path $DataFolder)) {
-                New-Item -ItemType Directory -Force -Path $DataFolder | Out-Null
-            }
             # Initialize database and store path for potential future use
-            $null = Initialize-SQLDatabase -SQLType $Settings.SQLType -SQLVersion $Settings.SQLVersion -SQLLocation $Settings.SQLLocation -DataFolder $DataFolder
+            $null = Initialize-SQLDatabase -SQLType $Settings.SQLType -SQLVersion $Settings.SQLVersion -SQLLocation $Settings.SQLLocation
         } catch {
             if (-not (Show-StepError "Database Setup" "Failed to initialize database: $($_.Exception.Message)`n`nUser authentication may not work properly.")) {
                 throw "Installation cancelled by user after database setup failed"

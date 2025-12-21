@@ -25,18 +25,67 @@ logger = get_dashboard_logger()
 
 
 def load_dashboard_config(server_manager_dir):
-    # Load dashboard configuration from JSON file
+    # Load dashboard configuration from database
     try:
-        config_path = os.path.join(server_manager_dir, "data", "dashboard.json")
-        if os.path.exists(config_path):
-            with open(config_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        else:
-            logger.warning(f"Dashboard config not found at {config_path}, using defaults")
-            return {}
+        from Modules.Database.cluster_database import ClusterDatabase
+        db = ClusterDatabase()
+        
+        # Get flattened config from database
+        flat_config = db.get_dashboard_config()
+        
+        # Convert flattened config back to nested structure
+        config = {}
+        for key, value in flat_config.items():
+            keys = key.split('.')
+            current = config
+            for k in keys[:-1]:
+                if k not in current:
+                    current[k] = {}
+                current = current[k]
+            current[keys[-1]] = value
+        
+        # Migrate from JSON if database is empty and JSON exists
+        if not config:
+            config_path = os.path.join(server_manager_dir, "data", "dashboard.json")
+            if os.path.exists(config_path):
+                logger.info("Migrating dashboard config from JSON to database")
+                db.migrate_dashboard_config_from_json(config_path)
+                # Reload after migration
+                flat_config = db.get_dashboard_config()
+                config = {}
+                for key, value in flat_config.items():
+                    keys = key.split('.')
+                    current = config
+                    for k in keys[:-1]:
+                        if k not in current:
+                            current[k] = {}
+                        current = current[k]
+                    current[keys[-1]] = value
+        
+        return config
+        
     except Exception as e:
-        logger.error(f"Error loading dashboard config: {e}")
+        logger.error(f"Error loading dashboard config from database: {e}")
         return {}
+
+
+def load_categories(server_manager_dir):
+    # Load categories from database
+    try:
+        from Modules.Database.cluster_database import ClusterDatabase
+        db = ClusterDatabase()
+        categories = db.get_categories()
+        return categories
+    except Exception as e:
+        logger.error(f"Error loading categories from database: {e}")
+        return ["Uncategorized"]
+
+
+def save_categories(server_manager_dir, categories):
+    # Save categories to database - this function is kept for compatibility
+    # but categories are now managed through individual database operations
+    logger.debug(f"Categories saved via database operations: {categories}")
+    pass
 
 
 def center_window(window, width=None, height=None, parent=None):
@@ -1418,8 +1467,25 @@ def format_uptime_from_start_time(start_time):
 
 
 def update_server_status_in_treeview(server_list, server_name, status):
-    # Placeholder for server status update
-    pass
+    # Update the status of a server in the treeview
+    try:
+        # Find all items in the treeview
+        for item in server_list.get_children():
+            item_values = server_list.item(item, 'values')
+            if item_values and len(item_values) > 0 and item_values[0] == server_name:
+                # Update the status (index 1) while preserving other values
+                updated_values = (
+                    item_values[0],  # server_name
+                    status,          # new status
+                    item_values[2] if len(item_values) > 2 else '',  # pid
+                    item_values[3] if len(item_values) > 3 else '0%',  # cpu
+                    item_values[4] if len(item_values) > 4 else '0 MB',  # memory
+                    item_values[5] if len(item_values) > 5 else '00:00:00'  # uptime
+                )
+                server_list.item(item, values=updated_values)
+                break
+    except Exception as e:
+        logger.error(f"Error updating server status in treeview: {e}")
 
 
 def open_directory_in_explorer(directory_path):
@@ -3177,7 +3243,7 @@ def cleanup_orphaned_process_entries(server_manager, logger):
         if not server_manager:
             return
             
-        logger.info("Cleaning up orphaned process entries...")
+        logger.debug("Cleaning up orphaned process entries...")
         
         # Get all configured servers
         server_configs = server_manager.get_servers()
@@ -3192,7 +3258,7 @@ def cleanup_orphaned_process_entries(server_manager, logger):
                         import psutil
                         if not psutil.pid_exists(pid):
                             # Process is not running, clean up the entry
-                            logger.info(f"Cleaning up orphaned PID {pid} for server {server_name}")
+                            logger.debug(f"Cleaning up orphaned PID {pid} for server {server_name}")
                             
                             # Remove process-related entries
                             server_config.pop('ProcessId', None)
@@ -3206,7 +3272,7 @@ def cleanup_orphaned_process_entries(server_manager, logger):
                             
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         # Process doesn't exist, clean it up
-                        logger.info(f"Cleaning up invalid PID {pid} for server {server_name}")
+                        logger.debug(f"Cleaning up invalid PID {pid} for server {server_name}")
                         
                         server_config.pop('ProcessId', None)
                         server_config.pop('PID', None)
@@ -3223,9 +3289,7 @@ def cleanup_orphaned_process_entries(server_manager, logger):
                 logger.error(f"Error cleaning up process entries for server {server_name}: {e}")
         
         if cleaned_count > 0:
-            logger.info(f"Cleaned up {cleaned_count} orphaned process entries")
-        else:
-            logger.debug("No orphaned process entries found")
+            logger.debug(f"Cleaned up {cleaned_count} orphaned process entries")
             
     except Exception as e:
         logger.error(f"Error in cleanup_orphaned_process_entries: {e}")
@@ -3237,7 +3301,7 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
         if not server_manager or not console_manager:
             return
             
-        logger.info("Detecting running server processes for console reattachment...")
+        logger.debug("Detecting running server processes for console reattachment...")
         
         # First, clean up orphaned process entries
         cleanup_orphaned_process_entries(server_manager, logger)
@@ -3257,7 +3321,23 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                         if psutil.pid_exists(pid):
                             process = psutil.Process(pid)
                             if process.is_running():
-                                logger.info(f"Found running server process for {server_name} (PID: {pid}) via stored PID")
+                                # IMPORTANT: Verify the process actually belongs to this server
+                                # Windows reuses PIDs, so an old PID might belong to a different process
+                                if not _process_matches_server(process, server_name, server_config):
+                                    logger.warning(f"PID {pid} for {server_name} is now a different process ({process.name()}), clearing stale PID")
+                                    # Clear the stale PID from config
+                                    server_config.pop('ProcessId', None)
+                                    server_config.pop('PID', None)
+                                    server_config.pop('StartTime', None)
+                                    server_manager.save_server_config(server_name, server_config)
+                                    # Also clear any leftover console state
+                                    try:
+                                        console_manager.cleanup_console_on_stop(server_name)
+                                    except Exception:
+                                        pass
+                                    continue
+                                
+                                logger.debug(f"Found running server process for {server_name} (PID: {pid})")
                                 
                                 # Reattach console to the running process
                                 success = console_manager.attach_console_to_process(
@@ -3265,12 +3345,29 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                                 )
                                 
                                 if success:
-                                    logger.info(f"Successfully reattached console to {server_name}")
+                                    logger.debug(f"Reattached console to {server_name}")
                                     reattached_by_pid += 1
                                 else:
                                     logger.warning(f"Failed to reattach console to {server_name}")
+                        else:
+                            # PID exists but process is not running - clear stale data
+                            logger.debug(f"PID {pid} for {server_name} is no longer running, clearing stale PID")
+                            server_config.pop('ProcessId', None)
+                            server_config.pop('PID', None)
+                            server_config.pop('StartTime', None)
+                            server_manager.save_server_config(server_name, server_config)
+                            # Clear any leftover console state
+                            try:
+                                console_manager.cleanup_console_on_stop(server_name)
+                            except Exception:
+                                pass
                     except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
                         logger.debug(f"Process {pid} for {server_name} is not accessible: {e}")
+                        # Clear the stale PID
+                        server_config.pop('ProcessId', None)
+                        server_config.pop('PID', None)
+                        server_config.pop('StartTime', None)
+                        server_manager.save_server_config(server_name, server_config)
                     except Exception as e:
                         logger.error(f"Error checking process {pid} for {server_name}: {e}")
                         
@@ -3299,7 +3396,7 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                                 logger.debug(f"Server {server_name} already has console attached")
                                 continue
                                 
-                            logger.info(f"Found running server process for {server_name} (PID: {proc.info['pid']}) via process discovery")
+                            logger.debug(f"Found running server process for {server_name} (PID: {proc.info['pid']}) via discovery")
                             
                             # Reattach console to the discovered process
                             success = console_manager.attach_console_to_process(
@@ -3307,7 +3404,7 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                             )
                             
                             if success:
-                                logger.info(f"Successfully reattached console to {server_name} via process discovery")
+                                logger.debug(f"Reattached console to {server_name} via discovery")
                                 reattached_by_discovery += 1
                                 
                                 # Update the server config with the current PID
@@ -3330,8 +3427,8 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
             logger.error(f"Error during enhanced process discovery: {e}")
         
         total_reattached = reattached_by_pid + reattached_by_discovery
-        logger.info(f"Finished detecting running server processes - Reattached {total_reattached} servers "
-                   f"({reattached_by_pid} by PID, {reattached_by_discovery} by discovery)")
+        if total_reattached > 0:
+            logger.info(f"Reattached {total_reattached} running server(s)")
         
     except Exception as e:
         logger.error(f"Error in reattach_to_running_servers: {e}")
@@ -3394,33 +3491,90 @@ def _process_matches_server(process, server_name, server_config):
         return False
 
 
-def update_server_list_for_subhost(subhost_name, servers_data, server_lists, logger):
-    # Update the server list for a specific subhost
+def update_server_list_for_subhost(subhost_name, servers_data, server_lists, server_manager_dir, logger):
+    # Update the server list for a specific subhost with enhanced selection preservation and categorization
     if subhost_name not in server_lists:
         return
         
     server_list = server_lists[subhost_name]
     
+    # Preserve current selection - handle multiple selections
+    current_selection = server_list.selection()
+    selected_server_names = []
+    if current_selection:
+        for item_id in current_selection:
+            try:
+                selected_item = server_list.item(item_id)
+                if selected_item and 'values' in selected_item and len(selected_item['values']) > 0:
+                    server_name = selected_item['values'][0]
+                    selected_server_names.append(server_name)
+            except Exception as e:
+                logger.debug(f"Error getting selection info for item {item_id}: {e}")
+    
+    if selected_server_names:
+        logger.debug(f"Preserving selection for servers: {selected_server_names}")
+    
     # Clear existing items
     for item in server_list.get_children():
         server_list.delete(item)
     
-    # Add servers for this subhost
+    # Load all categories from persistence (including empty ones)
+    all_categories = load_categories(server_manager_dir)
+    
+    # Group servers by category
+    categories = {}
+    for category in all_categories:
+        categories[category] = []  # Initialize all categories, even empty ones
+    
     for server_name, server_info in servers_data.items():
+        category = server_info.get('category', 'Uncategorized')
+        if category not in categories:
+            categories[category] = []  # Handle servers with categories not in persistence
+        categories[category].append((server_name, server_info))
+    
+    # Add categories and servers
+    selected_item_ids = []
+    for category_name in all_categories:  # Use all_categories to maintain order
+        servers = categories.get(category_name, [])
+        
+        # Insert category as parent (even if empty)
+        category_item = server_list.insert("", tk.END, text=category_name, 
+                                         values=(category_name, "", "", "", "", ""), 
+                                         open=True, tags=('category',))  # Start expanded
+        
+        # Add servers under category
+        for server_name, server_info in servers:
+            try:
+                # Extract server information
+                status = server_info.get('status', 'Unknown')
+                pid = server_info.get('pid', '')
+                cpu = server_info.get('cpu', '0%')
+                memory = server_info.get('memory', '0 MB')
+                uptime = server_info.get('uptime', '00:00:00')
+                
+                # Insert into treeview as child of category
+                item_id = server_list.insert(category_item, tk.END, values=(
+                    server_name, status, pid, cpu, memory, uptime
+                ), tags=('server',))
+                
+                # Track the item ID if this server was previously selected
+                if server_name in selected_server_names:
+                    selected_item_ids.append(item_id)
+                    
+            except Exception as e:
+                logger.error(f"Error adding server {server_name} to list: {e}")
+    
+    # Restore selection for all previously selected servers that still exist
+    if selected_item_ids:
         try:
-            # Extract server information
-            status = server_info.get('status', 'Unknown')
-            pid = server_info.get('pid', '')
-            cpu = server_info.get('cpu', '0%')
-            memory = server_info.get('memory', '0 MB')
-            uptime = server_info.get('uptime', '00:00:00')
-            
-            # Insert into treeview
-            server_list.insert("", tk.END, values=(
-                server_name, status, pid, cpu, memory, uptime
-            ))
+            server_list.selection_set(*selected_item_ids)
+            if len(selected_item_ids) == 1:
+                server_list.focus(selected_item_ids[0])
+            logger.debug(f"Restored selection for {len(selected_item_ids)} servers")
         except Exception as e:
-            logger.error(f"Error adding server {server_name} to list: {e}")
+            logger.debug(f"Error restoring selection: {e}")
+    else:
+        logger.debug("No servers to restore selection for")
 
 
 def get_servers_display_data(server_manager, logger):
@@ -3458,7 +3612,8 @@ def get_servers_display_data(server_manager, logger):
                     'pid': str(pid) if pid else '',
                     'cpu': '0%',
                     'memory': '0 MB',
-                    'uptime': '00:00:00'
+                    'uptime': '00:00:00',
+                    'category': server_config.get('Category', 'Uncategorized') if server_config else 'Uncategorized'
                 }
                 
                 # Get CPU and memory usage if server is running
@@ -3467,8 +3622,8 @@ def get_servers_display_data(server_manager, logger):
                         import psutil
                         process = psutil.Process(pid)
                         
-                        # Get CPU usage (short interval for responsiveness)
-                        cpu_percent = process.cpu_percent(interval=0.1)
+                        # Get CPU usage (very short interval for responsiveness)
+                        cpu_percent = process.cpu_percent(interval=0.01)
                         display_data['cpu'] = f"{cpu_percent:.1f}%"
                         
                         # Get memory usage
@@ -3515,22 +3670,22 @@ def get_servers_display_data(server_manager, logger):
         return {}
 
 
-def refresh_subhost_servers(subhost_name, server_manager, server_lists, logger):
+def refresh_subhost_servers(subhost_name, server_manager, server_lists, server_manager_dir, logger):
     # Refresh servers for a specific subhost with async remote operations
     try:
         if subhost_name == "Local Host":
             # Get processed server data for display
             servers = get_servers_display_data(server_manager, logger)
-            update_server_list_for_subhost(subhost_name, servers, server_lists, logger)
+            update_server_list_for_subhost(subhost_name, servers, server_lists, server_manager_dir, logger)
         else:
             # Get servers from remote subhost asynchronously
-            _refresh_remote_subhost_async(subhost_name, server_lists, logger)
+            _refresh_remote_subhost_async(subhost_name, server_lists, server_manager_dir, logger)
             
     except Exception as e:
         logger.error(f"Error refreshing servers for subhost {subhost_name}: {e}")
 
 
-def _refresh_remote_subhost_async(subhost_name, server_lists, logger):
+def _refresh_remote_subhost_async(subhost_name, server_lists, server_manager_dir, logger):
     # Asynchronously refresh servers from a remote subhost
     import threading
     
@@ -3589,7 +3744,7 @@ def _refresh_remote_subhost_async(subhost_name, server_lists, logger):
             # Update the UI on the main thread
             def update_ui():
                 try:
-                    update_server_list_for_subhost(subhost_name, converted_servers, server_lists, logger)
+                    update_server_list_for_subhost(subhost_name, converted_servers, server_lists, server_manager_dir, logger)
                 except Exception as e:
                     logger.error(f"Error updating UI for subhost {subhost_name}: {e}")
             
@@ -3617,20 +3772,20 @@ def _refresh_remote_subhost_async(subhost_name, server_lists, logger):
     thread.start()
 
 
-def refresh_all_subhost_servers(server_lists, server_manager, logger):
+def refresh_all_subhost_servers(server_lists, server_manager, server_manager_dir, logger):
     # Refresh servers for all subhost tabs - starts async operations for remote hosts
     for subhost_name in server_lists.keys():
         try:
-            refresh_subhost_servers(subhost_name, server_manager, server_lists, logger)
+            refresh_subhost_servers(subhost_name, server_manager, server_lists, server_manager_dir, logger)
         except Exception as e:
             logger.error(f"Error initiating refresh for subhost {subhost_name}: {e}")
 
 
-def refresh_current_subhost_servers(current_subhost_func, server_manager, server_lists, logger):
+def refresh_current_subhost_servers(current_subhost_func, server_manager, server_lists, server_manager_dir, logger):
     # Refresh servers for the currently active subhost tab - handles async remote operations
     current_subhost = current_subhost_func()
     if current_subhost:
-        refresh_subhost_servers(current_subhost, server_manager, server_lists, logger)
+        refresh_subhost_servers(current_subhost, server_manager, server_lists, server_manager_dir, logger)
         return False  # Return False to indicate async operation started
 
 

@@ -296,15 +296,23 @@ def admin_login(user_manager):
 
 def admin_login_with_root(login_root, user_manager):
     # Admin login function that uses an existing Tkinter root window to avoid conflicts
+    import logging
+    login_logger = logging.getLogger('dashboard')
+    login_logger.debug("admin_login_with_root() called")
+    
     max_attempts = 3
     attempts = 0
     
     while attempts < max_attempts:
+        login_logger.debug(f"Login attempt loop iteration {attempts + 1}")
+        
         # Withdraw the main window during login
         login_root.withdraw()
+        login_logger.debug("Main window withdrawn")
         
         # Create login dialog using the existing root window
         login_dialog = tk.Toplevel(login_root)
+        login_logger.debug("Login dialog Toplevel created")
         
         login_dialog.title("Server Manager - Authentication Required")
         login_dialog.geometry("400x300")
@@ -317,6 +325,13 @@ def admin_login_with_root(login_root, user_manager):
         x = (login_dialog.winfo_screenwidth() // 2) - (200)
         y = (login_dialog.winfo_screenheight() // 2) - (150)
         login_dialog.geometry(f"400x300+{x}+{y}")
+        
+        # Force dialog to front
+        login_dialog.lift()
+        login_dialog.focus_force()
+        login_dialog.attributes('-topmost', True)
+        login_dialog.after(100, lambda: login_dialog.attributes('-topmost', False))
+        login_logger.debug(f"Login dialog positioned at {x},{y}")
         
         # Main container frame
         container = tk.Frame(login_dialog, bg='white', padx=20, pady=20)
@@ -400,7 +415,7 @@ def admin_login_with_root(login_root, user_manager):
                 password_entry.delete(0, tk.END)
         
         def on_cancel():
-            print("Admin login cancelled")
+            login_logger.debug("on_cancel() called - user clicked Cancel button")
             dialog_closed[0] = True
             login_dialog.destroy()
         
@@ -424,22 +439,31 @@ def admin_login_with_root(login_root, user_manager):
         username_entry.bind('<Return>', on_enter)
         password_entry.bind('<Return>', on_enter)
         
-        # Handle window close button
+        # Handle window close button (X button)
         def on_close():
+            login_logger.debug("on_close() called - window close button (X) clicked")
             dialog_closed[0] = True
             login_dialog.destroy()
         
         login_dialog.protocol("WM_DELETE_WINDOW", on_close)
         
+        # Additional logging - check if dialog gets destroyed unexpectedly
+        def on_destroy(event):
+            if event.widget == login_dialog:
+                login_logger.debug(f"Login dialog destroyed - success={login_result[0]}, cancelled={dialog_closed[0]}")
+        
+        login_dialog.bind("<Destroy>", on_destroy)
+        
         # Focus on username field
         login_dialog.after(100, username_entry.focus_set)
+        login_logger.debug("Login dialog setup complete, waiting for user interaction")
         
-        print("Waiting for admin dialog interaction...")  # Debug
+        login_logger.debug("Starting wait_window() - blocking until dialog closes")
         
         # Wait for dialog to close
         login_root.wait_window(login_dialog)
         
-        print(f"Admin dialog closed. Result: success={login_result[0]}, cancelled={dialog_closed[0]}")  # Debug
+        login_logger.debug(f"wait_window() returned - success={login_result[0]}, cancelled={dialog_closed[0]}")
         
         # Check results
         if dialog_closed[0]:

@@ -40,17 +40,14 @@ class SecurityManager:
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             
-            # Define paths structure
+            # Define paths structure (config/data folders removed - all config is database-backed)
             self.paths = {
                 "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs"),
-                "config": os.path.join(self.server_manager_dir, "config"),
-                "security": os.path.join(self.server_manager_dir, "config", "security")
+                "logs": os.path.join(self.server_manager_dir, "logs")
             }
             
-            # Ensure directories exist
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
+            # Ensure log directory exists
+            os.makedirs(self.paths["logs"], exist_ok=True)
                 
             logger.info(f"Security manager initialized from registry")
             return True
