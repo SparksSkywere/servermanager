@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Windows service wrapper for Server Manager with install, start, stop, and debug functionality
+# Windows service wrapper
+# - Install, start, stop, debug
 import os
 import sys
 import time
@@ -10,7 +11,6 @@ import json
 import traceback
 from pathlib import Path
 
-# Add the parent directory to the path for module imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
@@ -19,22 +19,22 @@ try:
     import win32event
     import win32api
 except ImportError:
-    print("Error: pywin32 is required for Windows service functionality")
-    print("Install with: pip install pywin32")
+    print("Error: pywin32 required for Windows service")
+    print("Install: pip install pywin32")
     sys.exit(1)
 
-# Import our launcher
 from Modules.launcher import ServerManagerLauncher
 
 class ServerManagerService(win32serviceutil.ServiceFramework):
-    # Windows Service for Server Manager
+    # - Windows service for SM
+    # - Manages game servers and web dashboard
     
     _svc_name_ = "ServerManagerService"
     _svc_display_name_ = "Server Manager Service"
     _svc_description_ = "Manages game servers and provides web dashboard interface"
-    _svc_deps_ = None  # sequence of service names on which this depends
-    _exe_name_ = None  # Default to PythonService.exe
-    _exe_args_ = None  # Default to no arguments
+    _svc_deps_ = None
+    _exe_name_ = None
+    _exe_args_ = None
     
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
@@ -42,21 +42,18 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
         self.launcher = None
         self.running = False
         
-        # Set up logging for service
         self.setup_service_logging()
         
     def setup_service_logging(self):
-        # Configure logging for the service
+        # Service logging setup
         try:
-            # Try to use standardized logging
             from Modules.server_logging import get_component_logger
             self.logger = get_component_logger("ServerManagerService")
-            self.logger.info("Service logging initialized with standardized logger")
+            self.logger.info("Service logging initialised")
             
         except Exception as e:
-            # Fallback logging if centralized logging fails
+            # Fallback logging
             try:
-                # Get server manager directory from registry
                 import winreg
                 from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
                 key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)

@@ -1,5 +1,5 @@
-# Network management and connectivity operations for server infrastructure
-
+# Network management
+# - IP detection, connectivity checks, firewall bits
 import os
 import sys
 import socket
@@ -13,37 +13,29 @@ import winreg
 from datetime import datetime
 import psutil
 
-# Centralized logging pattern
-try:
-    from Modules.server_logging import get_component_logger, log_process_monitoring
-    logger = get_component_logger("Network")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("Network")
+from Modules.common import setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH
+from Modules.server_logging import log_process_monitoring
 
-if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
-    logger.setLevel(logging.DEBUG)
-    logger.debug("Network module debug mode enabled via environment")
+logger = setup_module_logging("Network")
+
 
 class NetworkManager:
-    # Manages network operations and server connectivity
+    # - Network ops and server connectivity
+    # - Uses registry for paths
     def __init__(self):
         self.registry_path = r"Software\SkywereIndustries\Servermanager"
         self.server_manager_dir = None
         self.paths = {}
         
-        # Initialize from registry
-        self.initialize_from_registry()
+        self.initialise_from_registry()
     
-    def initialize_from_registry(self):
-        # Initialize paths from registry settings
+    def initialise_from_registry(self):
+        # Pull paths from registry
         try:
-            # Read registry for paths
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             
-            # Define paths structure (config/data folders removed - all config is database-backed)
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
@@ -51,39 +43,34 @@ class NetworkManager:
                 "temp": os.path.join(self.server_manager_dir, "temp")
             }
             
-            # Ensure directories exist
             for path in self.paths.values():
                 os.makedirs(path, exist_ok=True)
             
-            logger.info(f"Network manager initialized from registry")
+            logger.info("Network manager ready")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to initialize network manager from registry: {str(e)}")
+            logger.error(f"Network init failed: {str(e)}")
             return False
     
     def get_local_ip_addresses(self):
-        # Get all local IP addresses from network interfaces
+        # All local IPs from network interfaces
         try:
             ip_list = []
             
-            # Get hostname
             hostname = socket.gethostname()
             
-            # Try to get IP by hostname
             try:
                 host_ip = socket.gethostbyname(hostname)
                 ip_list.append({"interface": "hostname", "ip": host_ip})
             except:
                 pass
             
-            # Get all network interfaces using psutil
             for iface, addrs in psutil.net_if_addrs().items():
                 for addr in addrs:
-                    if addr.family == socket.AF_INET:  # IPv4
+                    if addr.family == socket.AF_INET:
                         ip_list.append({"interface": iface, "ip": addr.address})
             
-            # If no IPs found, fallback to simple method
             if not ip_list:
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 s.connect(("8.8.8.8", 80))

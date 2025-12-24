@@ -1,9 +1,9 @@
-# Grafana Integration Module
+# Grafana integration
+# - Prometheus format metrics for dashboards
 import logging
 from datetime import datetime
 import json
 
-# Import server manager common functionality
 try:
     from Modules.common import ServerManagerModule
     from Modules.server_logging import get_component_logger
@@ -13,26 +13,24 @@ except Exception:
     logger = logging.getLogger("Grafana")
 
 class GrafanaManager(ServerManagerModule):
-    # Grafana integration for Server Manager
-    # Formats metrics in Prometheus format for Grafana dashboards
-    # Integrates with analytics module for metric collection
+    # - Prometheus format metrics
+    # - Analytics integration
     
     def __init__(self, analytics_instance=None):
         try:
             super().__init__("Grafana")
-            logger.info("Grafana module initialized successfully")
+            logger.info("Grafana module initialised")
         except Exception as e:
-            logger.error(f"Failed to initialize base ServerManagerModule: {e}")
-            # Initialize minimal attributes to prevent AttributeError
+            logger.error(f"Base module init failed: {e}")
             self.module_name = "Grafana"
             self.logger = logging.getLogger("Grafana")
         
         self.analytics = analytics_instance
         
-        # Prometheus metric prefixes
+        # Prometheus prefixes
         self.metric_prefix = "servermanager"
         
-        # Metric type mappings for Prometheus
+        # Metric types
         self.metric_types = {
             'counter': 'counter',
             'gauge': 'gauge',
@@ -41,22 +39,20 @@ class GrafanaManager(ServerManagerModule):
         }
 
     def set_analytics_instance(self, analytics_instance):
-        # Set the analytics instance for metric collection
+        # Set analytics for metric collection
         self.analytics = analytics_instance
-        logger.info("Analytics instance configured for Grafana manager")
+        logger.info("Analytics instance configured")
 
     def get_prometheus_metrics(self):
-        # Get metrics in Prometheus format for Grafana integration
-        # Converts dot notation to underscores for compatibility
+        # Metrics in Prometheus format
         if not self.analytics:
-            logger.warning("Analytics instance not configured")
+            logger.warning("Analytics not configured")
             return ""
             
         try:
             current_metrics = self.analytics.get_current_metrics()
             prometheus_output = []
             
-            # Add metadata
             prometheus_output.append(f"# HELP {self.metric_prefix}_info Server Manager metrics")
             prometheus_output.append(f"# TYPE {self.metric_prefix}_info gauge")
             prometheus_output.append("")

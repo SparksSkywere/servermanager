@@ -5,12 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Server Manager - Redirecting...</title>
     <script>
-        // Redirect to login page immediately
         window.location.replace('login.html');
     </script>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #0f0f1a;
+            color: #e8e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            text-align: center;
+        }
+        a { color: #667eea; }
+    </style>
 </head>
 <body>
-    <p>Redirecting to login page...</p>
-    <p>If you are not redirected automatically, <a href="login.html">click here</a>.</p>
+    <div>
+        <p>Redirecting to login page...</p>
+        <p style="color: #686888;">If not redirected, <a href="login.html">click here</a>.</p>
+    </div>
 </body>
 </html>

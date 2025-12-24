@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-# Automated server update management with scheduling, restart coordination, and Steam integration
+# Server update management
+# - Scheduled updates, restarts
 import os
 import sys
 import json
@@ -9,17 +10,17 @@ import subprocess
 import datetime
 from typing import Dict, List, Tuple, Optional, Callable, Any
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Modules.common import ServerManagerModule
-from Modules.server_logging import get_dashboard_logger
-from Modules.server_manager import get_subprocess_creation_flags
+from Modules.common import ServerManagerModule, setup_module_logging, get_subprocess_creation_flags
+from Modules.Database.cluster_database import get_cluster_database
 
-logger = get_dashboard_logger()
+logger = setup_module_logging("ServerUpdateManager")
+
 
 class ServerUpdateManager(ServerManagerModule):
-    # Manages automatic updates and restarts for servers
+    # - Automatic updates and restarts
+    # - Per-server and global schedules
     
     def __init__(self, server_manager_dir: Optional[str] = None, config: Optional[Dict] = None):
         super().__init__("ServerUpdateManager")
@@ -32,40 +33,31 @@ class ServerUpdateManager(ServerManagerModule):
         self.global_restart_schedule: Optional[Dict] = None
         self.last_update_check: Dict[str, str] = {}
         self.last_restart: Dict[str, str] = {}
-        
-        # Load update configuration
         self.load_update_config()
     
     def set_server_manager(self, server_manager):
-        # Set reference to server manager instance
         self.server_manager = server_manager
     
     def set_steam_cmd_path(self, steam_cmd_path):
-        # Set SteamCMD path
         self.steam_cmd_path = steam_cmd_path
     
     def load_update_config(self):
-        # Load update and restart configuration from database
+        # Load from DB—migrates JSON if needed
         try:
-            from Modules.Database.cluster_database import ClusterDatabase
-            db = ClusterDatabase()
+            db = get_cluster_database()
             
-            # Get config from database
             config_data = db.get_update_config()
             full_config = config_data.get("full_config", {})
             
             if isinstance(full_config, str):
-                import json
                 full_config = json.loads(full_config)
             
-            # Migrate from JSON if database is empty
             if not full_config:
                 server_dir = self.server_manager_dir or os.getcwd()
                 config_file = os.path.join(server_dir, "data", "update_config.json")
                 if os.path.exists(config_file):
-                    logger.info("Migrating update config from JSON to database")
+                    logger.info("Migrating update config from JSON")
                     db.migrate_update_config_from_json(config_file)
-                    # Reload after migration
                     config_data = db.get_update_config()
                     full_config = config_data.get("full_config", {})
                     if isinstance(full_config, str):
@@ -90,10 +82,8 @@ class ServerUpdateManager(ServerManagerModule):
             self.last_restart = {}
     
     def save_update_config(self):
-        # Save update and restart configuration to database
         try:
-            from Modules.Database.cluster_database import ClusterDatabase
-            db = ClusterDatabase()
+            db = get_cluster_database()
             
             data = {
                 "server_schedules": self.update_schedules,

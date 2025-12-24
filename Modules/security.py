@@ -1,5 +1,5 @@
-# Security operations including authentication, encryption, and privilege management
-
+# Security operations
+# - Auth, encryption, privilege checks
 import os
 import sys
 import json
@@ -11,64 +11,55 @@ import secrets
 import base64
 from datetime import datetime
 
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("Security")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("Security")
+from Modules.common import setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH
 
-if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
-    logger.setLevel(logging.DEBUG)
-    logger.debug("Security module debug mode enabled via environment")
+logger = setup_module_logging("Security")
+
 
 class SecurityManager:
-    # Manages security operations including authentication and encryption
+    # - Auth, password hashing, token gen
+    # - Admin privilege detection
     def __init__(self):
         self.registry_path = r"Software\SkywereIndustries\Servermanager"
         self.server_manager_dir = None
         self.paths = {}
         
-        # Initialize from registry
-        self.initialize_from_registry()
+        self.initialise_from_registry()
     
-    def initialize_from_registry(self):
-        # Initialize paths from registry settings
+    def initialise_from_registry(self):
+        # Pull paths from registry
         try:
-            # Read registry for paths
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             
-            # Define paths structure (config/data folders removed - all config is database-backed)
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs")
             }
             
-            # Ensure log directory exists
             os.makedirs(self.paths["logs"], exist_ok=True)
                 
-            logger.info(f"Security manager initialized from registry")
+            logger.info("Security manager ready")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to initialize security manager from registry: {str(e)}")
+            logger.error(f"Security init failed: {str(e)}")
             return False
             
     def is_admin(self):
-        # Check if the current process has administrator privileges
+        # Check admin privileges
         try:
             return ctypes.windll.shell32.IsUserAnAdmin() != 0
         except:
             return False
             
     def generate_token(self, length=32):
-        # Generate a secure random token
+        # Random hex token
         return secrets.token_hex(length)
         
     def hash_password(self, password, salt=None):
-        # Hash a password with optional salt
+        # SHA256 password hash with salt
         if salt is None:
             salt = secrets.token_hex(16)
             
@@ -84,7 +75,7 @@ class SecurityManager:
         }
         
     def verify_password(self, password, stored_hash, salt):
-        # Verify a password against a stored hash and salt
+        # Check password against stored hash
         password_bytes = password.encode('utf-8')
         salt_bytes = salt.encode('utf-8')
         

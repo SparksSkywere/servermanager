@@ -1,58 +1,46 @@
-# Simple Cluster Management Module
-# Provides Hyper-V style clustering for server manager instances
-# Handles master/subhost configuration with database and registry persistence
-
+# Cluster management
+# - Host/Subhost roles, node discovery
 import os
 import sys
 import winreg
 from datetime import datetime
 import requests
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import centralized registry constants
-from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-from Modules.Database.cluster_database import ClusterDatabase
+from Modules.common import REGISTRY_ROOT, REGISTRY_PATH, setup_module_logging
+from Modules.Database.cluster_database import get_cluster_database
 
-# Import standardized logging
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("SimpleCluster")
-except Exception:
-    import logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("SimpleCluster")
+logger = setup_module_logging("SimpleCluster")
+
 
 class SimpleClusterManager:
-    # Simple cluster management like Windows Hyper-V clustering
-    # Provides master/subhost architecture with database and registry persistence
+    # - Basic clustering like Hyper-V
+    # - Master/node topology
     
     def __init__(self):
-        # Initialize cluster database
         try:
-            self.cluster_db = ClusterDatabase()
+            self.cluster_db = get_cluster_database()
         except Exception as e:
-            logger.error(f"Failed to initialize cluster database: {e}")
+            logger.error(f"Cluster DB init failed: {e}")
             self.cluster_db = None
         
-        # Determine role and configuration from registry
         self.is_master = self.get_host_type() == "Host"
         self.master_ip = self.get_master_ip()
         self.load_or_create_cluster()
         
     def get_host_type(self):
-        # Get the host type from registry (Host = master, Subhost = node)
+        # Host = master, Subhost = node
         try:
             key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
             host_type = winreg.QueryValueEx(key, "HostType")[0]
             winreg.CloseKey(key)
             return host_type
         except:
-            return "Host"  # Default to master host
+            return "Host"
     
     def get_master_ip(self):
-        # Get master IP from registry or return None if this is master
+        # Get master IP (None if we are master)
         if self.is_master:
             return None
         try:
@@ -64,14 +52,12 @@ class SimpleClusterManager:
             return None
     
     def load_or_create_cluster(self):
-        # Load existing cluster or create new one
-        # Checks database first, then registry fallback for configuration
+        # Load cluster config from DB or registry
         try:
-            # Check database first
             if self.cluster_db:
                 config = self.cluster_db.get_cluster_config()
                 if config:
-                    logger.info(f"Cluster already configured from database ({'Master' if self.is_master else 'Node'})")
+                    logger.info(f"Cluster ready ({'Master' if self.is_master else 'Node'})")
                     return
                     
             # Fallback to registry check

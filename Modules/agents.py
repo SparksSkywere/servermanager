@@ -1,4 +1,5 @@
-# Cluster Agent Management Module
+# Cluster agent management
+# - Node discovery, health checks, cluster ops
 import os
 import sys
 import requests
@@ -7,19 +8,22 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import tkinter as tk
 from tkinter import ttk, messagebox
-from Modules.server_logging import get_dashboard_logger
-from Modules.Database.cluster_database import ClusterDatabase
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Modules.common import setup_module_logging
+from Modules.Database.cluster_database import get_cluster_database
+
 try:
     from Modules.cluster_security import SimpleClusterManager
 except ImportError:
     SimpleClusterManager = None
-logger = get_dashboard_logger()
+
+logger = setup_module_logging("Agents")
+
 
 class ClusterNode:
     def __init__(self, name: str, ip: str, status: str = "unknown"):
-        # Represents a cluster node with connection status and server tracking
         self.name = name
         self.ip = ip
         self.status = status
@@ -27,17 +31,15 @@ class ClusterNode:
         self.server_count = 0
         self.is_online = False
 
+
 class AgentManager:
     def __init__(self, config_path: Optional[str] = None):
-        # Initialize cluster agent manager with database backend and optional JSON migration
         self.nodes: Dict[str, ClusterNode] = {}
-        
-        # Initialize database instead of JSON file
         try:
-            self.cluster_db = ClusterDatabase()
-            logger.info("Cluster database initialized successfully")
+            self.cluster_db = get_cluster_database()
+            logger.info("Cluster database initialised successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize cluster database: {e}")
+            logger.error(f"Failed to initialise cluster database: {e}")
             self.cluster_db = None
         
         self.cluster_manager = None
@@ -45,12 +47,10 @@ class AgentManager:
             try:
                 self.cluster_manager = SimpleClusterManager()
             except Exception as e:
-                logger.warning(f"Could not initialize cluster manager: {e}")
+                logger.warning(f"Could not initialise cluster manager: {e}")
         
-        # Load existing nodes from database
         self.load_nodes()
         
-        # Migrate from JSON if it exists and database is available
         if config_path and self.cluster_db:
             self.migrate_from_json(config_path)
     
@@ -291,7 +291,7 @@ def show_agent_management_dialog(parent, agent_manager: AgentManager):
 
 class ClusterManagementDialog:
     def __init__(self, parent, agent_manager: AgentManager):
-        # Initialize cluster management GUI with pending requests and node management
+        # - Cluster management GUI with pending requests + node management
         self.parent = parent
         self.agent_manager = agent_manager
         self.dialog: Optional[tk.Toplevel] = None

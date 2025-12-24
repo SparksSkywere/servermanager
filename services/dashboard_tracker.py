@@ -1,45 +1,43 @@
+# -*- coding: utf-8 -*-
+# Dashboard tracker
+# - Tracks running dashboards and servers
+# - Auto-refresh thread for status updates
 import os
+import sys
 import json
 import time
 import threading
 import psutil
 import logging
 from pathlib import Path
-import os
 
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("DashboardTracker")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("DashboardTracker")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
-    logger.setLevel(logging.DEBUG)
-    logger.debug("DashboardTracker debug mode enabled via environment")
+from Modules.common import setup_module_logging
+
+logger = setup_module_logging("DashboardTracker")
+
 
 class DashboardTracker:
-    # Tracks running dashboard interfaces and server processes.
-    # Can be used by dashboards or other modules to keep state in sync.
+    # - Scans for running dashboard/server processes
+    # - Updates status in background thread
     def __init__(self, server_manager_dir=None):
-        # Try to auto-detect server_manager_dir if not provided
         if server_manager_dir is None:
-            # Try to find from environment or default to parent of this file
             server_manager_dir = os.environ.get("SERVERMANAGERDIR")
             if not server_manager_dir:
                 server_manager_dir = str(Path(__file__).resolve().parent.parent)
         self.server_manager_dir = server_manager_dir
         self.temp_dir = os.path.join(self.server_manager_dir, "temp")
         self.servers_dir = os.path.join(self.server_manager_dir, "servers")
-        self.dashboards = {}  # {pid: info}
-        self.servers = {}     # {server_name: info}
+        self.dashboards = {}
+        self.servers = {}
         self.lock = threading.Lock()
-        self.refresh_interval = 10  # seconds
+        self.refresh_interval = 10
         self._stop_event = threading.Event()
         self._thread = None
 
     def scan_dashboards(self):
-        # Scan temp directory for dashboard PID files and update self.dashboards
+        # Check temp dir for dashboard PID files
         dashboards = {}
         if os.path.exists(self.temp_dir):
             for fname in os.listdir(self.temp_dir):
@@ -64,11 +62,11 @@ class DashboardTracker:
                                 "status": "not running"
                             }
                     except Exception as e:
-                        logger.debug(f"Error reading dashboard PID file {fname}: {e}")
+                        logger.debug(f"PID file read error {fname}: {e}")
         self.dashboards = dashboards
 
     def scan_servers(self):
-        # Scan servers directory for running server processes and update self.servers
+        # Check servers dir for running server processes
         servers = {}
         if os.path.exists(self.servers_dir):
             for fname in os.listdir(self.servers_dir):

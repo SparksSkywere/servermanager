@@ -32,10 +32,10 @@ class NetworkSecurityManager:
             for network in DEFAULT_ALLOWED_NETWORKS:
                 self.allowed_networks.append(ipaddress.ip_network(network, strict=False))
                 
-        logger.info(f"Network security initialized with {len(self.allowed_networks)} allowed networks")
+        logger.info(f"Network security initialised with {len(self.allowed_networks)} allowed networks")
         
     def is_ip_allowed(self, ip_address):
-        # Check if an IP address is allowed
+        # - Check if IP address is allowed
         try:
             client_ip = ipaddress.ip_address(ip_address)
             for network in self.allowed_networks:
@@ -47,7 +47,7 @@ class NetworkSecurityManager:
             return False
             
     def add_allowed_network(self, network):
-        # Add an allowed network
+        # - Add an allowed network
         try:
             net = ipaddress.ip_network(network, strict=False)
             if net not in self.allowed_networks:

@@ -1,6 +1,6 @@
-# Mail Server Module for Server Manager
-# Handles SMTP email sending with support for various providers (Gmail, Outlook, custom SMTP)
-# Includes OAuth 2.0 support for Microsoft Exchange with 2FA
+# Mail server module
+# - SMTP with Gmail, Outlook, custom providers
+# - OAuth 2.0 for MS Exchange with 2FA
 import os
 import sys
 import smtplib
@@ -18,10 +18,8 @@ import socketserver
 from urllib.parse import parse_qs, urlparse
 import threading
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import standardized logging
 try:
     from Modules.server_logging import get_component_logger
     logger = get_component_logger("MailServer")
@@ -29,7 +27,7 @@ except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger("MailServer")
 
-# Try to import OAuth libraries
+# OAuth libs
 try:
     import msal
     import requests_oauthlib
@@ -38,12 +36,13 @@ except ImportError:
     msal = None
     requests_oauthlib = None
     OAUTH_AVAILABLE = False
-    logger.warning("OAuth libraries not available. Microsoft OAuth authentication will be disabled.")
+    logger.warning("OAuth libs not available. MS OAuth disabled.")
 
 class MailServer:
-    # SMTP Mail Server class with support for various email providers and OAuth 2.0
+    # - SMTP with multiple providers
+    # - OAuth 2.0 support
 
-    # Predefined SMTP configurations for common providers
+    # Provider configs
     SMTP_CONFIGS = {
         'gmail': {
             'server': 'smtp.gmail.com',

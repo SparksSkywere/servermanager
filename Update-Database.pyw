@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
+# Database migration script
+# - Updates schema, adds columns
 import os
 import sys
 import logging
 import argparse
 from datetime import datetime, timezone
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import database connection
 try:
     from Modules.Database.SQL_Connection import get_engine
     from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, text
@@ -16,11 +16,10 @@ try:
     SQLALCHEMY_AVAILABLE = True
 except ImportError:
     SQLALCHEMY_AVAILABLE = False
-    print("Warning: SQLAlchemy not available, will only work with SQLite")
+    print("Warning: SQLAlchemy not available, SQLite only")
 
 import sqlite3
 
-# Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -28,7 +27,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("DatabaseMigration")
 
-# SQLAlchemy models for new database schema with subscription tracking
+# DB models with subscription tracking
 if SQLALCHEMY_AVAILABLE:
     Base = declarative_base()
 
@@ -40,8 +39,8 @@ if SQLALCHEMY_AVAILABLE:
         type = Column(String(50))
         is_server = Column(Boolean, default=False)
         is_dedicated_server = Column(Boolean, default=False)
-        requires_subscription = Column(Boolean, default=False)  # Migration target
-        anonymous_install = Column(Boolean, default=True)  # Migration target
+        requires_subscription = Column(Boolean, default=False)
+        anonymous_install = Column(Boolean, default=True)
         publisher = Column(String(255))
         release_date = Column(String(50))
         description = Column(Text)
@@ -52,19 +51,19 @@ if SQLALCHEMY_AVAILABLE:
         source = Column(String(50), default='steamdb')
 
 class DatabaseMigrator:
+    # - Migrates DB schema
+    # - Supports dry-run mode
     def __init__(self, use_database=True, dry_run=False):
-        # Initialize database migrator with connection and dry-run options
         self.use_database = use_database and SQLALCHEMY_AVAILABLE
         self.dry_run = dry_run
 
-        # Initialize database connection
         if self.use_database:
             self.init_database()
         else:
             self.init_sqlite_fallback()
 
     def init_database(self):
-        # Initialize SQLAlchemy database connection
+        # SQLAlchemy connection
         try:
             self.engine = get_engine()
             Session = sessionmaker(bind=self.engine)

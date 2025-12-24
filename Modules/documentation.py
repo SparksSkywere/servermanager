@@ -1,83 +1,52 @@
-# Documentation system for Server Manager
-# Provides help dialogs, about dialog, and user documentation interface
+# Documentation dialogs
+# - Help, about, troubleshooting
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import winreg
 import os
 
-
-def center_window(window, width, height, parent=None):
-    # Center a window on the screen or relative to a parent window
-    window.update_idletasks()
-    
-    if parent:
-        # Center relative to parent window
-        parent_x = parent.winfo_rootx()
-        parent_y = parent.winfo_rooty()
-        parent_width = parent.winfo_width()
-        parent_height = parent.winfo_height()
-        
-        x = parent_x + (parent_width - width) // 2
-        y = parent_y + (parent_height - height) // 2
-    else:
-        # Center on screen
-        screen_width = window.winfo_screenwidth()
-        screen_height = window.winfo_screenheight()
-        
-        x = (screen_width - width) // 2
-        y = (screen_height - height) // 2
-    
-    window.geometry(f"{width}x{height}+{x}+{y}")
+from Modules.common import centre_window
 
 
 def show_help_dialog(parent_window, logger=None):
-    # Show help dialog with program information and controls
-    # Args: parent_window: The parent tkinter window to center the dialog on
-    #       logger: Optional logger instance for error logging
+    # Display help dialog with organised tabs
     try:
-        # Create help dialog
         help_dialog = tk.Toplevel(parent_window)
         help_dialog.title("Server Manager Dashboard - Help")
         help_dialog.transient(parent_window)
         help_dialog.grab_set()
         
-        # Create main frame with padding
         main_frame = ttk.Frame(help_dialog, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Title
         title_label = ttk.Label(main_frame, text="Server Manager Dashboard Help", 
                               font=("Segoe UI", 16, "bold"))
         title_label.pack(anchor=tk.W, pady=(0, 20))
         
-        # Create notebook for organized help sections
         notebook = ttk.Notebook(main_frame)
         notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
         
-        # Add all help tabs
         _add_overview_tab(notebook)
         _add_controls_tab(notebook)
         _add_server_management_tab(notebook)
         _add_troubleshooting_tab(notebook)
         
-        # Close button
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=(10, 0))
         
         ttk.Button(button_frame, text="Close", command=help_dialog.destroy, width=15).pack(side=tk.RIGHT)
         
-        # Center dialog relative to parent
-        center_window(help_dialog, 800, 700, parent_window)
+        centre_window(help_dialog, 800, 700, parent_window)
         
     except Exception as e:
-        error_msg = f"Error showing help dialog: {str(e)}"
+        error_msg = f"Help dialog error: {str(e)}"
         if logger:
             logger.error(error_msg)
-        messagebox.showerror("Error", f"Failed to show help: {str(e)}")
+        messagebox.showerror("Error", f"Help failed: {str(e)}")
 
 
 def _add_overview_tab(notebook):
-    # Add the Overview tab to the help notebook
+    # Overview tab content
     overview_frame = ttk.Frame(notebook)
     notebook.add(overview_frame, text="Overview")
     
@@ -366,7 +335,7 @@ def show_about_dialog(parent_window, logger=None):
         ttk.Button(main_frame, text="Close", command=about_dialog.destroy, 
                   width=15).pack()
         
-        # Center dialog relative to parent
+        # Centre dialog relative to parent
         center_window(about_dialog, 400, 300, parent_window)
         
     except Exception as e:
@@ -396,7 +365,7 @@ def test_documentation():
     
     ttk.Button(frame, text="Exit", command=root.destroy).pack(pady=10)
     
-    # Center the test window
+    # Centre the test window
     center_window(root, 400, 200)
     
     root.mainloop()

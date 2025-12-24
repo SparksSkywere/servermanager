@@ -1,23 +1,31 @@
 # -*- coding: utf-8 -*-
-# Early crash logging - catches import errors before main() runs
+# Main dashboard GUI
+# - Tkinter-based server management interface
 import os
 import sys
 import datetime as _dt
 
-def _early_crash_log(msg):
-    """Write to early crash log before any imports that might fail"""
-    try:
-        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'logs')
-        os.makedirs(log_dir, exist_ok=True)
-        log_path = os.path.join(log_dir, 'dashboard_early_crash.log')
-        with open(log_path, 'a', encoding='utf-8') as f:
-            f.write(f"{_dt.datetime.now().isoformat()} - {msg}\n")
-    except:
-        pass
+# Early crash logging
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from Modules.server_logging import early_crash_log
 
-_early_crash_log(f"Dashboard module loading started - Python {sys.version}")
-_early_crash_log(f"sys.executable: {sys.executable}")
-_early_crash_log(f"Working directory: {os.getcwd()}")
+early_crash_log("Dashboard", f"Module loading - Python {sys.version}")
+
+# DPI awareness on Windows BEFORE tkinter import
+# Prevents scaling issues with UI elements
+if sys.platform == 'win32':
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+            early_crash_log("Dashboard", "DPI awareness set to PROCESS_SYSTEM_DPI_AWARE")
+        except AttributeError:
+            ctypes.windll.user32.SetProcessDPIAware()
+            early_crash_log("Dashboard", "DPI awareness set using SetProcessDPIAware")
+        except Exception as e:
+            early_crash_log("Dashboard", f"DPI awareness failed: {e}")
+    except Exception as e:
+        early_crash_log("Dashboard", f"DPI setup failed: {e}")
 
 try:
     import argparse
@@ -27,35 +35,27 @@ try:
     import time
     import datetime
 
-    # GUI imports
     import tkinter as tk
     from tkinter import ttk, messagebox, filedialog, scrolledtext, simpledialog
-    _early_crash_log("Standard library imports successful")
+    early_crash_log("Dashboard", "Standard library imports successful")
 
-    # Add project root to sys.path for module resolution
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-    # Import user management system
     from Modules.Database.user_database import initialize_user_manager
-    _early_crash_log("User database import successful")
+    early_crash_log("Dashboard", "User database import successful")
 
-    # Import server management components
     from Modules.server_manager import ServerManager
     from Modules.minecraft import MinecraftServerManager
-    _early_crash_log("Server management imports successful")
+    early_crash_log("Dashboard", "Server management imports successful")
 
-    # Import logging components
     from Modules.server_logging import (
         get_dashboard_logger, configure_dashboard_logging,
         log_dashboard_event
     )
-    _early_crash_log("All imports successful")
+    early_crash_log("Dashboard", "All imports successful")
 
 except Exception as e:
     import traceback
-    _early_crash_log(f"FATAL IMPORT ERROR: {e}")
-    _early_crash_log(f"Traceback:\n{traceback.format_exc()}")
-    # Re-raise to let the crash show
+    early_crash_log("Dashboard", f"FATAL IMPORT ERROR: {e}")
+    early_crash_log("Dashboard", f"Traceback: {traceback.format_exc()}")
     raise
 
 # Import scheduling components
@@ -68,11 +68,11 @@ from Modules.server_updates import ServerUpdateManager
 from Modules.documentation import show_help_dialog, show_about_dialog
 
 # Import core infrastructure
-from Modules.common import ServerManagerModule, initialize_registry_values
+from Modules.common import ServerManagerModule, initialise_registry_values
 
-# Import dashboard utility functions (only confirmed working ones)
+# Dashboard utility functions
 from Host.dashboard_functions import (
-    load_dashboard_config, update_webserver_status, update_system_info_threaded, center_window,
+    load_dashboard_config, update_webserver_status, update_system_info_threaded, centre_window,
     create_server_type_selection_dialog, load_appid_scanner_list,
     load_minecraft_scanner_list, get_minecraft_versions_from_database,
     get_steam_credentials,perform_server_installation, import_server_from_directory_dialog, import_server_from_export_dialog,
@@ -82,7 +82,7 @@ from Host.dashboard_functions import (
     reattach_to_running_servers, update_server_list_for_subhost,
     refresh_all_subhost_servers, refresh_current_subhost_servers, refresh_subhost_servers,
     create_remote_host_connection_dialog, RemoteHostManager,
-    load_categories, save_categories
+    load_categories
 )
 
 # Import cluster management
@@ -153,29 +153,29 @@ class ServerManagerDashboard(ServerManagerModule):
             "processMonitorUpdateInterval": self.config.get("configuration", {}).get("processMonitorUpdateInterval", 10),
             "webserverStatusUpdateInterval": self.config.get("configuration", {}).get("webserverStatusUpdateInterval", 15),
             "updateCheckInterval": self.config.get("configuration", {}).get("updateCheckInterval", 300),
-            # Runtime variables from config
+            # UI state
+            "systemInfoVisible": self.config.get("ui", {}).get("systemInfoVisible", True),
+            # Runtime vars
             "formDisplayed": self.config.get("runtime", {}).get("formDisplayed", False),
             "verificationInProgress": self.config.get("runtime", {}).get("verificationInProgress", False),
             "webserverStatus": self.config.get("runtime", {}).get("webserverStatus", "Disconnected"),
         }
         
-        # Initialize paths from registry and setup the application
-        success, self.steam_cmd_path, webserver_port, self.registry_values = initialize_registry_values(self.registry_path)
+        # Init paths from registry
+        success, self.steam_cmd_path, webserver_port, self.registry_values = initialise_registry_values(self.registry_path)
         if success:
             self.variables["defaultSteamPath"] = self.steam_cmd_path or ""
             self.variables["webserverPort"] = webserver_port
-            # Set default install directories for different server types
             if self.steam_cmd_path:
                 self.variables["defaultSteamInstallDir"] = self.steam_cmd_path
             else:
                 self.variables["defaultSteamInstallDir"] = ""
-            # Default directory for Minecraft and Other servers (under servermanager)
             if self.server_manager_dir:
                 self.variables["defaultServerManagerInstallDir"] = os.path.join(self.server_manager_dir, "servers")
             else:
                 self.variables["defaultServerManagerInstallDir"] = ""
         else:
-            logger.error("Failed to initialize registry values")
+            logger.error("Registry init failed")
             sys.exit(1)
         
         # Initialize user management system
@@ -213,6 +213,9 @@ class ServerManagerDashboard(ServerManagerModule):
         self.root = tk.Tk()
         self.root.resizable(True, True)
         
+        # Calculate DPI scaling factor for proper UI sizing
+        self._init_dpi_scaling()
+        
         # On Windows, when launched from trayicon (detached process), ensure proper window handling
         if os.name == 'nt' and '--debug' not in sys.argv:
             try:
@@ -242,11 +245,16 @@ class ServerManagerDashboard(ServerManagerModule):
         username = getattr(self.current_user, 'username', 'Unknown') if self.current_user else 'Unknown'
         self.root.title(f"Server Manager Dashboard (Logged in as: {username})")
         
-        # Set dynamic minimum size based on screen size (reasonable minimums)
+        # Set dynamic minimum size based on screen size and DPI scaling
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        min_width = min(800, int(screen_width * 0.6))  # Max 60% of screen width, min 800px
-        min_height = min(600, int(screen_height * 0.6))  # Max 60% of screen height, min 600px
+        
+        # Calculate DPI-aware minimum sizes
+        base_min_width = self.scale_value(800)
+        base_min_height = self.scale_value(600)
+        
+        min_width = min(base_min_width, int(screen_width * 0.6))  # Max 60% of screen width
+        min_height = min(base_min_height, int(screen_height * 0.6))  # Max 60% of screen height
         self.root.minsize(min_width, min_height)
         
         # Ensure the main window is properly visible
@@ -260,14 +268,14 @@ class ServerManagerDashboard(ServerManagerModule):
         self.root.after(100, lambda: self.root.attributes('-topmost', False))
         logger.debug("Dashboard window brought to front")
         
-        # Center the main window on screen with adaptive sizing
+        # Centre the main window on screen with adaptive sizing
         # Use 85% of screen on large screens, but ensure minimum usable size
         width = max(min_width, int(screen_width * 0.85))
         height = max(min_height, int(screen_height * 0.85))
         # Cap at 90% to leave some space for taskbar/other UI elements
         width = min(width, int(screen_width * 0.9))
         height = min(height, int(screen_height * 0.9))
-        center_window(self.root, width, height)
+        centre_window(self.root, width, height)
         logger.debug("Dashboard window centered")
         
         self.setup_ui()
@@ -323,107 +331,116 @@ class ServerManagerDashboard(ServerManagerModule):
         else:
             self.supported_server_types = ["Steam", "Minecraft", "Other"]
 
+    def _init_dpi_scaling(self):
+        """Initialize DPI scaling factors for proper UI sizing across different displays"""
+        try:
+            # Get DPI from the root window
+            dpi = self.root.winfo_fpixels('1i')  # Pixels per inch
+            
+            # Standard DPI is 96 on Windows
+            self.dpi_scale = dpi / 96.0
+            
+            # Clamp scaling factor to reasonable range (avoid extreme values)
+            self.dpi_scale = max(1.0, min(self.dpi_scale, 3.0))
+            
+            logger.debug(f"DPI scaling initialized: DPI={dpi}, scale_factor={self.dpi_scale:.2f}")
+        except Exception as e:
+            logger.warning(f"Could not calculate DPI scaling: {e}")
+            self.dpi_scale = 1.0
+    
+    def scale_value(self, value):
+        """Scale a value according to the current DPI scaling factor"""
+        return int(value * getattr(self, 'dpi_scale', 1.0))
+    
     def _reattach_to_running_servers(self):
         # Detect and reattach to running server processes
         reattach_to_running_servers(self.server_manager, self.console_manager, logger)
 
     def setup_menu_bar(self):
-        # Setup the menu bar with update options
+        # Setup the menu bar
         self.menubar = tk.Menu(self.root)
         self.root.config(menu=self.menubar)
         
         # File Menu
         file_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="File", menu=file_menu)
-        file_menu.add_command(label="Add Server", command=self.add_server)
-        file_menu.add_command(label="Import Server", command=self.import_server)
-        file_menu.add_command(label="Sync All", command=self.sync_all)
+        file_menu.add_command(label="Settings", command=self.show_settings_dialog)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.on_close)
-        
-        # Updates Menu
-        updates_menu = tk.Menu(self.menubar, tearoff=0)
-        self.menubar.add_cascade(label="Updates", menu=updates_menu)
-        updates_menu.add_command(label="Update All Steam Servers", command=self.update_all_servers)
-        updates_menu.add_separator()
-        updates_menu.add_command(label="Schedule Manager", command=self.show_schedule_manager)
-        
-        # Tools Menu
-        tools_menu = tk.Menu(self.menubar, tearoff=0)
-        self.menubar.add_cascade(label="Tools", menu=tools_menu)
-        tools_menu.add_command(label="Refresh All", command=self.refresh_all)
-        tools_menu.add_separator()
-        tools_menu.add_command(label="Update Server Types", command=self.batch_update_server_types)
-        tools_menu.add_command(label="Database Sync Manager", command=self.show_database_sync_manager)
-        tools_menu.add_separator()
-        tools_menu.add_command(label="Cluster", command=self.add_agent)
         
         # Help Menu
         help_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Help", menu=help_menu)
-        help_menu.add_command(label="Help", command=self.show_help)
         help_menu.add_command(label="About", command=self.show_about)
+        help_menu.add_command(label="Help", command=self.show_help)
 
     def setup_ui(self):
         # Create and configure the main dashboard user interface
-        # Create top frame for help and about buttons
+        # Setup the menu bar first
+        self.setup_menu_bar()
+        
+        # Create top frame for action buttons
         self.top_frame = ttk.Frame(self.root)
-        self.top_frame.pack(fill=tk.X, padx=15, pady=(15, 10))
+        self.top_frame.pack(fill=tk.X, padx=10, pady=(8, 5))
         
-        # Add About, Settings and Help buttons to top right
-        # Adjust button widths based on screen size
-        screen_width = self.root.winfo_screenwidth()
-        button_width_help = 8 if screen_width < 1366 else 10
-        button_width_about = 8 if screen_width < 1366 else 10
-        button_width_settings = 10 if screen_width < 1366 else 12
+        # Use DPI-aware button sizing for proper scaling
+        button_width = self.scale_value(14)
+        button_spacing = self.scale_value(4)
         
-        self.help_button = ttk.Button(self.top_frame, text="Help", command=self.show_help, width=button_width_help)
-        self.help_button.pack(side=tk.RIGHT, padx=(0, 10))
+        # Action buttons on the left: Add Server, Stop Server, Import Server, Update All, Schedules, Consoles, Cluster
+        self.add_server_btn = ttk.Button(self.top_frame, text="Add Server", 
+                                        command=self.add_server, width=button_width)
+        self.add_server_btn.pack(side=tk.LEFT, padx=(0, button_spacing))
         
-        self.settings_button = ttk.Button(self.top_frame, text="Settings", command=self.show_settings_dialog, width=button_width_settings)
-        self.settings_button.pack(side=tk.RIGHT, padx=(0, 10))
+        self.stop_server_btn = ttk.Button(self.top_frame, text="Stop Server", 
+                                         command=self.stop_server, width=button_width)
+        self.stop_server_btn.pack(side=tk.LEFT, padx=(0, button_spacing))
         
-        self.about_button = ttk.Button(self.top_frame, text="About", command=self.show_about, width=button_width_about)
-        self.about_button.pack(side=tk.RIGHT)
-        
-        # Add quick update buttons to top left with responsive spacing and widths
-        button_width_main = 10 if screen_width < 1366 else 12
-        button_spacing = 5 if screen_width < 1366 else 8
+        self.import_server_btn = ttk.Button(self.top_frame, text="Import Server", 
+                                           command=self.import_server, width=button_width)
+        self.import_server_btn.pack(side=tk.LEFT, padx=(0, button_spacing))
         
         self.update_all_button = ttk.Button(self.top_frame, text="Update All", 
-                                          command=self.update_all_servers, width=button_width_main)
+                                          command=self.update_all_servers, width=button_width)
         self.update_all_button.pack(side=tk.LEFT, padx=(0, button_spacing))
         
         self.schedules_button = ttk.Button(self.top_frame, text="Schedules", 
-                                         command=self.show_schedule_manager, width=button_width_main)
+                                         command=self.show_schedule_manager, width=button_width)
         self.schedules_button.pack(side=tk.LEFT, padx=(0, button_spacing))
         
-        # Add console management button
         self.console_button = ttk.Button(self.top_frame, text="Consoles", 
-                                       command=self.show_console_manager, width=button_width_main)
+                                       command=self.show_console_manager, width=button_width)
         self.console_button.pack(side=tk.LEFT, padx=(0, button_spacing))
         
-        # Add remote host button with responsive width
-        remote_width = 12 if screen_width < 1366 else 14
-        self.remote_host_button = ttk.Button(self.top_frame, text="Remote Host", 
-                                           command=self.connect_remote_host, width=remote_width)
-        self.remote_host_button.pack(side=tk.LEFT, padx=(0, button_spacing))
+        self.cluster_button = ttk.Button(self.top_frame, text="Cluster", 
+                                        command=self.add_agent, width=button_width)
+        self.cluster_button.pack(side=tk.LEFT, padx=(0, button_spacing))
         
-        # Main container
-        self.container_frame = ttk.Frame(self.root, padding=(15, 10, 15, 15))
+        # Main container - reduced padding for tighter layout
+        self.container_frame = ttk.Frame(self.root, padding=(10, 5, 10, 10))
         self.container_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Configure container frame for proper resizing
+        # Configure container frame for proper resizing with grid
         self.container_frame.columnconfigure(0, weight=1)
-        self.container_frame.rowconfigure(0, weight=1)
-        self.container_frame.rowconfigure(1, weight=0)
+        self.container_frame.rowconfigure(0, weight=1)  # Main pane takes all available space
         
         # Main layout - servers list and system info
         self.main_pane = ttk.PanedWindow(self.container_frame, orient=tk.HORIZONTAL)
-        self.main_pane.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        self.main_pane.grid(row=0, column=0, sticky="nsew")
         
         # Server tabs frame (left side) - Tabbed interface for subhosts
-        self.servers_frame = ttk.LabelFrame(self.main_pane, text="Host Servers", padding=10)
+        self.servers_frame = ttk.LabelFrame(self.main_pane, text="", padding=10)
+        
+        # Header frame for "Host Servers" title and Remote Host button
+        self.servers_header_frame = ttk.Frame(self.servers_frame)
+        self.servers_header_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Label(self.servers_header_frame, text="Host Servers", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+        
+        # Remote Host button on far right of header
+        self.remote_host_button = ttk.Button(self.servers_header_frame, text="Remote Host", 
+                                           command=self.connect_remote_host, width=12)
+        self.remote_host_button.pack(side=tk.RIGHT)
         
         # Adjust pane weights based on screen size for better responsiveness
         screen_width = self.root.winfo_screenwidth()
@@ -505,9 +522,30 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_context_menu.add_command(label="Open Folder Directory", command=self.open_server_directory)
         self.server_context_menu.add_command(label="Remove Server", command=self.remove_server)
         
+        # Collapse toggle frame (vertical bar between panes with centered arrow)
+        self.system_info_visible = self.variables.get("systemInfoVisible", True)
+        self.collapse_frame = ttk.Frame(self.main_pane, width=20)
+        self.main_pane.add(self.collapse_frame, weight=0)
+        
+        # Configure collapse frame to center the button vertically
+        self.collapse_frame.columnconfigure(0, weight=1)
+        self.collapse_frame.rowconfigure(0, weight=1)
+        self.collapse_frame.rowconfigure(1, weight=0)
+        self.collapse_frame.rowconfigure(2, weight=1)
+        
+        # Collapse/Expand toggle button (centered vertically with horizontal arrows)
+        self.system_toggle_btn = ttk.Button(
+            self.collapse_frame,
+            text="◀" if self.system_info_visible else "▶",
+            width=2,
+            command=self.toggle_system_info
+        )
+        self.system_toggle_btn.grid(row=1, column=0, pady=5)
+        
         # System info frame (right side)
         self.system_frame = ttk.LabelFrame(self.main_pane, text="System Information", padding=10)
-        self.main_pane.add(self.system_frame, weight=system_weight)
+        if self.system_info_visible:
+            self.main_pane.add(self.system_frame, weight=system_weight)
         
         # Configure system frame for proper resizing
         self.system_frame.columnconfigure(0, weight=1)
@@ -573,59 +611,30 @@ class ServerManagerDashboard(ServerManagerModule):
         ]
         
         for metric in metrics:
-            # Create frame with responsive sizing
-            frame = ttk.LabelFrame(self.metrics_frame, text=f"{metric['icon']} {metric['title']}", padding=8)
+            # Create frame with responsive sizing - use DPI-aware padding
+            scaled_padding = self.scale_value(8)
+            frame = ttk.LabelFrame(self.metrics_frame, text=f"{metric['icon']} {metric['title']}", padding=scaled_padding)
             frame.grid(row=metric["row"], column=metric["col"], padx=3, pady=3, sticky="nsew")
             
-            # Allow frame to shrink on small screens but maintain reasonable minimum height
-            # Only set minimum height on larger screens
-            screen_height = self.root.winfo_screenheight()
-            if screen_height > 768:  # Only enforce minimum height on larger screens
-                frame.grid_propagate(False)
-                frame.configure(height=80)
+            # Let the frame size naturally based on content
+            # Don't use fixed heights - this was causing the button bar to be pushed off screen
+            # The grid with uniform sizing will handle proportional sizing
             
-            # Create value label with responsive wrapping
-            # Adjust wrap width based on screen size
+            # Create value label with DPI-aware wrapping
+            # Calculate wrap width based on screen size and DPI
             screen_width = self.root.winfo_screenwidth()
-            if screen_width < 1366:  # Smaller screens
-                wrap_width = 120 if metric["name"] == "gpu" else 100
-            else:  # Larger screens
-                wrap_width = 180 if metric["name"] == "gpu" else 150
+            base_wrap = 150 if metric["name"] == "gpu" else 120
             
-            value = ttk.Label(frame, text="Loading...", font=("Segoe UI", 9), wraplength=wrap_width, justify=tk.LEFT)
+            # Scale the wrap width based on screen size ratio and DPI
+            screen_scale = screen_width / 1920.0  # Normalize to 1080p base
+            wrap_width = int(base_wrap * max(0.7, min(1.5, screen_scale)) * self.dpi_scale)
+            
+            # Use DPI-aware font size
+            font_size = self.scale_value(9)
+            value = ttk.Label(frame, text="Loading...", font=("Segoe UI", font_size), wraplength=wrap_width, justify=tk.LEFT)
             value.pack(anchor=tk.W, fill=tk.BOTH, expand=True)
             
             self.metric_labels[metric["name"]] = value
-        
-        # Button bar at bottom
-        self.button_frame = ttk.Frame(self.container_frame)
-        self.button_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        # Two rows of buttons for better organization
-        self.button_row1 = ttk.Frame(self.button_frame)
-        self.button_row1.pack(fill=tk.X, pady=(0, 5))
-        
-        self.button_row2 = ttk.Frame(self.button_frame)
-        self.button_row2.pack(fill=tk.X)
-        
-        # Add buttons with consistent sizing and spacing
-        row1_buttons = [
-            {"text": "Add Server", "command": self.add_server, "width": 15},
-            {"text": "Import Server", "command": self.import_server, "width": 15}
-        ]
-        
-        row2_buttons = [
-            {"text": "Sync All", "command": self.sync_all, "width": 15},
-            {"text": "Cluster", "command": self.add_agent, "width": 15}
-        ]
-        
-        for btn in row1_buttons:
-            ttk.Button(self.button_row1, text=btn["text"], command=btn["command"], 
-                      width=btn["width"]).pack(side=tk.LEFT, padx=(0, 10))
-            
-        for btn in row2_buttons:
-            ttk.Button(self.button_row2, text=btn["text"], command=btn["command"], 
-                      width=btn["width"]).pack(side=tk.LEFT, padx=(0, 10))
     
     # ===== TAB MANAGEMENT METHODS =====
     
@@ -1214,16 +1223,17 @@ class ServerManagerDashboard(ServerManagerModule):
             if not os.path.exists(config_file):
                 return
                 
-            # Read current configuration
             with open(config_file, 'r', encoding='utf-8') as f:
                 server_config = json.load(f)
                 
-            # Update category
             server_config['Category'] = new_category
             
-            # Save updated configuration
             with open(config_file, 'w', encoding='utf-8') as f:
                 json.dump(server_config, f, indent=2, ensure_ascii=False)
+            
+            # Update in-memory cache
+            if self.server_manager:
+                self.server_manager.reload_server(server_name)
                 
             logger.info(f"Updated category for server '{server_name}' to '{new_category}'")
             
@@ -1560,8 +1570,8 @@ class ServerManagerDashboard(ServerManagerModule):
                 ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT, padx=(0, 10))
                 ttk.Button(button_frame, text="Select Server", command=select_server, width=15).pack(side=tk.RIGHT)
                 
-                # Center dialog
-                center_window(appid_dialog, 600, 500, dialog)
+                # Centre dialog
+                centre_window(appid_dialog, 600, 500, dialog)
             
             ttk.Button(scrollable_frame, text="Browse", command=browse_appid, width=12).grid(row=current_row, column=2, padx=15, pady=10)
             current_row += 1
@@ -1850,8 +1860,8 @@ class ServerManagerDashboard(ServerManagerModule):
             
         dialog.protocol("WM_DELETE_WINDOW", on_close)
         
-        # Center dialog relative to parent with proper size for new layout
-        center_window(dialog, dialog_width, dialog_height, self.root)
+        # Centre dialog relative to parent with proper size for new layout
+        centre_window(dialog, dialog_width, dialog_height, self.root)
 
     def update_server_list(self, force_refresh=False):
         # Update server list from configuration files - thread-safe
@@ -1871,6 +1881,29 @@ class ServerManagerDashboard(ServerManagerModule):
         self.variables["offlineMode"] = self.offline_var.get()
         self.update_webserver_status()
         logger.info(f"Offline mode set to {self.variables['offlineMode']}")
+    
+    def toggle_system_info(self):
+        # Toggle visibility of the system information panel
+        self.system_info_visible = not self.system_info_visible
+        
+        if self.system_info_visible:
+            # Show the system info panel - add back to pane
+            self.main_pane.add(self.system_frame, weight=30)
+            self.system_toggle_btn.config(text="◀")
+        else:
+            # Hide the system info panel - remove from pane
+            self.main_pane.forget(self.system_frame)
+            self.system_toggle_btn.config(text="▶")
+        
+        # Save state to database
+        self.variables["systemInfoVisible"] = self.system_info_visible
+        try:
+            from Modules.Database.cluster_database import get_cluster_database
+            db = get_cluster_database()
+            db.set_dashboard_config("ui.systemInfoVisible", self.system_info_visible, "boolean", "ui")
+            logger.debug(f"System info visibility saved: {self.system_info_visible}")
+        except Exception as e:
+            logger.error(f"Error saving system info visibility state: {e}")
     
     def update_webserver_status(self):
         # Update the web server status display - thread-safe
@@ -2605,8 +2638,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             # Close button
             ttk.Button(button_frame, text="Close", command=dialog.destroy, width=15).pack(side=tk.RIGHT, padx=(0, 10))
             
-            # Center dialog relative to parent
-            center_window(dialog, 700, 600, self.root)
+            # Centre dialog relative to parent
+            centre_window(dialog, 700, 600, self.root)
             
         except Exception as e:
             log_exception(e, f"Error viewing process details for {server_name}")
@@ -2939,8 +2972,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(button_frame, text="Select Server", command=select_server, width=15).pack(side=tk.RIGHT)
             
-            # Center dialog
-            center_window(appid_dialog, 600, 500, dialog)
+            # Centre dialog
+            centre_window(appid_dialog, 600, 500, dialog)
         
         appid_browse_btn = ttk.Button(identity_frame, text="Browse", command=browse_appid, width=10)
         appid_browse_btn.grid(row=2, column=2, padx=5, pady=5)
@@ -2969,6 +3002,19 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                     update_paths_for_new_install_dir(old_dir, selected_dir)
         
         ttk.Button(identity_frame, text="Browse", command=browse_install_dir, width=8).grid(row=3, column=2, padx=5, pady=5)
+        
+        def test_install_dir_path():
+            # Test if the install directory path exists
+            dir_path = install_dir_var.get().strip()
+            if not dir_path:
+                messagebox.showinfo("Test", "No install directory specified.")
+                return
+            if os.path.exists(dir_path) and os.path.isdir(dir_path):
+                messagebox.showinfo("Test OK", f"Directory exists: {dir_path}")
+            else:
+                messagebox.showwarning("Test Failed", f"Directory not found: {dir_path}")
+        
+        ttk.Button(identity_frame, text="Test Path", command=test_install_dir_path, width=10).grid(row=3, column=3, padx=5, pady=5)
         
         def update_paths_for_new_install_dir(old_dir, new_dir):
             """Update relative paths when install directory changes"""
@@ -3329,9 +3375,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                                     foreground="orange", font=("Segoe UI", 9, "bold"), wraplength=650)
             warning_label.pack()
 
-        # Button frame at bottom of main dialog
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=10)
+        # Button frame at bottom of dialog (outside scrollable area)
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=10)
         
         def validate_inputs():
             # Validate all input fields
@@ -3573,26 +3619,12 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 logger.error(f"Error saving server configuration: {str(e)}")
                 messagebox.showerror("Error", f"Failed to save configuration: {str(e)}")
         
-        def test_executable():
-            # Test if the executable path exists
-            exe_path = exe_var.get().strip()
-            if not exe_path:
-                messagebox.showinfo("Test", "No executable path specified. You can set this later after the server files are downloaded.")
-                return
-                
-            exe_abs = exe_path if os.path.isabs(exe_path) else os.path.join(install_dir_var.get(), exe_path)
-            if os.path.exists(exe_abs):
-                messagebox.showinfo("Test OK", f"Executable found: {exe_abs}")
-            else:
-                messagebox.showerror("Test Failed", f"Executable not found: {exe_abs}")
-        
-        # Buttons
-        ttk.Button(button_frame, text="Test Path", command=test_executable).pack(side=tk.LEFT, padx=(0, 10))
+        # Buttons - Save and Cancel at bottom of dialog
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="Save Configuration", command=save_configuration).pack(side=tk.RIGHT)
 
-        # Center dialog relative to parent
-        center_window(dialog, dialog_width, dialog_height, self.root)
+        # Centre dialog relative to parent
+        centre_window(dialog, dialog_width, dialog_height, self.root)
 
     def configure_java(self):
         # Open Java configuration dialog for selected server
@@ -3821,8 +3853,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="Save", command=on_save, width=12).pack(side=tk.RIGHT)
         
-        # Center dialog
-        center_window(dialog, 950, 750, self.root)
+        # Centre dialog
+        centre_window(dialog, 950, 750, self.root)
     
     def show_steam_server_config(self, server_name, server_config):
         # Show Steam-specific configuration dialog
@@ -3973,8 +4005,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="Save", command=on_save, width=12).pack(side=tk.RIGHT)
         
-        # Center dialog
-        center_window(dialog, 700, 600, self.root)
+        # Centre dialog
+        centre_window(dialog, 700, 600, self.root)
     
     def show_other_server_config(self, server_name, server_config):
         # Show generic server configuration dialog
@@ -4088,8 +4120,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="Save", command=on_save, width=12).pack(side=tk.RIGHT)
         
-        # Center dialog
-        center_window(dialog, 600, 500, self.root)
+        # Centre dialog
+        centre_window(dialog, 600, 500, self.root)
 
     def open_server_directory(self):
         # Open the server's installation directory in file explorer
@@ -4214,8 +4246,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             ttk.Button(button_frame, text="Continue", command=proceed_import, width=15).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(button_frame, text="Cancel", command=cancel_import, width=15).pack(side=tk.LEFT, padx=(0, 10))
             
-            # Center dialog
-            center_window(import_dialog, 400, 300, self.root)
+            # Centre dialog
+            centre_window(import_dialog, 400, 300, self.root)
             
         except Exception as e:
             logger.error(f"Error in import server: {str(e)}")
@@ -4340,8 +4372,8 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             sync_thread = threading.Thread(target=sync_data, daemon=True)
             sync_thread.start()
             
-            # Center progress dialog relative to parent
-            center_window(progress_dialog, 400, 150, self.root)
+            # Centre progress dialog relative to parent
+            centre_window(progress_dialog, 400, 150, self.root)
             
         except Exception as e:
             logger.error(f"Error in sync all: {str(e)}")
@@ -4849,7 +4881,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         cancel_btn = ttk.Button(button_frame, text="Cancel", command=dialog.destroy)
         cancel_btn.pack(side=tk.RIGHT)
         
-        # Center dialog
+        # Centre dialog
         dialog.update_idletasks()
         x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
         y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
@@ -5077,7 +5109,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             progress_dialog.geometry("400x150")
             progress_dialog.transient(self.root)
             progress_dialog.grab_set()
-            center_window(progress_dialog, 400, 150, self.root)
+            centre_window(progress_dialog, 400, 150, self.root)
             
             # Progress frame
             progress_frame = ttk.Frame(progress_dialog, padding=20)
@@ -5175,6 +5207,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                             server_config.pop('ProcessId', None)
                             server_config.pop('PID', None)
                             server_config.pop('StartTime', None)
+                            server_config.pop('ProcessCreateTime', None)
                             self.server_manager.save_server_config(server_name, server_config)
                     except Exception as e:
                         logger.warning(f"Failed to clear PID from config after kill: {e}")
@@ -5211,6 +5244,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                             server_config.pop('ProcessId', None)
                             server_config.pop('PID', None)
                             server_config.pop('StartTime', None)
+                            server_config.pop('ProcessCreateTime', None)
                             self.server_manager.save_server_config(server_name, server_config)
                             
                             # Clean up console state
@@ -5508,7 +5542,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         settings_window.transient(self.root)
         settings_window.grab_set()
         
-        # Center the dialog
+        # Centre the dialog
         settings_window.update_idletasks()
         x = (settings_window.winfo_screenwidth() // 2) - (settings_window.winfo_width() // 2)
         y = (settings_window.winfo_screenheight() // 2) - (settings_window.winfo_height() // 2)
@@ -5751,47 +5785,32 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         show_about_dialog(self.root, logger)
 
 def main():
-    # Parse command line arguments and create/run dashboard
-    import logging
     import traceback as tb
+    from Modules.server_logging import early_crash_log
     
-    # Set up early crash logging BEFORE anything else
-    early_log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'logs', 'dashboard_startup.log')
-    os.makedirs(os.path.dirname(early_log_path), exist_ok=True)
-    
-    # Configure early logging - only keep last startup log
-    early_logger = logging.getLogger('dashboard.startup')
-    early_logger.setLevel(logging.INFO)
-    early_handler = logging.FileHandler(early_log_path, mode='w', encoding='utf-8')
-    early_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    early_logger.addHandler(early_handler)
-    
-    early_logger.info("Dashboard startup initiated")
-    early_logger.debug(f"Python: {sys.executable} ({sys.version.split()[0]})")
+    early_crash_log("Dashboard", "Startup initiated")
     
     try:
         parser = argparse.ArgumentParser(description='Server Manager Dashboard')
         parser.add_argument('--debug', action='store_true', help='Enable debug logging')
         args = parser.parse_args()
 
-        # Create and run dashboard
         dashboard = ServerManagerDashboard(debug_mode=args.debug)
-        early_logger.info("Dashboard started successfully")
+        early_crash_log("Dashboard", "Started successfully")
         
         dashboard.run()
-        early_logger.info("Dashboard closed normally")
+        early_crash_log("Dashboard", "Closed normally")
         
     except Exception as e:
-        early_logger.error(f"FATAL ERROR during dashboard startup: {e}")
-        early_logger.error(f"Traceback:\n{tb.format_exc()}")
+        early_crash_log("Dashboard", f"FATAL ERROR: {e}")
+        early_crash_log("Dashboard", f"Traceback: {tb.format_exc()}")
         
-        # Also try to show a message box for fatal errors
         try:
             import tkinter as tk
             from tkinter import messagebox
             root = tk.Tk()
             root.withdraw()
-            messagebox.showerror("Dashboard Startup Error", f"Failed to start dashboard:\n\n{e}\n\nCheck logs\\dashboard_startup.log for details.")
+            messagebox.showerror("Dashboard Startup Error", f"Failed to start dashboard:\n\n{e}\n\nCheck logs/components/Dashboard.log for details.")
             root.destroy()
         except:
             pass

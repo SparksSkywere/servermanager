@@ -175,6 +175,79 @@ class API {
             body: JSON.stringify(serverData)
         });
     }
+
+    /**
+     * Get console output for a server
+     * @param {string} serverId - Server ID
+     * @param {number} lines - Number of lines to fetch
+     * @returns {Promise<Object>} Console output
+     */
+    static async getConsoleOutput(serverId, lines = 100) {
+        return this.request(`/servers/${encodeURIComponent(serverId)}/console?lines=${lines}`);
+    }
+
+    /**
+     * Send command to server console
+     * @param {string} serverId - Server ID
+     * @param {string} command - Command to send
+     * @returns {Promise<Object>} Operation result
+     */
+    static async sendConsoleCommand(serverId, command) {
+        return this.request(`/servers/${encodeURIComponent(serverId)}/console`, {
+            method: 'POST',
+            body: JSON.stringify({ command })
+        });
+    }
+
+    // ==================== Profile Methods ====================
+
+    /**
+     * Get current user's profile
+     * @returns {Promise<Object>} User profile data
+     */
+    static async getProfile() {
+        return this.request('/profile');
+    }
+
+    /**
+     * Update current user's profile
+     * @param {Object} profileData - Profile fields to update
+     * @returns {Promise<Object>} Operation result
+     */
+    static async updateProfile(profileData) {
+        return this.request('/profile', {
+            method: 'PUT',
+            body: JSON.stringify(profileData)
+        });
+    }
+
+    /**
+     * Change current user's password
+     * @param {string} currentPassword - Current password for verification
+     * @param {string} newPassword - New password to set
+     * @returns {Promise<Object>} Operation result
+     */
+    static async changePassword(currentPassword, newPassword) {
+        return this.request('/profile/password', {
+            method: 'PUT',
+            body: JSON.stringify({
+                current_password: currentPassword,
+                new_password: newPassword
+            })
+        });
+    }
+
+    /**
+     * Upload a new avatar
+     * @param {string} avatarBase64 - Base64 encoded avatar image
+     * @returns {Promise<Object>} Operation result
+     */
+    static async uploadAvatar(avatarBase64) {
+        return this.request('/profile/avatar', {
+            method: 'POST',
+            body: JSON.stringify({ avatar: avatarBase64 })
+        });
+    }
 }
 
 export default API;

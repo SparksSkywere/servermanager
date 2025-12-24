@@ -1,7 +1,8 @@
-# Server update and system task scheduling with unified interface management
-
+# Task scheduling
+# - Update checks, timers, database sync
 # -*- coding: utf-8 -*-
 import os
+import sys
 import json
 import datetime
 import psutil
@@ -11,42 +12,38 @@ from tkinter import ttk, messagebox
 from typing import Dict, List, Optional, Callable
 import requests
 
-# Add project root to sys.path for module resolution
-import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Modules.server_logging import log_process_monitoring, get_dashboard_logger
+from Modules.common import setup_module_logging
+from Modules.server_logging import log_process_monitoring
 
-logger = get_dashboard_logger()
+logger = setup_module_logging("Scheduler")
+
 
 class SchedulerManager:
-    # Enhanced scheduler for server updates and system tasks with unified interface
+    # - Runs update checks, timers, cluster sync
+    # - Relies on dashboard for UI updates
     
     def __init__(self, dashboard):
-        # Initialize the SchedulerManager with dashboard reference
         self.dashboard = dashboard
         self.update_manager = None
         self.scheduled_tasks = {}
-        self.update_check_interval = 300  # 5 minutes in seconds
+        self.update_check_interval = 300
         self.last_update_check = datetime.datetime.min
-        
-        # Database syncing configuration
         self.database_sync_enabled = False
-        self.database_sync_interval = 600  # 10 minutes default
+        self.database_sync_interval = 600
         self.last_database_sync = datetime.datetime.min
         self.agent_manager = None
     
     def set_update_manager(self, update_manager):
-        # Set the server update manager instance
         self.update_manager = update_manager
     
     def set_agent_manager(self, agent_manager):
-        # Set the cluster agent manager instance for database syncing
+        # Hook up cluster agent for db sync
         self.agent_manager = agent_manager
     
     def start_timers(self):
-        # Start all update timers using configuration values
-        # Start background CPU monitoring
+        # Fire up all scheduled timers
         self._start_cpu_monitoring()
         
         # System info update timer
@@ -66,25 +63,10 @@ class SchedulerManager:
             self.dashboard.root.after(30000, self.database_sync_timer)  # Start after 30 seconds
     
     def system_info_timer(self):
-        # Timer function for system info updates
         try:
-            # Direct file logging for debugging console flash
-            import datetime
-            try:
-                log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs', 'timer_trace.log')
-                with open(log_path, 'a') as f:
-                    f.write(f"{datetime.datetime.now().isoformat()} - system_info_timer STARTED\n")
-            except: pass
-            
             logger.debug("[SUBPROCESS_TRACE] system_info_timer fired")
             if self.dashboard and hasattr(self.dashboard, 'update_system_info'):
                 self.dashboard.update_system_info()
-            
-            # Log completion
-            try:
-                with open(log_path, 'a') as f:
-                    f.write(f"{datetime.datetime.now().isoformat()} - system_info_timer COMPLETED\n")
-            except: pass
             
             system_interval = self.dashboard.variables["systemInfoUpdateInterval"] * 1000
             self.dashboard.root.after(system_interval, self.system_info_timer)
@@ -92,27 +74,12 @@ class SchedulerManager:
             logger.error(f"System info timer error: {str(e)}")
     
     def server_list_timer(self):
-        # Timer function for server list updates
         try:
-            # Direct file logging for debugging console flash
-            import datetime
-            try:
-                log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs', 'timer_trace.log')
-                with open(log_path, 'a') as f:
-                    f.write(f"{datetime.datetime.now().isoformat()} - server_list_timer STARTED\n")
-            except: pass
-            
             logger.debug("[SUBPROCESS_TRACE] server_list_timer fired")
             if self.dashboard and hasattr(self.dashboard, 'periodic_server_list_refresh'):
                 self.dashboard.periodic_server_list_refresh()
             elif self.dashboard and hasattr(self.dashboard, 'refresh_server_list'):
                 self.dashboard.refresh_server_list()
-            
-            # Log completion
-            try:
-                with open(log_path, 'a') as f:
-                    f.write(f"{datetime.datetime.now().isoformat()} - server_list_timer COMPLETED\n")
-            except: pass
             
             server_interval = self.dashboard.variables["serverListUpdateInterval"] * 1000
             self.dashboard.root.after(server_interval, self.server_list_timer)
@@ -465,7 +432,7 @@ class SchedulerManager:
         # Populate targets list
         self.populate_targets_list()
         
-        # Center window
+        # Centre window
         manager.update_idletasks()
         x = self.dashboard.root.winfo_rootx() + (self.dashboard.root.winfo_width() - manager.winfo_width()) // 2
         y = self.dashboard.root.winfo_rooty() + (self.dashboard.root.winfo_height() - manager.winfo_height()) // 2

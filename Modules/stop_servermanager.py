@@ -1,4 +1,6 @@
-# Server Manager shutdown utility with process termination and cleanup functionality
+# Shutdown utility
+# - Stops all SM processes
+# - Cleans up PID files
 import os
 import sys
 import json
@@ -11,69 +13,52 @@ import time
 import ctypes
 import signal
 
-# Add the parent directory to the path for module imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from Modules.common import ServerManagerModule
+from Modules.common import ServerManagerModule, setup_module_logging
 
-# Import standardized logging
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("StopServerManager")
-except Exception:
-    import logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    logger = logging.getLogger("StopServerManager")
+logger = setup_module_logging("StopServerManager")
+
 
 def is_admin():
-    # Check if the script is running with administrator privileges
+    # Check admin privileges
     try:
         return ctypes.windll.shell32.IsUserAnAdmin() != 0
     except:
         return False
 
+
 def run_as_admin():
-    # Re-run the script with admin privileges
-    # Use hidden window when restarting as admin
+    # Re-run with admin (hidden)
     if sys.platform == 'win32':
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 0)  # 0 = SW_HIDE
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 0)
     else:
-        # Unix systems may handle this differently
-        print("Administrator privileges required")
+        print("Admin required")
     sys.exit()
 
+
 class ServerManagerStopper(ServerManagerModule):
+    # - Terminates all SM components
+    # - Force option for stubborn processes
     def __init__(self):
         super().__init__("StopServerManager")
         self.debug_mode = False
         
-        # Parse command line arguments
         parser = argparse.ArgumentParser(description='Stop Server Manager')
-        parser.add_argument('--debug', action='store_true', help='Enable debug logging')
-        parser.add_argument('--force', action='store_true', help='Force stop all processes')
+        parser.add_argument('--debug', action='store_true', help='Debug mode')
+        parser.add_argument('--force', action='store_true', help='Force stop')
         args = parser.parse_args()
         
-        # Configure logging based on arguments
         if args.debug:
             logger.setLevel(logging.DEBUG)
             self.debug_mode = True
             
         self.force_stop = args.force
         
-        # Set up file logging
-        log_file = os.path.join(self.paths["logs"], "stop-servermanager.log")
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-        logger.addHandler(file_handler)
-        
     def stop_process_by_pid(self, pid, process_name=None):
-        # Stop a process by PID
+        # Kill process by PID
         try:
             if not psutil.pid_exists(pid):
-                logger.debug(f"Process {pid} ({process_name or 'unknown'}) is not running")
+                logger.debug(f"PID {pid} not running")
                 return True
                 
             process = psutil.Process(pid)

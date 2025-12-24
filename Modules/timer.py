@@ -1,4 +1,6 @@
-# Timer management for dashboard updates including system info, server list, web server status, and process monitoring
+# Timer management
+# - Dashboard update timers
+# - CPU monitoring thread
 import os
 import json
 import datetime
@@ -9,62 +11,53 @@ from Modules.server_logging import log_process_monitoring
 
 
 class TimerManager:
-    # Manages all timer functionality for the dashboard
+    # - Schedules periodic UI updates
+    # - Background CPU monitoring
     
     def __init__(self, dashboard):
-        # Initialize the TimerManager with a reference to the dashboard
         self.dashboard = dashboard
     
     def start_timers(self):
-        # Start update timers using configuration values
-        # Start background CPU monitoring
+        # Fire up all update timers
         self._start_cpu_monitoring()
         
-        # System info update timer
         system_interval = self.dashboard.variables["systemInfoUpdateInterval"] * 1000
         self.dashboard.root.after(system_interval, self.system_info_timer)
         
-        # Server list update timer
         server_interval = self.dashboard.variables["serverListUpdateInterval"] * 1000
         self.dashboard.root.after(server_interval, self.server_list_timer)
         
-        # Web server status update timer
         webserver_interval = self.dashboard.variables["webserverStatusUpdateInterval"] * 1000
         self.dashboard.root.after(webserver_interval, self.webserver_status_timer)
         
-        # Process monitoring timer
         process_interval = self.dashboard.variables["processMonitorUpdateInterval"] * 1000
         self.dashboard.root.after(process_interval, self.process_monitor_timer)
 
     def _start_cpu_monitoring(self):
-        # Start background CPU monitoring to prevent UI blocking
+        # Background thread for CPU stats
         def cpu_monitor():
             try:
                 while hasattr(self.dashboard, 'root'):
                     try:
-                        # Check if root window still exists, if not, break
                         if not self.dashboard.root.winfo_exists():
                             break
                     except tk.TclError:
-                        # Window has been destroyed
                         break
                         
-                    # Update CPU stats in background - this will be cached for non-blocking UI updates
                     psutil.cpu_percent(interval=1)
-                    # Sleep for a bit to avoid excessive CPU usage
                     threading.Event().wait(2)
             except Exception as e:
-                log_process_monitoring(f"CPU monitoring thread error: {str(e)}", "ERROR")
+                log_process_monitoring(f"CPU monitor error: {str(e)}", "ERROR")
         
         cpu_thread = threading.Thread(target=cpu_monitor, daemon=True)
         cpu_thread.start()
 
     def system_info_timer(self):
-        # Timer callback for system info updates
+        # System info update callback
         try:
             self.dashboard.update_system_info()
         except Exception as e:
-            log_process_monitoring(f"System info update error: {str(e)}", "ERROR")
+            log_process_monitoring(f"System info error: {str(e)}", "ERROR")
         
         interval = self.dashboard.variables["systemInfoUpdateInterval"] * 1000
         self.dashboard.root.after(interval, self.system_info_timer)
@@ -128,7 +121,9 @@ class TimerManager:
                                     
                                     # Clean up the process ID in the config
                                     server_config.pop('ProcessId', None)
+                                    server_config.pop('PID', None)
                                     server_config.pop('StartTime', None)
+                                    server_config.pop('ProcessCreateTime', None)
                                     server_config['LastUpdate'] = datetime.datetime.now().isoformat()
                                     
                                     # Clean up process history

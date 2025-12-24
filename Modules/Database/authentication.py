@@ -1,3 +1,5 @@
+# Authentication module
+# - SQL and Windows auth support
 import os
 import sys
 import logging
@@ -6,45 +8,44 @@ import subprocess
 import winreg
 from datetime import datetime
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-# Centralized logging / debugging (follows dashboard pattern)
-try:  # Prefer centralized log manager
+try:
     from Modules.server_logging import get_component_logger, log_exception
     logger = get_component_logger("Authentication")
-except Exception:  # Fallback minimal logger
+except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger("Authentication")
 
-# Enable debug level if global flag set
+# Debug mode via env
 if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.setLevel(logging.DEBUG)
-    logger.debug("Authentication module debug mode enabled via environment")
+    logger.debug("Auth debug mode enabled")
 
-# SQL Authentication support
+# SQL auth support
 try:
-    from Modules.Database.SQL_Connection import get_engine, initialize_user_manager
+    from Modules.Database.SQL_Connection import get_engine, initialise_user_manager
     from Modules.user_management import UserManager
     SQL_AVAILABLE = True
-    logger.info("SQL authentication support available")
+    logger.info("SQL auth available")
 except ImportError as e:
     SQL_AVAILABLE = False
-    logger.warning(f"SQL authentication not available: {e}")
+    logger.warning(f"SQL auth not available: {e}")
 
-# Windows Authentication support
+# Windows auth support
 try:
     import win32api
     import win32security
     import win32net
     import win32netcon
     WINDOWS_AUTH_AVAILABLE = True
-    logger.info("Windows authentication support available")
+    logger.info("Windows auth available")
 except ImportError as e:
     WINDOWS_AUTH_AVAILABLE = False
-    logger.warning(f"Windows authentication not available: {e}")
+    logger.warning(f"Windows auth not available: {e}")
 
 def get_server_manager_dir():
+    # SM dir from registry
     try:
         from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
@@ -52,21 +53,20 @@ def get_server_manager_dir():
         winreg.CloseKey(key)
         return server_manager_dir
     except Exception as e:
-        logger.error(f"Failed to get server manager directory from registry: {e}")
+        logger.error(f"Registry read failed: {e}")
         return None
 
-# Singleton pattern for UserManager instance
 _user_manager = None
 def get_user_manager():
-    # Get or create UserManager instance
+    # Get or create UserManager singleton
     global _user_manager
     if _user_manager is None and SQL_AVAILABLE:
         try:
-            engine, user_manager = initialize_user_manager()
+            engine, user_manager = initialise_user_manager()
             _user_manager = user_manager
-            logger.info("SQL UserManager initialized")
+            logger.info("SQL UserManager initialised")
         except Exception as e:
-            logger.error(f"Failed to initialize SQL UserManager: {e}")
+            logger.error(f"UserManager init failed: {e}")
     return _user_manager
 
 def authenticate_user(username, password, auth_type="auto"):

@@ -1,3 +1,4 @@
+# System diagnostics and debugging
 import os
 import sys
 import json
@@ -11,43 +12,34 @@ import subprocess
 import socket
 from pathlib import Path
 
-# Centralized logging
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Modules.common import setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH
+
 try:
     from Modules.server_logging import get_debug_logger
-    # Create debug logger that writes to logs/debug/ directory
     logger = get_debug_logger("debug")
 except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("Debug")
+    logger = setup_module_logging("Debug")
 
-if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
-    logger.setLevel(logging.DEBUG)
-    logger.debug("Debug module debug mode enabled via environment")
 
 class DebugManager:
-    # Simplified class for system diagnostics and debugging
+    # - System diagnostics
+    # - Log collection
     def __init__(self):
-        # Add project root to sys.path
-        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-        from Modules.common import REGISTRY_PATH
         self.registry_path = REGISTRY_PATH
         self.server_manager_dir = None
         self.paths = {}
         self.debug_enabled = False
-        
-        # Initialize from registry
-        self.initialize_from_registry()
+        self.initialise_from_registry()
     
-    def initialize_from_registry(self):
-        # Initialize paths from registry settings
+    def initialise_from_registry(self):
+        # Pull paths from registry
         try:
-            from Modules.common import REGISTRY_ROOT
-            # Read registry for paths
             key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             
-            # Define paths structure (config/data folders removed - all config is database-backed)
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
@@ -55,17 +47,16 @@ class DebugManager:
                 "debug": os.path.join(self.server_manager_dir, "logs", "debug")
             }
             
-            # Ensure directories exist
             for path in self.paths.values():
                 os.makedirs(path, exist_ok=True)
             
-            logger.info(f"Debug manager initialized from registry")
+            logger.info(f"Debug manager initialised")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to initialize debug manager from registry: {str(e)}")
+            logger.error(f"Debug manager init failed: {str(e)}")
             
-            # Use a fallback path
+            # Fallback path
             self.server_manager_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             self.paths = {
                 "root": self.server_manager_dir,

@@ -1,8 +1,8 @@
-# SNMP Management Module
+# SNMP management module
+# - OID-based metrics for SNMP monitoring
 import logging
 from datetime import datetime
 
-# Import server manager common functionality
 try:
     from Modules.common import ServerManagerModule
     from Modules.server_logging import get_component_logger
@@ -12,41 +12,39 @@ except Exception:
     logger = logging.getLogger("SNMP")
 
 class SNMPManager(ServerManagerModule):
-    # SNMP monitoring integration for Server Manager
-    # Formats metrics with OID structure for SNMP monitoring systems
-    # Integrates with analytics module for metric collection
+    # - SNMP monitoring integration
+    # - OID structure for metrics
     
     def __init__(self, analytics_instance=None):
         try:
             super().__init__("SNMP")
-            logger.info("SNMP module initialized successfully")
+            logger.info("SNMP module initialised")
         except Exception as e:
-            logger.error(f"Failed to initialize base ServerManagerModule: {e}")
-            # Initialize minimal attributes to prevent AttributeError
+            logger.error(f"Base module init failed: {e}")
             self.module_name = "SNMP"
             self.logger = logging.getLogger("SNMP")
         
         self.analytics = analytics_instance
         
-        # SNMP OID base for Server Manager enterprise
+        # Enterprise OID base
         self.enterprise_base = "1.3.6.1.4.1.12345"
         
-        # OID mappings for different metric categories
+        # OID mappings
         self.oid_mappings = {
-            # System metrics (1.3.6.1.4.1.enterprise.1.x)
+            # System metrics
             'system.health_score': f'{self.enterprise_base}.1.1',
             'system.cpu.percent': f'{self.enterprise_base}.1.2',
             'system.memory.percent': f'{self.enterprise_base}.1.3',
             'system.disk.percent': f'{self.enterprise_base}.1.4',
             'system.uptime': f'{self.enterprise_base}.1.5',
             
-            # Server metrics (1.3.6.1.4.1.enterprise.2.x)
+            # Server metrics
             'servers.total': f'{self.enterprise_base}.2.1',
             'servers.running': f'{self.enterprise_base}.2.2',
             'servers.offline': f'{self.enterprise_base}.2.3',
             'servers.error': f'{self.enterprise_base}.2.4',
             
-            # Application metrics (1.3.6.1.4.1.enterprise.3.x)
+            # App metrics
             'application.webserver.cpu_percent': f'{self.enterprise_base}.3.1',
             'application.webserver.memory_rss': f'{self.enterprise_base}.3.2',
             'application.webserver.connections': f'{self.enterprise_base}.3.3',
@@ -54,9 +52,9 @@ class SNMPManager(ServerManagerModule):
         }
 
     def set_analytics_instance(self, analytics_instance):
-        # Set the analytics instance for metric collection
+        # Set analytics for metric collection
         self.analytics = analytics_instance
-        logger.info("Analytics instance configured for SNMP manager")
+        logger.info("Analytics instance configured")
 
     def get_snmp_metrics(self):
         # Get metrics formatted for SNMP monitoring with OID structure

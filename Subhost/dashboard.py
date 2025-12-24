@@ -1,3 +1,5 @@
+# Subhost dashboard
+# - Minimal Flask app for subhost status
 import os
 import sys
 import json
@@ -7,13 +9,10 @@ import requests
 import winreg
 from flask import Flask, jsonify, render_template_string
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import centralized registry constants
 from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
 
-# Import standardized logging
 try:
     from Modules.server_logging import get_component_logger
     logger = get_component_logger("SubhostDashboard")
@@ -24,9 +23,8 @@ except Exception:
 
 app = Flask(__name__)
 
-# Get configuration from registry
 def get_subhost_config():
-    # Get subhost configuration from registry
+    # Subhost config from registry
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         try:
@@ -37,14 +35,13 @@ def get_subhost_config():
         try:
             subhost_id = winreg.QueryValueEx(key, "SubhostID")[0]
         except:
-            # Generate a unique ID if not set
             import socket
             subhost_id = f"{socket.gethostname()}-{os.getpid()}"
             
         winreg.CloseKey(key)
         return subhost_id, host_address
     except Exception as e:
-        logger.warning(f"Could not read subhost config from registry: {e}")
+        logger.warning(f"Registry read failed: {e}")
         import socket
         return f"{socket.gethostname()}-{os.getpid()}", "localhost:5001"
 
@@ -53,7 +50,7 @@ HOST_URL = f"http://{HOST_ADDRESS}"
 INFO = {
     "os": os.name,
     "cwd": os.getcwd(),
-    "api_url": f"http://localhost:8080",  # This subhost's API URL
+    "api_url": f"http://localhost:8080",
     "python_version": sys.version,
     "subhost_version": "1.0.0"
 }

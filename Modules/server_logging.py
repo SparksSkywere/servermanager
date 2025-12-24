@@ -1,4 +1,6 @@
-# Centralized logging management with rotation, compression, and statistics
+# Logging management
+# - Rotation, compression, stats
+# - Component loggers, early crash logging
 import os
 import sys
 import traceback
@@ -14,20 +16,36 @@ import json
 import hashlib
 from pathlib import Path
 
-# Default logging format
 DEFAULT_LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 DEFAULT_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 DEFAULT_MAX_SIZE = 10 * 1024 * 1024
 DEFAULT_BACKUP_COUNT = 3
 
+def early_crash_log(component_name, message):
+    # Emergency logging before LogManager exists
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        logs_dir = os.path.join(os.path.dirname(script_dir), "logs", "components")
+        os.makedirs(logs_dir, exist_ok=True)
+        log_path = os.path.join(logs_dir, f"{component_name}.log")
+        timestamp = datetime.datetime.now().strftime(DEFAULT_DATE_FORMAT)
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(f"{timestamp} - {component_name} - STARTUP - {message}\n")
+    except Exception:
+        pass
+
+# Registry constants—duplicated to avoid circular import
+_REGISTRY_ROOT = winreg.HKEY_LOCAL_MACHINE
+_REGISTRY_PATH = r"Software\SkywereIndustries\Servermanager"
+
 class LogManager:
-    # Manages logs with rotation and compression
+    # - Manages all logging
+    # - Rotation, compression, stats tracking
     def __init__(self):
-        from Modules.common import REGISTRY_PATH
-        self.registry_path = REGISTRY_PATH
+        self.registry_path = _REGISTRY_PATH
         self.server_manager_dir = None
         self.paths = {}
-        self.log_level = logging.WARNING  # Default to WARNING to reduce log spam
+        self.log_level = logging.WARNING
         self.formatters = {}
         self.handlers = {}
         self.loggers = {}
@@ -40,11 +58,9 @@ class LogManager:
             'last_reset': time.time()
         }
         
-        # Initialize from registry
-        self.initialize()
+        self.initialise()
     
     def _setup_formatters(self):
-        # Setup different log formatters for various purposes
         self.formatters = {
             "default": logging.Formatter(DEFAULT_LOG_FORMAT, DEFAULT_DATE_FORMAT),
             "detailed": logging.Formatter(
@@ -57,22 +73,18 @@ class LogManager:
             )
         }
 
-    def initialize(self):
-        # Initialize paths and configuration from registry
+    def initialise(self):
+        # Pull paths from registry
         try:
-            from Modules.common import REGISTRY_ROOT
-            # Read registry for paths
-            key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
+            key = winreg.OpenKey(_REGISTRY_ROOT, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             
-            # Define paths structure (config/data folders removed - all config is database-backed)
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs")
             }
             
-            # Ensure log directory exists
             os.makedirs(self.paths["logs"], exist_ok=True)
             
             # Setup main application logger
@@ -94,8 +106,7 @@ class LogManager:
             self._setup_main_logger()
 
     def _setup_main_logger(self):
-        # Setup the main application logger
-        main_log_file = os.path.join(self.paths["logs"], "servermanager.log")
+        main_log_file = os.path.join(self.paths["logs"], "components", "Main.log")
         self.main_logger = self.get_logger("servermanager.main", main_log_file, formatter_name="detailed")
         self.main_logger.info("LogManager initialized successfully")
 
@@ -185,7 +196,46 @@ class LogManager:
 
     def get_component_logger(self, component_name):
         # Get a logger for a specific component
-        log_file = os.path.join(self.paths["logs"], "components", f"{component_name}.log")
+        # Consolidate related components into shared log files to reduce log file count
+        LOG_CONSOLIDATION = {
+            # Dashboard-related logs -> Dashboard.log
+            'Dashboard': 'Dashboard',
+            'DashboardTracker': 'Dashboard',
+            'DashboardFunctions': 'Dashboard',
+            
+            # Server management logs -> ServerManager.log
+            'ServerManager': 'ServerManager',
+            'ServerOperations': 'ServerManager',
+            'ServerUpdateManager': 'ServerManager',
+            'ServerConsole': 'ServerManager',
+            
+            # Database logs -> Database.log
+            'UserDatabase': 'Database',
+            'SteamDatabase': 'Database', 
+            'MinecraftDatabase': 'Database',
+            'ClusterDatabase': 'Database',
+            'DatabaseUtils': 'Database',
+            'AppIDScanner': 'Database',
+            'MinecraftIDScanner': 'Database',
+            
+            # Network/Cluster logs -> Network.log
+            'Network': 'Network',
+            'ClusterAPI': 'Network',
+            'SimpleCluster': 'Network',
+            'Agents': 'Network',
+            
+            # System services -> Services.log
+            'Launcher': 'Services',
+            'TrayIcon': 'Services',
+            'WebServer': 'Services',
+            'StopServerManager': 'Services',
+        }
+        
+        # Get consolidated log file name, or use component name if not mapped
+        log_filename = LOG_CONSOLIDATION.get(component_name, component_name)
+        log_file = os.path.join(self.paths["logs"], "components", f"{log_filename}.log")
+        
+        # Use a unique logger name but shared log file
         return self.get_logger(f"component.{component_name}", log_file, formatter_name="detailed")
 
     def get_debug_logger(self, debug_module_name="debug"):
@@ -198,18 +248,15 @@ class LogManager:
         return self.get_logger(f"debug.{debug_module_name}", log_file, formatter_name="detailed")
 
     def get_error_logger(self):
-        # Get the dedicated error logger
         if "errors" not in self.loggers:
-            # Use main logs directory instead of separate errors directory
-            log_file = os.path.join(self.paths["logs"], "errors.log")
+            log_file = os.path.join(self.paths["logs"], "components", "Errors.log")
             logger = self.get_logger("errors", log_file, formatter_name="detailed", level=logging.ERROR)
             return logger
         return self.loggers["errors"]
 
     def get_dashboard_logger(self):
-        # Get the dashboard logger
         if self._dashboard_logger is None:
-            log_file = os.path.join(self.paths["logs"], "dashboard.log")
+            log_file = os.path.join(self.paths["logs"], "components", "Dashboard.log")
             self._dashboard_logger = self.get_logger("dashboard", log_file, formatter_name="detailed")
         return self._dashboard_logger
 

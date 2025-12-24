@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# Dedicated Server Verification Tool
-# Validates Steam dedicated server entries in the database by checking against Steam API
-# Removes invalid entries and maintains data integrity with strict validation criteria
+# Steam dedicated server verifier
+# - Validates DB entries against Steam API
+# - Removes invalid entries
 
 import os
 import sys
@@ -12,10 +12,8 @@ import requests
 import time
 from datetime import datetime, timezone
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-# Import database connection
 try:
     from Modules.Database.steam_database import get_steam_engine
     from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text
@@ -23,11 +21,10 @@ try:
     SQLALCHEMY_AVAILABLE = True
 except ImportError:
     SQLALCHEMY_AVAILABLE = False
-    print("Warning: SQLAlchemy not available, falling back to SQLite")
+    print("Warning: SQLAlchemy not available, SQLite fallback")
 
 import sqlite3
 
-# Import standardized logging
 try:
     from Modules.server_logging import get_component_logger
     logger = get_component_logger("ServerVerifier")
@@ -40,7 +37,7 @@ except Exception:
     )
     logger = logging.getLogger("ServerVerifier")
 
-# Database models (same as AppIDScanner)
+# DB models
 if SQLALCHEMY_AVAILABLE:
     Base = declarative_base()
     
@@ -52,8 +49,8 @@ if SQLALCHEMY_AVAILABLE:
         type = Column(String(50))
         is_server = Column(Boolean, default=False)
         is_dedicated_server = Column(Boolean, default=False)
-        requires_subscription = Column(Boolean, default=False)  # Whether the server requires a paid subscription
-        anonymous_install = Column(Boolean, default=True)  # Whether the server can be installed anonymously
+        requires_subscription = Column(Boolean, default=False)  # Paid subscription
+        anonymous_install = Column(Boolean, default=True)  # Anon install
         publisher = Column(String(255))
         release_date = Column(String(50))
         description = Column(Text)

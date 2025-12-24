@@ -1,39 +1,34 @@
-# User Database Management Module
-# Handles user authentication database connections, SQL configuration,
-# login dialogs, and user management system initialization
+# User database management
+# - Auth connections, login dialogs, user manager init
 
 import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox
 from sqlalchemy import text
 
-# Import shared utilities
 from .database_utils import get_sql_config_from_registry, build_db_url, get_engine_by_type
 
-# Setup standardized logging
 from Modules.common import setup_module_logging, setup_module_path
 setup_module_path()
 logger = setup_module_logging("UserDatabase")
 
 def get_user_sql_config_from_registry():
-    # Get SQL configuration for user database from Windows registry
+    # User DB config from registry
     return get_sql_config_from_registry("user")
 
 def build_user_db_url(config):
-    # Build SQLAlchemy database URL from config for user database
+    # SQLAlchemy URL for user DB
     return build_db_url(config)
 
 def get_user_engine():
-    # Get SQLAlchemy engine for user database with appropriate connection settings
+    # SQLAlchemy engine for user DB
     return get_engine_by_type("user")
 
 def ensure_root_admin(engine):
-    # Ensure root admin user exists in user database with complete schema
+    # Create root admin if missing
     try:
-        # This is a placeholder - implement based on your user table structure
         with engine.connect() as conn:
-            # Check if users table exists and create if needed with all columns
-            # Full user schema includes authentication, profile, and admin capabilities
+            # Create users table with full schema
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY,
@@ -53,12 +48,10 @@ def ensure_root_admin(engine):
                 )
             """))
             
-            # Check if admin user exists
             result = conn.execute(text("SELECT COUNT(*) FROM users WHERE username = 'admin'"))
             count = result.scalar()
             
             if count == 0:
-                # Create admin user with default password - CHANGE THIS IN PRODUCTION
                 import bcrypt
                 from datetime import datetime
                 import uuid
@@ -73,35 +66,34 @@ def ensure_root_admin(engine):
                     "account_number": account_number
                 })
                 conn.commit()
-                logger.info("Created default admin user in user database")
+                logger.info("Created default admin user")
             
     except Exception as e:
-        logger.error(f"Failed to ensure root admin in user database: {e}")
+        logger.error(f"Root admin creation failed: {e}")
         raise
 
-def initialize_user_manager():
-    # Initialize user management system and return engine and user_manager
+def initialise_user_manager():
+    # Init user management, return engine + user_manager
     try:
         engine = get_user_engine()
-        # Import here to avoid circular import
         from Modules.user_management import UserManager
         user_manager = UserManager(engine)
-        logger.info("User management system initialized with separate user database")
+        logger.info("User management initialised")
         return engine, user_manager
     except Exception as e:
-        logger.error(f"Failed to initialize user management: {e}")
+        logger.error(f"User manager init failed: {e}")
         raise
 
+# Backward compat
+initialize_user_manager = initialise_user_manager
+
 def sql_login(user_manager, parent_window=None):
-    # Prompt for login using SQL database authentication
-    # Returns (success, user) tuple where success is True if successful,
-    # False if cancelled, and user is the authenticated user object or None
-    # Includes retry logic with maximum attempts and comprehensive GUI dialog
+    # SQL login dialog
+    # - Returns (success, user) tuple
     max_attempts = 3
     attempts = 0
     
     while attempts < max_attempts:
-        # Create login dialog window
         login_dialog = tk.Toplevel() if parent_window else tk.Tk()
         if parent_window:
             login_dialog.transient(parent_window)
@@ -110,7 +102,7 @@ def sql_login(user_manager, parent_window=None):
         login_dialog.resizable(False, False)
         login_dialog.grab_set()
         
-        # Center the dialog
+        # Centre the dialog
         login_dialog.update_idletasks()
         x = (login_dialog.winfo_screenwidth() // 2) - (login_dialog.winfo_width() // 2)
         y = (login_dialog.winfo_screenheight() // 2) - (login_dialog.winfo_height() // 2)
@@ -237,7 +229,7 @@ def handle_2fa_login(user_manager, username, parent_window=None):
         twofa_dialog.resizable(False, False)
         twofa_dialog.grab_set()
         
-        # Center the dialog
+        # Centre the dialog
         twofa_dialog.update_idletasks()
         x = (twofa_dialog.winfo_screenwidth() // 2) - (190)
         y = (twofa_dialog.winfo_screenheight() // 2) - (100)
@@ -329,7 +321,7 @@ def handle_2fa_login(user_manager, username, parent_window=None):
     twofa_dialog.geometry("380x200")
     twofa_dialog.resizable(False, False)
     
-    # Center the dialog
+    # Centre the dialog
     twofa_dialog.update_idletasks()
     x = (twofa_dialog.winfo_screenwidth() // 2) - (twofa_dialog.winfo_width() // 2)
     y = (twofa_dialog.winfo_screenheight() // 2) - (twofa_dialog.winfo_height() // 2)

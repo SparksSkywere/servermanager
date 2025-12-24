@@ -1,4 +1,5 @@
-# Server operations including start, stop, restart, and status management
+# Server operations
+# - Start, stop, restart, status
 import os
 import sys
 import json
@@ -9,53 +10,39 @@ import time
 from datetime import datetime
 
 try:
-    from Modules.server_logging import get_component_logger, log_server_action
-    logger = get_component_logger("ServerOperations")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("ServerOperations")
-
-if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
-    logger.setLevel(logging.DEBUG)
-    logger.debug("ServerOperations module debug mode enabled via environment")
-try:
     import psutil
 except ImportError:
     psutil = None
 
-# logging configuration handled by centralized logging module when imported; fallback basicConfig already applied if import failed above
+from Modules.common import (
+    get_subprocess_creation_flags, setup_module_logging,
+    REGISTRY_ROOT, REGISTRY_PATH
+)
+from Modules.server_logging import get_component_logger, log_server_action
 
-def get_subprocess_creation_flags(hide_window=True):
-    # Get appropriate creation flags for subprocess calls on Windows to prevent console windows
-    if sys.platform != 'win32':
-        return 0
-    
-    return subprocess.CREATE_NO_WINDOW if hide_window else 0
-logger = logging.getLogger("ServerOperations")
+logger = setup_module_logging("ServerOperations")
 
 class ServerOperations:
-    # Class for server management operations
+    # - Server start/stop/restart
+    # - Status monitoring
     def __init__(self):
         self.registry_path = r"Software\SkywereIndustries\Servermanager"
         self.server_manager_dir = None
         self.paths = {}
         
-        # Initialize from registry
-        self.initialize_from_registry()
+        self.initialise_from_registry()
     
-    def initialize_from_registry(self):
-        # Initialize paths from registry settings
+    def initialise_from_registry(self):
+        # Pull paths from registry
         try:
-            # Read registry for paths
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             
             if not self.server_manager_dir:
-                logger.error("Server manager directory not found in registry")
+                logger.error("SM dir not in registry")
                 return False
             
-            # Define paths structure (config/data folders removed - all config is database-backed)
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
@@ -64,12 +51,11 @@ class ServerOperations:
                 "scripts": os.path.join(self.server_manager_dir, "scripts")
             }
             
-            # Ensure directories exist
             for path_name, path in self.paths.items():
                 try:
                     os.makedirs(path, exist_ok=True)
                 except Exception as e:
-                    logger.error(f"Failed to create directory {path_name} at {path}: {str(e)}")
+                    logger.error(f"Dir create failed {path_name}: {str(e)}")
                     return False
                 
             logger.info(f"Server operations initialized from registry")

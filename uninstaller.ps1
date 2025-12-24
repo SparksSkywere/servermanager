@@ -43,7 +43,7 @@ function Remove-DirectoryForcefully {
             $null = cmd /c "rd /s /q `"$Path`"" 2>&1
         } catch {
             # Method 3: Robocopy
-            $empty = New-Item -ItemType Directory -Path "$env:TEMP\empty" -Force
+            $null = New-Item -ItemType Directory -Path "$env:TEMP\empty" -Force
             $null = robocopy "$env:TEMP\empty" "$Path" /PURGE /NFL /NDL /NJH /NJS /NC /NS /NP
             Remove-Item -Path "$env:TEMP\empty" -Force -ErrorAction SilentlyContinue
             Remove-Item -Path $Path -Recurse -Force -ErrorAction SilentlyContinue

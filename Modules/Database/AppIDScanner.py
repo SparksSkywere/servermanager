@@ -1,5 +1,5 @@
-# SteamDB AppID Scanner, used to scan for AppIDs from SteamDB and SteamDB.info
-# It is then placed into the database for later use
+# SteamDB AppID Scanner
+# - Scans SteamDB for AppIDs, stores in database
 import os
 import sys
 import logging
@@ -12,20 +12,17 @@ import shutil
 from datetime import datetime, timezone
 import argparse
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-# Import database connection
 try:
-    from Modules.Database.steam_database import get_steam_engine, initialize_steam_database
+    from Modules.Database.steam_database import get_steam_engine, initialise_steam_database
     from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text
     from sqlalchemy.orm import declarative_base, sessionmaker
     SQLALCHEMY_AVAILABLE = True
 except ImportError:
     SQLALCHEMY_AVAILABLE = False
-    print("Warning: SQLAlchemy not available, falling back to SQLite")
+    print("Warning: SQLAlchemy not available, SQLite fallback")
 
-# Centralized logging
 try:
     from Modules.server_logging import get_component_logger
     logger = get_component_logger("AppIDScanner")
@@ -35,9 +32,9 @@ except Exception:
 
 if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.setLevel(logging.DEBUG)
-    logger.debug("AppIDScanner debug mode enabled via environment")
+    logger.debug("AppIDScanner debug mode")
 
-# Database models
+# DB models
 if SQLALCHEMY_AVAILABLE:
     Base = declarative_base()
     
@@ -49,14 +46,14 @@ if SQLALCHEMY_AVAILABLE:
         type = Column(String(50))
         is_server = Column(Boolean, default=False)
         is_dedicated_server = Column(Boolean, default=False)
-        requires_subscription = Column(Boolean, default=False)  # Whether the server requires a paid subscription
-        anonymous_install = Column(Boolean, default=True)  # Whether the server can be installed anonymously
+        requires_subscription = Column(Boolean, default=False)  # Paid subscription required
+        anonymous_install = Column(Boolean, default=True)  # Anon install allowed
         publisher = Column(String(255))
         release_date = Column(String(50))
         description = Column(Text)
-        tags = Column(Text)  # JSON string of tags
+        tags = Column(Text)  # JSON tags
         price = Column(String(20))
-        platforms = Column(String(100))  # JSON string of supported platforms
+        platforms = Column(String(100))  # JSON platforms
         last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))
         source = Column(String(50), default='steamdb')
 

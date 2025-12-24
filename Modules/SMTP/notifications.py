@@ -1,14 +1,12 @@
-# Notifications Module for Server Manager
-# Handles different types of email notifications with templates
+# Notifications module
+# - Email notifications with templates
 import os
 import re
 import sys
 from datetime import datetime
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import standardized logging
 try:
     from Modules.server_logging import get_component_logger
     logger = get_component_logger("Notifications")
@@ -20,7 +18,8 @@ except Exception:
 from .mailserver import mail_server
 
 class NotificationManager:
-    # Manages email notifications with templates and automated sending
+    # - Email notifications with templates
+    # - Automated sending
 
     def __init__(self):
         self.templates = self._load_templates()
@@ -28,13 +27,13 @@ class NotificationManager:
         self.css_content = self._load_css()
 
     def _load_css(self):
-        # Load the CSS file for embedding in HTML emails
+        # Load CSS for HTML emails
         css_file = os.path.join(os.path.dirname(__file__), 'Mail-Templates', 'mail-template.css')
         try:
             with open(css_file, 'r', encoding='utf-8') as f:
                 return f.read()
         except Exception as e:
-            logger.warning(f"Failed to load CSS file: {e}")
+            logger.warning(f"CSS load failed: {e}")
             return ""
 
     def _embed_css_in_html(self, html_content):
@@ -45,7 +44,7 @@ class NotificationManager:
         return html_content
 
     def _load_templates(self):
-        # Load email templates from files
+        # Load email templates
         template_dir = os.path.join(os.path.dirname(__file__), 'Mail-Templates')
         templates = {}
         

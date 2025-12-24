@@ -1,4 +1,6 @@
-# Flask web server for Server Manager with API endpoints, authentication, analytics, and cluster support
+# Flask web server
+# - REST API for server management
+# - Authentication, rate limiting, the works
 import os
 import sys
 import json
@@ -16,7 +18,6 @@ import ctypes
 from pathlib import Path
 from waitress import serve
 
-# Try to import psutil with fallback
 try:
     import psutil
 except ImportError:
@@ -27,52 +28,37 @@ from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
-# Import standardized logging
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("WebServer")
-except Exception:
-    import logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    logger = logging.getLogger("WebServer")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import dashboard tracker with fallback
+from Modules.common import setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH
+
+logger = setup_module_logging("WebServer")
+
+
 def get_server_manager_dir():
+    # Grab SM dir from registry—fallback to script parent
     try:
-        # Add project root to sys.path for imports
-        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-        from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
         winreg.CloseKey(key)
         return server_manager_dir
     except Exception as e:
-        logger.error(f"Failed to get server manager directory from registry: {e}")
+        logger.error(f"Registry lookup failed: {e}")
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        server_manager_dir = os.path.dirname(script_dir)
-        logger.warning(f"Using fallback server manager directory: {server_manager_dir}")
-        return server_manager_dir
+        return os.path.dirname(script_dir)
 
-# Create a dummy dashboard tracker class for fallback
+
 class DummyDashboardTracker:
-    def start_auto_refresh(self):
-        pass
-    def stop_auto_refresh(self):
-        pass
-    def get_dashboards(self):
-        return []
-    def get_servers(self):
-        return []
-    def refresh(self):
-        pass
+    # Stub when real tracker unavailable
+    def start_auto_refresh(self): pass
+    def stop_auto_refresh(self): pass
+    def get_dashboards(self): return []
+    def get_servers(self): return []
+    def refresh(self): pass
+
 
 tracker = None
 try:
-    # Try to import from services directory
     server_manager_dir = get_server_manager_dir()
     services_path = os.path.join(server_manager_dir, "services")
     if os.path.exists(services_path):
@@ -442,15 +428,15 @@ from Modules.common import ServerManagerModule
 
 class ServerManagerWebServer(ServerManagerModule):
     def __init__(self):
-        logger.debug("Initializing ServerManagerWebServer...")
+        logger.debug("Initialising ServerManagerWebServer...")
         try:
             super().__init__("ServerManagerWebServer")
-            logger.debug("Base ServerManagerModule initialized successfully")
+            logger.debug("Base ServerManagerModule initialised successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize base ServerManagerModule: {e}")
+            logger.error(f"Failed to Initialise base ServerManagerModule: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-            # Initialize minimal attributes to prevent AttributeError
+            # Initialise minimal attributes to prevent AttributeError
             self.module_name = "ServerManagerWebServer"
             try:
                 from Modules.server_logging import get_component_logger
@@ -458,7 +444,7 @@ class ServerManagerWebServer(ServerManagerModule):
             except Exception:
                 self.logger = logging.getLogger("ServerManagerWebServer")
         
-        # Initialize all attributes to ensure they exist
+        # Initialise all attributes to ensure they exist
         self.auth = None
         self.sql_auth = None  
         self.engine = None
@@ -467,7 +453,7 @@ class ServerManagerWebServer(ServerManagerModule):
         self.limiter = None
         self.tracker = None
         self.subhost_thread = None
-        self.auth_tokens = {}  # Initialize auth_tokens attribute
+        self.auth_tokens = {}  # Initialise auth_tokens attribute
         
         # Read from environment first, fall back to inherited web_port property or default
         try:
@@ -516,11 +502,11 @@ class ServerManagerWebServer(ServerManagerModule):
             except:
                 logger.debug("Using default configuration")
 
-        logger.debug(f"Initialized webserver. Server Manager directory: {self.server_manager_dir}")
+        logger.debug(f"initialised webserver. Server Manager directory: {self.server_manager_dir}")
         logger.debug(f"Web server port: {self.web_port}")
         logger.debug(f"Cluster role: {self.host_type}" + (f", HostAddress: {self.host_address}" if self.host_address else ""))
 
-        # Initialize Flask app first
+        # Initialise Flask app first
         self.app = Flask(
             __name__,
             static_folder=os.path.join(self.server_manager_dir or "", "www")
@@ -528,80 +514,72 @@ class ServerManagerWebServer(ServerManagerModule):
         CORS(self.app)
         self.app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(24))
         
-        # Initialize rate limiter
-        try:
-            self.limiter = Limiter(
-                app=self.app, 
-                key_func=get_remote_address, 
-                default_limits=["200 per day", "50 per hour"]
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize rate limiter: {e}")
-            self.limiter = None
+        # Rate limiter disabled - server manager used by many users
+        self.limiter = None
 
         self.check_sql_availability()
 
-        # Initialize authentication
+        # Initialise authentication
         try:
             if self.sql_available and get_user_engine and UserManager:
                 self.engine = get_user_engine()
                 self.sql_auth = SQLAuthentication(self.engine)
                 self.auth = self.sql_auth  # Set auth to point to sql_auth for consistent interface
-                logger.debug("SQL authentication system initialized successfully")
+                logger.debug("SQL authentication system initialised successfully")
             else:
                 # File-based authentication no longer supported (config folder removed)
                 self.auth = self.create_fallback_auth()
                 self.sql_auth = None
                 logger.warning("File-based authentication not available (config folder removed), using fallback auth")
         except Exception as e:
-            logger.error(f"Failed to initialize authentication: {e}")
+            logger.error(f"Failed to Initialise authentication: {e}")
             self.auth = self.create_fallback_auth()
             self.sql_auth = None
 
-        # Initialize cluster database and host status
+        # Initialise cluster database and host status
         try:
             from Modules.Database.cluster_database import ClusterDatabase
             self.cluster_db = ClusterDatabase()
             
-            # Initialize host status as online with dashboard active
+            # Initialise host status as online with dashboard active
             self.cluster_db.update_host_status(
                 status="online",
                 dashboard_active=True,
                 maintenance_mode=False,
-                status_message="Web server initialized"
+                status_message="Web server initialised"
             )
             
             # Start host heartbeat thread
             self.start_host_heartbeat()
             
-            logger.debug("Cluster database initialized successfully")
+            logger.debug("Cluster database initialised successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize cluster database: {e}")
+            logger.error(f"Failed to Initialise cluster database: {e}")
             self.cluster_db = None
 
-        # Initialize server manager
+        # Initialise server manager
         try:
             self.server_manager = ServerManager(self.paths["servers"])
-            logger.debug("Server manager initialized successfully")
+            logger.debug("Server manager initialised successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize server manager: {e}")
+            logger.error(f"Failed to Initialise server manager: {e}")
             self.server_manager = None
 
-        # Initialize analytics
+        # Initialise analytics
         try:
             from Modules.analytics import AnalyticsCollector
             self.analytics = AnalyticsCollector()
             self.analytics.start_collection()
-            logger.debug("Analytics module initialized and started successfully")
+            logger.debug("Analytics module initialised and started successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize analytics module: {e}")
+            logger.error(f"Failed to Initialise analytics module: {e}")
             self.analytics = None
 
-        # Setup routes after all components are initialized
+        # Setup routes after all components are initialised
         self.setup_routes()
         self.write_pid_file("webserver", os.getpid())
 
-        # Initialize tracker
+        # Initialise tracker
         self.tracker = tracker
         if self.tracker:
             try:
@@ -707,7 +685,7 @@ class ServerManagerWebServer(ServerManagerModule):
 
     def setup_routes(self):
         if not self.app:
-            logger.error("Flask app not initialized")
+            logger.error("Flask app not initialised")
             return
             
         app = self.app
@@ -1076,6 +1054,86 @@ class ServerManagerWebServer(ServerManagerModule):
                 logger.error(f"Stop server error: {e}")
                 return jsonify({"error": "Failed to stop server"}), 500
 
+        @app.route('/api/servers/<server_id>/console', methods=['GET'])
+        def api_get_console(server_id):
+            # - Get console output for a server
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                # Get lines param (default 100)
+                lines = request.args.get('lines', 100, type=int)
+                
+                # Read console state file
+                temp_dir = os.path.join(self.server_manager_dir, "temp", "console_states")
+                state_file = os.path.join(temp_dir, f"{server_id}_console.json")
+                
+                if os.path.exists(state_file):
+                    try:
+                        with open(state_file, 'r', encoding='utf-8') as f:
+                            state = json.load(f)
+                        output = state.get('output_buffer', [])
+                        # Return last N lines
+                        return jsonify({
+                            "success": True,
+                            "output": output[-lines:] if len(output) > lines else output,
+                            "server_id": server_id
+                        })
+                    except Exception as e:
+                        logger.error(f"Error reading console state: {e}")
+                        return jsonify({"success": True, "output": [], "server_id": server_id})
+                else:
+                    return jsonify({"success": True, "output": [], "server_id": server_id})
+                    
+            except Exception as e:
+                logger.error(f"Get console error: {e}")
+                return jsonify({"error": "Failed to get console output"}), 500
+
+        @app.route('/api/servers/<server_id>/console', methods=['POST'])
+        def api_send_command(server_id):
+            # - Send command to server console
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                data = request.get_json()
+                command = data.get('command', '').strip() if data else ''
+                
+                if not command:
+                    return jsonify({"error": "No command provided"}), 400
+
+                # Try to send via command queue
+                queue_dir = os.path.join(self.server_manager_dir, "temp", "command_queues")
+                os.makedirs(queue_dir, exist_ok=True)
+                queue_file = os.path.join(queue_dir, f"{server_id}.queue")
+                
+                try:
+                    with open(queue_file, 'a', encoding='utf-8') as f:
+                        f.write(command + '\n')
+                    logger.info(f"Command queued for {server_id}: {command}")
+                    return jsonify({"success": True, "message": "Command sent"})
+                except Exception as e:
+                    logger.error(f"Failed to queue command: {e}")
+                    return jsonify({"error": "Failed to send command"}), 500
+                    
+            except Exception as e:
+                logger.error(f"Send command error: {e}")
+                return jsonify({"error": "Failed to send command"}), 500
+
         @app.route('/api/servers/<server_id>/restart', methods=['POST'])
         def api_restart_server(server_id):
             try:
@@ -1280,6 +1338,182 @@ class ServerManagerWebServer(ServerManagerModule):
             except Exception as e:
                 logger.error(f"Reset password error: {e}")
                 return jsonify({"error": "Failed to reset password"}), 500
+
+        @app.route('/api/profile', methods=['GET'])
+        def api_get_profile():
+            # - Get current user's profile
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                username = token_data.get("username")
+                
+                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager'):
+                    user = self.sql_auth.user_manager.get_user(username)
+                    if user:
+                        return jsonify({
+                            "username": user.username,
+                            "email": user.email or "",
+                            "first_name": getattr(user, 'first_name', '') or "",
+                            "last_name": getattr(user, 'last_name', '') or "",
+                            "display_name": getattr(user, 'display_name', '') or user.username,
+                            "avatar": getattr(user, 'avatar', '') or "",
+                            "bio": getattr(user, 'bio', '') or "",
+                            "timezone": getattr(user, 'timezone', '') or "UTC",
+                            "theme_preference": getattr(user, 'theme_preference', 'dark') or "dark",
+                            "is_admin": user.is_admin,
+                            "two_factor_enabled": getattr(user, 'two_factor_enabled', False),
+                            "created_at": user.created_at.isoformat() if user.created_at else None,
+                            "last_login": user.last_login.isoformat() if user.last_login else None
+                        })
+                    return jsonify({"error": "User not found"}), 404
+                else:
+                    return jsonify({
+                        "username": username,
+                        "email": "",
+                        "display_name": username,
+                        "is_admin": safe_auth_call('is_admin', username)
+                    })
+
+            except Exception as e:
+                logger.error(f"Get profile error: {e}")
+                return jsonify({"error": "Failed to get profile"}), 500
+
+        @app.route('/api/profile', methods=['PUT'])
+        def api_update_profile():
+            # - Update current user's profile (except username)
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                username = token_data.get("username")
+                data = request.json
+                
+                if not data:
+                    return jsonify({"error": "No data provided"}), 400
+
+                # Fields users can update (NOT username)
+                allowed_fields = ['email', 'first_name', 'last_name', 'display_name', 
+                                  'avatar', 'bio', 'timezone', 'theme_preference']
+                
+                update_data = {}
+                for field in allowed_fields:
+                    if field in data:
+                        update_data[field] = data[field]
+
+                if not update_data:
+                    return jsonify({"error": "No valid fields to update"}), 400
+
+                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager'):
+                    success = self.sql_auth.user_manager.update_user(username, **update_data)
+                    if success:
+                        return jsonify({"message": "Profile updated successfully"})
+                    return jsonify({"error": "Failed to update profile"}), 500
+                else:
+                    return jsonify({"error": "Profile updates not available"}), 501
+
+            except Exception as e:
+                logger.error(f"Update profile error: {e}")
+                return jsonify({"error": "Failed to update profile"}), 500
+
+        @app.route('/api/profile/password', methods=['PUT'])
+        def api_change_own_password():
+            # - User changes their own password (requires current password)
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                username = token_data.get("username")
+                data = request.json
+                
+                if not data:
+                    return jsonify({"error": "No data provided"}), 400
+
+                current_password = data.get('current_password', '')
+                new_password = data.get('new_password', '')
+                
+                if not current_password or not new_password:
+                    return jsonify({"error": "Current and new passwords required"}), 400
+
+                if len(new_password) < 6:
+                    return jsonify({"error": "New password must be at least 6 characters"}), 400
+
+                # Verify current password first
+                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth:
+                    auth_result = self.sql_auth.authenticate(username, current_password)
+                    if not auth_result:
+                        return jsonify({"error": "Current password is incorrect"}), 401
+                    
+                    # Update password
+                    success = self.sql_auth.user_manager.update_user(username, password=new_password)
+                    if success:
+                        return jsonify({"message": "Password changed successfully"})
+                    return jsonify({"error": "Failed to change password"}), 500
+                else:
+                    return jsonify({"error": "Password change not available"}), 501
+
+            except Exception as e:
+                logger.error(f"Change password error: {e}")
+                return jsonify({"error": "Failed to change password"}), 500
+
+        @app.route('/api/profile/avatar', methods=['POST'])
+        def api_upload_avatar():
+            # - Upload user avatar (base64 encoded)
+            try:
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                username = token_data.get("username")
+                data = request.json
+                
+                if not data or 'avatar' not in data:
+                    return jsonify({"error": "No avatar data provided"}), 400
+
+                avatar_data = data.get('avatar', '')
+                
+                # Validate it's a reasonable size (max ~500KB base64)
+                if len(avatar_data) > 700000:
+                    return jsonify({"error": "Avatar too large (max 500KB)"}), 400
+
+                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager'):
+                    success = self.sql_auth.user_manager.update_user(username, avatar=avatar_data)
+                    if success:
+                        return jsonify({"message": "Avatar updated successfully"})
+                    return jsonify({"error": "Failed to update avatar"}), 500
+                else:
+                    return jsonify({"error": "Avatar upload not available"}), 501
+
+            except Exception as e:
+                logger.error(f"Upload avatar error: {e}")
+                return jsonify({"error": "Failed to upload avatar"}), 500
 
         @app.route('/api/system-settings', methods=['GET'])
         def api_get_system_settings():
@@ -1721,7 +1955,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 logger.debug(f"SSL disabled - running HTTP only on {host}:{self.web_port}")
             
             if not self.app:
-                logger.error("Flask app not initialized - cannot start server")
+                logger.error("Flask app not initialised - cannot start server")
                 return False
                 
             serve(self.app, **server_args)

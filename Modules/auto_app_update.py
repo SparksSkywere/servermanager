@@ -1,7 +1,5 @@
-# Automatic Steam Server Update Module
-# Handles automatic updates for Steam game servers using SteamCMD
-# Supports check-only mode, force updates, and process management
-
+# Steam server auto-updater
+# - Check and apply Steam game server updates
 import os
 import sys
 import json
@@ -13,99 +11,72 @@ import datetime
 import winreg
 from pathlib import Path
 
-# Import psutil at the top level for better performance
 try:
     import psutil
 except ImportError:
     psutil = None
 
-# Add project root to sys.path for module imports
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(script_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-# Try to import debug module
+from Modules.common import setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH
+
 try:
     from debug.debug import enable_debug, log_exception
 except ImportError:
-    # Create a simple fallback if debug module not available
     def enable_debug():
         logging.getLogger().setLevel(logging.DEBUG)
-        return True  # Fixed return type to match imported function
+        return True
     
-    def log_exception(e, message="An exception occurred"):
+    def log_exception(e, message="Exception"):
         logging.error(f"{message}: {str(e)}")
         import traceback
         logging.error(traceback.format_exc())
 
-# Import standardized logging
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("AutoAppUpdate")
-except Exception:
-    import logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    logger = logging.getLogger("AutoAppUpdate")
+logger = setup_module_logging("AutoAppUpdate")
+
 
 class AutoUpdater:
-    # Steam server automatic updater with SteamCMD integration
-    # Handles registry configuration, server process management, and update validation
+    # - Checks Steam servers for updates
+    # - Applies updates with optional force
     def __init__(self):
         self.registry_path = r"Software\SkywereIndustries\Servermanager"
         self.server_manager_dir = None
         self.steam_cmd_path = None
         self.paths = {}
         
-        # Parse command line arguments
-        parser = argparse.ArgumentParser(description='Auto Update Steam Game Servers')
-        parser.add_argument('--check', action='store_true', help='Only check for updates without applying them')
-        parser.add_argument('--force', action='store_true', help='Force update even if server is running')
-        parser.add_argument('--server', help='Specific server to update')
-        parser.add_argument('--log', help='Log file path')
-        parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+        parser = argparse.ArgumentParser(description='Auto Update Steam Servers')
+        parser.add_argument('--check', action='store_true', help='Check only')
+        parser.add_argument('--force', action='store_true', help='Force update')
+        parser.add_argument('--server', help='Specific server')
+        parser.add_argument('--log', help='Log file')
+        parser.add_argument('--debug', action='store_true', help='Debug mode')
         args = parser.parse_args()
         
         self.check_only = args.check
         self.force_update = args.force
         self.specific_server = args.server
         
-        # Enable debug logging if requested
         if args.debug:
             enable_debug()
             logger.setLevel(logging.DEBUG)
         
-        # Initialize paths and set up logging
-        if not self.initialize():
-            logger.error("Failed to initialize. Exiting.")
+        if not self.initialise():
+            logger.error("Init failed. Exiting.")
             sys.exit(1)
         
-        # Configure file logging
+    def initialise(self):
+        # Init paths/config from registry
+        # - Validates SteamCMD, creates dirs
         try:
-            log_file = args.log if args.log else os.path.join(self.paths["logs"], "auto-app-update.log")
-            file_handler = logging.FileHandler(log_file)
-            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-            logger.addHandler(file_handler)
-            logger.info(f"File logging enabled: {log_file}")
-        except Exception as e:
-            logger.warning(f"Could not set up file logging: {str(e)}")
-        
-    def initialize(self):
-        # Initialize paths and configuration from registry
-        # Validates SteamCMD path and creates required directories
-        try:
-            # Read registry for paths
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             steam_cmd_dir = winreg.QueryValueEx(key, "SteamCMDPath")[0]
             self.steam_cmd_path = os.path.join(steam_cmd_dir, "steamcmd.exe")
             winreg.CloseKey(key)
             
-            # Define paths structure (config/data folders removed - all config is database-backed)
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
@@ -114,16 +85,15 @@ class AutoUpdater:
                 "scripts": os.path.join(self.server_manager_dir, "Modules")
             }
             
-            # Ensure directories exist
             for path in self.paths.values():
                 os.makedirs(path, exist_ok=True)
                 
-            logger.info(f"Initialization complete. Server Manager directory: {self.server_manager_dir}")
-            logger.info(f"SteamCMD path: {self.steam_cmd_path}")
+            logger.info(f"Init complete. SM dir: {self.server_manager_dir}")
+            logger.info(f"SteamCMD: {self.steam_cmd_path}")
             
-            # Validate SteamCMD path
+            # Validate SteamCMD
             if not os.path.exists(self.steam_cmd_path):
-                logger.error(f"SteamCMD not found at: {self.steam_cmd_path}")
+                logger.error(f"SteamCMD not found: {self.steam_cmd_path}")
                 return False
                 
             return True
@@ -212,19 +182,17 @@ class AutoUpdater:
                 logger.error(f"Error output: {result.stderr}")
                 return False
             
-            # Look for update indicators in the output
-            update_indicators = [
-                "update state",
-                "needs update",
-                "downloading update",
-                "update available"
-            ]
+            # Use set for O(1) lookup instead of nested loop
+            update_indicators = {
+                "update state", "needs update", "downloading update", "update available"
+            }
             
             for line in result.stdout.lower().split('\n'):
-                for indicator in update_indicators:
-                    if indicator in line and "false" not in line and "0" not in line:
-                        logger.info(f"Update available for AppID: {app_id}")
-                        return True
+                if "false" in line or "0" in line:
+                    continue
+                if any(indicator in line for indicator in update_indicators):
+                    logger.info(f"Update available for AppID: {app_id}")
+                    return True
             
             logger.info(f"No updates available for AppID: {app_id}")
             return False

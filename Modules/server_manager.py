@@ -1,4 +1,6 @@
-# Comprehensive server management including lifecycle, process monitoring, and configuration handling
+# Server management core
+# - Lifecycle, process monitoring, config handling
+# - The heart of the whole operation
 import os
 import sys
 import json
@@ -9,35 +11,43 @@ import psutil
 import urllib.request
 from datetime import datetime
 
+from Modules.common import (
+    get_subprocess_creation_flags, should_hide_server_consoles, 
+    setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH
+)
+from Modules.server_logging import get_component_logger, log_server_action, log_exception
+
+# Import stdin relay for persistent command input
 try:
-    from Modules.server_logging import get_component_logger, log_server_action, log_exception
-    logger = get_component_logger("ServerManager")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("ServerManager")
+    from services.stdin_relay import start_relay_for_server, send_command_via_relay
+    _STDIN_RELAY_AVAILABLE = True
+except ImportError:
+    _STDIN_RELAY_AVAILABLE = False
 
-if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
-    logger.setLevel(logging.DEBUG)
-    logger.debug("ServerManager module debug mode enabled via environment")
+# Import persistent stdin pipe (allows commands after dashboard restart)
+try:
+    from services.persistent_stdin import (
+        PersistentStdinPipe, 
+        send_command_to_stdin_pipe, 
+        is_stdin_pipe_available
+    )
+    _PERSISTENT_STDIN_AVAILABLE = True
+except ImportError:
+    _PERSISTENT_STDIN_AVAILABLE = False
 
-def get_subprocess_creation_flags(hide_window=True, new_process_group=False):
-    # Get appropriate creation flags for subprocess calls on Windows to prevent console windows
-    if sys.platform != 'win32':
-        return 0
-    
-    flags = 0
-    if hide_window:
-        flags |= subprocess.CREATE_NO_WINDOW
-    if new_process_group:
-        flags |= subprocess.CREATE_NEW_PROCESS_GROUP
-    
-    return flags
+# Import command queue relay (file-based command queuing)
+try:
+    from services.command_queue import (
+        start_command_relay,
+        stop_command_relay,
+        queue_command,
+        is_relay_active
+    )
+    _COMMAND_QUEUE_AVAILABLE = True
+except ImportError:
+    _COMMAND_QUEUE_AVAILABLE = False
 
-def should_hide_server_consoles(config=None):
-    # Check if server consoles should be hidden based on configuration
-    if config and 'configuration' in config:
-        return config['configuration'].get('hideServerConsoles', True)
-    return True  # Default to hiding consoles
+logger = setup_module_logging("ServerManager")
 
 # Import Minecraft-specific functions (NO FALLBACKS)
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Modules'))
@@ -56,16 +66,17 @@ except ImportError as e:
 from Modules.common import ServerManagerModule
 
 class ServerManager(ServerManagerModule):
-    # Main class for server management
+    # - Handles all server operations
+    # - Start, stop, restart, status, config
     def __init__(self):
         super().__init__("ServerManager")
         self.servers = {}
         
-        # Load configuration and server list
         self.load_config()
         self.load_servers()
+
     def get_server_process(self, server_name):
-        # Get the active process object for a server
+        # Get active process—None if dead
         if hasattr(self, 'active_processes') and server_name in self.active_processes:
             process = self.active_processes[server_name]
             # Check if process is still running
@@ -77,11 +88,11 @@ class ServerManager(ServerManagerModule):
         return None
         
     def get_servers(self):
-        # Get dictionary of all servers and their configurations
+        # All servers dict
         return self.servers
         
     def load_config(self):
-        # Load configuration from database
+        # Pull config from database
         try:
             from Modules.Database.cluster_database import ClusterDatabase
             db = ClusterDatabase()
@@ -217,8 +228,26 @@ class ServerManager(ServerManagerModule):
         return list(self.servers.values())
     
     def get_all_servers(self):
-        # Get all servers as a dictionary with server names as keys
         return self.servers.copy()
+    
+    def reload_servers(self):
+        # Reload all server configurations from disk
+        self.servers.clear()
+        self.load_servers()
+    
+    def reload_server(self, server_name):
+        # Reload a specific server configuration from disk
+        try:
+            servers_dir = self.paths["servers"]
+            config_file = os.path.join(servers_dir, f"{server_name}.json")
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    server_config = json.load(f)
+                self.servers[server_name] = server_config
+                return True
+        except Exception as e:
+            logger.error(f"Error reloading server config for {server_name}: {e}")
+        return False
             
     def is_process_running(self, process_id):
         # Check if a process with the given ID is running
@@ -227,6 +256,148 @@ class ServerManager(ServerManagerModule):
                 return False
             return psutil.pid_exists(process_id)
         except Exception:
+            return False
+    
+    def is_server_process_valid(self, server_name, process_id, server_config=None):
+        """
+        Validate that a PID actually belongs to the server it's claimed to be.
+        This prevents issues with Windows PID reuse where an old PID might now 
+        belong to a completely different process.
+        
+        Returns: (is_valid, process_or_none)
+        """
+        try:
+            if process_id is None:
+                return False, None
+            
+            if not psutil.pid_exists(process_id):
+                return False, None
+            
+            try:
+                process = psutil.Process(process_id)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                return False, None
+            
+            if not process.is_running():
+                return False, None
+            
+            # Get server config if not provided
+            if server_config is None:
+                server_config = self.get_server_config(server_name)
+            
+            if not server_config:
+                # No config to validate against, just check if process exists
+                return True, process
+            
+            # Validate the process matches the server
+            install_dir = server_config.get('InstallDir', '')
+            executable_path = server_config.get('ExecutablePath', '')
+            server_type = server_config.get('Type', '').lower()
+            
+            try:
+                proc_exe = process.exe().lower() if process.exe() else ''
+                proc_cwd = process.cwd().lower() if process.cwd() else ''
+                proc_name = process.name().lower() if process.name() else ''
+                
+                # Try to get command line
+                try:
+                    cmdline = process.cmdline()
+                    cmdline_str = ' '.join(cmdline).lower() if cmdline else ''
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    cmdline_str = ''
+                
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                # Can't access process info, assume invalid
+                logger.debug(f"Cannot access process {process_id} info for validation")
+                return False, None
+            
+            # Validation checks
+            install_dir_lower = install_dir.lower() if install_dir else ''
+            executable_lower = executable_path.lower() if executable_path else ''
+            
+            # Check 1: Working directory matches install directory
+            if install_dir_lower and proc_cwd:
+                if os.path.normpath(proc_cwd) == os.path.normpath(install_dir_lower):
+                    logger.debug(f"PID {process_id} validated: CWD matches install dir")
+                    return True, process
+            
+            # Check 2: Executable path matches
+            if executable_lower and proc_exe:
+                exe_basename = os.path.basename(executable_lower)
+                proc_exe_basename = os.path.basename(proc_exe)
+                if exe_basename == proc_exe_basename:
+                    logger.debug(f"PID {process_id} validated: executable name matches")
+                    return True, process
+            
+            # Check 3: Install directory in executable path
+            if install_dir_lower and proc_exe and install_dir_lower in proc_exe:
+                logger.debug(f"PID {process_id} validated: install dir in exe path")
+                return True, process
+            
+            # Check 4: Command line contains server-specific info
+            if cmdline_str:
+                if install_dir_lower and install_dir_lower in cmdline_str:
+                    logger.debug(f"PID {process_id} validated: install dir in cmdline")
+                    return True, process
+                if executable_lower and executable_lower in cmdline_str:
+                    logger.debug(f"PID {process_id} validated: executable in cmdline")
+                    return True, process
+            
+            # Check 5: Type-specific validation
+            if server_type == 'minecraft':
+                # For Minecraft, the java process should have the server jar in cmdline
+                if 'java' in proc_name or 'javaw' in proc_name:
+                    if cmdline_str and (install_dir_lower in cmdline_str or 'server.jar' in cmdline_str):
+                        logger.debug(f"PID {process_id} validated: Minecraft java process")
+                        return True, process
+            
+            # Check 6: Stored process creation time (if available)
+            stored_create_time = server_config.get('ProcessCreateTime')
+            if stored_create_time:
+                try:
+                    actual_create_time = process.create_time()
+                    # Allow 2 second tolerance for timing differences
+                    if abs(actual_create_time - stored_create_time) < 2:
+                        logger.debug(f"PID {process_id} validated: create time matches")
+                        return True, process
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
+            
+            # If we get here, the process doesn't match the server
+            logger.warning(f"PID {process_id} does NOT match server '{server_name}' (process: {proc_name}, cwd: {proc_cwd})")
+            return False, None
+            
+        except Exception as e:
+            logger.error(f"Error validating server process for {server_name}: {e}")
+            return False, None
+    
+    def clear_stale_pid(self, server_name, server_config=None):
+        """Clear stale PID from server config if it's no longer valid"""
+        try:
+            if server_config is None:
+                server_config = self.get_server_config(server_name)
+            
+            if not server_config:
+                return False
+            
+            pid = server_config.get('ProcessId') or server_config.get('PID')
+            if not pid:
+                return False
+            
+            is_valid, _ = self.is_server_process_valid(server_name, pid, server_config)
+            if not is_valid:
+                logger.info(f"Clearing stale PID {pid} for server '{server_name}'")
+                server_config.pop('ProcessId', None)
+                server_config.pop('PID', None)
+                server_config.pop('StartTime', None)
+                server_config.pop('ProcessCreateTime', None)
+                server_config['LastUpdate'] = datetime.now().isoformat()
+                self.save_server_config(server_name, server_config)
+                return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error clearing stale PID for {server_name}: {e}")
             return False
             
     def start_server(self, server_name):
@@ -293,18 +464,23 @@ class ServerManager(ServerManagerModule):
             with open(config_file, 'r') as f:
                 server_config = json.load(f)
             
-            # Clean up orphaned process ID first
+            # Clean up orphaned process ID first - use proper validation
             if 'ProcessId' in server_config:
-                if self.is_process_running(server_config['ProcessId']):
-                    logger.info(f"Server '{server_name}' is already running with PID {server_config['ProcessId']}.")
+                pid = server_config['ProcessId']
+                is_valid, _ = self.is_server_process_valid(server_name, pid, server_config)
+                
+                if is_valid:
+                    logger.info(f"Server '{server_name}' is already running with PID {pid}.")
                     if callback:
                         callback(f"Server '{server_name}' is already running")
-                    return False, f"Server '{server_name}' is already running with PID {server_config['ProcessId']}."
+                    return False, f"Server '{server_name}' is already running with PID {pid}."
                 else:
-                    # Clean up dead process ID
-                    logger.debug(f"Cleaning up dead process ID {server_config['ProcessId']} for server '{server_name}'")
+                    # PID is stale or belongs to different process - clean up
+                    logger.debug(f"Cleaning up stale/invalid process ID {pid} for server '{server_name}'")
                     server_config.pop('ProcessId', None)
+                    server_config.pop('PID', None)
                     server_config.pop('StartTime', None)
+                    server_config.pop('ProcessCreateTime', None)
                     server_config['LastUpdate'] = datetime.now().isoformat()
                     self.save_server_config(server_name, server_config)
                 
@@ -529,6 +705,14 @@ class ServerManager(ServerManagerModule):
                     callback(f"Server '{server_name}' failed to start")
                 return False, f"Server process terminated immediately after starting. Check logs at {stderr_log}"
             
+            # Get process creation time for PID validation
+            process_create_time = None
+            try:
+                ps_process = psutil.Process(process.pid)
+                process_create_time = ps_process.create_time()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+            
             # Update server configuration
             server_config['ProcessId'] = process.pid
             server_config['PID'] = process.pid  # For console manager compatibility
@@ -537,6 +721,10 @@ class ServerManager(ServerManagerModule):
             server_config['LogStdout'] = stdout_log
             server_config['LogStderr'] = stderr_log
             
+            # Store process creation time for PID validation on reattachment
+            if process_create_time:
+                server_config['ProcessCreateTime'] = process_create_time
+            
             # Save updated configuration
             self.save_server_config(server_name, server_config)
             
@@ -544,6 +732,24 @@ class ServerManager(ServerManagerModule):
             if not hasattr(self, 'active_processes'):
                 self.active_processes = {}
             self.active_processes[server_name] = process
+            
+            # Start command queue relay for persistent command input
+            # This relay reads from a file and writes to stdin, allowing
+            # commands to be queued even from other processes
+            if _COMMAND_QUEUE_AVAILABLE:
+                try:
+                    start_command_relay(server_name, process)
+                    logger.debug(f"Started command queue relay for {server_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to start command queue relay for {server_name}: {e}")
+            
+            # Also start the named pipe stdin relay as a backup method
+            if _STDIN_RELAY_AVAILABLE:
+                try:
+                    start_relay_for_server(server_name, process, process.pid)
+                    logger.debug(f"Started stdin relay for {server_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to start stdin relay for {server_name}: {e}")
             
             if callback:
                 callback(f"Server '{server_name}' started successfully")
@@ -580,21 +786,26 @@ class ServerManager(ServerManagerModule):
                 
             process_id = server_config['ProcessId']
             
-            # Check if process is still running
-            if not self.is_process_running(process_id):
-                logger.info(f"Server process (PID {process_id}) is not running.")
+            # Validate that the PID actually belongs to this server
+            # This prevents stopping the wrong process if Windows reused the PID
+            is_valid, validated_process = self.is_server_process_valid(server_name, process_id, server_config)
+            
+            if not is_valid:
+                logger.warning(f"PID {process_id} is no longer valid for server '{server_name}' (stale or reused PID)")
                 
-                # Clean up the process ID in the config
+                # Clean up the stale process ID in the config
                 server_config.pop('ProcessId', None)
+                server_config.pop('PID', None)
                 server_config.pop('StartTime', None)
+                server_config.pop('ProcessCreateTime', None)
                 server_config['LastUpdate'] = datetime.now().isoformat()
                 
                 # Save updated configuration
                 self.save_server_config(server_name, server_config)
                 
                 if callback:
-                    callback(f"Server '{server_name}' was not running")
-                return False, f"Server process (PID {process_id}) is not running."
+                    callback(f"Server '{server_name}' was not running (stale PID cleared)")
+                return False, f"Server '{server_name}' was not running (stale PID {process_id} cleared)."
                 
             if callback:
                 callback(f"Stopping server '{server_name}'...")
@@ -628,9 +839,11 @@ class ServerManager(ServerManagerModule):
                     # Wait a bit to see if the process stops
                     for _ in range(5):  # Try for 5 seconds
                         if not self.is_process_running(process_id):
-                            # Process stopped successfully
+                            # Process stopped successfully - clear all process-related fields
                             server_config.pop('ProcessId', None)
+                            server_config.pop('PID', None)
                             server_config.pop('StartTime', None)
+                            server_config.pop('ProcessCreateTime', None)
                             server_config['LastUpdate'] = datetime.now().isoformat()
                             
                             # Save updated configuration
@@ -645,31 +858,83 @@ class ServerManager(ServerManagerModule):
                     logger.error(f"Error executing custom stop command: {str(e)}")
             
             # If we got here, either the custom stop command failed or wasn't available
-            # Try to terminate the process
+            # Try to terminate the process gracefully
             try:
                 process = psutil.Process(process_id)
                 
-                # Get all child processes
+                # Store the process creation time to verify children belong to this server's process tree
+                try:
+                    server_process_create_time = process.create_time()
+                except:
+                    server_process_create_time = None
+                
+                # Get all child processes BEFORE terminating parent
+                # Only include children that were started after the parent (same process tree)
                 children = []
                 try:
-                    children = process.children(recursive=True)
-                except:
-                    logger.warning(f"Could not get child processes for PID {process_id}")
+                    all_children = process.children(recursive=True)
+                    for child in all_children:
+                        try:
+                            # Only include children created after the parent process
+                            # This helps avoid killing unrelated processes that happen to share a common ancestor
+                            if server_process_create_time is not None:
+                                child_create_time = child.create_time()
+                                if child_create_time >= server_process_create_time:
+                                    children.append(child)
+                            else:
+                                children.append(child)
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            continue
+                except Exception as e:
+                    logger.warning(f"Could not get child processes for PID {process_id}: {e}")
                 
-                # First try graceful termination
-                try:
-                    process.terminate()
-                    logger.debug(f"Sent termination signal to process {process_id}")
-                except:
-                    logger.warning(f"Failed to terminate process {process_id}")
+                logger.info(f"Initiating graceful shutdown for server '{server_name}' (PID {process_id}, {len(children)} child processes)")
                 
-                # Wait up to 5 seconds for the process to terminate
-                gone, alive = psutil.wait_procs([process], timeout=5)
+                # STEP 1: Try graceful shutdown methods
+                graceful_stopped = False
                 
-                if process in alive:
-                    # If it doesn't terminate, kill it forcefully
+                # On Windows, try sending CTRL_BREAK_EVENT first (works for console apps)
+                if sys.platform == 'win32':
+                    try:
+                        import signal
+                        # CTRL_BREAK_EVENT is more likely to trigger graceful shutdown
+                        os.kill(process_id, signal.CTRL_BREAK_EVENT)
+                        logger.debug(f"Sent CTRL_BREAK_EVENT to process {process_id}")
+                    except Exception as e:
+                        logger.debug(f"CTRL_BREAK_EVENT failed: {e}")
+                
+                # Wait for graceful shutdown (up to 10 seconds for game servers)
+                for i in range(10):
+                    if not process.is_running():
+                        logger.info(f"Process {process_id} stopped gracefully after {i+1} seconds")
+                        graceful_stopped = True
+                        break
+                    time.sleep(1)
+                
+                # STEP 2: If still running, try terminate()
+                if not graceful_stopped and process.is_running():
+                    try:
+                        process.terminate()
+                        logger.debug(f"Sent SIGTERM to process {process_id}")
+                    except psutil.NoSuchProcess:
+                        graceful_stopped = True
+                    except Exception as e:
+                        logger.warning(f"Failed to terminate process {process_id}: {e}")
+                    
+                    # Wait up to 5 more seconds for termination
+                    if not graceful_stopped:
+                        gone, alive = psutil.wait_procs([process], timeout=5)
+                        if process in gone:
+                            graceful_stopped = True
+                            logger.info(f"Process {process_id} terminated after SIGTERM")
+                
+                # STEP 3: If still running, force kill
+                if not graceful_stopped and process.is_running():
                     logger.warning(f"Process {process_id} did not terminate gracefully, using force kill")
-                    process.kill()
+                    try:
+                        process.kill()
+                    except psutil.NoSuchProcess:
+                        pass
                     
                     # On Windows, use taskkill as backup for stubborn processes
                     if sys.platform == 'win32':
@@ -680,8 +945,24 @@ class ServerManager(ServerManagerModule):
                         except Exception:
                             pass
                 
-                # Terminate any remaining child processes
+                # STEP 4: Terminate any remaining child processes (only those from this server's tree)
                 if children:
+                    logger.debug(f"Cleaning up {len(children)} child processes for server '{server_name}'")
+                    for child in children:
+                        try:
+                            if child.is_running():
+                                # First try graceful termination
+                                try:
+                                    child.terminate()
+                                except:
+                                    pass
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            continue
+                    
+                    # Wait briefly for children to terminate gracefully
+                    time.sleep(1)
+                    
+                    # Force kill any remaining children
                     for child in children:
                         try:
                             if child.is_running():
@@ -694,8 +975,8 @@ class ServerManager(ServerManagerModule):
                                                        stderr=subprocess.DEVNULL)
                                     except Exception:
                                         pass
-                                logger.debug(f"Killed child process with PID {child.pid}")
-                        except:
+                                logger.debug(f"Force killed child process with PID {child.pid}")
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
                             pass
                 
                 # Verify all processes are dead
@@ -713,9 +994,11 @@ class ServerManager(ServerManagerModule):
                 
                 logger.debug(f"Terminated process PID {process_id}")
                 
-                # Update server configuration
+                # Update server configuration - clear all process-related fields
                 server_config.pop('ProcessId', None)
+                server_config.pop('PID', None)
                 server_config.pop('StartTime', None)
+                server_config.pop('ProcessCreateTime', None)
                 server_config['LastUpdate'] = datetime.now().isoformat()
                 
                 # Save updated configuration

@@ -1,4 +1,6 @@
-# System tray icon for Server Manager with web interface, dashboard, and admin controls
+# System tray icon
+# - Web interface, dashboard, admin controls
+# - Right-click menu for quick actions
 import os
 import sys
 import subprocess
@@ -16,35 +18,24 @@ import signal
 import argparse
 import ctypes
 
-# Import required for system tray functionality
 try:
     import pystray
     from PIL import Image, ImageDraw
 except ImportError:
-    print("Required packages not found. Installing...")
+    print("Installing required packages...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "pystray", "pillow"])
     import pystray
     from PIL import Image, ImageDraw
 
-# Add the parent directory to the path for module imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from Modules.common import ServerManagerModule
+from Modules.common import ServerManagerModule, setup_module_logging
+from Modules.server_logging import log_dashboard_event
 
-# Centralized logging
-try:
-    from Modules.server_logging import get_component_logger, log_dashboard_event
-    logger = get_component_logger("TrayIcon")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("TrayIcon")
-
-if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
-    logger.setLevel(logging.DEBUG)
-    logger.debug("TrayIcon debug mode enabled via environment")
+logger = setup_module_logging("TrayIcon")
 
 
 def is_another_trayicon_running():
-    """Check if another trayicon instance is already running"""
+    # Check for existing trayicon process
     try:
         current_pid = os.getpid()
         for proc in psutil.process_iter(['pid', 'cmdline', 'name']):
@@ -53,17 +44,19 @@ def is_another_trayicon_running():
                 if cmdline and proc.info['pid'] != current_pid:
                     cmdline_str = ' '.join(cmdline).lower() if cmdline else ''
                     if 'trayicon.py' in cmdline_str and ('python' in proc.info['name'].lower() or 'pythonw' in proc.info['name'].lower()):
-                        logger.warning(f"Found existing trayicon process: PID={proc.info['pid']}, cmdline={cmdline}")
+                        logger.warning(f"Found existing trayicon: PID={proc.info['pid']}")
                         return True, proc.info['pid']
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
         return False, None
     except Exception as e:
-        logger.error(f"Error checking for existing trayicon: {e}")
+        logger.error(f"Trayicon check failed: {e}")
         return False, None
 
 
 class ServerManagerTrayIcon(ServerManagerModule):
+    # - Lives in system tray
+    # - Quick access to dashboard, web UI, admin panel
     def __init__(self):
         super().__init__("TrayIcon")
         self.icon = None
@@ -72,11 +65,10 @@ class ServerManagerTrayIcon(ServerManagerModule):
         self.dashboard_process = None
         self.webserver_status = "Disconnected"
         self.offline_mode = False
-        self.standalone_mode = False  # New: track if running in standalone mode
-        self.notifications_enabled = False  # Add flag to control notifications
-        self.admin_dashboard_process = None  # Track admin dashboard process
+        self.standalone_mode = False
+        self.notifications_enabled = False
+        self.admin_dashboard_process = None
         
-        # Parse command line arguments
         parser = argparse.ArgumentParser(description='Server Manager Tray Icon')
         parser.add_argument('--debug', action='store_true', help='Enable debug logging')
         parser.add_argument('--logpath', help='Path to log file')
@@ -85,11 +77,10 @@ class ServerManagerTrayIcon(ServerManagerModule):
         parser.add_argument('--force', action='store_true', help='Force start even if another instance is running')
         args = parser.parse_args()
         
-        # Check for existing trayicon instance (unless --force is used)
         if not args.force:
             already_running, existing_pid = is_another_trayicon_running()
             if already_running:
-                logger.warning(f"Another trayicon instance is already running (PID: {existing_pid}). Exiting to prevent duplicates.")
+                logger.warning(f"Already running (PID: {existing_pid})—exiting")
                 print(f"Server Manager tray icon is already running (PID: {existing_pid}). Use --force to start anyway.")
                 sys.exit(0)
         
@@ -147,42 +138,12 @@ class ServerManagerTrayIcon(ServerManagerModule):
         return None
 
     def configure_file_logging(self, log_path=None):
-        # Set up logging to file with comprehensive DEBUG level logging
-        try:
-            if not log_path:
-                log_path = os.path.join(self.paths["logs"], "trayicon.log")
-                
-            # Ensure the directory exists
-            os.makedirs(os.path.dirname(log_path), exist_ok=True)
-            
-            # Remove any existing file handlers to avoid duplicates
-            for handler in logger.handlers[:]:
-                if isinstance(handler, logging.FileHandler):
-                    logger.removeHandler(handler)
-            
-            # Add file handler to logger - use INFO level to reduce spam, DEBUG only if explicitly enabled
-            file_handler = logging.FileHandler(log_path, mode='a', encoding='utf-8')
-            file_handler.setLevel(logging.INFO if not self.debug_mode else logging.DEBUG)
-            file_handler.setFormatter(logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
-            ))
-            logger.addHandler(file_handler)
-            
-            # Set logger level based on debug mode
-            logger.setLevel(logging.INFO if not self.debug_mode else logging.DEBUG)
-            
-            # Add a console handler for debugging (if not running as pythonw and in debug mode)
-            if not sys.executable.lower().endswith('pythonw.exe') and self.debug_mode:
-                console_handler = logging.StreamHandler()
-                console_handler.setLevel(logging.DEBUG)
-                console_handler.setFormatter(logging.Formatter(
-                    '%(asctime)s - %(levelname)s - %(message)s'
-                ))
-                logger.addHandler(console_handler)
-            
-            logger.debug(f"File logging configured: {log_path}")
-        except Exception as e:
-            logger.error(f"Failed to configure file logging: {str(e)}")
+        # Configure debug mode logging level
+        if self.debug_mode:
+            logger.setLevel(logging.DEBUG)
+            for handler in logger.handlers:
+                handler.setLevel(logging.DEBUG)
+        logger.debug(f"Logging level configured: {'DEBUG' if self.debug_mode else 'INFO'}")
     
     def create_icon_image(self):
         # Create icon image for the tray
@@ -194,15 +155,15 @@ class ServerManagerTrayIcon(ServerManagerModule):
             except Exception as e:
                 logger.error(f"Failed to load icon from {icon_path}: {str(e)}")
         
-        # Fall back to creating a simple icon
+        # - Fall back to simple icon
         width = 64
         height = 64
-        color = (0, 128, 255)  # Blue color
+        color = (0, 128, 255)  # Blue colour
         
         image = Image.new('RGB', (width, height), color=(0, 0, 0))
         dc = ImageDraw.Draw(image)
         
-        # Draw a simple server icon
+        # - Draw a simple server icon
         dc.rectangle((10, 10, width-10, height-10), fill=color)
         dc.rectangle((20, 20, width-20, 30), fill=(255, 255, 255))
         dc.rectangle((20, 40, width-20, 50), fill=(255, 255, 255))
@@ -210,7 +171,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
         return image
     
     def get_running_server_count(self):
-        # Get the count of running servers
+        # - Get count of running servers
         try:
             if hasattr(self, 'server_manager') and self.server_manager:
                 running_servers = self.server_manager.get_running_servers()
@@ -334,52 +295,48 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 self.icon.notify(f"Restart failed: {str(e)}", "Server Manager Error")
 
     def update_server_status(self):
-        # Update server status in the menu
+        # Update server status in menu
         try:
-            # Initialize server manager if not already done
+            # Init server manager if needed
             if not hasattr(self, 'server_manager') or self.server_manager is None:
                 try:
                     from Modules.server_manager import ServerManager
                     self.server_manager = ServerManager()
-                    logger.info("ServerManager initialized for trayicon status updates")
+                    logger.info("ServerManager initialised for status updates")
                 except Exception as e:
-                    logger.error(f"Failed to initialize ServerManager: {str(e)}")
+                    logger.error(f"ServerManager init failed: {str(e)}")
                     self.server_status = "Error"
                     return
             
-            # Get running servers from server manager
+            # Get running servers
             try:
                 running_servers = self.server_manager.get_running_servers()
                 running_count = len(running_servers) if running_servers else 0
             except Exception as e:
-                logger.error(f"Error getting running servers: {str(e)}")
+                logger.error(f"Running servers fetch failed: {str(e)}")
                 running_count = 0
             
-            # Check web server status
+            # Web server status
             self.check_webserver_status()
             
-            # Update icon if it exists and is valid
+            # Update icon if valid
             if self.icon:
                 try:
-                    # Check if icon is still valid by trying to access a property
                     _ = self.icon._icon
-                    # Update with status
                     status_text = f"Running servers ({running_count}) | Webserver ({self.webserver_status})"
                     self.icon.title = f"Server Manager - {status_text}"
                     
-                    # Recreate the entire menu with updated status
+                    # Recreate menu with updated status
                     self.icon.menu = self.create_menu()
-                    logger.debug(f"Updated tray icon menu: {status_text}")
+                    logger.debug(f"Tray icon updated: {status_text}")
                 except (AttributeError, RuntimeError, Exception) as icon_error:
-                    logger.error(f"Tray icon is invalid, cannot update: {str(icon_error)}")
-                    # Don't try to recreate the icon here as it might cause more issues
-                    # Just log the error and continue
+                    logger.error(f"Tray icon invalid: {str(icon_error)}")
             else:
-                logger.warning("Tray icon is None, cannot update menu")
+                logger.warning("Tray icon is None")
         except Exception as e:
-            logger.error(f"Error updating server status: {str(e)}")
+            logger.error(f"Status update failed: {str(e)}")
         
-        # Schedule next update - always reschedule even if there's an error
+        # Schedule next update
         try:
             # Use a safer threading approach
             timer = threading.Timer(10.0, self.update_server_status)

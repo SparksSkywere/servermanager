@@ -4,279 +4,693 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Panel - Server Manager</title>
-    <link rel="stylesheet" href="css/style.css">
-    <link rel="stylesheet" href="css/theme.css">
     <style>
-        .admin-container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #e8e8f0;
+            min-height: 100vh;
         }
-        .admin-header {
+
+        body.theme-light { background: #f5f6fa; color: #1a1a2e; }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 0 24px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: white;
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .header-brand svg { width: 28px; height: 28px; }
+
+        .user-menu {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            padding: 6px 12px;
+            border-radius: 8px;
+            transition: background 0.2s;
+            color: white;
+        }
+
+        .user-menu:hover { background: rgba(255,255,255,0.15); }
+
+        .user-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            overflow: hidden;
+            border: 2px solid rgba(255,255,255,0.3);
+        }
+
+        .user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+        .user-dropdown {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
+            border-radius: 12px;
+            min-width: 220px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            display: none;
+            z-index: 200;
+            overflow: hidden;
+        }
+
+        body.theme-light .user-dropdown { background: #ffffff; border-color: #e0e0e8; }
+        .user-dropdown.show { display: block; }
+
+        .user-dropdown a {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 20px;
+            color: #e8e8f0;
+            text-decoration: none;
+            transition: background 0.15s;
+        }
+
+        body.theme-light .user-dropdown a { color: #1a1a2e; }
+        .user-dropdown a:hover { background: #252540; }
+        body.theme-light .user-dropdown a:hover { background: #f0f0f5; }
+        .user-dropdown a.danger { color: #ef4444; }
+        .user-dropdown .divider { height: 1px; background: #2a2a45; margin: 4px 0; }
+        body.theme-light .user-dropdown .divider { background: #e0e0e8; }
+
+        .nav {
+            background: #1a1a2e;
+            padding: 12px 24px;
+            display: flex;
+            gap: 8px;
+            border-bottom: 1px solid #2a2a45;
+            flex-wrap: wrap;
+        }
+
+        body.theme-light .nav { background: #ffffff; border-color: #e0e0e8; }
+
+        .nav a {
+            padding: 10px 18px;
+            background: #252540;
+            color: #a8a8c0;
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        body.theme-light .nav a { background: #f0f0f5; color: #4a4a68; }
+        .nav a:hover { background: #2a2a48; color: #e8e8f0; }
+        body.theme-light .nav a:hover { background: #e8eaed; color: #1a1a2e; }
+        .nav a.active { background: #667eea; color: white; }
+
+        .main { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+        .admin-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        @media (max-width: 1000px) { .admin-grid { grid-template-columns: 1fr; } }
+
+        .card {
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        body.theme-light .card { background: #ffffff; border-color: #e0e0e8; }
+
+        .card-header {
+            padding: 16px 20px;
+            background: #252540;
+            border-bottom: 1px solid #2a2a45;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 30px;
         }
-        .user-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }
-        .user-table th, .user-table td {
-            padding: 12px;
+
+        body.theme-light .card-header { background: #f5f6fa; border-color: #e0e0e8; }
+        .card-header h2 { font-size: 1rem; font-weight: 600; }
+
+        .card-body { padding: 20px; }
+
+        /* Table */
+        .table-container { overflow-x: auto; }
+
+        table { width: 100%; border-collapse: collapse; }
+
+        th, td {
+            padding: 12px 14px;
             text-align: left;
-            border-bottom: 1px solid #ddd;
+            border-bottom: 1px solid #2a2a45;
         }
-        .user-table th {
-            background-color: #f5f5f5;
-            font-weight: bold;
+
+        body.theme-light th, body.theme-light td { border-color: #e0e0e8; }
+
+        th {
+            background: #252540;
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: #a8a8c0;
         }
+
+        body.theme-light th { background: #f5f6fa; color: #4a4a68; }
+
+        td { font-size: 0.9rem; }
+
+        tbody tr:hover { background: #252540; }
+        body.theme-light tbody tr:hover { background: #f5f6fa; }
+
         .admin-badge {
-            background: #e74c3c;
+            background: #ef4444;
             color: white;
             padding: 2px 8px;
-            border-radius: 3px;
-            font-size: 12px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
         }
-        .user-actions {
-            display: flex;
-            gap: 10px;
+
+        .badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
         }
-        .btn-small {
-            padding: 5px 10px;
-            font-size: 12px;
+
+        .badge-success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+        .badge-danger { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+
+        .user-actions { display: flex; gap: 8px; }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 8px 14px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
         }
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 1000;
-        }
-        .modal-content {
-            background: white;
-            margin: 10% auto;
-            padding: 20px;
-            border-radius: 10px;
-            width: 90%;
-            max-width: 500px;
-        }
-        .form-group {
-            margin-bottom: 15px;
-        }
+
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-sm { padding: 6px 10px; font-size: 0.8rem; }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover:not(:disabled) { background: #5a6fd6; }
+        .btn-secondary { background: #252540; color: #a8a8c0; border: 1px solid #3a3a55; }
+        .btn-secondary:hover:not(:disabled) { background: #2a2a48; color: #e8e8f0; }
+        body.theme-light .btn-secondary { background: #f0f0f5; color: #4a4a68; border-color: #d0d0d8; }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-danger:hover:not(:disabled) { background: #dc2626; }
+
+        /* Forms */
+        .form-group { margin-bottom: 18px; }
+
         .form-group label {
             display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
+            font-size: 0.85rem;
+            color: #a8a8c0;
+            margin-bottom: 8px;
+            font-weight: 500;
         }
-        .form-group input, .form-group select {
+
+        body.theme-light .form-group label { color: #4a4a68; }
+
+        .form-group input,
+        .form-group select {
             width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            padding: 12px 14px;
+            background: #252540;
+            border: 1px solid #3a3a55;
+            border-radius: 8px;
+            color: #e8e8f0;
+            font-size: 0.95rem;
         }
+
+        body.theme-light .form-group input,
+        body.theme-light .form-group select {
+            background: #f0f0f5;
+            border-color: #d0d0d8;
+            color: #1a1a2e;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group input:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .help-text { font-size: 0.8rem; color: #686888; margin-top: 6px; }
+        .text-muted { color: #686888; }
+
+        /* Modal */
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+
+        .modal.show { display: flex; }
+
+        .modal-content {
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 440px;
+            overflow: hidden;
+        }
+
+        body.theme-light .modal-content { background: #ffffff; border-color: #e0e0e8; }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #2a2a45;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        body.theme-light .modal-header { border-color: #e0e0e8; }
+        .modal-header h2 { font-size: 1.1rem; }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: #686888;
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .modal-close:hover { color: #e8e8f0; }
+
+        .modal-body { padding: 24px; }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+        }
+
+        .checkbox-label input { width: auto; }
+
+        /* Notification */
+        .notification {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 14px 20px;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            display: none;
+            z-index: 2000;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+
+        .notification.show { display: block; }
+        .notification.success { background: #22c55e; color: white; }
+        .notification.error { background: #ef4444; color: white; }
     </style>
 </head>
 <body>
-    <div class="admin-container">
-        <div class="admin-header">
-            <h1>Admin Panel - User Management</h1>
-            <div class="user-info">
-                <span>Welcome, <span id="username">Admin</span></span>
-                <button class="btn" onclick="logout()">Logout</button>
+    <header class="header">
+        <div class="header-brand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="2" width="20" height="8" rx="2"></rect>
+                <rect x="2" y="14" width="20" height="8" rx="2"></rect>
+                <circle cx="6" cy="6" r="1" fill="currentColor"></circle>
+                <circle cx="6" cy="18" r="1" fill="currentColor"></circle>
+            </svg>
+            <span>Server Manager</span>
+        </div>
+        <div class="user-menu" onclick="toggleUserDropdown(event)">
+            <div class="user-avatar" id="headerAvatar"><span id="avatarInitial">?</span></div>
+            <span id="headerDisplayName">Admin</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"></path></svg>
+        </div>
+        <div class="user-dropdown" id="userDropdown">
+            <a href="dashboard.html">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                Dashboard
+            </a>
+            <a href="#" onclick="toggleTheme(); return false;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="themeIcon"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                <span id="themeText">Dark Mode</span>
+            </a>
+            <div class="divider"></div>
+            <a href="#" class="danger" onclick="logout(); return false;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                Logout
+            </a>
+        </div>
+    </header>
+
+    <nav class="nav">
+        <a href="dashboard.html">Dashboard</a>
+        <a href="status.html">Server Status</a>
+        <a href="create-server.html">Create Server</a>
+        <a href="cluster.html">Cluster</a>
+        <a href="admin.html" class="active">Admin</a>
+    </nav>
+
+    <main class="main">
+        <div class="admin-grid">
+            <!-- User Management -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>User Management</h2>
+                    <button class="btn btn-primary btn-sm" onclick="showCreateUserModal()">Add User</button>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Role</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="userTableBody">
+                            <tr><td colspan="4" class="text-muted" style="text-align:center;">Loading users...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- System Settings -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>System Settings</h2>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label>Server Manager Port</label>
+                        <input type="number" value="5000" disabled>
+                        <div class="help-text">Change requires restart</div>
+                    </div>
+                    <div class="form-group">
+                        <label>Auto-start Servers on Boot</label>
+                        <select disabled>
+                            <option value="true">Enabled</option>
+                            <option value="false">Disabled</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Log Retention (Days)</label>
+                        <input type="number" value="30" disabled>
+                    </div>
+                    <button class="btn btn-secondary" disabled>Save Settings</button>
+                    <p class="text-muted" style="margin-top: 12px; font-size: 0.85rem;">System settings coming soon</p>
+                </div>
             </div>
         </div>
-
-        <div class="nav-menu">
-            <a href="dashboard.html">Dashboard</a>
-            <a href="status.html">Server Status</a>
-            <a href="create-server.html">Create Server</a>
-            <a href="admin.html" class="active">Admin Panel</a>
-        </div>
-
-        <div class="card">
-            <h2>User Management</h2>
-            <button class="btn btn-primary" onclick="showCreateUserModal()">Add New User</button>
-            <table class="user-table" id="userTable">
-                <thead>
-                    <tr>
-                        <th>Username</th>
-                        <th>Admin</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="userTableBody">
-                    <!-- Users will be loaded here -->
-                </tbody>
-            </table>
-        </div>
-    </div>
+    </main>
 
     <!-- Create User Modal -->
-    <div id="createUserModal" class="modal">
+    <div class="modal" id="createUserModal">
         <div class="modal-content">
-            <h3>Create New User</h3>
-            <form id="createUserForm">
-                <div class="form-group">
-                    <label for="newUsername">Username:</label>
-                    <input type="text" id="newUsername" required>
-                </div>
-                <div class="form-group">
-                    <label for="newPassword">Password:</label>
-                    <input type="password" id="newPassword" required>
-                </div>
-                <div class="form-group">
-                    <label for="newIsAdmin">
-                        <input type="checkbox" id="newIsAdmin"> Administrator
-                    </label>
-                </div>
-                <div class="form-actions">
-                    <button type="button" onclick="hideCreateUserModal()" class="btn">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Create User</button>
-                </div>
-            </form>
+            <div class="modal-header">
+                <h2>Create New User</h2>
+                <button class="modal-close" onclick="hideCreateUserModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="createUserForm" onsubmit="handleCreateUser(event)">
+                    <div class="form-group">
+                        <label>Username *</label>
+                        <input type="text" id="newUsername" required placeholder="Enter username">
+                    </div>
+                    <div class="form-group">
+                        <label>Password *</label>
+                        <input type="password" id="newPassword" required placeholder="Min 6 characters">
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" id="newEmail" placeholder="user@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="newIsAdmin">
+                            <span>Administrator privileges</span>
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="width: 100%; padding: 14px;">Create User</button>
+                </form>
+            </div>
         </div>
     </div>
 
-    <!-- Notification System -->
-    <div id="notification" class="notification"></div>
+    <!-- Reset Password Modal -->
+    <div class="modal" id="resetPasswordModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Reset Password</h2>
+                <button class="modal-close" onclick="hideResetPasswordModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px;">Reset password for: <strong id="resetUsername"></strong></p>
+                <form id="resetPasswordForm" onsubmit="handleResetPassword(event)">
+                    <div class="form-group">
+                        <label>New Password *</label>
+                        <input type="password" id="resetNewPassword" required placeholder="Min 6 characters">
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="width: 100%; padding: 14px;">Reset Password</button>
+                </form>
+            </div>
+        </div>
+    </div>
 
-    <script type="module">
-        import { checkAuth, logout } from './js/auth.js';
-        import { showNotification } from './js/utils.js';
-        import API from './js/api.js';
+    <div class="notification" id="notification"></div>
 
-        // Make logout available globally
-        window.logout = logout;
+    <script>
+        let currentTheme = localStorage.getItem('theme_preference') || 'dark';
+        let currentResetUser = null;
 
-        let users = [];
+        function applyTheme(theme) {
+            currentTheme = theme;
+            document.body.classList.remove('theme-light');
+            if (theme === 'light') document.body.classList.add('theme-light');
+            localStorage.setItem('theme_preference', theme);
+            updateThemeUI();
+        }
 
-        async function initAdminPanel() {
+        function updateThemeUI() {
+            const icon = document.getElementById('themeIcon');
+            const text = document.getElementById('themeText');
+            icon.innerHTML = currentTheme === 'dark' 
+                ? '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>'
+                : '<circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line>';
+            text.textContent = currentTheme === 'dark' ? 'Dark Mode' : 'Light Mode';
+        }
+
+        async function toggleTheme() {
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            applyTheme(newTheme);
             try {
                 const token = sessionStorage.getItem('auth_token');
-                if (!token) {
-                    window.location.replace('login.html');
-                    return;
+                if (token) await fetch('/api/profile', { method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ theme_preference: newTheme }) });
+            } catch {}
+        }
+
+        function showNotification(msg, type = 'info') {
+            const el = document.getElementById('notification');
+            el.textContent = msg;
+            el.className = `notification show ${type}`;
+            setTimeout(() => el.classList.remove('show'), 4000);
+        }
+
+        function toggleUserDropdown(e) { e.stopPropagation(); document.getElementById('userDropdown').classList.toggle('show'); }
+        document.addEventListener('click', () => document.getElementById('userDropdown').classList.remove('show'));
+
+        function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+        async function loadProfile() {
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const r = await fetch('/api/profile', { headers: { 'Authorization': `Bearer ${token}` } });
+                if (r.ok) {
+                    const p = await r.json();
+                    const name = p.display_name || p.username || 'Admin';
+                    document.getElementById('headerDisplayName').textContent = name;
+                    document.getElementById('headerAvatar').innerHTML = p.avatar ? `<img src="${p.avatar}" alt="">` : `<span>${name.charAt(0).toUpperCase()}</span>`;
+                    if (p.theme_preference) applyTheme(p.theme_preference);
                 }
-
-                // Check if user is admin
-                const isAdmin = sessionStorage.getItem('isAdmin') === 'true';
-                if (!isAdmin) {
-                    showNotification('Access denied. Admin privileges required.', 'error');
-                    window.location.replace('dashboard.html');
-                    return;
-                }
-
-                // Verify authentication
-                const isAuthenticated = await checkAuth();
-                if (!isAuthenticated) {
-                    sessionStorage.clear();
-                    window.location.replace('login.html');
-                    return;
-                }
-
-                // Display username
-                const username = sessionStorage.getItem('username');
-                document.getElementById('username').textContent = username || 'Admin';
-
-                // Load users
-                await loadUsers();
-
-            } catch (error) {
-                console.error('Admin panel initialization error:', error);
-                showNotification('Failed to initialize admin panel', 'error');
-            }
+            } catch {}
         }
 
         async function loadUsers() {
             try {
-                users = await API.getUsers();
-                displayUsers();
-            } catch (error) {
-                console.error('Error loading users:', error);
-                showNotification('Failed to load users', 'error');
+                const token = sessionStorage.getItem('auth_token');
+                const r = await fetch('/api/users', { headers: { 'Authorization': `Bearer ${token}` } });
+                if (!r.ok) throw new Error();
+                const users = await r.json();
+                const tbody = document.getElementById('userTableBody');
+
+                if (!users || users.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="text-muted" style="text-align:center;">No users found</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = users.map(u => `
+                    <tr>
+                        <td>
+                            <strong>${escapeHtml(u.username)}</strong>
+                            ${u.email ? `<br><span class="text-muted" style="font-size:0.8rem;">${escapeHtml(u.email)}</span>` : ''}
+                        </td>
+                        <td>${u.is_admin ? '<span class="admin-badge">Admin</span>' : 'User'}</td>
+                        <td><span class="badge ${u.is_active !== false ? 'badge-success' : 'badge-danger'}">${u.is_active !== false ? 'Active' : 'Inactive'}</span></td>
+                        <td>
+                            <div class="user-actions">
+                                <button class="btn btn-sm btn-secondary" onclick="showResetPasswordModal('${escapeHtml(u.username)}')">Reset</button>
+                                ${u.username !== 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteUser('${escapeHtml(u.username)}')">Delete</button>` : ''}
+                            </div>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch {
+                document.getElementById('userTableBody').innerHTML = '<tr><td colspan="4" class="text-muted" style="text-align:center;">Failed to load</td></tr>';
             }
         }
 
-        function displayUsers() {
-            const tbody = document.getElementById('userTableBody');
-            tbody.innerHTML = users.map(user => `
-                <tr>
-                    <td>${user.username}</td>
-                    <td>${user.isAdmin ? '<span class="admin-badge">ADMIN</span>' : ''}</td>
-                    <td class="user-actions">
-                        <button class="btn btn-small" onclick="resetPassword('${user.username}')">Reset Password</button>
-                        <button class="btn btn-small btn-danger" onclick="deleteUser('${user.username}')">Delete</button>
-                    </td>
-                </tr>
-            `).join('');
-        }
-
-        window.showCreateUserModal = function() {
-            document.getElementById('createUserModal').style.display = 'block';
-        };
-
-        window.hideCreateUserModal = function() {
-            document.getElementById('createUserModal').style.display = 'none';
+        function showCreateUserModal() {
+            document.getElementById('createUserModal').classList.add('show');
             document.getElementById('createUserForm').reset();
-        };
+        }
 
-        window.resetPassword = async function(username) {
-            if (!confirm(`Reset password for ${username}?`)) return;
+        function hideCreateUserModal() { document.getElementById('createUserModal').classList.remove('show'); }
 
-            try {
-                const newPassword = prompt('Enter new password:');
-                if (!newPassword) return;
+        function showResetPasswordModal(username) {
+            currentResetUser = username;
+            document.getElementById('resetUsername').textContent = username;
+            document.getElementById('resetPasswordModal').classList.add('show');
+            document.getElementById('resetPasswordForm').reset();
+        }
 
-                await API.resetUserPassword(username, newPassword);
-                showNotification('Password reset successfully', 'success');
-            } catch (error) {
-                showNotification(error.message, 'error');
-            }
-        };
+        function hideResetPasswordModal() { document.getElementById('resetPasswordModal').classList.remove('show'); currentResetUser = null; }
 
-        window.deleteUser = async function(username) {
-            if (!confirm(`Delete user ${username}? This action cannot be undone.`)) return;
-
-            try {
-                await API.deleteUser(username);
-                showNotification('User deleted successfully', 'success');
-                await loadUsers(); // Reload users list
-            } catch (error) {
-                showNotification(error.message, 'error');
-            }
-        };
-
-        // Handle create user form
-        document.getElementById('createUserForm').addEventListener('submit', async (e) => {
+        async function handleCreateUser(e) {
             e.preventDefault();
-
-            const userData = {
-                username: document.getElementById('newUsername').value,
+            const data = {
+                username: document.getElementById('newUsername').value.trim(),
                 password: document.getElementById('newPassword').value,
+                email: document.getElementById('newEmail').value.trim(),
                 is_admin: document.getElementById('newIsAdmin').checked
             };
 
+            if (data.password.length < 6) { showNotification('Password must be at least 6 characters', 'error'); return; }
+
             try {
-                await API.createUser(userData);
-                showNotification('User created successfully', 'success');
-                hideCreateUserModal();
-                await loadUsers(); // Reload users list
-            } catch (error) {
-                showNotification(error.message, 'error');
-            }
+                const token = sessionStorage.getItem('auth_token');
+                const r = await fetch('/api/users', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                if (r.ok) { showNotification('User created', 'success'); hideCreateUserModal(); await loadUsers(); }
+                else { const res = await r.json(); showNotification(res.error || 'Failed', 'error'); }
+            } catch { showNotification('Failed to create user', 'error'); }
+        }
+
+        async function handleResetPassword(e) {
+            e.preventDefault();
+            const newPwd = document.getElementById('resetNewPassword').value;
+            if (newPwd.length < 6) { showNotification('Password must be at least 6 characters', 'error'); return; }
+
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const r = await fetch(`/api/users/${encodeURIComponent(currentResetUser)}/password`, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: newPwd })
+                });
+                if (r.ok) { showNotification(`Password reset for ${currentResetUser}`, 'success'); hideResetPasswordModal(); }
+                else { const res = await r.json(); showNotification(res.error || 'Failed', 'error'); }
+            } catch { showNotification('Failed to reset password', 'error'); }
+        }
+
+        async function deleteUser(username) {
+            if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const r = await fetch(`/api/users/${encodeURIComponent(username)}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (r.ok) { showNotification(`User ${username} deleted`, 'success'); await loadUsers(); }
+                else { const res = await r.json(); showNotification(res.error || 'Failed', 'error'); }
+            } catch { showNotification('Failed to delete user', 'error'); }
+        }
+
+        function logout() { sessionStorage.clear(); window.location.href = 'login.html'; }
+
+        // Modal close on outside click
+        document.querySelectorAll('.modal').forEach(m => {
+            m.addEventListener('click', e => { if (e.target === m) m.classList.remove('show'); });
         });
 
-        // Initialize when DOM is ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initAdminPanel);
-        } else {
-            initAdminPanel();
+        async function init() {
+            const token = sessionStorage.getItem('auth_token');
+            if (!token) { window.location.replace('login.html'); return; }
+            try { const r = await fetch('/api/auth/verify', { headers: { 'Authorization': `Bearer ${token}` } }); if (!r.ok) throw 0; } catch { sessionStorage.clear(); window.location.replace('login.html'); return; }
+
+            const isAdmin = sessionStorage.getItem('isAdmin') === 'true';
+            if (!isAdmin) {
+                showNotification('Access denied. Admin privileges required.', 'error');
+                setTimeout(() => window.location.replace('dashboard.html'), 2000);
+                return;
+            }
+
+            applyTheme(currentTheme);
+            await loadProfile();
+            await loadUsers();
         }
+
+        document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
     </script>
 </body>
 </html>

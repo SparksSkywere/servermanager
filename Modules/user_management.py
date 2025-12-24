@@ -1,11 +1,13 @@
-# User management system with authentication, 2FA, and database operations for Server Manager
+# User management
+# - Auth, 2FA, database ops
+# - TOTP via pyotp if available
 import os
 import sys
 import logging
 import time
 from datetime import datetime
 import hashlib
-# Check if pyotp is available
+
 try:
     import pyotp as _pyotp
     PYOTP_AVAILABLE = True
@@ -14,27 +16,26 @@ except ImportError:
     PYOTP_AVAILABLE = False
 
 def create_totp(secret: str):
-    # Safe wrapper for creating TOTP objects
+    # TOTP wrapper—raises if pyotp missing
     if not PYOTP_AVAILABLE or _pyotp is None:
-        raise ImportError("pyotp library not available")
+        raise ImportError("pyotp not available")
     return _pyotp.TOTP(str(secret))
 
 def generate_secret():
-    # Safe wrapper for generating secrets
+    # Generate TOTP secret
     if not PYOTP_AVAILABLE or _pyotp is None:
-        raise ImportError("pyotp library not available")
+        raise ImportError("pyotp not available")
     return _pyotp.random_base32()
 
 def create_provisioning_uri(secret: str, username: str, issuer: str):
-    # Safe wrapper for creating provisioning URIs
+    # QR code URI for authenticator apps
     if not PYOTP_AVAILABLE or _pyotp is None:
-        raise ImportError("pyotp library not available")
+        raise ImportError("pyotp not available")
     return _pyotp.totp.TOTP(secret).provisioning_uri(
         name=username,
         issuer_name=issuer
     )
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
@@ -68,10 +69,16 @@ class User(Base):
     # Add 2FA fields
     two_factor_enabled = Column(Boolean, default=False)
     two_factor_secret = Column(String(64), nullable=True)
-    # Add additional profile fields
+    # Profile fields
     first_name = Column(String(50), nullable=True)
     last_name = Column(String(50), nullable=True)
     display_name = Column(String(100), nullable=True)
+    # Avatar - stored as base64 or URL
+    avatar = Column(String(500), nullable=True)
+    # Additional profile data
+    bio = Column(String(500), nullable=True)
+    timezone = Column(String(50), nullable=True)
+    theme_preference = Column(String(20), default='dark')
 
 class UserManager:
     def __init__(self, engine=None):

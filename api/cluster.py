@@ -1,3 +1,5 @@
+# Cluster API
+# - Host/subhost communication
 import os
 import sys
 import winreg
@@ -9,44 +11,35 @@ from datetime import datetime
 from functools import wraps
 from flask import Blueprint, jsonify, request
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import centralized registry constants
 from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-
-# Import security managers
 from Modules.network_security import NetworkSecurityManager, require_cluster_network_security
-
-# Import database for persistent cluster data
 from Modules.Database.cluster_database import ClusterDatabase
-
-# Import server manager and user database
 from Modules.server_manager import ServerManager
-from Modules.Database.user_database import initialize_user_manager
+from Modules.Database.user_database import initialise_user_manager
 
-# Import standardized logging
 from Modules.server_logging import get_component_logger
 logger = get_component_logger("ClusterAPI")
 
 cluster_api = Blueprint("cluster_api", __name__)
 
-# Initialize security managers and database
+# Security and DB
 network_security_manager = NetworkSecurityManager()
 cluster_db = ClusterDatabase()
 
 def is_subhost_registered(subhost_id):
-    # Check if a subhost is registered in the database
+    # Check if subhost is in DB
     node = cluster_db.get_cluster_node(subhost_id)
     return node is not None and node['node_type'] == 'subhost'
 
 def get_subhost_info(subhost_id):
-    # Get subhost information from database
+    # Subhost info from DB
     node = cluster_db.get_cluster_node(subhost_id)
     if node and node['node_type'] == 'subhost':
         return {
             "id": node['name'],
-            "info": {},  # Legacy compatibility: info field no longer stored in new schema
+            "info": {},  # Legacy compat
             "last_seen": node['last_ping'] or node['added_at'],
             "registered_at": node['added_at'],
             "ip_address": node['ip_address'],
@@ -56,7 +49,7 @@ def get_subhost_info(subhost_id):
     return None
 
 def require_cluster_auth(f):
-    # Decorator to require cluster authentication for API endpoints
+    # Decorator: require cluster auth
     @wraps(f)
     @require_cluster_network_security(network_security_manager)
     def decorated_function(*args, **kwargs):

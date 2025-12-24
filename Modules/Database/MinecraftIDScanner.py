@@ -1,5 +1,5 @@
-# Minecraft Server Scanner for all modloaders
-# Scans for Minecraft server versions and modloaders, stores in database for later use
+# Minecraft server scanner
+# - Scans for MC versions and modloaders, stores in DB
 import os
 import sys
 import logging
@@ -10,10 +10,8 @@ import re
 from datetime import datetime, timezone
 import argparse
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-# Import database connection
 try:
     from Modules.Database.minecraft_database import get_minecraft_engine
     from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
@@ -21,9 +19,8 @@ try:
     SQLALCHEMY_AVAILABLE = True
 except ImportError:
     SQLALCHEMY_AVAILABLE = False
-    print("Warning: SQLAlchemy not available, falling back to SQLite")
+    print("Warning: SQLAlchemy not available, SQLite fallback")
 
-# Centralized logging
 try:
     from Modules.server_logging import get_component_logger
     logger = get_component_logger("MinecraftIDScanner")
@@ -33,9 +30,9 @@ except Exception:
 
 if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.setLevel(logging.DEBUG)
-    logger.debug("MinecraftIDScanner debug mode enabled via environment")
+    logger.debug("MinecraftIDScanner debug mode")
 
-# Database models
+# DB models
 if SQLALCHEMY_AVAILABLE:
     Base = declarative_base()
 
@@ -44,10 +41,10 @@ if SQLALCHEMY_AVAILABLE:
 
         id = Column(Integer, primary_key=True, autoincrement=True)
         version_id = Column(String(50), nullable=False, unique=True)
-        version_type = Column(String(20))  # 'release', 'snapshot'
-        modloader = Column(String(20))  # 'vanilla', 'fabric', 'forge', 'neoforge', 'spigot', 'paper', 'bukkit'
+        version_type = Column(String(20))  # release/snapshot
+        modloader = Column(String(20))  # vanilla/fabric/forge/neoforge/spigot/paper/bukkit
         modloader_version = Column(String(50))
-        java_requirement = Column(Integer)  # Minimum Java version required
+        java_requirement = Column(Integer)  # Min Java version
         download_url = Column(Text)
         installer_url = Column(Text)
         release_date = Column(String(50))

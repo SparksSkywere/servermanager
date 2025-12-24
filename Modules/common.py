@@ -1,5 +1,6 @@
-# Common utility classes and functions for Server Manager
-# Provides registry management, path handling, process management, and system utilities
+# Common utilities for Server Manager
+# - Registry, paths, process management, system bits
+# - Shared across all modules—don't duplicate this rubbish elsewhere
 import os
 import sys
 import json
@@ -9,11 +10,11 @@ import time
 import datetime
 import psutil
 
-# Centralized registry constants
+# Centralised registry constants—use these, not hardcoded strings
 REGISTRY_ROOT = winreg.HKEY_LOCAL_MACHINE
 REGISTRY_PATH = r"Software\SkywereIndustries\Servermanager"
 
-# Centralized logging integration
+# Logging setup—falls back to basic config if server_logging unavailable
 try:
     from Modules.server_logging import get_component_logger
     logger = get_component_logger("Common")
@@ -23,13 +24,12 @@ except Exception:
 
 if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.setLevel(logging.DEBUG)
-    logger.debug("Common module debug mode enabled via environment")
+    logger.debug("Debug mode on via environment")
 
 # Registry utility functions
-def initialize_paths_from_registry(registry_path):
-    # Initialize basic paths from registry
+def initialise_paths_from_registry(registry_path):
+    # Grab paths from registry—returns (success, dir, paths dict)
     try:
-        # Read registry for basic paths
         key = winreg.OpenKey(REGISTRY_ROOT, registry_path)
         server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
         winreg.CloseKey(key)
@@ -51,16 +51,16 @@ def initialize_paths_from_registry(registry_path):
             if path_key not in ["config", "data"]:  # Skip config and data directories
                 os.makedirs(path, exist_ok=True)
         
-        logger.info(f"Basic initialization complete. Server Manager directory: {server_manager_dir}")
+        logger.info(f"Paths initialised from registry: {server_manager_dir}")
         return True, server_manager_dir, paths
         
     except Exception as e:
-        logger.error(f"Basic initialization failed: {str(e)}")
+        logger.error(f"Path init failed: {str(e)}")
         return False, None, {}
 
 
-def initialize_registry_values(registry_path):
-    # Initialize registry-managed values
+def initialise_registry_values(registry_path):
+    # Pull config values from registry—SteamCmd path, web port, etc.
     try:
         # Read registry for all installation-managed values
         key = winreg.OpenKey(REGISTRY_ROOT, registry_path)
@@ -120,18 +120,18 @@ def initialize_registry_values(registry_path):
         return False, None, 8080, {}
 
 class ServerManagerPaths:
-    # Class to handle paths for the server manager
+    # - Path resolver for all server manager directories
+    # - Falls back to script dir if registry fails
     def __init__(self):
         self.registry_path = REGISTRY_PATH
         self.server_manager_dir = None
         self.paths = {}
-        self.initialized = False
+        self.initialised = False
         
-        # Try to initialize from registry
-        self.initialize_from_registry()
+        self.initialise_from_registry()
         
-    def initialize_from_registry(self):
-        # Initialize paths from registry settings
+    def initialise_from_registry(self):
+        # Try registry first—fallback kicks in if this fails
         try:
             # Read registry for paths
             key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
@@ -160,24 +160,24 @@ class ServerManagerPaths:
                 "dashboard": os.path.join(self.paths["temp"], "dashboard.pid")
             }
             
-            # Ensure all directories exist (excluding config and data)
+            # Create dirs if missing (skip config/data—database handles those)
             for path_key, path in self.paths.items():
-                if path_key not in ["config", "data"]:  # Skip config and data directories
+                if path_key not in ["config", "data"]:
                     os.makedirs(path, exist_ok=True)
                 
-            self.initialized = True
-            logger.info(f"Paths initialized from registry. Server Manager directory: {self.server_manager_dir}")
+            self.initialised = True
+            logger.info(f"Paths ready: {self.server_manager_dir}")
             return True
             
         except Exception as e:
             logger.error(f"Failed to initialize paths from registry: {str(e)}")
             
-            # Fallback to current directory or script directory
-            if not self.initialize_fallback():
-                raise Exception("Failed to initialize paths")
+            # Registry failed—try fallback
+            if not self.initialise_fallback():
+                raise Exception("Path initialisation failed")
                 
-    def initialize_fallback(self):
-        # Initialize with fallback paths if registry fails
+    def initialise_fallback(self):
+        # Use script dir as fallback when registry is broken/missing
         try:
             # Try to use the script directory's parent as the server manager directory
             script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -205,47 +205,48 @@ class ServerManagerPaths:
                 "dashboard": os.path.join(self.paths["temp"], "dashboard.pid")
             }
             
-            # Ensure all directories exist (excluding config and data)
+            # Create dirs if missing
             for path_key, path in self.paths.items():
-                if path_key not in ["config", "data"]:  # Skip config and data directories
+                if path_key not in ["config", "data"]:
                     os.makedirs(path, exist_ok=True)
                 
-            self.initialized = True
-            logger.warning(f"Using fallback paths. Server Manager directory: {self.server_manager_dir}")
+            self.initialised = True
+            logger.warning(f"Fallback paths in use: {self.server_manager_dir}")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to initialize fallback paths: {str(e)}")
+            logger.error(f"Fallback path init failed: {str(e)}")
             return False
             
     def get_path(self, path_key):
-        # Get a specific path by key
-        if not self.initialized:
-            raise Exception("Paths not initialized")
+        # Return path for key—raises if uninitialised
+        if not self.initialised:
+            raise Exception("Paths not initialised")
             
         if path_key in self.paths:
             return self.paths[path_key]
         else:
-            raise KeyError(f"Path key not found: {path_key}")
+            raise KeyError(f"Unknown path key: {path_key}")
             
     def get_pid_file(self, process_type):
-        # Get a specific PID file path by process type
-        if not self.initialized:
-            raise Exception("Paths not initialized")
+        # PID file path for given process type
+        if not self.initialised:
+            raise Exception("Paths not initialised")
             
         if process_type in self.pid_files:
             return self.pid_files[process_type]
         else:
             raise KeyError(f"PID file for process type not found: {process_type}")
 
-# Process and PID file management functions
+# Process and PID file handling
 class ProcessManager:
-    # Class to manage processes and PID files
+    # - Manages PID files and process lifecycle
+    # - Nothing fancy, just gets the job done
     def __init__(self, paths_manager):
         self.paths_manager = paths_manager
         
     def write_pid_file(self, process_type, pid):
-        # Write process ID information to a PID file
+        # Dump PID info to file
         try:
             pid_file = self.paths_manager.get_pid_file(process_type)
             
@@ -267,12 +268,12 @@ class ProcessManager:
             return False
             
     def read_pid_file(self, process_type):
-        # Read process ID information from a PID file
+        # Load PID info from file—returns None if missing/corrupt
         try:
             pid_file = self.paths_manager.get_pid_file(process_type)
             
             if not os.path.exists(pid_file):
-                logger.debug(f"PID file not found for {process_type}")
+                logger.debug(f"No PID file for {process_type}")
                 return None
                 
             with open(pid_file, 'r') as f:
@@ -280,11 +281,11 @@ class ProcessManager:
                 
             return pid_info
         except Exception as e:
-            logger.error(f"Failed to read PID file for {process_type}: {str(e)}")
+            logger.error(f"PID read failed for {process_type}: {str(e)}")
             return None
             
     def remove_pid_file(self, process_type):
-        # Remove a PID file
+        # Delete PID file
         try:
             pid_file = self.paths_manager.get_pid_file(process_type)
             
@@ -300,7 +301,7 @@ class ProcessManager:
             return False
             
     def is_process_running(self, pid):
-        # Check if a process with the given PID is running
+        # Quick PID check—False if dead/missing
         try:
             if not pid:
                 return False
@@ -310,7 +311,7 @@ class ProcessManager:
             return False
             
     def is_component_running(self, process_type):
-        # Check if a server manager component is running
+        # Check if a server manager component is alive
         pid_info = self.read_pid_file(process_type)
         
         if not pid_info:
@@ -319,7 +320,7 @@ class ProcessManager:
         return self.is_process_running(pid_info.get("ProcessId"))
             
     def kill_process(self, pid, force=False):
-        # Kill a process by PID
+        # Terminate or kill process—force=True uses SIGKILL
         try:
             if not pid or not self.is_process_running(pid):
                 return True
@@ -336,26 +337,24 @@ class ProcessManager:
             logger.error(f"Failed to kill process {pid}: {str(e)}")
             return False
 
-# Configuration management
+# Config management
 class ConfigManager:
-    # Class to manage server manager configuration
+    # - Handles app config via database
+    # - Falls back to JSON migration if db empty
     def __init__(self, paths_manager):
         self.paths_manager = paths_manager
         self.config = {}
         
-        # Load configuration from database
         self.load_config()
         
     def load_config(self):
-        # Load configuration from database
         try:
-            from Modules.Database.cluster_database import ClusterDatabase
-            db = ClusterDatabase()
+            from Modules.Database.cluster_database import get_cluster_database
+            db = get_cluster_database()
             
-            # Get main config from database
             config_data = db.get_main_config()
             
-            # Migrate from JSON if database is empty (check old config location)
+            # Migrate from JSON if database is empty
             if not config_data:
                 # Check if old config folder exists for migration
                 old_config_folder = os.path.join(self.paths_manager.server_manager_dir, "config")
@@ -369,18 +368,17 @@ class ConfigManager:
             # Update config with database values
             self.config.update(config_data)
             
-            # Always try to merge current registry values
+            # Merge current registry values
             try:
-                success, steam_cmd, webserver_port, registry_values = initialize_registry_values(
+                success, steam_cmd, webserver_port, registry_values = initialise_registry_values(
                     REGISTRY_PATH
                 )
                 if success:
-                    # Override with current registry values
                     self.config["web_port"] = webserver_port
                     if steam_cmd:
                         self.config["steam_cmd_path"] = steam_cmd
             except Exception as e:
-                logger.warning(f"Could not load current registry values: {str(e)}")
+                logger.warning(f"Registry values unavailable: {str(e)}")
                 
             logger.debug("Configuration loaded from database")
             return True
@@ -390,23 +388,22 @@ class ConfigManager:
             return False
             
     def create_default_config(self):
-        # Create default configuration
+        # Set up sensible defaults
         try:
-            # Start with default config
             self.config = {
                 "version": "0.1",
                 "web_port": 8080,
                 "enable_auto_updates": True,
                 "enable_tray_icon": True,
-                "check_updates_interval": 3600,  # seconds
+                "check_updates_interval": 3600,
                 "log_level": "INFO",
-                "max_log_size": 10485760,  # 10 MB
+                "max_log_size": 10485760,
                 "max_log_files": 10
             }
             
-            # Try to override with registry values
+            # Override with registry values if available
             try:
-                success, steam_cmd, webserver_port, registry_values = initialize_registry_values(
+                success, steam_cmd, webserver_port, registry_values = initialise_registry_values(
                     REGISTRY_PATH
                 )
                 if success:
@@ -429,16 +426,13 @@ class ConfigManager:
             return False
             
     def save_config(self):
-        # Save configuration to database
         try:
-            from Modules.Database.cluster_database import ClusterDatabase
-            db = ClusterDatabase()
+            from Modules.Database.cluster_database import get_cluster_database
+            db = get_cluster_database()
             
-            # Define integer config keys
             integer_keys = {'web_port', 'check_updates_interval', 'max_log_size', 'max_log_files'}
             boolean_keys = {'enable_auto_updates', 'enable_tray_icon'}
             
-            # Save all config values to database with proper types
             for key, value in self.config.items():
                 if key in integer_keys:
                     try:
@@ -475,12 +469,12 @@ except ImportError:
     def log_exception(e, message="An exception occurred"):
         logger.error(f"{message}: {str(e)}")
 
-# System utilities
+# System utils
 class SystemUtils:
-    # Class for system utilities
+    # Quick system info helpers—CPU, memory, disk, process stats
     @staticmethod
     def get_system_info():
-        # Get system information
+        # Returns dict of system metrics
         try:
             # Try to use debug module first
             try:
@@ -510,7 +504,7 @@ class SystemUtils:
     
     @staticmethod
     def get_process_info(pid):
-        # Get process information by PID
+        # Grab process stats by PID—returns None if dead
         try:
             # Try to use debug module first
             try:
@@ -541,51 +535,50 @@ class SystemUtils:
             log_exception(e, f"Failed to get process information for PID {pid}")
             return None
 
-# Create global instances for easy access
+# Global instances—use these, don't create your own
 paths = ServerManagerPaths()
 process_manager = ProcessManager(paths)
 config_manager = ConfigManager(paths)
 system_utils = SystemUtils()
 
-# Base class for all Server Manager modules
+# Base class for all modules
 class ServerManagerModule:
-    # Base class for all Server Manager modules that provides common functionality
+    # - Inherit from this for common functionality
+    # - Paths, config, PID management baked in
     
     def __init__(self, module_name=None):
         self.module_name = module_name or self.__class__.__name__
         self.logger = logging.getLogger(self.module_name)
         self.registry_path = REGISTRY_PATH
         
-        # Use global instances for shared functionality
         self._paths_manager = paths
         self._process_manager = process_manager
         self._config_manager = config_manager
         
-        # Ensure paths are initialized
-        if not self._paths_manager.initialized:
-            self.logger.warning("Paths not initialized, attempting to initialize...")
-            if not self._paths_manager.initialize_from_registry():
-                self.logger.error("Failed to initialize paths")
-                raise Exception("Failed to initialize Server Manager paths")
+        if not self._paths_manager.initialised:
+            self.logger.warning("Paths uninitialised, fixing...")
+            if not self._paths_manager.initialise_from_registry():
+                self.logger.error("Path init failed")
+                raise Exception("Failed to initialise paths")
     
     @property
     def paths(self):
-        # Get the paths dictionary
+        # Path dict
         return self._paths_manager.paths
         
     @property 
     def server_manager_dir(self):
-        # Get the server manager directory
+        # Root directory
         return self._paths_manager.server_manager_dir
         
     @property
     def config(self):
-        # Get configuration
+        # Config dict
         return self._config_manager.config
         
     @property
     def web_port(self):
-        # Get the web server port from configuration (always return int)
+        # Web port—always int, defaults to 8080
         port = self.get_config_value("web_port", 8080)
         try:
             return int(port) if port else 8080
@@ -594,47 +587,47 @@ class ServerManagerModule:
         
     @web_port.setter
     def web_port(self, value):
-        # Set the web server port in configuration (always store as int)
+        # Set web port
         try:
             self.set_config_value("web_port", int(value) if value else 8080)
         except (ValueError, TypeError):
             self.set_config_value("web_port", 8080)
         
     def is_process_running(self, pid):
-        # Check if a process with the given PID is running
+        # PID alive check
         return self._process_manager.is_process_running(pid)
         
     def write_pid_file(self, process_type, pid):
-        # Write process ID information to a PID file
+        # Write PID file
         return self._process_manager.write_pid_file(process_type, pid)
         
     def read_pid_file(self, process_type):
-        # Read process ID information from a PID file
+        # Read PID file
         return self._process_manager.read_pid_file(process_type)
         
     def remove_pid_file(self, process_type):
-        # Remove a PID file
+        # Delete PID file
         return self._process_manager.remove_pid_file(process_type)
         
     def is_component_running(self, process_type):
-        # Check if a server manager component is running
+        # Component alive check
         return self._process_manager.is_component_running(process_type)
         
     def get_config_value(self, key, default=None):
-        # Get a configuration value
+        # Get config value
         return self._config_manager.get(key, default)
         
     def set_config_value(self, key, value):
-        # Set a configuration value and save
+        # Set and save config value
         return self._config_manager.set(key, value)
         
     def get_path(self, path_key):
-        # Get a specific path by key
+        # Get path by key
         return self._paths_manager.get_path(path_key)
 
-# Additional utility functions from common_utils.py
+# Utility functions
 def setup_module_logging(module_name):
-    # Standardized logging setup for all modules
+    # Logging setup for modules—use this, not raw basicConfig
     try:
         from Modules.server_logging import get_component_logger
         logger = get_component_logger(module_name)
@@ -646,33 +639,31 @@ def setup_module_logging(module_name):
         )
         logger = logging.getLogger(module_name)
 
-    # Enable debug logging if environment variable is set
     if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
         logger.setLevel(logging.DEBUG)
 
     return logger
 
 def setup_module_path():
-    # Standardized path setup for module imports
+    # Add project root to sys.path
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
     sys.path.insert(0, project_root)
 
 def get_server_manager_dir():
-    # Centralized function to get server manager directory from registry
+    # Get SM dir from registry—falls back to script parent
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         server_manager_dir = winreg.QueryValueEx(key, "ServerManagerPath")[0]
         winreg.CloseKey(key)
         return server_manager_dir.strip('"').strip()
     except Exception as e:
-        # Fallback to script directory
         script_dir = os.path.dirname(os.path.abspath(__file__))
         server_manager_dir = os.path.dirname(script_dir)
         return server_manager_dir
 
 def get_registry_value(key_path, value_name, default=None):
-    # Generic function to get registry values
+    # Generic registry value getter
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, key_path)
         value = winreg.QueryValueEx(key, value_name)[0]
@@ -682,19 +673,91 @@ def get_registry_value(key_path, value_name, default=None):
         return default
 
 def ensure_directory_exists(directory_path):
-    # Ensure a directory exists, create if it doesn't
+    # Create dir if missing
     if not os.path.exists(directory_path):
         os.makedirs(directory_path, exist_ok=True)
     return directory_path
 
 def get_absolute_path(relative_path):
-    # Convert relative path to absolute path
+    # Make path absolute
     if not os.path.isabs(relative_path):
         return os.path.abspath(relative_path)
     return relative_path
 
-# Export these instances to make them available to other modules
-__all__ = ['paths', 'process_manager', 'config_manager', 'system_utils', 'ServerManagerModule',
-           'initialize_paths_from_registry', 'initialize_registry_values', 'REGISTRY_ROOT', 'REGISTRY_PATH',
-           'setup_module_logging', 'setup_module_path', 'get_server_manager_dir', 'get_registry_value',
-           'ensure_directory_exists', 'get_absolute_path']
+# Subprocess flags for Windows console hiding
+def get_subprocess_creation_flags(hide_window=True, new_process_group=False):
+    # Get creation flags for subprocess—Windows only
+    import subprocess
+    if sys.platform != 'win32':
+        return 0
+    flags = 0
+    if hide_window:
+        flags |= subprocess.CREATE_NO_WINDOW
+    if new_process_group:
+        flags |= subprocess.CREATE_NEW_PROCESS_GROUP
+    return flags
+
+def should_hide_server_consoles(config=None):
+    # Check hideServerConsoles config
+    if config and 'configuration' in config:
+        return config['configuration'].get('hideServerConsoles', True)
+    return True
+
+# JSON file I/O
+def save_json_config(filepath, data, indent=4):
+    # Write JSON with error handling
+    try:
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=indent)
+        return True
+    except Exception as e:
+        logger.error(f"JSON save failed: {filepath} - {e}")
+        return False
+
+def load_json_config(filepath, default=None):
+    # Load JSON with fallback
+    try:
+        if os.path.exists(filepath):
+            with open(filepath, 'r') as f:
+                return json.load(f)
+        return default if default is not None else {}
+    except Exception as e:
+        logger.error(f"JSON load failed: {filepath} - {e}")
+        return default if default is not None else {}
+
+# Tkinter window positioning
+def centre_window(window, width=None, height=None, parent=None):
+    # Centre tkinter window on screen or relative to parent
+    window.update_idletasks()
+    if width and height:
+        window_width, window_height = width, height
+    else:
+        window_width = window.winfo_width()
+        window_height = window.winfo_height()
+    
+    if parent:
+        parent_x = parent.winfo_rootx()
+        parent_y = parent.winfo_rooty()
+        parent_width = parent.winfo_width()
+        parent_height = parent.winfo_height()
+        x = parent_x + (parent_width - window_width) // 2
+        y = parent_y + (parent_height - window_height) // 2
+    else:
+        screen_width = window.winfo_screenwidth()
+        screen_height = window.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+    
+    window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+# Alias for backwards compat
+center_window = centre_window
+
+# Exports
+__all__ = [
+    'paths', 'process_manager', 'config_manager', 'system_utils', 'ServerManagerModule',
+    'initialise_paths_from_registry', 'initialise_registry_values', 'REGISTRY_ROOT', 'REGISTRY_PATH',
+    'setup_module_logging', 'setup_module_path', 'get_server_manager_dir', 'get_registry_value',
+    'ensure_directory_exists', 'get_absolute_path', 'get_subprocess_creation_flags',
+    'should_hide_server_consoles', 'save_json_config', 'load_json_config', 'centre_window', 'center_window'
+]

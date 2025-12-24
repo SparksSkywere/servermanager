@@ -1,33 +1,30 @@
-# Minecraft Servers Database Connection Module
-# Handles SQLAlchemy connections specifically for Minecraft server data
+# Minecraft servers database
+# - SQLAlchemy connections for MC server data
 
 from sqlalchemy import text
 
-# Import shared utilities
 from .database_utils import get_sql_config_from_registry as db_get_sql_config, build_db_url, get_engine_by_type
 
-# Setup standardized logging
 from Modules.common import setup_module_logging, setup_module_path
 setup_module_path()
 logger = setup_module_logging("MinecraftDatabase")
 
 def get_minecraft_sql_config_from_registry():
-    # Get SQL configuration for Minecraft servers database from Windows registry
+    # MC DB config from registry
     return db_get_sql_config("minecraft")
 
 def build_minecraft_db_url(config):
-    # Build SQLAlchemy database URL from config for Minecraft servers database
+    # SQLAlchemy URL for MC DB
     return build_db_url(config)
 
 def get_minecraft_engine():
-    # Get SQLAlchemy engine for Minecraft servers database
+    # SQLAlchemy engine for MC DB
     return get_engine_by_type("minecraft")
 
 def ensure_minecraft_tables(engine):
-    # Ensure Minecraft servers tables exist in the database
+    # Create MC tables if missing
     try:
         with engine.connect() as conn:
-            # Create comprehensive minecraft_servers table
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS minecraft_servers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,20 +44,20 @@ def ensure_minecraft_tables(engine):
                 )
             """))
             conn.commit()
-            logger.info("Ensured minecraft_servers table exists")
+            logger.info("MC tables ensured")
     except Exception as e:
-        logger.error(f"Failed to ensure Minecraft tables: {e}")
+        logger.error(f"MC tables creation failed: {e}")
         raise
 
-def initialize_minecraft_database():
-    # Initialize Minecraft servers database and return engine
+def initialise_minecraft_database():
+    # Init MC DB, return engine
     try:
         engine = get_minecraft_engine()
         ensure_minecraft_tables(engine)
-        logger.info("Minecraft servers database initialized")
+        logger.info("MC DB initialised")
         return engine
     except Exception as e:
-        logger.error(f"Failed to initialize Minecraft database: {e}")
+        logger.error(f"Failed to initialise Minecraft database: {e}")
         raise
 
 # Legacy compatibility layer

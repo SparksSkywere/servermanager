@@ -1,29 +1,49 @@
+# Cluster database
+# - Manages cluster/node state in SQLite
 import sqlite3
 import os
 import sys
 import json
+import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from Modules.server_logging import get_component_logger
 
 logger = get_component_logger("ClusterDatabase")
 
+# Singleton instance and lock
+_cluster_db_instance = None
+_cluster_db_lock = threading.Lock()
+
+
+def get_cluster_database(db_path: Optional[str] = None) -> 'ClusterDatabase':
+    # Singleton ClusterDatabase access
+    global _cluster_db_instance
+    with _cluster_db_lock:
+        if _cluster_db_instance is None:
+            _cluster_db_instance = ClusterDatabase(db_path, _singleton=True)
+        return _cluster_db_instance
+
+
 class ClusterDatabase:
-    # Database manager for cluster information
+    # DB manager for cluster info
+    # - Use get_cluster_database() for singleton access
     
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: Optional[str] = None, _singleton: bool = False):
+        if not _singleton:
+            logger.debug("Use get_cluster_database() for singleton access")
+        
         if db_path is None:
-            # Auto-discover database path from registry or fallback locations
+            # Auto-discover DB path from registry
             try:
                 import winreg
                 from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
                 key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
                 try:
-                    # Check multiple registry key names for flexibility
+                    # Check multiple registry keys
                     server_manager_dir = None
                     for key_name in ["ServerManagerDirectory", "InstallPath", "Directory"]:
                         try:
@@ -35,20 +55,20 @@ class ClusterDatabase:
                     
                     if server_manager_dir:
                         db_dir = os.path.join(server_manager_dir, 'db')
-                        logger.info(f"Using registry-configured database directory: {db_dir}")
+                        logger.info(f"Using registry DB dir: {db_dir}")
                     else:
-                        # Check if production path exists as fallback
+                        # Production path fallback
                         production_path = r"C:\SteamCMD\Servermanager"
                         if os.path.exists(production_path):
                             db_dir = os.path.join(production_path, 'db')
-                            logger.info(f"Using detected production path: {db_dir}")
+                            logger.info(f"Using production path: {db_dir}")
                         else:
-                            # Fallback to relative path
+                            # Relative path fallback
                             db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
-                            logger.info(f"No registry keys found, using relative path: {db_dir}")
+                            logger.info(f"Using relative path: {db_dir}")
                     
                 except Exception as inner_e:
-                    # Check if production path exists as fallback
+                    # Production fallback
                     production_path = r"C:\SteamCMD\Servermanager"
                     if os.path.exists(production_path):
                         db_dir = os.path.join(production_path, 'db')

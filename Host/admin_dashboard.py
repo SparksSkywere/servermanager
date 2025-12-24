@@ -1,3 +1,5 @@
+# Admin dashboard
+# - User management, 2FA setup, role assignment
 import os
 import sys
 import tkinter as tk
@@ -14,12 +16,11 @@ try:
     PYOTP_AVAILABLE = True
 except ImportError:
     PYOTP_AVAILABLE = False
-    print("Warning: pyotp not available. 2FA functionality will be disabled.")
+    print("Warning: pyotp missing. 2FA disabled.")
 
 def handle_2fa_login_admin(user_manager, username, parent_window=None):
-    # Handle 2FA verification during admin login process
+    # 2FA verification dialog for admin login
     try:
-        # Create 2FA dialog
         twofa_dialog = tk.Toplevel() if parent_window else tk.Tk()
         if parent_window:
             twofa_dialog.transient(parent_window)

@@ -1,28 +1,23 @@
-# Minecraft server management and Java compatibility utilities
-# Provides Java detection, version management, and Minecraft server operations
+# Minecraft server management
+# - Java detection, version compatibility, modloader support
 import json
 import os
+import sys
 import urllib.request
 import subprocess
 import re
 
-# Import standardized logging
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("Minecraft")
-except Exception:
-    import logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger(__name__)
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Modules.common import setup_module_logging
+
+logger = setup_module_logging("Minecraft")
 
 
 def get_java_version(java_path="java"):
-    # Get the installed Java version for a specific Java executable
-    # Args: java_path (str): Path to the Java executable (default: "java" from PATH)
-    # Returns: tuple: (major_version, full_version_string) or (None, None) if Java not found
+    # Get Java version from executable
     try:
-        logger.debug(f"[SUBPROCESS_TRACE] get_java_version called with path: {java_path}")
-        # Use CREATE_NO_WINDOW to prevent console popup on Windows
+        logger.debug(f"[SUBPROCESS_TRACE] get_java_version: {java_path}")
         startupinfo = None
         creationflags = 0
         if os.name == 'nt':
@@ -30,40 +25,35 @@ def get_java_version(java_path="java"):
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = 0
             creationflags = subprocess.CREATE_NO_WINDOW
-            logger.debug(f"[SUBPROCESS_TRACE] Using CREATE_NO_WINDOW flag: {creationflags}")
+            logger.debug(f"[SUBPROCESS_TRACE] CREATE_NO_WINDOW: {creationflags}")
         
-        logger.debug(f"[SUBPROCESS_TRACE] Executing: java -version")
+        logger.debug("[SUBPROCESS_TRACE] Running java -version")
         result = subprocess.run([java_path, '-version'], capture_output=True, text=True, timeout=10,
                                startupinfo=startupinfo, creationflags=creationflags)
-        logger.debug(f"[SUBPROCESS_TRACE] java -version completed with returncode: {result.returncode}")
-        # Java version output goes to stderr
+        logger.debug(f"[SUBPROCESS_TRACE] returncode: {result.returncode}")
         version_output = result.stderr
         
-        # Parse version - look for patterns like "1.8.0_271" or "11.0.2" or "21.0.1"
+        # Parse version—handles "1.8.0_271" and "21.0.1" formats
         version_match = re.search(r'version "([^"]+)"', version_output)
         if version_match:
             version_str = version_match.group(1)
             
-            # Extract major version
             if version_str.startswith('1.'):
-                # Old format like "1.8.0_271" -> major version is 8
                 major_version = int(version_str.split('.')[1])
             else:
-                # New format like "11.0.2" -> major version is 11
                 major_version = int(version_str.split('.')[0])
             
             return major_version, version_str
             
     except Exception as e:
-        logger.debug(f"Failed to get Java version from {java_path}: {str(e)}")
+        logger.debug(f"Java version check failed: {java_path} - {str(e)}")
     
     return None, None
 
 
 def detect_java_installations():
-    # Detect available Java installations on the system
-    # Returns: list of dictionaries with Java installation info
-    #          [{"path": "java_path", "version": "version_string", "major": major_version}]
+    # Find all Java installations on system
+    # Returns list of {"path", "version", "major"} dicts
     java_installations = []
     
     # Check default Java in PATH

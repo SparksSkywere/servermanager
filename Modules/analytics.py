@@ -1,4 +1,5 @@
-# Analytics and Metrics Collection Module
+# Analytics and metrics collection
+# - System stats, server metrics, SNMP/Grafana hooks
 import os
 import sys
 import json
@@ -10,76 +11,64 @@ from datetime import datetime, timedelta
 from collections import defaultdict, deque
 import socket
 
-# Import server manager common functionality
-try:
-    from Modules.common import ServerManagerModule
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("Analytics")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("Analytics")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import SNMP and Grafana modules (lazy loading to prevent circular imports)
+from Modules.common import ServerManagerModule, setup_module_logging
+
+logger = setup_module_logging("Analytics")
+
+# Lazy-loaded integrations
 _snmp_manager = None
 _grafana_manager = None
 
+
 class AnalyticsCollector(ServerManagerModule):
-    # Analytics module for collecting system and server statistics
+    # - Collects system/server stats every 60s
+    # - Thread-safe metric storage
     
     def __init__(self):
         try:
             super().__init__("Analytics")
-            logger.info("Analytics module initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize base ServerManagerModule: {e}")
-            # Initialize minimal attributes to prevent AttributeError
+            logger.error(f"Base init failed: {e}")
             self.module_name = "Analytics"
             self.logger = logging.getLogger("Analytics")
         
-        # Metrics storage
         self.metrics_history = defaultdict(lambda: deque(maxlen=1440))
         self.last_collection = datetime.now()
-        self.collection_interval = 60  # seconds
+        self.collection_interval = 60
         self.lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread = None
-        
-        # Server manager integration
         self.server_manager = None
         self.dashboard_tracker = None
-        
-        # Performance counters
         self.server_uptime_start = {}
         self.server_restart_counts = defaultdict(int)
         self.server_error_counts = defaultdict(int)
-        
-        # System baseline
         self.boot_time = datetime.fromtimestamp(psutil.boot_time())
         
-        self.initialize_integrations()
+        self.initialise_integrations()
 
-    def initialize_integrations(self):
-        # Initialize integrations with server manager and dashboard tracker
+    def initialise_integrations(self):
+        # Hook up server manager and tracker
         try:
-            # Import server manager
             from Modules.server_manager import ServerManager
             self.server_manager = ServerManager()
-            logger.info("Server manager integration initialized")
+            logger.info("Server manager hooked")
         except Exception as e:
-            logger.warning(f"Server manager integration failed: {e}")
+            logger.warning(f"Server manager hook failed: {e}")
             
         try:
-            # Import dashboard tracker
             from services.dashboard_tracker import tracker
             self.dashboard_tracker = tracker
-            logger.info("Dashboard tracker integration initialized")
+            logger.info("Dashboard tracker hooked")
         except Exception as e:
-            logger.warning(f"Dashboard tracker integration failed: {e}")
+            logger.warning(f"Dashboard tracker hook failed: {e}")
 
     def start_collection(self):
-        # Start background metrics collection with 60-second intervals
+        # Kick off background metrics thread
         if self._thread and self._thread.is_alive():
-            logger.warning("Metrics collection already running")
+            logger.warning("Already running")
             return
             
         self._stop_event.clear()
@@ -88,24 +77,24 @@ class AnalyticsCollector(ServerManagerModule):
         logger.info("Metrics collection started")
 
     def stop_collection(self):
-        # Stop background metrics collection
+        # Halt collection thread
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=5)
         logger.info("Metrics collection stopped")
 
     def _collection_loop(self):
-        # Background collection loop with error recovery
+        # Loop forever collecting metrics—recovers from errors
         while not self._stop_event.is_set():
             try:
                 self.collect_all_metrics()
                 self._stop_event.wait(self.collection_interval)
             except Exception as e:
-                logger.error(f"Error in metrics collection loop: {e}")
-                self._stop_event.wait(30)  # Wait longer on error
+                logger.error(f"Collection error: {e}")
+                self._stop_event.wait(30)
 
     def collect_all_metrics(self):
-        # Collect all system and server metrics with thread-safe storage
+        # Grab all metrics—thread-safe
         timestamp = datetime.now()
         
         with self.lock:

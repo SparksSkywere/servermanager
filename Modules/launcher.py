@@ -1,6 +1,6 @@
-# Server Manager Launcher - Process manager and startup orchestrator  
-# Manages startup of all Server Manager components with cluster role detection
-# Handles tray icon, web server, and subhost dashboard based on configuration
+# Launcher
+# - Process manager, startup orchestrator
+# - Kicks off webserver, trayicon, dashboard
 import os
 import sys
 import time
@@ -16,23 +16,16 @@ from pathlib import Path
 from datetime import datetime
 import socket
 
-# Add the parent directory to the path for module imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from Modules.common import ServerManagerModule
+from Modules.common import ServerManagerModule, setup_module_logging
+from Modules.server_logging import log_dashboard_event
 
-# Centralized logging (fallback to basic if module import fails)
-try:
-    from Modules.server_logging import get_component_logger, log_dashboard_event
-    logger = get_component_logger("Launcher")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("Launcher")
+logger = setup_module_logging("Launcher")
 
-if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
-    logger.setLevel(logging.DEBUG)
-    logger.debug("Launcher debug mode enabled via environment")
 
 class ServerManagerLauncher(ServerManagerModule):
+    # - Manages child processes
+    # - Detects cluster role (Host/Subhost)
     def __init__(self):
         super().__init__("Launcher")
         self.processes = {}
@@ -41,44 +34,32 @@ class ServerManagerLauncher(ServerManagerModule):
         self.cluster_role = "Unknown"
         self.host_address = None
         
-        # Detect cluster role (Host or Subhost)
         self.detect_cluster_role()
         
-        # Parse command line arguments
         parser = argparse.ArgumentParser(description='Server Manager Launcher')
         parser.add_argument('--service', action='store_true', help='Run as a service')
         parser.add_argument('--debug', action='store_true', help='Enable debug logging')
         parser.add_argument('--force', action='store_true', help='Force start even if another instance is detected')
         args = parser.parse_args()
         
-        # Configure logging based on arguments
         if args.debug:
             logger.setLevel(logging.DEBUG)
             
         self.is_service = args.service
         self.force_start = args.force
         
-        # Set up file logging
-        log_file = os.path.join(self.paths["logs"], "launcher.log")
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-        logger.addHandler(file_handler)
-        
-        # Log cluster role information
-        logger.debug(f"Cluster role detected: {self.cluster_role}")
+        logger.debug(f"Cluster role: {self.cluster_role}")
         if self.host_address:
-            logger.debug(f"Host address: {self.host_address}")
+            logger.debug(f"Host: {self.host_address}")
         
-        # Write PID file for launcher
         self.write_pid_file("launcher", os.getpid())
         
-        # Check for existing instance
         if not self.force_start and self.check_existing_instance():
-            logger.warning("Another instance of Server Manager is already running. Exiting.")
+            logger.warning("Another instance running—exiting")
             sys.exit(0)
     
     def detect_cluster_role(self):
-        # Detect whether this instance is a Host or Subhost
+        # Check registry for Host/Subhost status
         try:
             from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
             key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
@@ -89,15 +70,14 @@ class ServerManagerLauncher(ServerManagerModule):
                 self.host_address = None
             winreg.CloseKey(key)
         except Exception as e:
-            logger.warning(f"Could not detect cluster role from registry: {e}")
+            logger.warning(f"Cluster role detection failed: {e}")
             self.cluster_role = "Unknown"
             self.host_address = None
         
     def check_existing_instance(self):
-        # Check if another instance of Server Manager is already running
+        # See if we're already running
         try:
             if not self.paths or not self.paths.get("temp"):
-                # If paths aren't initialized, we can't check
                 return False
                 
             # Check for existing PID files

@@ -1,4 +1,4 @@
-# Debug Manager - System diagnostics and debugging tools for Server Manager
+# Debug manager - diagnostics GUI
 import os
 import sys
 import json
@@ -14,69 +14,64 @@ import traceback
 import ctypes
 import psutil
 
-# Add modules directory to path if needed
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(script_dir)
-modules_dir = os.path.join(parent_dir, "Modules")
-if modules_dir not in sys.path:
-    sys.path.append(modules_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
-# Try to import from modules
+from Modules.common import setup_module_logging
+
 try:
     from debug.debug import DebugManager as CoreDebugManager
     from Modules.server_logging import get_debug_logger
     debug_manager = CoreDebugManager()
     logger = get_debug_logger("debug-manager")
 except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("DebugManager")
+    logger = setup_module_logging("DebugManager")
     debug_manager = None
 
-if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
-    logger.setLevel(logging.DEBUG)
-    logger.debug("DebugManager module debug mode enabled via environment")
 
 def is_admin():
-    # Check if the script is running with administrator privileges
+    # Admin check
     try:
         return ctypes.windll.shell32.IsUserAnAdmin() != 0
     except:
         return False
 
+
 def run_as_admin():
-    # Re-run the script with admin privileges
+    # Elevate to admin
     ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
     sys.exit()
 
+
 class DebugManagerGUI:
+    # - Debug centre UI
+    # - Log viewer, diagnostics
     def __init__(self, root):
         self.root = root
-        self.root.title("Server Manager - Debug Center")
+        self.root.title("Server Manager - Debug Centre")
         self.root.geometry("600x400")
         self.root.minsize(600, 400)
         
-        # Initialize paths
         from Modules.common import REGISTRY_PATH
         self.registry_path = REGISTRY_PATH
         self.server_manager_dir = None
         self.paths = {}
         
-        # Initialize paths and configuration
-        self.initialize()
+        self.initialise()
         
-        # Set up UI elements
+        # Set up UI
         self.create_ui()
     
-    def initialize(self):
-        # Initialize paths and configuration from registry
+    def initialise(self):
+        # Init paths/config from registry
         try:
             from Modules.common import REGISTRY_ROOT
-            # Read registry for paths
             key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
             self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             winreg.CloseKey(key)
             
-            # Define paths structure (config/data folders removed - all config is database-backed)
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
@@ -86,21 +81,19 @@ class DebugManagerGUI:
                 "debug": os.path.join(self.server_manager_dir, "logs", "debug")
             }
             
-            # Ensure directories exist
             for path in self.paths.values():
                 os.makedirs(path, exist_ok=True)
                 
-            logger.info(f"Initialization complete. Server Manager directory: {self.server_manager_dir}")
+            logger.info(f"Init complete. SM dir: {self.server_manager_dir}")
             
-            # Enable debug mode via instance
             if debug_manager:
                 debug_manager.set_debug_mode(True)
                 
             return True
             
         except Exception as e:
-            logger.error(f"Initialization failed: {str(e)}")
-            messagebox.showerror("Initialization Error", f"Failed to initialize: {str(e)}")
+            logger.error(f"Init failed: {str(e)}")
+            messagebox.showerror("Init Error", f"Failed to initialise: {str(e)}")
             return False
     
     def create_ui(self):

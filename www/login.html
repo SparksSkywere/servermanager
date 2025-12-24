@@ -3,309 +3,414 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Server Manager Login</title>
+    <title>Server Manager - Login</title>
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        * {
             margin: 0;
             padding: 0;
-            height: 100vh;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+            background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #252540 100%);
+            min-height: 100vh;
             display: flex;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
+            padding: 20px;
         }
+
         .login-container {
-            background: white;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
             width: 100%;
-            max-width: 400px;
+            max-width: 420px;
         }
+
+        .login-card {
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+        }
+
         .login-header {
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 35px;
         }
+
+        .login-logo {
+            width: 70px;
+            height: 70px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.35);
+        }
+
+        .login-logo svg {
+            color: white;
+            width: 36px;
+            height: 36px;
+        }
+
         .login-header h1 {
-            color: #333;
-            margin: 0;
-            font-size: 28px;
+            color: #e8e8f0;
+            font-size: 1.75rem;
+            font-weight: 600;
+            margin-bottom: 8px;
         }
+
         .login-header p {
-            color: #666;
-            margin: 5px 0 0 0;
+            color: #686888;
+            font-size: 0.95rem;
         }
+
         .form-group {
             margin-bottom: 20px;
         }
+
         .form-group label {
             display: block;
-            margin-bottom: 5px;
-            color: #333;
+            color: #a8a8c0;
+            font-size: 0.9rem;
             font-weight: 500;
+            margin-bottom: 8px;
         }
+
         .form-group input {
             width: 100%;
-            padding: 12px;
-            border: 2px solid #ddd;
-            border-radius: 5px;
-            font-size: 16px;
-            transition: border-color 0.3s;
-            box-sizing: border-box;
+            padding: 14px 16px;
+            background: #252540;
+            border: 1px solid #3a3a55;
+            border-radius: 8px;
+            color: #e8e8f0;
+            font-size: 1rem;
+            transition: all 0.2s ease;
         }
+
         .form-group input:focus {
             outline: none;
             border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
         }
+
+        .form-group input::placeholder {
+            color: #686888;
+        }
+
+        .password-wrapper {
+            position: relative;
+        }
+
+        .password-wrapper input {
+            padding-right: 50px;
+        }
+
+        .password-toggle {
+            position: absolute;
+            right: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: #686888;
+            cursor: pointer;
+            padding: 4px;
+            display: flex;
+            align-items: center;
+            transition: color 0.2s;
+        }
+
+        .password-toggle:hover {
+            color: #a8a8c0;
+        }
+
         .login-btn {
             width: 100%;
-            padding: 12px;
+            padding: 14px 24px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
-            border-radius: 5px;
-            font-size: 16px;
-            font-weight: 500;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
             cursor: pointer;
-            transition: transform 0.2s;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
         }
-        .login-btn:hover {
+
+        .login-btn:hover:not(:disabled) {
             transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
         }
+
         .login-btn:disabled {
             opacity: 0.6;
             cursor: not-allowed;
             transform: none;
         }
-        .error-message {
-            color: #e74c3c;
-            margin-top: 10px;
-            padding: 10px;
-            background: #ffeaea;
-            border-radius: 5px;
+
+        .alert {
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+            display: none;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .alert.show {
+            display: flex;
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #f87171;
+        }
+
+        .alert-success {
+            background: rgba(34, 197, 94, 0.15);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            color: #4ade80;
+        }
+
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid transparent;
+            border-top-color: currentColor;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
             display: none;
         }
-        .success-message {
-            color: #27ae60;
-            margin-top: 10px;
-            padding: 10px;
-            background: #eafaf1;
-            border-radius: 5px;
-            display: none;
+
+        .spinner.show {
+            display: inline-block;
         }
-        .loading {
-            display: none;
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .login-footer {
             text-align: center;
-            margin-top: 10px;
+            margin-top: 30px;
+            padding-top: 25px;
+            border-top: 1px solid #2a2a45;
         }
-        .help-text {
-            text-align: center;
-            margin-top: 20px;
-            color: #666;
-            font-size: 14px;
+
+        .login-footer p {
+            color: #686888;
+            font-size: 0.85rem;
         }
     </style>
 </head>
 <body>
     <div class="login-container">
-        <div class="login-header">
-            <h1>Server Manager</h1>
-            <p>Please sign in to continue</p>
-        </div>
-        
-        <form id="loginForm">
-            <div class="form-group">
-                <label for="username">Username:</label>
-                <input type="text" id="username" name="username" required autofocus>
+        <div class="login-card">
+            <div class="login-header">
+                <div class="login-logo">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                        <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                        <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                        <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                    </svg>
+                </div>
+                <h1>Server Manager</h1>
+                <p>Sign in to manage your servers</p>
             </div>
-            
-            <div class="form-group">
-                <label for="password">Password:</label>
-                <input type="password" id="password" name="password" required>
-            </div>
-            
-            <button type="submit" class="login-btn" id="loginBtn">Sign In</button>
-            
-            <div id="errorMessage" class="error-message"></div>
-            <div id="successMessage" class="success-message"></div>
-            <div id="loading" class="loading">Signing in...</div>
-        </form>
-    </div>
 
-    <!-- Notification System -->
-    <div id="notification" class="notification"></div>
+            <form id="loginForm">
+                <div id="errorAlert" class="alert alert-error">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    <span id="errorMessage"></span>
+                </div>
+
+                <div id="successAlert" class="alert alert-success">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                    </svg>
+                    <span id="successMessage">Login successful! Redirecting...</span>
+                </div>
+
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" placeholder="Enter your username" required autofocus>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="password" name="password" placeholder="Enter your password" required>
+                        <button type="button" class="password-toggle" onclick="togglePasswordVisibility()" title="Show password">
+                            <svg id="eyeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                            <svg id="eyeOffIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                <line x1="1" y1="1" x2="23" y2="23"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <button type="submit" class="login-btn" id="loginBtn">
+                    <span class="spinner" id="spinner"></span>
+                    <span id="btnText">Sign In</span>
+                </button>
+            </form>
+
+            <div class="login-footer">
+                <p>Secure access to your game server infrastructure</p>
+            </div>
+        </div>
+    </div>
 
     <script>
         let attempts = 0;
-        const maxAttempts = 3;
-        
+        const maxAttempts = 5;
+
+        function togglePasswordVisibility() {
+            const input = document.getElementById('password');
+            const eyeIcon = document.getElementById('eyeIcon');
+            const eyeOffIcon = document.getElementById('eyeOffIcon');
+
+            if (input.type === 'password') {
+                input.type = 'text';
+                eyeIcon.style.display = 'none';
+                eyeOffIcon.style.display = 'block';
+            } else {
+                input.type = 'password';
+                eyeIcon.style.display = 'block';
+                eyeOffIcon.style.display = 'none';
+            }
+        }
+
+        function showError(message) {
+            document.getElementById('successAlert').classList.remove('show');
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('errorAlert').classList.add('show');
+        }
+
+        function showSuccess(message) {
+            document.getElementById('errorAlert').classList.remove('show');
+            document.getElementById('successMessage').textContent = message;
+            document.getElementById('successAlert').classList.add('show');
+        }
+
+        function setLoading(loading) {
+            const btn = document.getElementById('loginBtn');
+            const spinner = document.getElementById('spinner');
+            const btnText = document.getElementById('btnText');
+
+            btn.disabled = loading;
+            if (loading) {
+                spinner.classList.add('show');
+                btnText.textContent = 'Signing in...';
+            } else {
+                spinner.classList.remove('show');
+                btnText.textContent = 'Sign In';
+            }
+        }
+
         document.getElementById('loginForm').addEventListener('submit', async function(e) {
             e.preventDefault();
-            
+
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value;
-            const loginBtn = document.getElementById('loginBtn');
-            const errorDiv = document.getElementById('errorMessage');
-            const successDiv = document.getElementById('successMessage');
-            const loadingDiv = document.getElementById('loading');
-            
-            // Input validation
+
             if (!username || !password) {
-                errorDiv.textContent = 'Please enter both username and password.';
-                errorDiv.style.display = 'block';
+                showError('Please enter both username and password.');
                 return;
             }
-            
-            // Reset messages
-            errorDiv.style.display = 'none';
-            successDiv.style.display = 'none';
-            loadingDiv.style.display = 'block';
-            loginBtn.disabled = true;
-            
+
+            document.getElementById('errorAlert').classList.remove('show');
+            document.getElementById('successAlert').classList.remove('show');
+            setLoading(true);
+
             try {
                 const response = await fetch('/api/auth/login', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        username: username,
-                        password: password
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
                 });
-                
+
                 let data;
                 try {
-                    const responseText = await response.text();
-                    try {
-                        data = JSON.parse(responseText);
-                    } catch (jsonError) {
-                        console.error('Server returned non-JSON response:', responseText);
-                        data = { error: 'Server returned invalid response format' };
-                    }
-                } catch (parseError) {
-                    console.error('Failed to read response:', parseError);
-                    data = { error: 'Failed to read server response' };
+                    const text = await response.text();
+                    data = JSON.parse(text);
+                } catch (e) {
+                    data = { error: 'Invalid server response' };
                 }
-                
+
                 if (response.ok && data.token) {
-                    // Store token in session storage
                     sessionStorage.setItem('auth_token', data.token);
                     sessionStorage.setItem('username', data.username);
                     sessionStorage.setItem('isAdmin', data.isAdmin ? 'true' : 'false');
-                    
-                    console.log('Login successful:', { username: data.username, isAdmin: data.isAdmin });
-                    
-                    // Show success message
-                    successDiv.textContent = 'Login successful! Redirecting...';
-                    successDiv.style.display = 'block';
-                    
-                    // Redirect to dashboard
-                    setTimeout(() => {
-                        window.location.href = 'dashboard.html';
-                    }, 1000);
+
+                    showSuccess('Login successful! Redirecting...');
+                    setTimeout(() => window.location.href = 'dashboard.html', 1000);
                 } else {
                     attempts++;
                     if (attempts >= maxAttempts) {
-                        errorDiv.textContent = 'Too many failed attempts. Please try again later.';
-                        loginBtn.disabled = true;
+                        showError('Too many failed attempts. Please try again later.');
+                        document.getElementById('loginBtn').disabled = true;
                     } else {
-                        let errorMsg = 'Authentication failed';
-                        if (data && data.error) {
-                            errorMsg = data.error;
-                        } else if (response.status === 401) {
-                            errorMsg = 'Invalid username or password';
-                        } else if (response.status === 500) {
-                            errorMsg = 'Server error. Please try again later or contact administrator';
-                        } else if (response.status === 400) {
-                            errorMsg = 'Invalid request. Please check your input';
-                        } else if (response.status === 403) {
-                            errorMsg = 'Access forbidden. You may not have permission to access this resource';
-                        } else if (response.status === 404) {
-                            errorMsg = 'Authentication service not found. Please check server configuration';
-                        } else if (response.status >= 500) {
-                            errorMsg = 'Server error. Please try again later';
-                        }
-                        
-                        if (errorMsg.includes('Invalid username or password')) {
-                            errorDiv.textContent = `${errorMsg}. Try using 'admin'/'admin' or your Windows credentials. ${maxAttempts - attempts} attempts remaining.`;
-                        } else {
-                            errorDiv.textContent = `${errorMsg}. ${maxAttempts - attempts} attempts remaining.`;
-                        }
-                        errorDiv.style.display = 'block';
-                        console.log('Login failed:', { status: response.status, statusText: response.statusText, data: data });
+                        let msg = data.error || 'Invalid username or password';
+                        showError(`${msg}. ${maxAttempts - attempts} attempts remaining.`);
                     }
                 }
             } catch (error) {
-                console.error('Login error:', error);
                 attempts++;
                 if (attempts >= maxAttempts) {
-                    errorDiv.textContent = 'Connection error. Too many attempts.';
-                    loginBtn.disabled = true;
+                    showError('Connection error. Too many attempts.');
+                    document.getElementById('loginBtn').disabled = true;
                 } else {
-                    if (error.name === 'TypeError' && error.message.includes('fetch')) {
-                        errorDiv.textContent = `Cannot connect to server. Please check if the server is running on the correct port. ${maxAttempts - attempts} attempts remaining.`;
-                    } else if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
-                        errorDiv.textContent = `Network error. Please check your connection and server status. ${maxAttempts - attempts} attempts remaining.`;
-                    } else {
-                        errorDiv.textContent = `Connection error: ${error.message}. ${maxAttempts - attempts} attempts remaining.`;
-                    }
-                    errorDiv.style.display = 'block';
+                    showError(`Connection error. ${maxAttempts - attempts} attempts remaining.`);
                 }
             } finally {
-                loadingDiv.style.display = 'none';
                 if (attempts < maxAttempts) {
-                    loginBtn.disabled = false;
+                    setLoading(false);
                 }
             }
         });
 
-        // Check server connectivity on page load
+        // Check if already logged in
         document.addEventListener('DOMContentLoaded', async () => {
-            try {
-                console.log('Testing server connectivity...');
-                const response = await fetch('/api/auth/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username: 'test', password: 'test' })
-                });
-                console.log('Server response status:', response.status);
-                if (response.status === 400) {
-                    console.log('Server is responding correctly');
-                } else if (response.status === 200) {
-                    console.log('Server authentication endpoint is working');
-                }
-            } catch (error) {
-                console.error('Server connectivity test failed:', error);
-                document.getElementById('errorMessage').textContent = 'Cannot connect to server. Please check if the server is running and accessible.';
-                document.getElementById('errorMessage').style.display = 'block';
-            }
-
-            // Check if already logged in
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                if (token) {
-                    // Verify token is still valid
+            const token = sessionStorage.getItem('auth_token');
+            if (token) {
+                try {
                     const response = await fetch('/api/auth/verify', {
-                        headers: {
-                            'Authorization': `Bearer ${token}`
-                        }
+                        headers: { 'Authorization': `Bearer ${token}` }
                     });
-                    
                     if (response.ok) {
                         const data = await response.json();
                         if (data.authenticated) {
                             window.location.replace('dashboard.html');
                         }
                     } else {
-                        // Token is invalid, clear it
                         sessionStorage.clear();
                     }
+                } catch (e) {
+                    sessionStorage.clear();
                 }
-            } catch (error) {
-                console.error('Auth check error:', error);
-                sessionStorage.clear();
             }
         });
     </script>

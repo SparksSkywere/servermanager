@@ -5,393 +5,589 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cluster Management - Server Manager</title>
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 0;
-            padding: 0;
-            background: #f5f5f5;
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #e8e8f0;
+            min-height: 100vh;
         }
+
+        body.theme-light { background: #f5f6fa; color: #1a1a2e; }
+
         .header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
+            padding: 0 24px;
+            height: 60px;
             display: flex;
+            align-items: center;
             justify-content: space-between;
-            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.3);
         }
-        .header h1 {
-            margin: 0;
-        }
-        .user-info {
+
+        .header-brand {
             display: flex;
             align-items: center;
-            gap: 15px;
-        }
-        .logout-btn {
-            background: rgba(255, 255, 255, 0.2);
+            gap: 12px;
             color: white;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            padding: 8px 16px;
-            border-radius: 5px;
-            cursor: pointer;
-            text-decoration: none;
+            font-size: 1.25rem;
+            font-weight: 600;
         }
-        .logout-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-        }
-        .container {
-            max-width: 1200px;
-            margin: 20px auto;
-            padding: 0 20px;
-        }
-        .nav-menu {
-            background: white;
-            padding: 15px 20px;
-            border-radius: 10px;
-            margin-bottom: 20px;
+
+        .header-brand svg { width: 28px; height: 28px; }
+
+        .user-menu {
+            position: relative;
             display: flex;
-            gap: 20px;
-        }
-        .nav-menu a {
-            color: #333;
-            text-decoration: none;
-            padding: 10px 15px;
-            border-radius: 5px;
-        }
-        .nav-menu a:hover {
-            background: #f0f0f0;
-        }
-        .nav-menu a.active {
-            background: #667eea;
-            color: white;
-        }
-        .cluster-card {
-            background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-        }
-        .cluster-card h2 {
-            color: #333;
-            margin-top: 0;
-            margin-bottom: 20px;
-        }
-        .pending-requests {
-            margin-bottom: 30px;
-        }
-        .request-item {
-            background: #f8f9fa;
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 15px;
-            display: flex;
-            justify-content: space-between;
             align-items: center;
-        }
-        .request-info {
-            flex-grow: 1;
-        }
-        .request-info h4 {
-            margin: 0 0 10px 0;
-            color: #333;
-        }
-        .request-info p {
-            margin: 5px 0;
-            color: #666;
-            font-size: 14px;
-        }
-        .request-actions {
-            display: flex;
             gap: 10px;
-        }
-        .btn {
-            padding: 8px 16px;
-            border: none;
-            border-radius: 5px;
             cursor: pointer;
-            font-size: 14px;
-        }
-        .btn-approve {
-            background: #28a745;
+            padding: 6px 12px;
+            border-radius: 8px;
+            transition: background 0.2s;
             color: white;
         }
-        .btn-approve:hover {
-            background: #218838;
+
+        .user-menu:hover { background: rgba(255,255,255,0.15); }
+
+        .user-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            overflow: hidden;
+            border: 2px solid rgba(255,255,255,0.3);
         }
-        .btn-reject {
-            background: #dc3545;
-            color: white;
-        }
-        .btn-reject:hover {
-            background: #c82333;
-        }
-        .no-requests {
-            text-align: center;
-            color: #666;
-            font-style: italic;
-            padding: 40px;
-        }
-        .status-badge {
-            padding: 4px 12px;
+
+        .user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+        .user-dropdown {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
             border-radius: 12px;
-            font-size: 12px;
-            font-weight: bold;
+            min-width: 220px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            display: none;
+            z-index: 200;
+            overflow: hidden;
+        }
+
+        body.theme-light .user-dropdown { background: #ffffff; border-color: #e0e0e8; }
+        .user-dropdown.show { display: block; }
+
+        .user-dropdown a {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 20px;
+            color: #e8e8f0;
+            text-decoration: none;
+            transition: background 0.15s;
+        }
+
+        body.theme-light .user-dropdown a { color: #1a1a2e; }
+        .user-dropdown a:hover { background: #252540; }
+        body.theme-light .user-dropdown a:hover { background: #f0f0f5; }
+        .user-dropdown a.danger { color: #ef4444; }
+        .user-dropdown .divider { height: 1px; background: #2a2a45; margin: 4px 0; }
+        body.theme-light .user-dropdown .divider { background: #e0e0e8; }
+
+        .nav {
+            background: #1a1a2e;
+            padding: 12px 24px;
+            display: flex;
+            gap: 8px;
+            border-bottom: 1px solid #2a2a45;
+            flex-wrap: wrap;
+        }
+
+        body.theme-light .nav { background: #ffffff; border-color: #e0e0e8; }
+
+        .nav a {
+            padding: 10px 18px;
+            background: #252540;
+            color: #a8a8c0;
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        body.theme-light .nav a { background: #f0f0f5; color: #4a4a68; }
+        .nav a:hover { background: #2a2a48; color: #e8e8f0; }
+        body.theme-light .nav a:hover { background: #e8eaed; color: #1a1a2e; }
+        .nav a.active { background: #667eea; color: white; }
+
+        .main { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+        .page-header { margin-bottom: 24px; }
+        .page-header h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 8px; }
+        .page-header p { color: #686888; }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        @media (max-width: 700px) { .stats-grid { grid-template-columns: 1fr; } }
+
+        .stat-card {
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+        }
+
+        body.theme-light .stat-card { background: #ffffff; border-color: #e0e0e8; }
+
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 6px;
+        }
+
+        .stat-label { color: #686888; font-size: 0.9rem; font-weight: 500; }
+
+        /* Cards */
+        .card {
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
+            border-radius: 16px;
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+
+        body.theme-light .card { background: #ffffff; border-color: #e0e0e8; }
+
+        .card-header {
+            padding: 16px 20px;
+            background: #252540;
+            border-bottom: 1px solid #2a2a45;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        body.theme-light .card-header { background: #f5f6fa; border-color: #e0e0e8; }
+        .card-header h2 { font-size: 1rem; font-weight: 600; }
+
+        .card-body { padding: 20px; }
+
+        /* Node List */
+        .node-list { display: flex; flex-direction: column; gap: 12px; }
+
+        .node-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 18px;
+            background: #252540;
+            border: 1px solid #2a2a45;
+            border-radius: 10px;
+            transition: border-color 0.2s;
+        }
+
+        body.theme-light .node-item { background: #f5f6fa; border-color: #e0e0e8; }
+        .node-item:hover { border-color: #667eea; }
+
+        .node-info h4 { font-size: 1rem; margin-bottom: 6px; }
+        .node-info p { font-size: 0.85rem; color: #686888; margin: 4px 0; }
+        .node-info strong { color: #e8e8f0; }
+        body.theme-light .node-info strong { color: #1a1a2e; }
+
+        .node-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+        .node-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
             text-transform: uppercase;
         }
-        .status-pending {
-            background: #fff3cd;
-            color: #856404;
+
+        .node-status.online { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
+        .node-status.offline { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+        .node-status.pending { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
         }
-        .cluster-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .stat-card {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
+
+        .empty-state {
             text-align: center;
+            padding: 50px 20px;
+            color: #686888;
         }
-        .stat-number {
-            font-size: 2em;
-            font-weight: bold;
-            color: #667eea;
-            margin-bottom: 5px;
-        }
-        .stat-label {
-            color: #666;
-            font-size: 14px;
-        }
-        .refresh-btn {
-            background: #667eea;
-            color: white;
+
+        .empty-state h3 { margin-bottom: 8px; color: #a8a8c0; }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 8px 14px;
+            font-size: 0.85rem;
+            font-weight: 500;
             border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
+            border-radius: 8px;
             cursor: pointer;
-            margin-bottom: 20px;
+            transition: all 0.2s;
+            text-decoration: none;
         }
-        .refresh-btn:hover {
-            background: #5a67d8;
+
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-sm { padding: 6px 10px; font-size: 0.8rem; }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover:not(:disabled) { background: #5a6fd6; }
+        .btn-success { background: #22c55e; color: white; }
+        .btn-success:hover:not(:disabled) { background: #1db954; }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-danger:hover:not(:disabled) { background: #dc2626; }
+        .btn-secondary { background: #252540; color: #a8a8c0; border: 1px solid #3a3a55; }
+        .btn-secondary:hover:not(:disabled) { background: #2a2a48; color: #e8e8f0; }
+        body.theme-light .btn-secondary { background: #f0f0f5; color: #4a4a68; border-color: #d0d0d8; }
+
+        /* Notification */
+        .notification {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 14px 20px;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            display: none;
+            z-index: 2000;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+
+        .notification.show { display: block; }
+        .notification.success { background: #22c55e; color: white; }
+        .notification.error { background: #ef4444; color: white; }
+
+        @media (max-width: 768px) {
+            .node-item { flex-direction: column; gap: 12px; }
+            .node-actions { width: 100%; }
+            .node-actions .btn { flex: 1; }
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>Server Manager</h1>
-        <div class="user-info">
-            <span id="username">Admin</span>
-            <a href="#" class="logout-btn" onclick="logout()">Logout</a>
+    <header class="header">
+        <div class="header-brand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="2" width="20" height="8" rx="2"></rect>
+                <rect x="2" y="14" width="20" height="8" rx="2"></rect>
+                <circle cx="6" cy="6" r="1" fill="currentColor"></circle>
+                <circle cx="6" cy="18" r="1" fill="currentColor"></circle>
+            </svg>
+            <span>Server Manager</span>
         </div>
-    </div>
+        <div class="user-menu" onclick="toggleUserDropdown(event)">
+            <div class="user-avatar" id="headerAvatar"><span id="avatarInitial">?</span></div>
+            <span id="headerDisplayName">Admin</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"></path></svg>
+        </div>
+        <div class="user-dropdown" id="userDropdown">
+            <a href="dashboard.html">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                Dashboard
+            </a>
+            <a href="#" onclick="toggleTheme(); return false;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="themeIcon"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                <span id="themeText">Dark Mode</span>
+            </a>
+            <div class="divider"></div>
+            <a href="#" class="danger" onclick="logout(); return false;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                Logout
+            </a>
+        </div>
+    </header>
 
-    <div class="container">
-        <div class="nav-menu">
-            <a href="dashboard.html">Dashboard</a>
-            <a href="status.html">Server Status</a>
-            <a href="create-server.html">Create Server</a>
-            <a href="cluster.html" class="active">Cluster Management</a>
+    <nav class="nav">
+        <a href="dashboard.html">Dashboard</a>
+        <a href="status.html">Server Status</a>
+        <a href="create-server.html">Create Server</a>
+        <a href="cluster.html" class="active">Cluster</a>
+        <a href="admin.html">Admin</a>
+    </nav>
+
+    <main class="main">
+        <div class="page-header">
+            <h1>Cluster Management</h1>
+            <p>Manage your cluster nodes and approve join requests from subhosts</p>
         </div>
 
-        <div class="cluster-card">
-            <h2>Cluster Statistics</h2>
-            <div class="cluster-stats">
-                <div class="stat-card">
-                    <div class="stat-number" id="pending-count">0</div>
-                    <div class="stat-label">Pending Requests</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number" id="approved-count">0</div>
-                    <div class="stat-label">Active Nodes</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-number" id="total-requests">0</div>
-                    <div class="stat-label">Total Requests</div>
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="pendingCount">0</div>
+                <div class="stat-label">Pending Requests</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="approvedCount">0</div>
+                <div class="stat-label">Active Nodes</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalRequests">0</div>
+                <div class="stat-label">Total Requests</div>
+            </div>
+        </div>
+
+        <!-- Pending Requests -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Pending Requests</h2>
+                <button class="btn btn-sm btn-secondary" onclick="loadClusterData()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                    Refresh
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="node-list" id="pendingList">
+                    <div class="empty-state">
+                        <h3>No pending requests</h3>
+                        <p>Cluster join requests will appear here</p>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <div class="cluster-card pending-requests">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2>Pending Join Requests</h2>
-                <button class="refresh-btn" onclick="loadPendingRequests()">Refresh</button>
+        <!-- Active Nodes -->
+        <div class="card">
+            <div class="card-header">
+                <h2>Active Nodes</h2>
             </div>
-            
-            <div id="requests-container">
-                <div class="no-requests">
-                    Loading pending requests...
+            <div class="card-body">
+                <div class="node-list" id="activeList">
+                    <div class="empty-state">
+                        <h3>No active nodes</h3>
+                        <p>Approved cluster nodes will appear here</p>
+                    </div>
                 </div>
             </div>
         </div>
+    </main>
 
-        <div class="cluster-card">
-            <h2>Approved Cluster Nodes</h2>
-            <div id="approved-nodes">
-                <div class="no-requests">
-                    Loading cluster nodes...
-                </div>
-            </div>
-        </div>
-    </div>
+    <div class="notification" id="notification"></div>
 
-    <script src="js/auth.js"></script>
-    <script src="js/api.js"></script>
     <script>
-        let pendingRequests = [];
-        let approvedNodes = [];
+        let currentTheme = localStorage.getItem('theme_preference') || 'dark';
 
-        async function loadPendingRequests() {
+        function applyTheme(theme) {
+            currentTheme = theme;
+            document.body.classList.remove('theme-light');
+            if (theme === 'light') document.body.classList.add('theme-light');
+            localStorage.setItem('theme_preference', theme);
+            updateThemeUI();
+        }
+
+        function updateThemeUI() {
+            const icon = document.getElementById('themeIcon');
+            const text = document.getElementById('themeText');
+            icon.innerHTML = currentTheme === 'dark' 
+                ? '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>'
+                : '<circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line>';
+            text.textContent = currentTheme === 'dark' ? 'Dark Mode' : 'Light Mode';
+        }
+
+        async function toggleTheme() {
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            applyTheme(newTheme);
             try {
-                const response = await fetch('/api/cluster/pending');
-                if (response.ok) {
-                    pendingRequests = await response.json();
-                    renderPendingRequests();
-                    updateStats();
-                } else {
-                    console.error('Failed to load pending requests');
+                const token = sessionStorage.getItem('auth_token');
+                if (token) await fetch('/api/profile', { method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ theme_preference: newTheme }) });
+            } catch {}
+        }
+
+        function showNotification(msg, type = 'info') {
+            const el = document.getElementById('notification');
+            el.textContent = msg;
+            el.className = `notification show ${type}`;
+            setTimeout(() => el.classList.remove('show'), 4000);
+        }
+
+        function toggleUserDropdown(e) { e.stopPropagation(); document.getElementById('userDropdown').classList.toggle('show'); }
+        document.addEventListener('click', () => document.getElementById('userDropdown').classList.remove('show'));
+
+        function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+        async function loadProfile() {
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const r = await fetch('/api/profile', { headers: { 'Authorization': `Bearer ${token}` } });
+                if (r.ok) {
+                    const p = await r.json();
+                    const name = p.display_name || p.username || 'Admin';
+                    document.getElementById('headerDisplayName').textContent = name;
+                    document.getElementById('headerAvatar').innerHTML = p.avatar ? `<img src="${p.avatar}" alt="">` : `<span>${name.charAt(0).toUpperCase()}</span>`;
+                    if (p.theme_preference) applyTheme(p.theme_preference);
                 }
-            } catch (error) {
-                console.error('Error loading pending requests:', error);
+            } catch {}
+        }
+
+        async function loadClusterData() {
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const r = await fetch('/api/cluster/requests', { headers: { 'Authorization': `Bearer ${token}` } });
+                
+                if (!r.ok) {
+                    if (r.status === 404) {
+                        // Cluster API not available
+                        renderEmptyState();
+                        return;
+                    }
+                    throw new Error();
+                }
+
+                const data = await r.json();
+                const pending = data.pending || [];
+                const approved = data.approved || [];
+
+                document.getElementById('pendingCount').textContent = pending.length;
+                document.getElementById('approvedCount').textContent = approved.length;
+                document.getElementById('totalRequests').textContent = pending.length + approved.length;
+
+                renderPendingList(pending);
+                renderActiveList(approved);
+            } catch (e) {
+                console.error('Error loading cluster data:', e);
+                renderEmptyState();
             }
         }
 
-        function renderPendingRequests() {
-            const container = document.getElementById('requests-container');
-            
-            if (pendingRequests.length === 0) {
-                container.innerHTML = '<div class="no-requests">No pending join requests</div>';
+        function renderEmptyState() {
+            document.getElementById('pendingList').innerHTML = '<div class="empty-state"><h3>No pending requests</h3><p>Cluster join requests will appear here</p></div>';
+            document.getElementById('activeList').innerHTML = '<div class="empty-state"><h3>No active nodes</h3><p>Approved cluster nodes will appear here</p></div>';
+        }
+
+        function renderPendingList(nodes) {
+            const container = document.getElementById('pendingList');
+            if (!nodes.length) {
+                container.innerHTML = '<div class="empty-state"><h3>No pending requests</h3><p>Cluster join requests will appear here</p></div>';
                 return;
             }
 
-            container.innerHTML = pendingRequests.map(request => `
-                <div class="request-item" data-id="${request.id}">
-                    <div class="request-info">
-                        <h4>${request.hostname}</h4>
-                        <p><strong>Subhost ID:</strong> ${request.subhost_id}</p>
-                        <p><strong>IP Address:</strong> ${request.ip_address}</p>
-                        <p><strong>Request Time:</strong> ${new Date(request.timestamp).toLocaleString()}</p>
-                        <span class="status-badge status-pending">Pending</span>
+            container.innerHTML = nodes.map(node => `
+                <div class="node-item">
+                    <div class="node-info">
+                        <h4>${escapeHtml(node.hostname || node.name || 'Unknown')}</h4>
+                        <p>IP: <strong>${escapeHtml(node.ip || node.address || 'N/A')}</strong></p>
+                        <p>Requested: ${node.requested_at || 'Unknown'}</p>
+                        <span class="node-status pending"><span class="status-dot"></span> Pending</span>
                     </div>
-                    <div class="request-actions">
-                        <button class="btn btn-approve" onclick="approveRequest('${request.id}')">
-                            Approve
-                        </button>
-                        <button class="btn btn-reject" onclick="rejectRequest('${request.id}')">
-                            Reject
-                        </button>
+                    <div class="node-actions">
+                        <button class="btn btn-sm btn-success" onclick="handleRequest('${escapeHtml(node.id)}', 'approve')">Approve</button>
+                        <button class="btn btn-sm btn-danger" onclick="handleRequest('${escapeHtml(node.id)}', 'reject')">Reject</button>
                     </div>
                 </div>
             `).join('');
         }
 
-        async function approveRequest(requestId) {
-            try {
-                const response = await fetch(`/api/cluster/approve/${requestId}`, {
-                    method: 'POST'
-                });
-                
-                if (response.ok) {
-                    // Remove the request from the pending list
-                    pendingRequests = pendingRequests.filter(r => r.id !== requestId);
-                    renderPendingRequests();
-                    updateStats();
-                    loadApprovedNodes();
-                    
-                    // Show success message
-                    alert('Cluster join request approved successfully!');
-                } else {
-                    alert('Failed to approve request');
-                }
-            } catch (error) {
-                console.error('Error approving request:', error);
-                alert('Error approving request');
-            }
-        }
-
-        async function rejectRequest(requestId) {
-            if (!confirm('Are you sure you want to reject this cluster join request?')) {
-                return;
-            }
-            
-            try {
-                const response = await fetch(`/api/cluster/reject/${requestId}`, {
-                    method: 'POST'
-                });
-                
-                if (response.ok) {
-                    // Remove the request from the pending list
-                    pendingRequests = pendingRequests.filter(r => r.id !== requestId);
-                    renderPendingRequests();
-                    updateStats();
-                    
-                    // Show success message
-                    alert('Cluster join request rejected.');
-                } else {
-                    alert('Failed to reject request');
-                }
-            } catch (error) {
-                console.error('Error rejecting request:', error);
-                alert('Error rejecting request');
-            }
-        }
-
-        async function loadApprovedNodes() {
-            try {
-                const response = await fetch('/api/cluster/nodes');
-                if (response.ok) {
-                    approvedNodes = await response.json();
-                    renderApprovedNodes();
-                    updateStats();
-                } else {
-                    console.error('Failed to load approved nodes');
-                }
-            } catch (error) {
-                console.error('Error loading approved nodes:', error);
-            }
-        }
-
-        function renderApprovedNodes() {
-            const container = document.getElementById('approved-nodes');
-            
-            if (approvedNodes.length === 0) {
-                container.innerHTML = '<div class="no-requests">No approved cluster nodes</div>';
+        function renderActiveList(nodes) {
+            const container = document.getElementById('activeList');
+            if (!nodes.length) {
+                container.innerHTML = '<div class="empty-state"><h3>No active nodes</h3><p>Approved cluster nodes will appear here</p></div>';
                 return;
             }
 
-            container.innerHTML = approvedNodes.map(node => `
-                <div class="request-item">
-                    <div class="request-info">
-                        <h4>${node.hostname}</h4>
-                        <p><strong>Subhost ID:</strong> ${node.subhost_id}</p>
-                        <p><strong>IP Address:</strong> ${node.ip_address}</p>
-                        <p><strong>Joined:</strong> ${new Date(node.approved_timestamp).toLocaleString()}</p>
-                        <p><strong>Status:</strong> ${node.status || 'Unknown'}</p>
+            container.innerHTML = nodes.map(node => `
+                <div class="node-item">
+                    <div class="node-info">
+                        <h4>${escapeHtml(node.hostname || node.name || 'Unknown')}</h4>
+                        <p>IP: <strong>${escapeHtml(node.ip || node.address || 'N/A')}</strong></p>
+                        <p>Last seen: ${node.last_seen || 'Unknown'}</p>
+                        <span class="node-status ${node.online ? 'online' : 'offline'}"><span class="status-dot"></span> ${node.online ? 'Online' : 'Offline'}</span>
+                    </div>
+                    <div class="node-actions">
+                        <button class="btn btn-sm btn-danger" onclick="revokeNode('${escapeHtml(node.id)}')">Revoke</button>
                     </div>
                 </div>
             `).join('');
         }
 
-        function updateStats() {
-            document.getElementById('pending-count').textContent = pendingRequests.length;
-            document.getElementById('approved-count').textContent = approvedNodes.length;
-            document.getElementById('total-requests').textContent = pendingRequests.length + approvedNodes.length;
+        async function handleRequest(nodeId, action) {
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const r = await fetch(`/api/cluster/requests/${encodeURIComponent(nodeId)}/${action}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (r.ok) {
+                    showNotification(`Request ${action}d successfully`, 'success');
+                    await loadClusterData();
+                } else {
+                    const res = await r.json();
+                    showNotification(res.error || `Failed to ${action}`, 'error');
+                }
+            } catch { showNotification(`Failed to ${action} request`, 'error'); }
         }
 
-        // Auto-refresh every 30 seconds
-        setInterval(() => {
-            loadPendingRequests();
-            loadApprovedNodes();
-        }, 30000);
+        async function revokeNode(nodeId) {
+            if (!confirm('Are you sure you want to revoke this node?')) return;
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const r = await fetch(`/api/cluster/nodes/${encodeURIComponent(nodeId)}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (r.ok) {
+                    showNotification('Node revoked', 'success');
+                    await loadClusterData();
+                } else {
+                    const res = await r.json();
+                    showNotification(res.error || 'Failed to revoke', 'error');
+                }
+            } catch { showNotification('Failed to revoke node', 'error'); }
+        }
 
-        // Load data when page loads
-        document.addEventListener('DOMContentLoaded', () => {
-            loadPendingRequests();
-            loadApprovedNodes();
-        });
+        function logout() { sessionStorage.clear(); window.location.href = 'login.html'; }
+
+        async function init() {
+            const token = sessionStorage.getItem('auth_token');
+            if (!token) { window.location.replace('login.html'); return; }
+            try { const r = await fetch('/api/auth/verify', { headers: { 'Authorization': `Bearer ${token}` } }); if (!r.ok) throw 0; } catch { sessionStorage.clear(); window.location.replace('login.html'); return; }
+
+            const isAdmin = sessionStorage.getItem('isAdmin') === 'true';
+            if (!isAdmin) {
+                showNotification('Access denied. Admin privileges required.', 'error');
+                setTimeout(() => window.location.replace('dashboard.html'), 2000);
+                return;
+            }
+
+            applyTheme(currentTheme);
+            await loadProfile();
+            await loadClusterData();
+            setInterval(loadClusterData, 30000);
+        }
+
+        document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
     </script>
 </body>
 </html>

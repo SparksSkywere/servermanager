@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# Dashboard utility functions
+# - Config loading, system info, dialogs, server ops
 import os
 import sys
 import json
@@ -11,26 +13,40 @@ import platform
 import psutil
 import subprocess
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import registry functions from common module
-from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-
-# Import logging functions
+from Modules.common import REGISTRY_ROOT, REGISTRY_PATH, centre_window
 from Modules.server_logging import get_dashboard_logger, log_dashboard_event
 
-# Get dashboard logger
+# Alias for backwards compat
+center_window = centre_window
+
 logger = get_dashboard_logger()
+
+# CPU process cache for accurate non-blocking readings
+_cpu_process_cache: Dict[int, psutil.Process] = {}
+
+
+def cleanup_cpu_cache():
+    # Remove dead processes from cache
+    global _cpu_process_cache
+    stale_pids = []
+    for pid, proc in _cpu_process_cache.items():
+        try:
+            if not proc.is_running():
+                stale_pids.append(pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            stale_pids.append(pid)
+    for pid in stale_pids:
+        _cpu_process_cache.pop(pid, None)
 
 
 def load_dashboard_config(server_manager_dir):
-    # Load dashboard configuration from database
+    # Load config from database—migrates from JSON if needed
     try:
-        from Modules.Database.cluster_database import ClusterDatabase
-        db = ClusterDatabase()
+        from Modules.Database.cluster_database import get_cluster_database
+        db = get_cluster_database()
         
-        # Get flattened config from database
         flat_config = db.get_dashboard_config()
         
         # Convert flattened config back to nested structure
@@ -44,13 +60,12 @@ def load_dashboard_config(server_manager_dir):
                 current = current[k]
             current[keys[-1]] = value
         
-        # Migrate from JSON if database is empty and JSON exists
+        # Migrate from JSON if database is empty
         if not config:
             config_path = os.path.join(server_manager_dir, "data", "dashboard.json")
             if os.path.exists(config_path):
                 logger.info("Migrating dashboard config from JSON to database")
                 db.migrate_dashboard_config_from_json(config_path)
-                # Reload after migration
                 flat_config = db.get_dashboard_config()
                 config = {}
                 for key, value in flat_config.items():
@@ -72,50 +87,12 @@ def load_dashboard_config(server_manager_dir):
 def load_categories(server_manager_dir):
     # Load categories from database
     try:
-        from Modules.Database.cluster_database import ClusterDatabase
-        db = ClusterDatabase()
-        categories = db.get_categories()
-        return categories
+        from Modules.Database.cluster_database import get_cluster_database
+        db = get_cluster_database()
+        return db.get_categories()
     except Exception as e:
         logger.error(f"Error loading categories from database: {e}")
         return ["Uncategorized"]
-
-
-def save_categories(server_manager_dir, categories):
-    # Save categories to database - this function is kept for compatibility
-    # but categories are now managed through individual database operations
-    logger.debug(f"Categories saved via database operations: {categories}")
-    pass
-
-
-def center_window(window, width=None, height=None, parent=None):
-    # Center a window on the screen or relative to a parent window
-    window.update_idletasks()
-    
-    # Get window dimensions
-    if width and height:
-        window_width, window_height = width, height
-    else:
-        window_width = window.winfo_width()
-        window_height = window.winfo_height()
-    
-    if parent:
-        # Center relative to parent
-        parent_x = parent.winfo_rootx()
-        parent_y = parent.winfo_rooty()
-        parent_width = parent.winfo_width()
-        parent_height = parent.winfo_height()
-        
-        x = parent_x + (parent_width - window_width) // 2
-        y = parent_y + (parent_height - window_height) // 2
-    else:
-        # Center on screen
-        screen_width = window.winfo_screenwidth()
-        screen_height = window.winfo_screenheight()
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-    
-    window.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
 
 def create_server_type_selection_dialog(root, supported_server_types):
@@ -164,7 +141,7 @@ def create_server_type_selection_dialog(root, supported_server_types):
     ttk.Button(button_frame, text="Cancel", command=cancel, width=12).pack(side=tk.LEFT)
     ttk.Button(button_frame, text="Next", command=proceed, width=12).pack(side=tk.RIGHT)
     
-    # Center dialog relative to parent
+    # Centre dialog relative to parent
     center_window(type_dialog, 380, 280, root)
     
     root.wait_window(type_dialog)
@@ -218,7 +195,7 @@ def get_steam_credentials(root):
     ttk.Button(dialog, text="Anonymous", command=on_anonymous).grid(row=4, column=0, columnspan=2, padx=10, pady=5)
     ttk.Button(dialog, text="Cancel", command=on_cancel).grid(row=5, column=0, columnspan=2, padx=10, pady=5)
     
-    # Center dialog on parent window
+    # Centre dialog on parent window
     dialog.update_idletasks()
     x = root.winfo_rootx() + (root.winfo_width() - dialog.winfo_width()) // 2
     y = root.winfo_rooty() + (root.winfo_height() - dialog.winfo_height()) // 2
@@ -237,7 +214,7 @@ def load_appid_scanner_list(server_manager_dir):
         # Import database scanner
         from Modules.Database.AppIDScanner import AppIDScanner
 
-        # Initialize scanner with database enabled
+        # Initialise scanner with database enabled
         scanner = AppIDScanner(use_database=True, debug_mode=False)
 
         try:
@@ -278,7 +255,7 @@ def load_minecraft_scanner_list(server_manager_dir):
         # Import database scanner
         from Modules.Database.MinecraftIDScanner import MinecraftIDScanner
 
-        # Initialize scanner with database enabled
+        # Initialise scanner with database enabled
         scanner = MinecraftIDScanner(use_database=True, debug_mode=False)
 
         try:
@@ -323,7 +300,7 @@ def get_minecraft_versions_from_database(modloader=None, dedicated_only=True):
         # Import database scanner
         from Modules.Database.MinecraftIDScanner import MinecraftIDScanner
 
-        # Initialize scanner with database enabled
+        # Initialise scanner with database enabled
         scanner = MinecraftIDScanner(use_database=True, debug_mode=False)
 
         try:
@@ -453,7 +430,7 @@ def create_minecraft_version_browser_dialog(parent, modloader="Vanilla"):
     # Double-click to select
     version_tree.bind("<Double-1>", lambda e: on_select())
     
-    # Center dialog
+    # Centre dialog
     center_window(dialog, 700, 500, parent)
     
     # Wait for dialog to close
@@ -632,7 +609,7 @@ def create_steam_appid_browser_dialog(parent, server_manager_dir):
     ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT)
     ttk.Button(button_frame, text="Select Server", command=on_select).pack(side=tk.RIGHT)
     
-    # Center dialog
+    # Centre dialog
     center_window(dialog, 700, 500, parent)
     
     # Wait for dialog to close
@@ -813,12 +790,12 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
 
 # Placeholder functions for functions that are used by dashboard.py but not essential for add_server
 def update_webserver_status(webserver_status_label, offline_var, paths, variables):
-    # Update webserver status in the dashboard
+    # - Update webserver status in the dashboard
     try:
         status = check_webserver_status(paths, variables)
         webserver_status_label.config(text=status)
         
-        # Set color based on status
+        # - Set colour based on status
         if status == "Running":
             webserver_status_label.config(foreground="green")
         elif status == "Stopped":
@@ -922,7 +899,7 @@ def update_system_info(metric_labels, system_name, os_info, variables):
                     else:
                         metric_labels["network"].config(text="Network: Calculating...")
                 else:
-                    metric_labels["network"].config(text="Network: Initializing...")
+                    metric_labels["network"].config(text="Network: Initialising...")
                 
                 # Update previous values for next calculation
                 _previous_network_stats = network_stats
@@ -937,14 +914,6 @@ def update_system_info(metric_labels, system_name, os_info, variables):
         try:
             gpu_info = "GPU: Not detected"
             
-            # Log GPU detection attempt for debugging
-            try:
-                log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs', 'timer_trace.log')
-                with open(log_path, 'a') as f:
-                    f.write(f"{datetime.datetime.now().isoformat()} - GPU detection STARTED (nvidia-smi)\n")
-            except: pass
-            
-            # Direct nvidia-smi call with CREATE_NO_WINDOW to prevent console flash
             try:
                 from distutils import spawn
                 nvidia_smi = spawn.find_executable('nvidia-smi')
@@ -957,7 +926,7 @@ def update_system_info(metric_labels, system_name, os_info, variables):
                 if nvidia_smi:
                     startupinfo = subprocess.STARTUPINFO()
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = 0  # SW_HIDE
+                    startupinfo.wShowWindow = 0
                     
                     result = subprocess.run(
                         [nvidia_smi, "--query-gpu=index,name,memory.total,memory.used,utilization.gpu", 
@@ -979,22 +948,12 @@ def update_system_info(metric_labels, system_name, os_info, variables):
                         else:
                             gpu_names = [p.strip() for p in lines[0].split(',')][1] if lines else "Unknown"
                             gpu_info = f"GPU: {len(lines)} GPUs ({gpu_names[:20]}...)"
-                            
-                    # Log completion
-                    try:
-                        with open(log_path, 'a') as f:
-                            f.write(f"{datetime.datetime.now().isoformat()} - GPU detection COMPLETED\n")
-                    except: pass
                 else:
                     gpu_info = "GPU: nvidia-smi not found"
             except subprocess.TimeoutExpired:
                 gpu_info = "GPU: Detection timeout"
-            except Exception as e:
+            except Exception:
                 gpu_info = "GPU: Not detected"
-                try:
-                    with open(log_path, 'a') as f:
-                        f.write(f"{datetime.datetime.now().isoformat()} - GPU detection FAILED: {e}\n")
-                except: pass
             
             metric_labels["gpu"].config(text=gpu_info)
         except Exception as e:
@@ -1146,7 +1105,7 @@ def collect_system_info_data():
                     else:
                         data['network_display'] = "Network: Calculating..."
                 else:
-                    data['network_display'] = "Network: Initializing..."
+                    data['network_display'] = "Network: Initialising..."
                 
                 # Update previous values for next calculation
                 _previous_network_stats = network_stats
@@ -2286,7 +2245,7 @@ def create_java_selection_dialog(root, minecraft_version=None):
         # Double-click to select
         java_tree.bind("<Double-1>", lambda e: on_select())
         
-        # Center dialog
+        # Centre dialog
         center_window(dialog, 600, 400, root)
         
         root.wait_window(dialog)
@@ -2804,7 +2763,7 @@ def create_remote_host_connection_dialog(parent, dashboard):
     
     bind_mousewheel(dialog)
     
-    # Center dialog with the new dimensions
+    # Centre dialog with the new dimensions
     center_window(dialog, 600, 650, parent)
 
 
@@ -3166,11 +3125,12 @@ def update_server_configuration_with_detection(server_config_path):
 
 def cleanup_orphaned_process_entries(server_manager, logger):
     # Clean up orphaned process entries from server configurations
+    # This also validates that PIDs actually belong to the correct server (handles Windows PID reuse)
     try:
         if not server_manager:
             return
             
-        logger.debug("Cleaning up orphaned process entries...")
+        logger.debug("Cleaning up orphaned and stale process entries...")
         
         # Get all configured servers
         server_configs = server_manager.get_servers()
@@ -3180,43 +3140,63 @@ def cleanup_orphaned_process_entries(server_manager, logger):
             try:
                 pid = server_config.get('ProcessId') or server_config.get('PID')
                 if pid:
-                    # Check if process is actually running
-                    try:
-                        import psutil
-                        if not psutil.pid_exists(pid):
-                            # Process is not running, clean up the entry
-                            logger.debug(f"Cleaning up orphaned PID {pid} for server {server_name}")
+                    # Use the comprehensive validation from server_manager
+                    # This checks CWD, executable, cmdline, and creation time - not just pid_exists
+                    if hasattr(server_manager, 'is_server_process_valid'):
+                        is_valid, _ = server_manager.is_server_process_valid(server_name, pid, server_config)
+                        if not is_valid:
+                            logger.debug(f"Cleaning up stale/invalid PID {pid} for server {server_name}")
                             
                             # Remove process-related entries
                             server_config.pop('ProcessId', None)
                             server_config.pop('PID', None)
                             server_config.pop('StartTime', None)
+                            server_config.pop('ProcessCreateTime', None)
                             server_config['LastUpdate'] = datetime.datetime.now().isoformat()
                             
                             # Save the updated configuration
                             server_manager.save_server_config(server_name, server_config)
                             cleaned_count += 1
+                    else:
+                        # Fallback to basic pid_exists check
+                        try:
+                            import psutil
+                            if not psutil.pid_exists(pid):
+                                # Process is not running, clean up the entry
+                                logger.debug(f"Cleaning up orphaned PID {pid} for server {server_name}")
+                                
+                                # Remove process-related entries
+                                server_config.pop('ProcessId', None)
+                                server_config.pop('PID', None)
+                                server_config.pop('StartTime', None)
+                                server_config.pop('ProcessCreateTime', None)
+                                server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                                
+                                # Save the updated configuration
+                                server_manager.save_server_config(server_name, server_config)
+                                cleaned_count += 1
+                                
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            # Process doesn't exist, clean it up
+                            logger.debug(f"Cleaning up invalid PID {pid} for server {server_name}")
                             
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        # Process doesn't exist, clean it up
-                        logger.debug(f"Cleaning up invalid PID {pid} for server {server_name}")
-                        
-                        server_config.pop('ProcessId', None)
-                        server_config.pop('PID', None)
-                        server_config.pop('StartTime', None)
-                        server_config['LastUpdate'] = datetime.datetime.now().isoformat()
-                        
-                        server_manager.save_server_config(server_name, server_config)
-                        cleaned_count += 1
-                        
-                    except Exception as e:
-                        logger.debug(f"Error checking PID {pid} for server {server_name}: {e}")
+                            server_config.pop('ProcessId', None)
+                            server_config.pop('PID', None)
+                            server_config.pop('StartTime', None)
+                            server_config.pop('ProcessCreateTime', None)
+                            server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                            
+                            server_manager.save_server_config(server_name, server_config)
+                            cleaned_count += 1
+                            
+                        except Exception as e:
+                            logger.debug(f"Error checking PID {pid} for server {server_name}: {e}")
                         
             except Exception as e:
                 logger.error(f"Error cleaning up process entries for server {server_name}: {e}")
         
         if cleaned_count > 0:
-            logger.debug(f"Cleaned up {cleaned_count} orphaned process entries")
+            logger.info(f"Cleaned up {cleaned_count} stale/orphaned process entries")
             
     except Exception as e:
         logger.error(f"Error in cleanup_orphaned_process_entries: {e}")
@@ -3256,6 +3236,7 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                                     server_config.pop('ProcessId', None)
                                     server_config.pop('PID', None)
                                     server_config.pop('StartTime', None)
+                                    server_config.pop('ProcessCreateTime', None)
                                     server_manager.save_server_config(server_name, server_config)
                                     # Also clear any leftover console state
                                     try:
@@ -3265,6 +3246,17 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                                     continue
                                 
                                 logger.debug(f"Found running server process for {server_name} (PID: {pid})")
+                                
+                                # Ensure StartTime is set from process creation time if missing
+                                if 'StartTime' not in server_config or not server_config.get('StartTime'):
+                                    try:
+                                        create_time = process.create_time()
+                                        start_dt = datetime.datetime.fromtimestamp(create_time)
+                                        server_config['StartTime'] = start_dt.isoformat()
+                                        server_manager.save_server_config(server_name, server_config)
+                                        logger.debug(f"Set StartTime for {server_name} from process creation time")
+                                    except Exception as e:
+                                        logger.debug(f"Could not get process creation time for {server_name}: {e}")
                                 
                                 # Reattach console to the running process
                                 success = console_manager.attach_console_to_process(
@@ -3282,6 +3274,7 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                             server_config.pop('ProcessId', None)
                             server_config.pop('PID', None)
                             server_config.pop('StartTime', None)
+                            server_config.pop('ProcessCreateTime', None)
                             server_manager.save_server_config(server_name, server_config)
                             # Clear any leftover console state
                             try:
@@ -3294,6 +3287,7 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                         server_config.pop('ProcessId', None)
                         server_config.pop('PID', None)
                         server_config.pop('StartTime', None)
+                        server_config.pop('ProcessCreateTime', None)
                         server_manager.save_server_config(server_name, server_config)
                     except Exception as e:
                         logger.error(f"Error checking process {pid} for {server_name}: {e}")
@@ -3334,9 +3328,19 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                                 logger.debug(f"Reattached console to {server_name} via discovery")
                                 reattached_by_discovery += 1
                                 
-                                # Update the server config with the current PID
+                                # Update the server config with the current PID and StartTime
                                 server_config['ProcessId'] = proc.info['pid']
                                 server_config['PID'] = proc.info['pid']
+                                
+                                # Set StartTime from process creation time
+                                try:
+                                    create_time = proc.create_time()
+                                    start_dt = datetime.datetime.fromtimestamp(create_time)
+                                    server_config['StartTime'] = start_dt.isoformat()
+                                    logger.debug(f"Set StartTime for {server_name} from discovered process")
+                                except Exception as e:
+                                    logger.debug(f"Could not get process creation time for discovered {server_name}: {e}")
+                                
                                 server_manager.save_server_config(server_name, server_config)
                             else:
                                 logger.warning(f"Failed to reattach console to discovered process for {server_name}")
@@ -3441,6 +3445,19 @@ def update_server_list_for_subhost(subhost_name, servers_data, server_lists, ser
     if selected_server_names:
         logger.debug(f"Preserving selection for servers: {selected_server_names}")
     
+    # Preserve category expanded/collapsed states before clearing
+    category_states = {}  # category_name -> is_open (True/False)
+    for item in server_list.get_children():
+        try:
+            item_values = server_list.item(item)['values']
+            if item_values and not item_values[1]:  # No status value = category
+                category_name = item_values[0]
+                is_open = server_list.item(item, 'open')
+                category_states[category_name] = is_open
+                logger.debug(f"Preserved category state: {category_name} -> {'expanded' if is_open else 'collapsed'}")
+        except Exception as e:
+            logger.debug(f"Error preserving category state: {e}")
+    
     # Clear existing items
     for item in server_list.get_children():
         server_list.delete(item)
@@ -3451,7 +3468,7 @@ def update_server_list_for_subhost(subhost_name, servers_data, server_lists, ser
     # Group servers by category
     categories = {}
     for category in all_categories:
-        categories[category] = []  # Initialize all categories, even empty ones
+        categories[category] = []  # Initialise all categories, even empty ones
     
     for server_name, server_info in servers_data.items():
         category = server_info.get('category', 'Uncategorized')
@@ -3464,10 +3481,13 @@ def update_server_list_for_subhost(subhost_name, servers_data, server_lists, ser
     for category_name in all_categories:  # Use all_categories to maintain order
         servers = categories.get(category_name, [])
         
+        # Determine if category should be open (restore previous state, default to True for new)
+        should_be_open = category_states.get(category_name, True)
+        
         # Insert category as parent (even if empty)
         category_item = server_list.insert("", tk.END, text=category_name, 
                                          values=(category_name, "", "", "", "", ""), 
-                                         open=True, tags=('category',))  # Start expanded
+                                         open=should_be_open, tags=('category',))
         
         # Add servers under category
         for server_name, server_info in servers:
@@ -3510,6 +3530,9 @@ def get_servers_display_data(server_manager, logger):
         servers_data = {}
         raw_servers = server_manager.get_all_servers()
         
+        # Periodically cleanup stale CPU cache entries
+        cleanup_cpu_cache()
+        
         for server_name, server_config in raw_servers.items():
             try:
                 # Get server config from raw_servers
@@ -3533,7 +3556,7 @@ def get_servers_display_data(server_manager, logger):
                         display_status = 'Stopped'
                         pid = None
                 
-                # Initialize display data
+                # Initialise display data
                 display_data = {
                     'status': display_status,
                     'pid': str(pid) if pid else '',
@@ -3546,20 +3569,50 @@ def get_servers_display_data(server_manager, logger):
                 # Get CPU and memory usage if server is running
                 if display_status == 'Running' and pid:
                     try:
-                        import psutil
-                        process = psutil.Process(pid)
+                        # Use cached process object for accurate CPU readings
+                        # The first call to cpu_percent() on a new process returns 0,
+                        # subsequent calls return the delta since the last call
+                        global _cpu_process_cache
                         
-                        # Get CPU usage (very short interval for responsiveness)
-                        cpu_percent = process.cpu_percent(interval=0.01)
+                        if pid not in _cpu_process_cache:
+                            # Create new process object and Initialise CPU tracking
+                            try:
+                                proc = psutil.Process(pid)
+                                proc.cpu_percent(interval=None)  # Initialise (returns 0)
+                                _cpu_process_cache[pid] = proc
+                                # Show 0% on first reading, next refresh will be accurate
+                                cpu_percent = 0.0
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                cpu_percent = 0.0
+                        else:
+                            # Use cached process for non-blocking accurate reading
+                            try:
+                                process = _cpu_process_cache[pid]
+                                if process.is_running():
+                                    cpu_percent = process.cpu_percent(interval=None)
+                                else:
+                                    # Process ended, clean from cache
+                                    del _cpu_process_cache[pid]
+                                    cpu_percent = 0.0
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                # Process ended, clean from cache
+                                _cpu_process_cache.pop(pid, None)
+                                cpu_percent = 0.0
+                        
                         display_data['cpu'] = f"{cpu_percent:.1f}%"
                         
-                        # Get memory usage
-                        memory_info = process.memory_info()
-                        memory_mb = memory_info.rss / (1024 * 1024)  # Convert to MB
-                        display_data['memory'] = f"{memory_mb:.1f} MB"
+                        # Get memory usage (can use the cached process or create new)
+                        try:
+                            process = _cpu_process_cache.get(pid) or psutil.Process(pid)
+                            memory_info = process.memory_info()
+                            memory_mb = memory_info.rss / (1024 * 1024)  # Convert to MB
+                            display_data['memory'] = f"{memory_mb:.1f} MB"
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
                         
-                        # Calculate uptime
-                        if 'StartTime' in server_config:
+                        # Calculate uptime - try StartTime first, then fall back to process creation time
+                        uptime_calculated = False
+                        if 'StartTime' in server_config and server_config['StartTime']:
                             try:
                                 start_time_str = server_config['StartTime']
                                 if isinstance(start_time_str, str):
@@ -3568,11 +3621,37 @@ def get_servers_display_data(server_manager, logger):
                                     start_time = start_time_str
                                 
                                 uptime = datetime.datetime.now() - start_time
-                                hours, remainder = divmod(int(uptime.total_seconds()), 3600)
-                                minutes, seconds = divmod(remainder, 60)
-                                display_data['uptime'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                                total_seconds = int(uptime.total_seconds())
+                                if total_seconds >= 0:
+                                    days, remainder = divmod(total_seconds, 86400)
+                                    hours, remainder = divmod(remainder, 3600)
+                                    minutes, seconds = divmod(remainder, 60)
+                                    if days > 0:
+                                        display_data['uptime'] = f"{days}d {hours:02d}:{minutes:02d}:{seconds:02d}"
+                                    else:
+                                        display_data['uptime'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                                    uptime_calculated = True
                             except Exception as e:
-                                logger.debug(f"Could not calculate uptime for {server_name}: {e}")
+                                logger.debug(f"Could not calculate uptime from StartTime for {server_name}: {e}")
+                        
+                        # Fall back to process creation time if StartTime not available
+                        if not uptime_calculated:
+                            try:
+                                process = _cpu_process_cache.get(pid) or psutil.Process(pid)
+                                create_time = process.create_time()
+                                start_time = datetime.datetime.fromtimestamp(create_time)
+                                uptime = datetime.datetime.now() - start_time
+                                total_seconds = int(uptime.total_seconds())
+                                if total_seconds >= 0:
+                                    days, remainder = divmod(total_seconds, 86400)
+                                    hours, remainder = divmod(remainder, 3600)
+                                    minutes, seconds = divmod(remainder, 60)
+                                    if days > 0:
+                                        display_data['uptime'] = f"{days}d {hours:02d}:{minutes:02d}:{seconds:02d}"
+                                    else:
+                                        display_data['uptime'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                            except Exception as e:
+                                logger.debug(f"Could not calculate uptime from process for {server_name}: {e}")
                         
                     except Exception as e:
                         logger.debug(f"Could not get process details for {server_name} (PID {pid}): {e}")

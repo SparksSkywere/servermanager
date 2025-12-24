@@ -1,6 +1,8 @@
-# Real-time server console interface with interactive command support
-
+# Server console interface
+# - Real-time output, command input
+# - Named pipes, stdin relay, command queue
 # -*- coding: utf-8 -*-
+# pyright: reportArgumentType=false
 import os
 import sys
 import subprocess
@@ -17,36 +19,80 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import psutil
 
-# Add project root to sys.path for module resolution
+# Windows named pipe support
+_NAMED_PIPES_AVAILABLE = False
+_WIN32_CONSOLE_AVAILABLE = False
+if sys.platform == 'win32':
+    try:
+        import win32pipe
+        import win32file
+        import pywintypes
+        _NAMED_PIPES_AVAILABLE = True
+    except ImportError:
+        pass
+    
+    # Console API for attached process input
+    try:
+        import ctypes
+        from ctypes import wintypes
+        
+        ATTACH_PARENT_PROCESS = -1
+        STD_INPUT_HANDLE = -10
+        
+        kernel32 = ctypes.windll.kernel32
+        
+        kernel32.AttachConsole.argtypes = [wintypes.DWORD]
+        kernel32.AttachConsole.restype = wintypes.BOOL
+        kernel32.FreeConsole.argtypes = []
+        kernel32.FreeConsole.restype = wintypes.BOOL
+        kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
+        kernel32.GetStdHandle.restype = wintypes.HANDLE
+        kernel32.WriteConsoleInputW.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.WriteConsoleInputW.restype = wintypes.BOOL
+        
+        _WIN32_CONSOLE_AVAILABLE = True
+    except Exception:
+        pass
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import logging functions
-from Modules.server_logging import get_dashboard_logger
+from Modules.common import setup_module_logging
 
-# Get logger
-logger = get_dashboard_logger()
+# Stdin relay for persistent command input
+_STDIN_RELAY_AVAILABLE = False
+try:
+    from services.stdin_relay import send_command_via_relay
+    _STDIN_RELAY_AVAILABLE = True
+except ImportError:
+    pass
+
+# File-based command queue
+_COMMAND_QUEUE_AVAILABLE = False
+try:
+    from services.command_queue import queue_command, is_relay_active, start_command_relay
+    _COMMAND_QUEUE_AVAILABLE = True
+except ImportError:
+    pass
+
+logger = setup_module_logging("ServerConsole")
 
 
 class RealTimeConsole:
-    # Real-time console for individual server process with interactive command support
+    # Real-time console for individual server process
     
     def __init__(self, server_name, server_config):
         self.server_name = server_name
         self.server_config = server_config
         self.process = None
         self.is_active = False
-        
-        # GUI components
         self.window = None
         self.text_widget = None
         self.command_entry = None
-        
-        # Threading components
         self.output_thread = None
         self.error_thread = None
         self.input_thread = None
-        self.log_monitor_thread = None  # Additional thread for log file monitoring
-        self.state_save_thread = None  # Thread for periodic state saving
+        self.log_monitor_thread = None
+        self.state_save_thread = None
         self.stop_event = threading.Event()
         
         # Command handling
@@ -64,11 +110,29 @@ class RealTimeConsole:
         self.stderr_log = None
         self.server_log_paths = []  # Additional server-specific log files to monitor
         self.log_file_positions = {}  # Track positions in log files
+        self._force_log_refresh = threading.Event()  # Signal to force immediate log refresh
         
         # State persistence for crash recovery
         self._state_file_path = self._get_state_file_path()
         self._last_state_save_count = 0  # Track buffer size at last save
         self._state_save_interval = 10  # Save state every 10 seconds
+        
+        # Named pipe for IPC command sending (Windows only)
+        self._pipe_name = self._get_pipe_name()
+        self._pipe_handle = None
+        self._pipe_listener_thread = None
+        self._pipe_server_active = False
+        self._is_reattached = False  # True if console was reattached to existing process
+    
+    def _get_pipe_name(self):
+        # Get the named pipe name for this server (Windows only)
+        try:
+            # Sanitize server name for pipe name
+            safe_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in self.server_name)
+            return f"\\\\.\\pipe\\ServerManager_{safe_name}_Console"
+        except Exception as e:
+            logger.error(f"Error getting pipe name for {self.server_name}: {e}")
+            return None
     
     def _get_state_file_path(self):
         # Get the path to the console state file for this server
@@ -232,6 +296,9 @@ class RealTimeConsole:
             # Stop monitoring threads
             self.stop_event.set()
             
+            # Stop named pipe server
+            self._stop_pipe_server()
+            
             # Clear process reference
             self.process = None
             
@@ -239,6 +306,259 @@ class RealTimeConsole:
             
         except Exception as e:
             logger.error(f"Error cleaning up console on stop for {self.server_name}: {e}")
+    
+    def _start_pipe_server(self):
+        """Start named pipe server for IPC command input (Windows only)"""
+        if not _NAMED_PIPES_AVAILABLE or not self._pipe_name:
+            return False
+            
+        try:
+            if self._pipe_server_active:
+                return True  # Already running
+            
+            self._pipe_server_active = True
+            self._pipe_listener_thread = threading.Thread(
+                target=self._pipe_server_loop,
+                daemon=True,
+                name=f"Console-{self.server_name}-PipeServer"
+            )
+            self._pipe_listener_thread.start()
+            logger.debug(f"Started named pipe server for {self.server_name}: {self._pipe_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error starting pipe server for {self.server_name}: {e}")
+            return False
+    
+    def _stop_pipe_server(self):
+        """Stop named pipe server"""
+        try:
+            self._pipe_server_active = False
+            if self._pipe_handle:
+                try:
+                    win32file.CloseHandle(self._pipe_handle)
+                except:
+                    pass
+                self._pipe_handle = None
+            logger.debug(f"Stopped named pipe server for {self.server_name}")
+        except Exception as e:
+            logger.debug(f"Error stopping pipe server for {self.server_name}: {e}")
+    
+    def _pipe_server_loop(self):
+        """Named pipe server loop - listens for commands and forwards to process stdin"""
+        if not _NAMED_PIPES_AVAILABLE:
+            return
+            
+        try:
+            while self._pipe_server_active and self.is_active and not self.stop_event.is_set():
+                try:
+                    # Create named pipe server
+                    pipe_name = self._pipe_name if self._pipe_name else f"\\\\.\\pipe\\servermanager_{self.server_name}"
+                    self._pipe_handle = win32pipe.CreateNamedPipe(  # type: ignore[arg-type]
+                        pipe_name,
+                        win32pipe.PIPE_ACCESS_INBOUND,
+                        win32pipe.PIPE_TYPE_MESSAGE | win32pipe.PIPE_READMODE_MESSAGE | win32pipe.PIPE_WAIT,
+                        1,  # Max instances
+                        4096,  # Out buffer size
+                        4096,  # In buffer size
+                        0,  # Default timeout
+                        None  # Security attributes
+                    )
+                    
+                    if self._pipe_handle == win32file.INVALID_HANDLE_VALUE:
+                        logger.error(f"Failed to create named pipe for {self.server_name}")
+                        time.sleep(1)
+                        continue
+                    
+                    logger.debug(f"Waiting for pipe connection on {self._pipe_name}")
+                    
+                    # Wait for client connection (with timeout check)
+                    try:
+                        win32pipe.ConnectNamedPipe(self._pipe_handle, None)
+                    except pywintypes.error as e:
+                        if e.winerror == 535:  # ERROR_PIPE_CONNECTED - client already connected
+                            pass
+                        else:
+                            raise
+                    
+                    # Read commands from pipe
+                    while self._pipe_server_active and self.is_active:
+                        try:
+                            result, data = win32file.ReadFile(self._pipe_handle, 4096)
+                            if result == 0 and data:
+                                # data is bytes from ReadFile
+                                command = data.decode('utf-8').strip() if isinstance(data, bytes) else str(data).strip()
+                                if command:
+                                    logger.debug(f"Received pipe command for {self.server_name}: {command}")
+                                    # Forward command to process via command queue
+                                    self.command_queue.put(command)
+                        except pywintypes.error as e:
+                            if e.winerror == 109:  # ERROR_BROKEN_PIPE
+                                break  # Client disconnected
+                            elif e.winerror == 232:  # ERROR_NO_DATA
+                                time.sleep(0.1)
+                                continue
+                            else:
+                                raise
+                    
+                    # Close this instance of the pipe
+                    try:
+                        win32pipe.DisconnectNamedPipe(self._pipe_handle)
+                        win32file.CloseHandle(self._pipe_handle)
+                    except:
+                        pass
+                    self._pipe_handle = None
+                    
+                except pywintypes.error as e:
+                    if e.winerror == 231:  # ERROR_PIPE_BUSY
+                        time.sleep(0.1)
+                        continue
+                    logger.debug(f"Pipe server error for {self.server_name}: {e}")
+                    time.sleep(1)
+                except Exception as e:
+                    logger.debug(f"Pipe server loop error for {self.server_name}: {e}")
+                    time.sleep(1)
+                    
+        except Exception as e:
+            logger.error(f"Fatal pipe server error for {self.server_name}: {e}")
+        finally:
+            self._pipe_server_active = False
+            if self._pipe_handle:
+                try:
+                    win32file.CloseHandle(self._pipe_handle)
+                except:
+                    pass
+                self._pipe_handle = None
+    
+    def _send_command_via_pipe(self, command):
+        """Send command to server via named pipe (for reattached consoles)"""
+        if not _NAMED_PIPES_AVAILABLE or not self._pipe_name:
+            return False
+            
+        try:
+            # Connect to named pipe as client
+            handle = win32file.CreateFile(
+                self._pipe_name,
+                win32file.GENERIC_WRITE,
+                0,  # No sharing
+                None,  # Default security
+                win32file.OPEN_EXISTING,
+                0,  # Default attributes
+                None  # No template file
+            )
+            
+            try:
+                # Set pipe mode to message (handle type is compatible at runtime)
+                win32pipe.SetNamedPipeHandleState(handle, win32pipe.PIPE_READMODE_MESSAGE, None, None)  # type: ignore[arg-type]
+                
+                # Write command
+                data = (command + "\n").encode('utf-8')
+                win32file.WriteFile(handle, data)  # type: ignore[arg-type]
+                
+                logger.debug(f"Sent command via pipe to {self.server_name}: {command}")
+                return True
+            finally:
+                win32file.CloseHandle(handle)  # type: ignore[arg-type]
+                
+        except pywintypes.error as e:
+            if e.winerror == 2:  # ERROR_FILE_NOT_FOUND - pipe doesn't exist
+                logger.debug(f"Named pipe not available for {self.server_name}, will try alternative method")
+            else:
+                logger.error(f"Error sending command via pipe to {self.server_name}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error sending command via pipe to {self.server_name}: {e}")
+            return False
+    
+    def _send_command_via_console_api(self, command):
+        """Send command to reattached process via Windows Console API (AttachConsole)"""
+        if not _WIN32_CONSOLE_AVAILABLE:
+            return False
+        
+        if not self.process:
+            return False
+            
+        try:
+            pid = self.process.pid if hasattr(self.process, 'pid') else None
+            if not pid:
+                return False
+            
+            # Detach from our current console first
+            kernel32.FreeConsole()
+            
+            # Attach to the target process's console
+            if not kernel32.AttachConsole(pid):
+                logger.debug(f"Could not attach to console of PID {pid}")
+                # Reattach to our parent's console
+                kernel32.AttachConsole(ATTACH_PARENT_PROCESS)
+                return False
+            
+            try:
+                # Get the input handle for the attached console
+                stdin_handle = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+                
+                if stdin_handle == -1 or stdin_handle == 0:
+                    logger.debug(f"Could not get stdin handle for PID {pid}")
+                    return False
+                
+                # Create INPUT_RECORD structures for each character
+                # This simulates keyboard input to the console
+                command_with_enter = command + "\r\n"
+                
+                # Define INPUT_RECORD structure
+                class KEY_EVENT_RECORD(ctypes.Structure):
+                    _fields_ = [
+                        ("bKeyDown", wintypes.BOOL),
+                        ("wRepeatCount", wintypes.WORD),
+                        ("wVirtualKeyCode", wintypes.WORD),
+                        ("wVirtualScanCode", wintypes.WORD),
+                        ("uChar", wintypes.WCHAR),
+                        ("dwControlKeyState", wintypes.DWORD),
+                    ]
+                
+                class INPUT_RECORD(ctypes.Structure):
+                    _fields_ = [
+                        ("EventType", wintypes.WORD),
+                        ("Event", KEY_EVENT_RECORD),
+                    ]
+                
+                KEY_EVENT = 0x0001
+                
+                # Write each character as a key event
+                for char in command_with_enter:
+                    # Key down event
+                    input_record = INPUT_RECORD()
+                    input_record.EventType = KEY_EVENT
+                    input_record.Event.bKeyDown = True
+                    input_record.Event.wRepeatCount = 1
+                    input_record.Event.uChar = char
+                    input_record.Event.wVirtualKeyCode = 0
+                    input_record.Event.wVirtualScanCode = 0
+                    input_record.Event.dwControlKeyState = 0
+                    
+                    written = wintypes.DWORD()
+                    kernel32.WriteConsoleInputW(stdin_handle, ctypes.byref(input_record), 1, ctypes.byref(written))
+                    
+                    # Key up event
+                    input_record.Event.bKeyDown = False
+                    kernel32.WriteConsoleInputW(stdin_handle, ctypes.byref(input_record), 1, ctypes.byref(written))
+                
+                logger.debug(f"Sent command via Console API to {self.server_name}: {command}")
+                return True
+                
+            finally:
+                # Detach from target console and reattach to parent
+                kernel32.FreeConsole()
+                kernel32.AttachConsole(ATTACH_PARENT_PROCESS)
+                
+        except Exception as e:
+            logger.error(f"Error sending command via Console API to {self.server_name}: {e}")
+            # Try to reattach to parent console
+            try:
+                kernel32.FreeConsole()
+                kernel32.AttachConsole(ATTACH_PARENT_PROCESS)
+            except:
+                pass
+            return False
         
     def attach_to_process(self, process):
         # Attach console to an existing process object (subprocess.Popen or psutil.Process)
@@ -247,6 +567,26 @@ class RealTimeConsole:
             if not process:
                 logger.error(f"Cannot attach console to {self.server_name}: No process provided")
                 return False
+            
+            # Detect if this is a reattachment (psutil.Process) vs original start (subprocess.Popen)
+            # subprocess.Popen has 'poll' method, psutil.Process has 'is_running' method
+            if hasattr(process, 'poll'):
+                # This is a subprocess.Popen object (original start) - we have stdin access
+                self._is_reattached = False
+                logger.debug(f"Attaching to original Popen process for {self.server_name}")
+                
+                # Start command queue relay if not already running
+                if _COMMAND_QUEUE_AVAILABLE and not is_relay_active(self.server_name):
+                    try:
+                        from services.command_queue import start_command_relay
+                        start_command_relay(self.server_name, process)
+                        logger.debug(f"Started command queue relay for {self.server_name}")
+                    except Exception as e:
+                        logger.warning(f"Could not start command queue relay: {e}")
+            else:
+                # This is a psutil.Process object (reattachment) - no stdin access
+                self._is_reattached = True
+                logger.debug(f"Reattaching to existing process for {self.server_name} (no stdin)")
                 
             self.process = process
             self.is_active = True
@@ -275,7 +615,20 @@ class RealTimeConsole:
             # Start periodic state saving for crash recovery
             self._start_state_save_thread()
             
-            logger.debug(f"Console attached to {self.server_name} (PID: {pid})")
+            # Start named pipe server for IPC (if this is original start with stdin)
+            # This allows future reattachments to send commands via the pipe
+            if not self._is_reattached and _NAMED_PIPES_AVAILABLE:
+                self._start_pipe_server()
+            elif self._is_reattached:
+                # Inform user about command input capabilities for reattached servers
+                if _COMMAND_QUEUE_AVAILABLE and is_relay_active(self.server_name):
+                    self._add_output(f"=== Console reattached - command input available via command queue ===", "system")
+                elif _STDIN_RELAY_AVAILABLE:
+                    self._add_output(f"=== Console reattached - attempting to use stdin relay ===", "system")
+                else:
+                    self._add_output(f"=== Console reattached - command input requires server restart ===", "system")
+            
+            logger.debug(f"Console attached to {self.server_name} (PID: {pid}, reattached={self._is_reattached})")
             return True
             
         except Exception as e:
@@ -686,7 +1039,17 @@ class RealTimeConsole:
                         except Exception as e:
                             logger.debug(f"Error reading log file {log_file}: {e}")
                     
-                    time.sleep(0.5)  # Check log files every 500ms (less frequent than before)
+                    # Wait for next cycle, but respond to force refresh quickly
+                    # Use shorter wait intervals and check for force refresh signal
+                    if self._force_log_refresh.wait(timeout=0.1):
+                        # Force refresh was signaled - clear it and continue immediately
+                        self._force_log_refresh.clear()
+                        continue
+                    # Otherwise wait a bit more (total ~500ms between checks normally)
+                    for _ in range(4):
+                        if self._force_log_refresh.wait(timeout=0.1):
+                            self._force_log_refresh.clear()
+                            break
                     
                 except Exception as e:
                     logger.debug(f"Log file monitoring error: {e}")
@@ -824,13 +1187,82 @@ class RealTimeConsole:
         # Send command to server process
         try:
             logger.debug(f"DEBUG: send_command called for {self.server_name} with command: '{command}'")
-            if self.is_active and command.strip():
-                logger.debug(f"DEBUG: Console is active for {self.server_name}, attempting to send command")
-                self.command_queue.put(command.strip())
-                return True
-            else:
-                logger.warning(f"DEBUG: Console not active for {self.server_name} (is_active={self.is_active}) or empty command")
+            if not self.is_active:
+                logger.warning(f"DEBUG: Console not active for {self.server_name}")
                 return False
+            if not command.strip():
+                logger.warning(f"DEBUG: Empty command for {self.server_name}")
+                return False
+            
+            command = command.strip()
+            
+            # Helper to handle successful command send
+            def on_command_sent():
+                self._add_output(f"> {command}", "command")
+                if command not in self.command_history:
+                    self.command_history.append(command)
+                    if len(self.command_history) > 50:
+                        self.command_history.pop(0)
+                # Trigger immediate log file refresh to show response faster
+                if hasattr(self, '_force_log_refresh'):
+                    self._force_log_refresh.set()
+            
+            # If reattached, try multiple methods to send command
+            if self._is_reattached:
+                logger.debug(f"DEBUG: Attempting to send command to reattached console {self.server_name}")
+                
+                # Method 1: Try command queue first (file-based, works if relay is running)
+                if _COMMAND_QUEUE_AVAILABLE:
+                    logger.debug(f"DEBUG: Trying command queue for {self.server_name}")
+                    if is_relay_active(self.server_name):
+                        success, message = queue_command(self.server_name, command)
+                        if success:
+                            logger.info(f"Command queued for {self.server_name}: {command}")
+                            on_command_sent()
+                            return True
+                        else:
+                            logger.debug(f"Command queue failed for {self.server_name}: {message}")
+                    else:
+                        logger.debug(f"No command queue relay active for {self.server_name}")
+                
+                # Method 2: Try stdin relay (named pipe maintained since server start)
+                if _STDIN_RELAY_AVAILABLE:
+                    logger.debug(f"DEBUG: Trying stdin relay for {self.server_name}")
+                    try:
+                        success, message = send_command_via_relay(self.server_name, command)
+                        if success:
+                            logger.info(f"Command sent via stdin relay to {self.server_name}: {command}")
+                            on_command_sent()
+                            return True
+                        else:
+                            logger.debug(f"Stdin relay failed for {self.server_name}: {message}")
+                    except Exception as e:
+                        logger.debug(f"Stdin relay error for {self.server_name}: {e}")
+                
+                # Method 3: Try the console's own named pipe (if server was started by Server Manager)
+                if _NAMED_PIPES_AVAILABLE:
+                    if self._send_command_via_pipe(command):
+                        on_command_sent()
+                        return True
+                
+                # Method 4: Try Windows Console API (AttachConsole) - rarely works for hidden console apps
+                if _WIN32_CONSOLE_AVAILABLE:
+                    logger.debug(f"DEBUG: Trying Console API for {self.server_name}")
+                    if self._send_command_via_console_api(command):
+                        on_command_sent()
+                        return True
+                
+                # All methods failed
+                logger.warning(f"Failed to send command to reattached server {self.server_name}")
+                self._add_output(f"[WARN] Cannot send commands to this server - console input is only available for servers started in the current session.", "error")
+                self._add_output(f"[INFO] To enable console commands, stop and restart the server through the dashboard.", "info")
+                return False
+            
+            # Normal path: send via command queue (for processes with stdin)
+            logger.debug(f"DEBUG: Console is active for {self.server_name}, sending via command queue")
+            self.command_queue.put(command)
+            return True
+            
         except Exception as e:
             logger.error(f"Error sending command to {self.server_name}: {e}")
             import traceback

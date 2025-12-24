@@ -1,5 +1,5 @@
-# Database Utilities Module
-# Common database functions shared between user and steam databases
+# Database utilities
+# - Shared DB functions for user/steam databases
 
 import os
 import sys
@@ -7,10 +7,8 @@ import winreg
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-# Import standardized logging
 try:
     from Modules.server_logging import get_component_logger
     logger = get_component_logger("DatabaseUtils")
@@ -20,20 +18,18 @@ except Exception:
     logger = logging.getLogger("DatabaseUtils")
 
 def get_sql_config_from_registry(db_type="user"):
-    # Generic SQL configuration function for both user and steam databases
+    # SQL config from registry for user/steam/minecraft databases
     try:
         from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
 
-        # Try to get SQL type
         try:
             sql_type = winreg.QueryValueEx(key, "SQLType")[0]
         except:
-            sql_type = "SQLite"  # Default to SQLite
+            sql_type = "SQLite"  # Default
 
-        # Get database path/connection info based on type
+        # Database path based on type
         if sql_type.lower() == "sqlite":
-            # Determine database path based on type
             if db_type == "user":
                 try:
                     db_path = winreg.QueryValueEx(key, "UsersSQLDatabasePath")[0]

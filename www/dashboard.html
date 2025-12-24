@@ -3,283 +3,1586 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Server Manager Dashboard</title>
+    <title>Dashboard - Server Manager</title>
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        * {
             margin: 0;
             padding: 0;
-            background: #f5f5f5;
+            box-sizing: border-box;
         }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #e8e8f0;
+            min-height: 100vh;
+        }
+
+        body.theme-light {
+            background: #f5f6fa;
+            color: #1a1a2e;
+        }
+
+        /* Header */
         .header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 0 24px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
             color: white;
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .header-brand svg {
+            width: 28px;
+            height: 28px;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .user-menu {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            padding: 6px 12px;
+            border-radius: 8px;
+            transition: background 0.2s;
+            color: white;
+        }
+
+        .user-menu:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        .user-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.9rem;
+            overflow: hidden;
+            border: 2px solid rgba(255,255,255,0.3);
+        }
+
+        .user-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .user-dropdown {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
+            border-radius: 12px;
+            min-width: 240px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            display: none;
+            z-index: 200;
+            overflow: hidden;
+        }
+
+        body.theme-light .user-dropdown {
+            background: #ffffff;
+            border-color: #e0e0e8;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+        }
+
+        .user-dropdown.show { display: block; }
+
+        .user-dropdown-header {
             padding: 20px;
+            text-align: center;
+            background: #252540;
+            border-bottom: 1px solid #2a2a45;
+        }
+
+        body.theme-light .user-dropdown-header {
+            background: #f5f6fa;
+            border-color: #e0e0e8;
+        }
+
+        .dropdown-avatar {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: #667eea;
+            margin: 0 auto 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: white;
+            overflow: hidden;
+        }
+
+        .dropdown-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .dropdown-name {
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .dropdown-username {
+            font-size: 0.85rem;
+            color: #686888;
+        }
+
+        .user-dropdown a {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 20px;
+            color: #e8e8f0;
+            text-decoration: none;
+            transition: background 0.15s;
+        }
+
+        body.theme-light .user-dropdown a {
+            color: #1a1a2e;
+        }
+
+        .user-dropdown a:hover {
+            background: #252540;
+        }
+
+        body.theme-light .user-dropdown a:hover {
+            background: #f0f0f5;
+        }
+
+        .user-dropdown a.danger { color: #ef4444; }
+
+        .user-dropdown .divider {
+            height: 1px;
+            background: #2a2a45;
+            margin: 4px 0;
+        }
+
+        body.theme-light .user-dropdown .divider {
+            background: #e0e0e8;
+        }
+
+        /* Navigation */
+        .nav {
+            background: #1a1a2e;
+            padding: 12px 24px;
+            display: flex;
+            gap: 8px;
+            border-bottom: 1px solid #2a2a45;
+            flex-wrap: wrap;
+        }
+
+        body.theme-light .nav {
+            background: #ffffff;
+            border-color: #e0e0e8;
+        }
+
+        .nav a {
+            padding: 10px 18px;
+            background: #252540;
+            color: #a8a8c0;
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        body.theme-light .nav a {
+            background: #f0f0f5;
+            color: #4a4a68;
+        }
+
+        .nav a:hover {
+            background: #2a2a48;
+            color: #e8e8f0;
+        }
+
+        body.theme-light .nav a:hover {
+            background: #e8eaed;
+            color: #1a1a2e;
+        }
+
+        .nav a.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .nav a.hidden { display: none; }
+
+        /* Main Container */
+        .main {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        body.theme-light .stat-card {
+            background: #ffffff;
+            border-color: #e0e0e8;
+        }
+
+        .stat-card h3 {
+            font-size: 0.85rem;
+            color: #686888;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #e8e8f0;
+        }
+
+        body.theme-light .stat-value {
+            color: #1a1a2e;
+        }
+
+        .stat-value.success { color: #22c55e; }
+        .stat-value.danger { color: #ef4444; }
+        .stat-value.warning { color: #f59e0b; }
+
+        /* Dashboard Grid */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 24px;
+        }
+
+        /* Panels */
+        .panel {
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        body.theme-light .panel {
+            background: #ffffff;
+            border-color: #e0e0e8;
+        }
+
+        .panel-header {
+            padding: 16px 20px;
+            background: #252540;
+            border-bottom: 1px solid #2a2a45;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
-        .header h1 {
-            margin: 0;
+
+        body.theme-light .panel-header {
+            background: #f5f6fa;
+            border-color: #e0e0e8;
         }
-        .user-info {
+
+        .panel-header h2 {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .panel-body {
+            padding: 16px;
+        }
+
+        /* Server List */
+        .server-list {
+            max-height: 450px;
+            overflow-y: auto;
+        }
+
+        .server-item {
             display: flex;
             align-items: center;
-            gap: 15px;
+            justify-content: space-between;
+            padding: 14px 16px;
+            border-bottom: 1px solid #2a2a45;
+            transition: background 0.15s;
         }
-        .logout-btn {
-            background: rgba(255, 255, 255, 0.2);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            padding: 8px 16px;
-            border-radius: 5px;
-            cursor: pointer;
-            text-decoration: none;
+
+        body.theme-light .server-item {
+            border-color: #e0e0e8;
         }
-        .logout-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
+
+        .server-item:last-child { border-bottom: none; }
+
+        .server-item:hover {
+            background: #252540;
         }
-        .container {
-            max-width: 1200px;
-            margin: 20px auto;
-            padding: 0 20px;
+
+        body.theme-light .server-item:hover {
+            background: #f5f6fa;
         }
-        .welcome-card {
-            background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-            text-align: center;
+
+        .server-info h3 {
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 4px;
         }
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 20px;
+
+        .server-meta {
+            font-size: 0.8rem;
+            color: #686888;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
-        .status-card {
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-        .status-card h3 {
-            margin-top: 0;
-            color: #333;
-        }
-        .status-value {
-            font-size: 24px;
-            font-weight: bold;
-            color: #667eea;
-        }
-        .error-message {
-            color: #e74c3c;
-            padding: 15px;
-            background: #ffeaea;
-            border-radius: 5px;
-            margin: 20px 0;
-        }
-        .nav-menu {
-            background: white;
-            padding: 15px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-            text-align: center;
-        }
-        .nav-menu a {
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
             display: inline-block;
-            margin: 0 10px;
-            padding: 8px 16px;
-            background: #667eea;
-            color: white;
+        }
+
+        .status-dot.running { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+        .status-dot.stopped { background: #ef4444; }
+        .status-dot.starting { background: #f59e0b; animation: pulse 1.5s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .server-actions {
+            display: flex;
+            gap: 6px;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 8px 14px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
             text-decoration: none;
-            border-radius: 5px;
-            transition: background 0.3s;
         }
-        .nav-menu a:hover {
-            background: #5a67d8;
-        }
-        .nav-menu a.disabled {
-            background: #ccc;
+
+        .btn:disabled {
+            opacity: 0.4;
             cursor: not-allowed;
+        }
+
+        .btn-sm { padding: 6px 10px; font-size: 0.8rem; }
+
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover:not(:disabled) { background: #5a6fd6; }
+
+        .btn-secondary { background: #252540; color: #a8a8c0; border: 1px solid #3a3a55; }
+        .btn-secondary:hover:not(:disabled) { background: #2a2a48; color: #e8e8f0; }
+
+        body.theme-light .btn-secondary {
+            background: #f0f0f5;
+            color: #4a4a68;
+            border-color: #d0d0d8;
+        }
+
+        .btn-success { background: #22c55e; color: white; }
+        .btn-success:hover:not(:disabled) { background: #1db954; }
+
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-danger:hover:not(:disabled) { background: #dc2626; }
+
+        .btn-warning { background: #f59e0b; color: white; }
+        .btn-warning:hover:not(:disabled) { background: #d97706; }
+
+        /* Console */
+        .console-panel {
+            display: flex;
+            flex-direction: column;
+            height: 520px;
+        }
+
+        .console-select {
+            width: 100%;
+            padding: 10px 14px;
+            background: #252540;
+            border: 1px solid #3a3a55;
+            border-radius: 8px;
+            color: #e8e8f0;
+            font-size: 0.9rem;
+            margin-bottom: 12px;
+        }
+
+        body.theme-light .console-select {
+            background: #f0f0f5;
+            border-color: #d0d0d8;
+            color: #1a1a2e;
+        }
+
+        .console-output {
+            flex: 1;
+            background: #0a0a12;
+            border: 1px solid #2a2a45;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.8rem;
+            color: #cdd6f4;
+            overflow-y: auto;
+            line-height: 1.5;
+            margin-bottom: 12px;
+        }
+
+        .console-input-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .console-input {
+            flex: 1;
+            padding: 10px 14px;
+            background: #252540;
+            border: 1px solid #3a3a55;
+            border-radius: 8px;
+            color: #e8e8f0;
+            font-family: 'Consolas', monospace;
+            font-size: 0.85rem;
+        }
+
+        body.theme-light .console-input {
+            background: #f0f0f5;
+            border-color: #d0d0d8;
+            color: #1a1a2e;
+        }
+
+        .console-input:focus { outline: none; border-color: #667eea; }
+        .console-input:disabled { opacity: 0.5; }
+
+        /* System Resources */
+        .resources-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-top: 24px;
+        }
+
+        .resource-item label {
+            display: block;
+            font-size: 0.85rem;
+            color: #686888;
+            margin-bottom: 10px;
+        }
+
+        .progress-bar {
+            height: 10px;
+            background: #252540;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        body.theme-light .progress-bar {
+            background: #e0e0e8;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            border-radius: 5px;
+            transition: width 0.3s;
+        }
+
+        .resource-text {
+            font-size: 0.8rem;
+            color: #a8a8c0;
+            margin-top: 6px;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #686888;
+        }
+
+        .empty-state h3 {
+            margin-bottom: 8px;
+            color: #a8a8c0;
+        }
+
+        .empty-state .btn {
+            margin-top: 16px;
+        }
+
+        /* Modal */
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+
+        .modal.show { display: flex; }
+
+        .modal-content {
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 480px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        body.theme-light .modal-content {
+            background: #ffffff;
+            border-color: #e0e0e8;
+        }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #2a2a45;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        body.theme-light .modal-header {
+            border-color: #e0e0e8;
+        }
+
+        .modal-header h2 {
+            font-size: 1.1rem;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: #686888;
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .modal-close:hover { color: #e8e8f0; }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 18px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            color: #a8a8c0;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        body.theme-light .form-group label {
+            color: #4a4a68;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px 14px;
+            background: #252540;
+            border: 1px solid #3a3a55;
+            border-radius: 8px;
+            color: #e8e8f0;
+            font-size: 0.95rem;
+        }
+
+        body.theme-light .form-group input,
+        body.theme-light .form-group select,
+        body.theme-light .form-group textarea {
+            background: #f0f0f5;
+            border-color: #d0d0d8;
+            color: #1a1a2e;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group input:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        /* Profile Avatar */
+        .profile-avatar-section {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .profile-avatar-large {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            background: #667eea;
+            margin: 0 auto 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            color: white;
+            cursor: pointer;
+            overflow: hidden;
+            border: 3px solid #2a2a45;
+            transition: opacity 0.2s;
+        }
+
+        .profile-avatar-large:hover { opacity: 0.85; }
+
+        .profile-avatar-large img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .avatar-hint {
+            font-size: 0.8rem;
+            color: #686888;
+        }
+
+        /* Notification */
+        .notification {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 14px 20px;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            display: none;
+            z-index: 2000;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+
+        .notification.show { display: block; }
+        .notification.success { background: #22c55e; color: white; }
+        .notification.error { background: #ef4444; color: white; }
+        .notification.info { background: #3b82f6; color: white; }
+
+        /* Responsive */
+        @media (max-width: 1100px) {
+            .dashboard-grid { grid-template-columns: 1fr; }
+            .console-panel { height: 400px; }
+        }
+
+        @media (max-width: 768px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .resources-grid { grid-template-columns: 1fr; }
+            .form-row { grid-template-columns: 1fr; }
+            .header { padding: 0 16px; }
+            .main { padding: 16px; }
+        }
+
+        @media (max-width: 480px) {
+            .stats-grid { grid-template-columns: 1fr; }
+            .server-item { flex-direction: column; align-items: flex-start; gap: 12px; }
+            .server-actions { width: 100%; justify-content: flex-start; }
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>Server Manager Dashboard</h1>
-        <div class="user-info">
-            <span>Welcome, <span id="username">User</span></span>
-            <a href="#" class="logout-btn" onclick="logout()">Logout</a>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-brand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="2" width="20" height="8" rx="2"></rect>
+                <rect x="2" y="14" width="20" height="8" rx="2"></rect>
+                <circle cx="6" cy="6" r="1" fill="currentColor"></circle>
+                <circle cx="6" cy="18" r="1" fill="currentColor"></circle>
+            </svg>
+            <span>Server Manager</span>
+        </div>
+        <div class="header-actions">
+            <div class="user-menu" onclick="toggleUserDropdown(event)">
+                <div class="user-avatar" id="headerAvatar">
+                    <span id="avatarInitial">?</span>
+                </div>
+                <span id="headerDisplayName">User</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"></path>
+                </svg>
+            </div>
+            <div class="user-dropdown" id="userDropdown">
+                <div class="user-dropdown-header">
+                    <div class="dropdown-avatar" id="dropdownAvatar">
+                        <span id="dropdownAvatarInitial">?</span>
+                    </div>
+                    <div class="dropdown-name" id="dropdownDisplayName">User</div>
+                    <div class="dropdown-username" id="dropdownUsername">@username</div>
+                </div>
+                <a href="#" onclick="openProfileModal(); return false;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    Profile Settings
+                </a>
+                <a href="#" onclick="openPasswordModal(); return false;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                    </svg>
+                    Change Password
+                </a>
+                <a href="#" onclick="toggleTheme(); return false;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="themeIcon">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <span id="themeText">Dark Mode</span>
+                </a>
+                <div class="divider"></div>
+                <a href="#" class="danger" onclick="logout(); return false;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                        <polyline points="16 17 21 12 16 7"></polyline>
+                        <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                    Logout
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Navigation -->
+    <nav class="nav">
+        <a href="dashboard.html" class="active">Dashboard</a>
+        <a href="status.html">Server Status</a>
+        <a href="create-server.html">Create Server</a>
+        <a href="cluster.html" id="clusterLink" class="hidden">Cluster</a>
+        <a href="admin.html" id="adminLink" class="hidden">Admin</a>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main">
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Total Servers</h3>
+                <div class="stat-value" id="totalServers">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Running</h3>
+                <div class="stat-value success" id="runningServers">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Stopped</h3>
+                <div class="stat-value danger" id="stoppedServers">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>System Status</h3>
+                <div class="stat-value" id="systemHealth">OK</div>
+            </div>
+        </div>
+
+        <!-- Dashboard Grid -->
+        <div class="dashboard-grid">
+            <!-- Server List -->
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Servers</h2>
+                    <button class="btn btn-sm btn-secondary" onclick="refreshServers()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M23 4v6h-6"></path>
+                            <path d="M1 20v-6h6"></path>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
+                <div class="server-list" id="serverList">
+                    <div class="empty-state">
+                        <p>Loading servers...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Console -->
+            <div class="panel console-panel">
+                <div class="panel-header">
+                    <h2>Console</h2>
+                </div>
+                <div class="panel-body" style="flex: 1; display: flex; flex-direction: column;">
+                    <select class="console-select" id="consoleServerSelect" onchange="switchConsole()">
+                        <option value="">Select a server...</option>
+                    </select>
+                    <div class="console-output" id="consoleOutput">
+                        Select a server to view console output...
+                    </div>
+                    <div class="console-input-row">
+                        <input type="text" class="console-input" id="consoleInput" 
+                               placeholder="Type command..." disabled
+                               onkeypress="if(event.key==='Enter')sendCommand()">
+                        <button class="btn btn-primary" id="consoleSendBtn" onclick="sendCommand()" disabled>Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Resources -->
+        <div class="panel" style="margin-top: 24px;">
+            <div class="panel-header">
+                <h2>System Resources</h2>
+            </div>
+            <div class="panel-body">
+                <div class="resources-grid">
+                    <div class="resource-item">
+                        <label>CPU Usage</label>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="cpuBar" style="width: 0%"></div>
+                        </div>
+                        <div class="resource-text" id="cpuText">-</div>
+                    </div>
+                    <div class="resource-item">
+                        <label>Memory Usage</label>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="memBar" style="width: 0%"></div>
+                        </div>
+                        <div class="resource-text" id="memText">-</div>
+                    </div>
+                    <div class="resource-item">
+                        <label>Disk Usage</label>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="diskBar" style="width: 0%"></div>
+                        </div>
+                        <div class="resource-text" id="diskText">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Profile Modal -->
+    <div class="modal" id="profileModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Profile Settings</h2>
+                <button class="modal-close" onclick="closeProfileModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="profile-avatar-section">
+                    <div class="profile-avatar-large" id="profileAvatar" onclick="document.getElementById('avatarInput').click()">
+                        <span id="profileAvatarInitial">?</span>
+                    </div>
+                    <div class="avatar-hint">Click to change avatar</div>
+                    <input type="file" id="avatarInput" accept="image/*" style="display: none;" onchange="handleAvatarUpload(event)">
+                </div>
+                
+                <form id="profileForm" onsubmit="saveProfile(event)">
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" id="profileUsername" disabled>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>First Name</label>
+                            <input type="text" id="profileFirstName" placeholder="First name">
+                        </div>
+                        <div class="form-group">
+                            <label>Last Name</label>
+                            <input type="text" id="profileLastName" placeholder="Last name">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Display Name</label>
+                        <input type="text" id="profileDisplayName" placeholder="Display name">
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" id="profileEmail" placeholder="your@email.com">
+                    </div>
+                    <div class="form-group">
+                        <label>Bio</label>
+                        <textarea id="profileBio" rows="3" placeholder="About yourself..."></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Timezone</label>
+                            <select id="profileTimezone">
+                                <option value="UTC">UTC</option>
+                                <option value="Europe/London">London (GMT)</option>
+                                <option value="Europe/Paris">Paris (CET)</option>
+                                <option value="America/New_York">New York (EST)</option>
+                                <option value="America/Los_Angeles">Los Angeles (PST)</option>
+                                <option value="Asia/Tokyo">Tokyo (JST)</option>
+                                <option value="Australia/Sydney">Sydney (AEST)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Theme</label>
+                            <select id="profileTheme" onchange="previewTheme(this.value)">
+                                <option value="dark">Dark</option>
+                                <option value="light">Light</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="width: 100%; padding: 14px;">Save Changes</button>
+                </form>
+            </div>
         </div>
     </div>
 
-    <div class="container">
-        <div class="nav-menu">
-            <a href="dashboard.html">Dashboard</a>
-            <a href="status.html">Server Status</a>
-            <a href="create-server.html">Create Server</a>
-            <a href="cluster.html">Cluster Management</a>
-            <a href="admin.html" id="adminLink" style="display: none;">Admin Panel</a>
-        </div>
-
-        <div class="welcome-card">
-            <h2>Welcome to Server Manager</h2>
-            <p>Your centralized server management dashboard is ready to use.</p>
-            <p><strong>Authentication Status:</strong> <span style="color: green;">✓ Connected</span></p>
-        </div>
-
-        <div class="status-grid">
-            <div class="status-card">
-                <h3>Server Status</h3>
-                <div class="status-value" id="serverStatus">Loading...</div>
-                <p>Active game servers</p>
+    <!-- Password Modal -->
+    <div class="modal" id="passwordModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Change Password</h2>
+                <button class="modal-close" onclick="closePasswordModal()">&times;</button>
             </div>
-            
-            <div class="status-card">
-                <h3>System Health</h3>
-                <div class="status-value" style="color: #27ae60;">Healthy</div>
-                <p>All systems operational</p>
-            </div>
-            
-            <div class="status-card">
-                <h3>Connected Users</h3>
-                <div class="status-value">1</div>
-                <p>Currently logged in</p>
-            </div>
-            
-            <div class="status-card">
-                <h3>Uptime</h3>
-                <div class="status-value" id="uptime">Loading...</div>
-                <p>System uptime</p>
+            <div class="modal-body">
+                <form id="passwordForm" onsubmit="changePassword(event)">
+                    <div class="form-group">
+                        <label>Current Password</label>
+                        <input type="password" id="currentPassword" required placeholder="Current password">
+                    </div>
+                    <div class="form-group">
+                        <label>New Password</label>
+                        <input type="password" id="newPassword" required placeholder="New password (min 6 chars)">
+                    </div>
+                    <div class="form-group">
+                        <label>Confirm Password</label>
+                        <input type="password" id="confirmPassword" required placeholder="Confirm new password">
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="width: 100%; padding: 14px;">Change Password</button>
+                </form>
             </div>
         </div>
-
-        <div id="errorMessage" class="error-message" style="display: none;"></div>
     </div>
 
-    <!-- Notification System -->
-    <div id="notification" class="notification"></div>
+    <!-- Notification -->
+    <div class="notification" id="notification"></div>
 
-    <script type="module">
-        import { checkAuth, logout } from './js/auth.js';
-        import { showNotification } from './js/utils.js';
-        
-        // Check authentication immediately
-        async function initDashboard() {
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                if (!token) {
-                    window.location.replace('login.html');
-                    return;
-                }
+    <script>
+        // State
+        let servers = [];
+        let currentConsoleServer = null;
+        let consoleInterval = null;
+        let userProfile = {};
+        let currentTheme = localStorage.getItem('theme_preference') || 'dark';
 
-                // Verify token is still valid
-                const isAuthenticated = await checkAuth();
-                if (!isAuthenticated) {
-                    sessionStorage.clear();
-                    window.location.replace('login.html');
-                    return;
-                }
+        // Apply theme
+        function applyTheme(theme) {
+            currentTheme = theme;
+            document.body.classList.remove('theme-light', 'theme-dark');
+            if (theme === 'light') {
+                document.body.classList.add('theme-light');
+            }
+            localStorage.setItem('theme_preference', theme);
+            updateThemeUI();
+        }
 
-                // Get user info
-                const username = sessionStorage.getItem('username');
-                const isAdmin = sessionStorage.getItem('isAdmin') === 'true';
-                
-                // Display user info
-                document.getElementById('username').textContent = username || 'User';
-
-                // Show admin link if user is admin
-                if (isAdmin) {
-                    document.getElementById('adminLink').style.display = 'inline-block';
-                }
-
-                // Load initial data
-                await loadServerStatus();
-                updateUptime();
-                
-                // Set up periodic updates
-                setInterval(updateUptime, 1000);
-                setInterval(loadServerStatus, 30000); // Refresh every 30 seconds
-                
-            } catch (error) {
-                console.error('Dashboard initialization error:', error);
-                sessionStorage.clear();
-                window.location.replace('login.html');
+        function updateThemeUI() {
+            const icon = document.getElementById('themeIcon');
+            const text = document.getElementById('themeText');
+            if (currentTheme === 'dark') {
+                icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>';
+                text.textContent = 'Dark Mode';
+            } else {
+                icon.innerHTML = '<circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>';
+                text.textContent = 'Light Mode';
             }
         }
 
-        // Load server status
-        async function loadServerStatus() {
+        async function toggleTheme() {
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            applyTheme(newTheme);
+            
+            // Save to profile
             try {
                 const token = sessionStorage.getItem('auth_token');
-                const response = await fetch('/api/servers', {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
+                if (token) {
+                    await fetch('/api/profile', {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ theme_preference: newTheme })
+                    });
+                }
+            } catch (e) {
+                console.warn('Failed to save theme preference');
+            }
+        }
+
+        function previewTheme(theme) {
+            applyTheme(theme);
+        }
+
+        // Auth check
+        async function checkAuth() {
+            const token = sessionStorage.getItem('auth_token');
+            if (!token) return false;
+            
+            try {
+                const response = await fetch('/api/auth/verify', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                return response.ok;
+            } catch {
+                return false;
+            }
+        }
+
+        // Notification
+        function showNotification(message, type = 'info') {
+            const el = document.getElementById('notification');
+            el.textContent = message;
+            el.className = `notification show ${type}`;
+            setTimeout(() => el.classList.remove('show'), 4000);
+        }
+
+        // User dropdown
+        function toggleUserDropdown(e) {
+            e.stopPropagation();
+            document.getElementById('userDropdown').classList.toggle('show');
+        }
+
+        document.addEventListener('click', () => {
+            document.getElementById('userDropdown').classList.remove('show');
+        });
+
+        // Profile functions
+        async function loadProfile() {
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const response = await fetch('/api/profile', {
+                    headers: { 'Authorization': `Bearer ${token}` }
                 });
 
                 if (response.ok) {
-                    const servers = await response.json();
-                    const runningServers = servers.filter(s => s.status === 'running').length;
-                    document.getElementById('serverStatus').textContent = `${runningServers}/${servers.length}`;
-                } else if (response.status === 401) {
-                    // Token expired
-                    logout();
-                } else {
-                    document.getElementById('serverStatus').textContent = 'Error';
+                    userProfile = await response.json();
+                    updateProfileDisplay();
+                    
+                    if (userProfile.theme_preference) {
+                        applyTheme(userProfile.theme_preference);
+                    }
                 }
-            } catch (error) {
-                console.error('Error loading server status:', error);
-                document.getElementById('serverStatus').textContent = 'Error';
+            } catch (e) {
+                console.error('Error loading profile:', e);
             }
         }
 
-        // Simple uptime display
-        let startTime = Date.now();
-        function updateUptime() {
-            const elapsed = Date.now() - startTime;
-            const minutes = Math.floor(elapsed / 60000);
-            const seconds = Math.floor((elapsed % 60000) / 1000);
-            document.getElementById('uptime').textContent = `${minutes}m ${seconds}s`;
+        function updateProfileDisplay() {
+            const displayName = userProfile.display_name || userProfile.username || 'User';
+            const initial = displayName.charAt(0).toUpperCase();
+            
+            document.getElementById('headerDisplayName').textContent = displayName;
+            document.getElementById('dropdownDisplayName').textContent = displayName;
+            document.getElementById('dropdownUsername').textContent = '@' + (userProfile.username || '');
+
+            // Update avatars
+            ['headerAvatar', 'dropdownAvatar', 'profileAvatar'].forEach(id => {
+                const el = document.getElementById(id);
+                if (userProfile.avatar) {
+                    el.innerHTML = `<img src="${userProfile.avatar}" alt="Avatar">`;
+                } else {
+                    el.innerHTML = `<span>${initial}</span>`;
+                }
+            });
         }
 
-        // Make logout available globally
-        window.logout = logout;
+        function openProfileModal() {
+            document.getElementById('userDropdown').classList.remove('show');
+            document.getElementById('profileModal').classList.add('show');
+            
+            document.getElementById('profileUsername').value = userProfile.username || '';
+            document.getElementById('profileFirstName').value = userProfile.first_name || '';
+            document.getElementById('profileLastName').value = userProfile.last_name || '';
+            document.getElementById('profileDisplayName').value = userProfile.display_name || '';
+            document.getElementById('profileEmail').value = userProfile.email || '';
+            document.getElementById('profileBio').value = userProfile.bio || '';
+            document.getElementById('profileTimezone').value = userProfile.timezone || 'UTC';
+            document.getElementById('profileTheme').value = currentTheme;
+        }
 
-        // Initialize dashboard when DOM is ready
+        function closeProfileModal() {
+            document.getElementById('profileModal').classList.remove('show');
+        }
+
+        function openPasswordModal() {
+            document.getElementById('userDropdown').classList.remove('show');
+            document.getElementById('passwordModal').classList.add('show');
+            document.getElementById('passwordForm').reset();
+        }
+
+        function closePasswordModal() {
+            document.getElementById('passwordModal').classList.remove('show');
+        }
+
+        async function handleAvatarUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (file.size > 500000) {
+                showNotification('Image too large (max 500KB)', 'error');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const token = sessionStorage.getItem('auth_token');
+                    const response = await fetch('/api/profile/avatar', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ avatar: e.target.result })
+                    });
+
+                    if (response.ok) {
+                        userProfile.avatar = e.target.result;
+                        updateProfileDisplay();
+                        showNotification('Avatar updated', 'success');
+                    } else {
+                        showNotification('Failed to update avatar', 'error');
+                    }
+                } catch {
+                    showNotification('Failed to upload avatar', 'error');
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function saveProfile(event) {
+            event.preventDefault();
+            
+            const data = {
+                first_name: document.getElementById('profileFirstName').value,
+                last_name: document.getElementById('profileLastName').value,
+                display_name: document.getElementById('profileDisplayName').value,
+                email: document.getElementById('profileEmail').value,
+                bio: document.getElementById('profileBio').value,
+                timezone: document.getElementById('profileTimezone').value,
+                theme_preference: document.getElementById('profileTheme').value
+            };
+            
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const response = await fetch('/api/profile', {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                if (response.ok) {
+                    Object.assign(userProfile, data);
+                    updateProfileDisplay();
+                    closeProfileModal();
+                    showNotification('Profile updated', 'success');
+                } else {
+                    showNotification('Failed to update profile', 'error');
+                }
+            } catch {
+                showNotification('Failed to update profile', 'error');
+            }
+        }
+
+        async function changePassword(event) {
+            event.preventDefault();
+            
+            const currentPwd = document.getElementById('currentPassword').value;
+            const newPwd = document.getElementById('newPassword').value;
+            const confirmPwd = document.getElementById('confirmPassword').value;
+            
+            if (newPwd !== confirmPwd) {
+                showNotification('Passwords do not match', 'error');
+                return;
+            }
+            
+            if (newPwd.length < 6) {
+                showNotification('Password must be at least 6 characters', 'error');
+                return;
+            }
+            
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const response = await fetch('/api/profile/password', {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        current_password: currentPwd,
+                        new_password: newPwd
+                    })
+                });
+
+                if (response.ok) {
+                    closePasswordModal();
+                    showNotification('Password changed', 'success');
+                } else {
+                    const result = await response.json();
+                    showNotification(result.error || 'Failed to change password', 'error');
+                }
+            } catch {
+                showNotification('Failed to change password', 'error');
+            }
+        }
+
+        // Server functions
+        async function refreshServers() {
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const response = await fetch('/api/servers', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (response.status === 401) {
+                    logout();
+                    return;
+                }
+
+                if (!response.ok) throw new Error('Failed to fetch');
+
+                const data = await response.json();
+                
+                if (Array.isArray(data)) {
+                    servers = data;
+                } else if (typeof data === 'object') {
+                    servers = Object.entries(data).map(([name, config]) => ({
+                        id: name, name: name, ...config
+                    }));
+                } else {
+                    servers = [];
+                }
+                
+                renderServerList();
+                updateStats();
+                updateConsoleSelect();
+            } catch (e) {
+                console.error('Error fetching servers:', e);
+                document.getElementById('serverList').innerHTML = 
+                    '<div class="empty-state"><p>Failed to load servers</p></div>';
+            }
+        }
+
+        function getServerStatus(server) {
+            if (server.status) return server.status.toLowerCase();
+            if (server.Status) return server.Status.toLowerCase();
+            if (server.pid || server.PID || server.ProcessId) return 'running';
+            return 'stopped';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function renderServerList() {
+            const container = document.getElementById('serverList');
+            
+            if (servers.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <h3>No servers configured</h3>
+                        <p>Create your first server to get started</p>
+                        <a href="create-server.html" class="btn btn-primary">Create Server</a>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = servers.map(server => {
+                const name = server.name || server.Name || server.id;
+                const type = server.type || server.Type || 'Unknown';
+                const status = getServerStatus(server);
+                const pid = server.pid || server.PID || server.ProcessId || '';
+                
+                return `
+                    <div class="server-item">
+                        <div class="server-info">
+                            <h3>${escapeHtml(name)}</h3>
+                            <div class="server-meta">
+                                <span class="status-dot ${status}"></span>
+                                ${status.charAt(0).toUpperCase() + status.slice(1)}
+                                &nbsp;•&nbsp; ${escapeHtml(type)}
+                                ${pid ? `&nbsp;•&nbsp; PID: ${pid}` : ''}
+                            </div>
+                        </div>
+                        <div class="server-actions">
+                            <button class="btn btn-sm btn-success" onclick="controlServer('${escapeHtml(name)}', 'start')" 
+                                    ${status === 'running' ? 'disabled' : ''}>Start</button>
+                            <button class="btn btn-sm btn-danger" onclick="controlServer('${escapeHtml(name)}', 'stop')"
+                                    ${status !== 'running' ? 'disabled' : ''}>Stop</button>
+                            <button class="btn btn-sm btn-warning" onclick="controlServer('${escapeHtml(name)}', 'restart')"
+                                    ${status !== 'running' ? 'disabled' : ''}>Restart</button>
+                            <button class="btn btn-sm btn-primary" onclick="openConsole('${escapeHtml(name)}')">Console</button>
+                        </div>
+                    </div>`;
+            }).join('');
+        }
+
+        function updateStats() {
+            const total = servers.length;
+            const running = servers.filter(s => getServerStatus(s) === 'running').length;
+            
+            document.getElementById('totalServers').textContent = total;
+            document.getElementById('runningServers').textContent = running;
+            document.getElementById('stoppedServers').textContent = total - running;
+        }
+
+        function updateConsoleSelect() {
+            const select = document.getElementById('consoleServerSelect');
+            const current = select.value;
+            
+            select.innerHTML = '<option value="">Select a server...</option>' +
+                servers.map(s => {
+                    const name = s.name || s.Name || s.id;
+                    return `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+                }).join('');
+            
+            if (current && servers.some(s => (s.name || s.Name || s.id) === current)) {
+                select.value = current;
+            }
+        }
+
+        async function controlServer(serverId, action) {
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const response = await fetch(`/api/servers/${encodeURIComponent(serverId)}/${action}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showNotification(result.message || `Server ${action} initiated`, 'success');
+                    setTimeout(refreshServers, 1500);
+                } else {
+                    showNotification(result.error || `Failed to ${action} server`, 'error');
+                }
+            } catch {
+                showNotification(`Failed to ${action} server`, 'error');
+            }
+        }
+
+        // Console functions
+        function openConsole(serverId) {
+            document.getElementById('consoleServerSelect').value = serverId;
+            switchConsole();
+        }
+
+        function switchConsole() {
+            const serverId = document.getElementById('consoleServerSelect').value;
+            const input = document.getElementById('consoleInput');
+            const sendBtn = document.getElementById('consoleSendBtn');
+            
+            if (consoleInterval) {
+                clearInterval(consoleInterval);
+                consoleInterval = null;
+            }
+            
+            if (!serverId) {
+                currentConsoleServer = null;
+                document.getElementById('consoleOutput').textContent = 'Select a server to view console output...';
+                input.disabled = true;
+                sendBtn.disabled = true;
+                return;
+            }
+            
+            currentConsoleServer = serverId;
+            input.disabled = false;
+            sendBtn.disabled = false;
+            
+            loadConsoleOutput();
+            consoleInterval = setInterval(loadConsoleOutput, 2000);
+        }
+
+        async function loadConsoleOutput() {
+            if (!currentConsoleServer) return;
+            
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const response = await fetch(
+                    `/api/servers/${encodeURIComponent(currentConsoleServer)}/console?lines=200`,
+                    { headers: { 'Authorization': `Bearer ${token}` } }
+                );
+
+                if (!response.ok) return;
+
+                const data = await response.json();
+                const output = document.getElementById('consoleOutput');
+                
+                if (data.output && data.output.length > 0) {
+                    output.innerHTML = data.output.map(line => {
+                        const escaped = escapeHtml(line);
+                        if (line.match(/error|exception|failed/i)) return `<div style="color: #f87171;">${escaped}</div>`;
+                        if (line.match(/warn|warning/i)) return `<div style="color: #fbbf24;">${escaped}</div>`;
+                        if (line.match(/info|started|loaded/i)) return `<div style="color: #58a6ff;">${escaped}</div>`;
+                        return `<div>${escaped}</div>`;
+                    }).join('');
+                    output.scrollTop = output.scrollHeight;
+                } else {
+                    output.textContent = 'No console output available.';
+                }
+            } catch (e) {
+                console.error('Console error:', e);
+            }
+        }
+
+        async function sendCommand() {
+            if (!currentConsoleServer) return;
+            
+            const input = document.getElementById('consoleInput');
+            const command = input.value.trim();
+            if (!command) return;
+            
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const response = await fetch(
+                    `/api/servers/${encodeURIComponent(currentConsoleServer)}/console`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ command })
+                    }
+                );
+
+                if (response.ok) {
+                    input.value = '';
+                    const output = document.getElementById('consoleOutput');
+                    output.innerHTML += `<div style="color: #667eea;">&gt; ${escapeHtml(command)}</div>`;
+                    output.scrollTop = output.scrollHeight;
+                } else {
+                    showNotification('Failed to send command', 'error');
+                }
+            } catch {
+                showNotification('Failed to send command', 'error');
+            }
+        }
+
+        // Logout
+        function logout() {
+            sessionStorage.clear();
+            window.location.href = 'login.html';
+        }
+
+        // Modal close on outside click
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.classList.remove('show');
+                }
+            });
+        });
+
+        // Init
+        async function init() {
+            const token = sessionStorage.getItem('auth_token');
+            if (!token) {
+                window.location.replace('login.html');
+                return;
+            }
+
+            const isAuthenticated = await checkAuth();
+            if (!isAuthenticated) {
+                sessionStorage.clear();
+                window.location.replace('login.html');
+                return;
+            }
+
+            // Apply saved theme immediately
+            applyTheme(currentTheme);
+
+            // Show admin links if admin
+            const isAdmin = sessionStorage.getItem('isAdmin') === 'true';
+            if (isAdmin) {
+                document.getElementById('adminLink').classList.remove('hidden');
+                document.getElementById('clusterLink').classList.remove('hidden');
+            }
+
+            await loadProfile();
+            await refreshServers();
+            
+            // Auto-refresh servers
+            setInterval(refreshServers, 15000);
+        }
+
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initDashboard);
+            document.addEventListener('DOMContentLoaded', init);
         } else {
-            initDashboard();
+            init();
         }
     </script>
-
-    <template id="serverItemTemplate">
-        <div class="server-item">
-            <div class="server-info">
-                <input type="checkbox" class="server-select">
-                <span class="server-name"></span>
-                <span class="server-status"></span>
-                <div class="server-metrics">
-                    <span class="cpu-usage"></span>
-                    <span class="memory-usage"></span>
-                    <span class="disk-usage"></span>
-                    <span class="network-usage"></span>
-                </div>
-            </div>
-            <div class="server-controls">
-                <button class="btn start-btn" title="Start Server">Start</button>
-                <button class="btn stop-btn" title="Stop Server">Stop</button>
-                <button class="btn restart-btn" title="Restart Server">Restart</button>
-                <button class="btn suspend-btn" title="Suspend Server">Suspend</button>
-                <button class="btn resume-btn" title="Resume Server">Resume</button>
-                <button class="btn console-btn" title="Open Console">Console</button>
-                <button class="btn settings-btn" title="Server Settings">Settings</button>
-            </div>
-        </div>
-    </template>
 </body>
 </html>

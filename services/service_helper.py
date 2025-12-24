@@ -1,29 +1,31 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Windows service helper
+# - Install/uninstall SM as a service
+
 import os
 import sys
 import subprocess
 import argparse
 import winreg
 
-# Add project root to sys.path for module resolution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 
-# Import centralized registry constants
 from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
 
 def get_server_manager_dir():
-    # Get Server Manager directory from registry
+    # SM directory from registry
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         server_manager_dir = winreg.QueryValueEx(key, "ServerManagerPath")[0]
         winreg.CloseKey(key)
         return server_manager_dir
     except Exception as e:
-        print(f"Error reading registry: {e}")
+        print(f"Registry read error: {e}")
         return None
 
 def check_admin():
-    # Check if script is running with admin privileges
+    # Admin privileges check
     try:
         import ctypes
         return ctypes.windll.shell32.IsUserAnAdmin() != 0
@@ -31,7 +33,7 @@ def check_admin():
         return False
 
 def run_as_admin():
-    # Re-run script with admin privileges
+    # Elevate to admin
     try:
         import ctypes
         ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
@@ -40,7 +42,7 @@ def run_as_admin():
         return False
 
 def install_service():
-    # Install the Server Manager service
+    # Install SM Windows service
     if not check_admin():
         print("Admin privileges required for service installation.")
         if input("Restart with admin privileges? (y/n): ").lower() == 'y':
@@ -49,7 +51,7 @@ def install_service():
     
     server_manager_dir = get_server_manager_dir()
     if not server_manager_dir:
-        print("Server Manager installation not found in registry.")
+        print("SM installation not found in registry.")
         return False
     
     service_wrapper_path = os.path.join(server_manager_dir, "Modules", "service_wrapper.py")
@@ -65,14 +67,12 @@ def install_service():
         subprocess.run([sys.executable, "-m", "pip", "install", "pywin32"], 
                       check=True, capture_output=True)
         
-        # Install the service
         result = subprocess.run([sys.executable, service_wrapper_path, "install"], 
                                capture_output=True, text=True)
         
         if result.returncode == 0:
             print("Service installed successfully!")
             
-            # Start the service
             print("Starting service...")
             start_result = subprocess.run([sys.executable, service_wrapper_path, "start"], 
                                         capture_output=True, text=True)
