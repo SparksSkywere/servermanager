@@ -1,5 +1,4 @@
 # Security operations
-# - Auth, encryption, privilege checks
 import os
 import sys
 import json

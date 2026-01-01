@@ -1,5 +1,4 @@
 # Cluster database
-# - Manages cluster/node state in SQLite
 import sqlite3
 import os
 import sys
@@ -95,11 +94,11 @@ class ClusterDatabase:
         else:
             self.db_path = db_path
             
-        logger.info(f"ClusterDatabase initialized with path: {self.db_path}")
+        logger.info(f"ClusterDatabase initialised with path: {self.db_path}")
         self.init_database()
     
     def init_database(self):
-        # Initialize comprehensive cluster database schema with all required tables
+        # Initialise comprehensive cluster database schema with all required tables
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -248,13 +247,13 @@ class ClusterDatabase:
                 ''')
                 
                 conn.commit()
-                logger.info(f"Cluster database initialized at: {self.db_path}")
+                logger.info(f"Cluster database initialised at: {self.db_path}")
                 
                 # Run migrations for existing databases
                 self._run_migrations(conn)
                 
         except Exception as e:
-            logger.error(f"Failed to initialize cluster database: {e}")
+            logger.error(f"Failed to initialise cluster database: {e}")
             raise
     
     def _run_migrations(self, conn):
@@ -839,7 +838,7 @@ class ClusterDatabase:
                     conn.commit()
                     return True
                 else:
-                    # Initialize status record if none exists
+                    # Initialise status record if none exists
                     self.update_host_status()
                     return True
                 

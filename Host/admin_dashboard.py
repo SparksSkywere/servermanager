@@ -1,18 +1,22 @@
 # Admin dashboard
-# - User management, 2FA setup, role assignment
 import os
 import sys
 import tkinter as tk
 from tkinter import ttk
 from datetime import datetime
+from typing import Any
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from tkinter import messagebox, simpledialog
 from Modules.user_management import UserManager
 from Modules.Database.user_database import get_user_engine, ensure_root_admin
 
+# Module-level placeholder for type checker
+pyotp: Any = None
+
 try:
-    import pyotp
+    import pyotp as _pyotp
+    pyotp = _pyotp
     PYOTP_AVAILABLE = True
 except ImportError:
     PYOTP_AVAILABLE = False
@@ -31,7 +35,7 @@ def handle_2fa_login_admin(user_manager, username, parent_window=None):
         twofa_dialog.grab_set()
         twofa_dialog.configure(bg='white')
         
-        # Center the dialog
+        # Centre the dialog
         twofa_dialog.update_idletasks()
         x = (twofa_dialog.winfo_screenwidth() // 2) - (190)
         y = (twofa_dialog.winfo_screenheight() // 2) - (100)
@@ -136,7 +140,7 @@ def admin_login(user_manager):
         login_dialog.grab_set()
         login_dialog.configure(bg='white')
         
-        # Center the dialog
+        # Centre the dialog
         login_dialog.update_idletasks()
         x = (login_dialog.winfo_screenwidth() // 2) - (200)
         y = (login_dialog.winfo_screenheight() // 2) - (150)
@@ -321,7 +325,7 @@ def admin_login_with_root(login_root, user_manager):
         login_dialog.grab_set()
         login_dialog.configure(bg='white')
         
-        # Center the dialog
+        # Centre the dialog
         login_dialog.update_idletasks()
         x = (login_dialog.winfo_screenwidth() // 2) - (200)
         y = (login_dialog.winfo_screenheight() // 2) - (150)
@@ -490,7 +494,7 @@ def admin_login_with_root(login_root, user_manager):
 
 def main():
     try:
-        # Initialize database and user manager
+        # Initialise database and user manager
         engine = get_user_engine()
         ensure_root_admin(engine)
         um = UserManager(engine)
@@ -505,8 +509,8 @@ def main():
         app = AdminDashboard(um, authenticated_user)
         app.mainloop()
     except Exception as e:
-        print(f"Error initializing admin dashboard: {e}", file=sys.stderr)
-        messagebox.showerror("Initialization Error", f"Failed to start admin dashboard:\n{str(e)}")
+        print(f"Error initialising admin dashboard: {e}", file=sys.stderr)
+        messagebox.showerror("Initialisation Error", f"Failed to start admin dashboard:\n{str(e)}")
         sys.exit(1)
 
 class AdminDashboard(tk.Tk):
@@ -1460,7 +1464,7 @@ class AdminDashboard(tk.Tk):
             ttk.Button(btn_frame, text="Save Settings", command=save_settings).pack(side=tk.RIGHT, padx=(5, 0))
             ttk.Button(btn_frame, text="Close", command=settings_window.destroy).pack(side=tk.RIGHT)
 
-            # Initialize SMTP fields based on provider
+            # Initialise SMTP fields based on provider
             self._update_smtp_fields(provider_var.get(), entries)
 
         except Exception as e:
@@ -1597,7 +1601,7 @@ class AdminDashboard(tk.Tk):
             qr_dialog.resizable(True, True)
             qr_dialog.grab_set()
             
-            # Center the dialog
+            # Centre the dialog
             qr_dialog.update_idletasks()
             x = (qr_dialog.winfo_screenwidth() // 2) - (250)
             y = (qr_dialog.winfo_screenheight() // 2) - (200)

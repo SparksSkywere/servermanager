@@ -1,5 +1,4 @@
 # Cluster agent management
-# - Node discovery, health checks, cluster ops
 import os
 import sys
 import requests

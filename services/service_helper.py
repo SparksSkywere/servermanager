@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Windows service helper
-# - Install/uninstall SM as a service
-
 import os
 import sys
 import subprocess
@@ -199,6 +197,7 @@ def main():
     print("Server Manager Service Helper")
     print("=" * 40)
     
+    success = False
     if args.action == 'install':
         success = install_service()
     elif args.action == 'uninstall':

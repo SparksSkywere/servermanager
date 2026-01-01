@@ -1,6 +1,4 @@
 # Timer management
-# - Dashboard update timers
-# - CPU monitoring thread
 import os
 import json
 import datetime

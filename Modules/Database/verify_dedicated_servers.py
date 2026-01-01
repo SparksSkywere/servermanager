@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-# Steam dedicated server verifier
-# - Validates DB entries against Steam API
-# - Removes invalid entries
-
 import os
 import sys
 import logging
@@ -39,30 +35,30 @@ except Exception:
 
 # DB models
 if SQLALCHEMY_AVAILABLE:
-    Base = declarative_base()
+    Base = declarative_base()  # type: ignore[possibly-unbound]
     
-    class SteamApp(Base):
+    class SteamApp(Base):  # type: ignore[valid-type, misc]
         __tablename__ = 'steam_apps'
         
-        appid = Column(Integer, primary_key=True)
-        name = Column(String(255), nullable=False)
-        type = Column(String(50))
-        is_server = Column(Boolean, default=False)
-        is_dedicated_server = Column(Boolean, default=False)
-        requires_subscription = Column(Boolean, default=False)  # Paid subscription
-        anonymous_install = Column(Boolean, default=True)  # Anon install
-        publisher = Column(String(255))
-        release_date = Column(String(50))
-        description = Column(Text)
-        tags = Column(Text)
-        price = Column(String(20))
-        platforms = Column(String(100))
-        last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-        source = Column(String(50), default='steamdb')
+        appid = Column(Integer, primary_key=True)  # type: ignore[possibly-unbound]
+        name = Column(String(255), nullable=False)  # type: ignore[possibly-unbound]
+        type = Column(String(50))  # type: ignore[possibly-unbound]
+        is_server = Column(Boolean, default=False)  # type: ignore[possibly-unbound]
+        is_dedicated_server = Column(Boolean, default=False)  # type: ignore[possibly-unbound]
+        requires_subscription = Column(Boolean, default=False)  # type: ignore[possibly-unbound]
+        anonymous_install = Column(Boolean, default=True)  # type: ignore[possibly-unbound]
+        publisher = Column(String(255))  # type: ignore[possibly-unbound]
+        release_date = Column(String(50))  # type: ignore[possibly-unbound]
+        description = Column(Text)  # type: ignore[possibly-unbound]
+        tags = Column(Text)  # type: ignore[possibly-unbound]
+        price = Column(String(20))  # type: ignore[possibly-unbound]
+        platforms = Column(String(100))  # type: ignore[possibly-unbound]
+        last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))  # type: ignore[possibly-unbound]
+        source = Column(String(50), default='steamdb')  # type: ignore[possibly-unbound]
 
 class DedicatedServerVerifier:
     def __init__(self, use_database=True, dry_run=False):
-        # Initialize the verifier with database and dry-run options
+        # Initialise the verifier with database and dry-run options
         # Args: use_database: Whether to use the main database or SQLite fallback
         #       dry_run: If True, only report what would be changed without making changes
         self.use_database = use_database and SQLALCHEMY_AVAILABLE
@@ -103,17 +99,17 @@ class DedicatedServerVerifier:
         
         self.invalid_types = ['dlc', 'music', 'video', 'demo', 'advertising']
         
-        # Initialize database connection
+        # Initialise database connection
         if self.use_database:
             self.init_database()
         else:
             self.init_sqlite_fallback()
     
     def init_database(self):
-        # Initialize SQLAlchemy database connection with Steam database engine
+        # Initialise SQLAlchemy database connection with Steam database engine
         try:
-            self.engine = get_steam_engine()
-            Session = sessionmaker(bind=self.engine)
+            self.engine = get_steam_engine()  # type: ignore[possibly-unbound]
+            Session = sessionmaker(bind=self.engine)  # type: ignore[possibly-unbound]
             self.db_session = Session()
             logger.info("Connected to main database")
         except Exception as e:
@@ -123,15 +119,15 @@ class DedicatedServerVerifier:
             self.init_sqlite_fallback()
     
     def init_sqlite_fallback(self):
-        # Initialize SQLite fallback database using centralized db directory
+        # Initialise SQLite fallback database using centralised db directory
         try:
-            # Use centralized db directory
+            # Use centralised db directory
             db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
             db_path = os.path.join(db_dir, 'steam_ID.db')
             self.sqlite_conn = sqlite3.connect(db_path)
             logger.info(f"Connected to SQLite database: {db_path}")
         except Exception as e:
-            logger.error(f"Failed to initialize SQLite database: {e}")
+            logger.error(f"Failed to initialise SQLite database: {e}")
             raise
     
     def rate_limit(self):

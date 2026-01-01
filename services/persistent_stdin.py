@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 # pyright: reportArgumentType=false
 # Persistent stdin pipe for server processes
-# - Named pipe for stdin access
-
 import os
 import sys
 import time
@@ -10,17 +8,28 @@ import json
 import threading
 import logging
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any
 
-# Windows named pipe support
+# Windows named pipe support - declare module-level placeholders for type checking
+win32pipe: Any = None
+win32file: Any = None
+win32security: Any = None
+pywintypes: Any = None
+msvcrt: Any = None
+
 _AVAILABLE = False
 if sys.platform == 'win32':
     try:
-        import win32pipe
-        import win32file
-        import win32security
-        import pywintypes
-        import msvcrt
+        import win32pipe as _win32pipe
+        import win32file as _win32file
+        import win32security as _win32security
+        import pywintypes as _pywintypes
+        import msvcrt as _msvcrt
+        win32pipe = _win32pipe
+        win32file = _win32file
+        win32security = _win32security
+        pywintypes = _pywintypes
+        msvcrt = _msvcrt
         _AVAILABLE = True
     except ImportError:
         pass
@@ -126,7 +135,7 @@ class PersistentStdinPipe:
             return None
     
     def cleanup(self):
-        """Clean up pipe handles."""
+        # Clean up pipe handles
         try:
             if self.pipe_handle:
                 win32file.CloseHandle(self.pipe_handle)
@@ -143,17 +152,9 @@ class PersistentStdinPipe:
 
 
 def send_command_to_stdin_pipe(server_name: str, command: str, timeout: float = 5.0) -> Tuple[bool, str]:
-    """
-    Send a command to a server via its persistent stdin pipe.
-    
-    Args:
-        server_name: The name of the server
-        command: The command to send
-        timeout: Timeout in seconds
-        
-    Returns:
-        Tuple of (success, message)
-    """
+    # Send a command to a server via its persistent stdin pipe
+    # Args: server_name - The name of the server, command - The command to send, timeout - Timeout in seconds
+    # Returns: Tuple of (success, message)
     if not _AVAILABLE:
         return False, "Named pipes not available"
     
@@ -197,7 +198,7 @@ def send_command_to_stdin_pipe(server_name: str, command: str, timeout: float = 
 
 
 def is_stdin_pipe_available(server_name: str) -> bool:
-    """Check if a stdin pipe is available for the server."""
+    # Check if a stdin pipe is available for the server
     info_file = get_stdin_info_file(server_name)
     if not info_file.exists():
         return False

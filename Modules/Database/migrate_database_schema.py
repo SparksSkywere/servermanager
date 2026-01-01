@@ -1,21 +1,30 @@
 #!/usr/bin/env python3
 # Database migration
-# - Schema updates and migrations
 import os
 import sys
 import logging
 import argparse
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# SQLAlchemy imports - these may not be available on all systems
+SQLALCHEMY_AVAILABLE = False
+get_engine = None
+Base = None
+
 try:
-    from Modules.Database.SQL_Connection import get_engine
+    from Modules.Database.SQL_Connection import get_engine as _get_engine
     from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, text
     from sqlalchemy.orm import declarative_base, sessionmaker
     SQLALCHEMY_AVAILABLE = True
+    get_engine = _get_engine
 except ImportError:
-    SQLALCHEMY_AVAILABLE = False
+    # Provide stub values for type checking when SQLAlchemy is not available
+    text = lambda x: x  # type: ignore[assignment, misc]
+    sessionmaker = None  # type: ignore[assignment]
+    declarative_base = None  # type: ignore[assignment]
     print("Warning: SQLAlchemy not available, SQLite only")
 
 import sqlite3
@@ -28,27 +37,28 @@ logging.basicConfig(
 logger = logging.getLogger("DatabaseMigration")
 
 # SQLAlchemy models with subscription tracking
+# Note: These imports are conditionally available - the model is only defined when SQLAlchemy is installed
 if SQLALCHEMY_AVAILABLE:
-    Base = declarative_base()
+    Base = declarative_base()  # type: ignore[possibly-unbound]
     
-    class SteamApp(Base):
+    class SteamApp(Base):  # type: ignore[valid-type, misc]
         __tablename__ = 'steam_apps'
         
-        appid = Column(Integer, primary_key=True)
-        name = Column(String(255), nullable=False)
-        type = Column(String(50))
-        is_server = Column(Boolean, default=False)
-        is_dedicated_server = Column(Boolean, default=False)
-        requires_subscription = Column(Boolean, default=False)
-        anonymous_install = Column(Boolean, default=True)
-        publisher = Column(String(255))
-        release_date = Column(String(50))
-        description = Column(Text)
-        tags = Column(Text)
-        price = Column(String(20))
-        platforms = Column(String(100))
-        last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-        source = Column(String(50), default='steamdb')
+        appid = Column(Integer, primary_key=True)  # type: ignore[possibly-unbound]
+        name = Column(String(255), nullable=False)  # type: ignore[possibly-unbound]
+        type = Column(String(50))  # type: ignore[possibly-unbound]
+        is_server = Column(Boolean, default=False)  # type: ignore[possibly-unbound]
+        is_dedicated_server = Column(Boolean, default=False)  # type: ignore[possibly-unbound]
+        requires_subscription = Column(Boolean, default=False)  # type: ignore[possibly-unbound]
+        anonymous_install = Column(Boolean, default=True)  # type: ignore[possibly-unbound]
+        publisher = Column(String(255))  # type: ignore[possibly-unbound]
+        release_date = Column(String(50))  # type: ignore[possibly-unbound]
+        description = Column(Text)  # type: ignore[possibly-unbound]
+        tags = Column(Text)  # type: ignore[possibly-unbound]
+        price = Column(String(20))  # type: ignore[possibly-unbound]
+        platforms = Column(String(100))  # type: ignore[possibly-unbound]
+        last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))  # type: ignore[possibly-unbound]
+        source = Column(String(50), default='steamdb')  # type: ignore[possibly-unbound]
 
 class DatabaseMigrator:
     # - Migrates DB schema
@@ -65,8 +75,8 @@ class DatabaseMigrator:
     def init_database(self):
         # SQLAlchemy connection
         try:
-            self.engine = get_engine()
-            Session = sessionmaker(bind=self.engine)
+            self.engine = get_engine()  # type: ignore[misc]
+            Session = sessionmaker(bind=self.engine)  # type: ignore[possibly-unbound]
             self.db_session = Session()
             logger.info("Connected to main database")
         except Exception as e:
@@ -76,9 +86,9 @@ class DatabaseMigrator:
             self.init_sqlite_fallback()
     
     def init_sqlite_fallback(self):
-        # Initialize SQLite fallback database
+        # Initialise SQLite fallback database
         try:
-            # Use centralized db directory
+            # Use centralised db directory
             db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
             db_path = os.path.join(db_dir, 'steam_ID.db')
             
@@ -89,7 +99,7 @@ class DatabaseMigrator:
             self.sqlite_conn = sqlite3.connect(db_path)
             logger.info(f"Connected to SQLite database: {db_path}")
         except Exception as e:
-            logger.error(f"Failed to initialize SQLite database: {e}")
+            logger.error(f"Failed to initialise SQLite database: {e}")
             raise
     
     def check_current_schema(self):
@@ -242,7 +252,7 @@ class DatabaseMigrator:
                 # Update well-known free servers
                 for appid in free_anonymous_servers:
                     with self.engine.begin() as conn:
-                        result = conn.execute(text("""
+                        result = conn.execute(text("""  # type: ignore[possibly-unbound]
                             UPDATE steam_apps 
                             SET requires_subscription = FALSE, anonymous_install = TRUE
                             WHERE appid = :appid AND is_dedicated_server = TRUE
@@ -254,7 +264,7 @@ class DatabaseMigrator:
                 
                 # Mark servers with non-free pricing as requiring subscription
                 with self.engine.begin() as conn:
-                    result = conn.execute(text("""
+                    result = conn.execute(text("""  # type: ignore[possibly-unbound]
                         UPDATE steam_apps 
                         SET requires_subscription = TRUE, anonymous_install = FALSE
                         WHERE is_dedicated_server = TRUE 

@@ -1,5 +1,4 @@
 # Authentication module
-# - SQL and Windows auth support
 import os
 import sys
 import logging
@@ -62,6 +61,7 @@ def get_user_manager():
     global _user_manager
     if _user_manager is None and SQL_AVAILABLE:
         try:
+            from Modules.Database.SQL_Connection import initialise_user_manager
             engine, user_manager = initialise_user_manager()
             _user_manager = user_manager
             logger.info("SQL UserManager initialised")
@@ -137,11 +137,14 @@ def authenticate_windows_user(username, password):
         return False
     
     try:
+        # Import Windows modules (only reached if WINDOWS_AUTH_AVAILABLE is True)
+        import win32security
+        import win32con
+        
         # Authenticate against local machine using Windows API
         domain = "."  # Local machine
         
         # Use LogonUser API to validate credentials securely
-        import win32con
         hToken = win32security.LogonUser(
             username,
             domain,
@@ -198,6 +201,9 @@ def is_windows_admin(username):
         return False
     
     try:
+        # Import Windows module (only reached if WINDOWS_AUTH_AVAILABLE is True)
+        import win32net
+        
         # Try primary method - get user's group memberships
         try:
             import socket

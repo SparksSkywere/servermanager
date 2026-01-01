@@ -1,6 +1,4 @@
 # SQL connection interface
-# - Unified access to user/Steam DBs
-# - Backward compat for legacy code
 import os
 import sys
 

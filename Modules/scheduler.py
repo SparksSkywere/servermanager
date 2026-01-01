@@ -1,5 +1,4 @@
 # Task scheduling
-# - Update checks, timers, database sync
 # -*- coding: utf-8 -*-
 import os
 import sys

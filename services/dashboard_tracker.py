@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 # Dashboard tracker
-# - Tracks running dashboards and servers
-# - Auto-refresh thread for status updates
 import os
 import sys
 import json
@@ -10,13 +8,9 @@ import threading
 import psutil
 import logging
 from pathlib import Path
-
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from Modules.common import setup_module_logging
-
 logger = setup_module_logging("DashboardTracker")
-
 
 class DashboardTracker:
     # - Scans for running dashboard/server processes

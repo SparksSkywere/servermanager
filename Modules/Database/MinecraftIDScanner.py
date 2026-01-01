@@ -1,5 +1,4 @@
 # Minecraft server scanner
-# - Scans for MC versions and modloaders, stores in DB
 import os
 import sys
 import logging
@@ -34,25 +33,25 @@ if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
 
 # DB models
 if SQLALCHEMY_AVAILABLE:
-    Base = declarative_base()
+    Base = declarative_base()  # type: ignore[possibly-unbound]
 
-    class MinecraftServer(Base):
+    class MinecraftServer(Base):  # type: ignore[valid-type, misc]
         __tablename__ = 'minecraft_servers'
 
-        id = Column(Integer, primary_key=True, autoincrement=True)
-        version_id = Column(String(50), nullable=False, unique=True)
-        version_type = Column(String(20))  # release/snapshot
-        modloader = Column(String(20))  # vanilla/fabric/forge/neoforge/spigot/paper/bukkit
-        modloader_version = Column(String(50))
-        java_requirement = Column(Integer)  # Min Java version
-        download_url = Column(Text)
-        installer_url = Column(Text)
-        release_date = Column(String(50))
-        description = Column(Text)
-        is_dedicated_server = Column(Boolean, default=True)
-        is_recommended = Column(Boolean, default=False)
-        last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-        source = Column(String(50), default='mojang')
+        id = Column(Integer, primary_key=True, autoincrement=True)  # type: ignore[possibly-unbound]
+        version_id = Column(String(50), nullable=False, unique=True)  # type: ignore[possibly-unbound]
+        version_type = Column(String(20))  # type: ignore[possibly-unbound]
+        modloader = Column(String(20))  # type: ignore[possibly-unbound]
+        modloader_version = Column(String(50))  # type: ignore[possibly-unbound]
+        java_requirement = Column(Integer)  # type: ignore[possibly-unbound]
+        download_url = Column(Text)  # type: ignore[possibly-unbound]
+        installer_url = Column(Text)  # type: ignore[possibly-unbound]
+        release_date = Column(String(50))  # type: ignore[possibly-unbound]
+        description = Column(Text)  # type: ignore[possibly-unbound]
+        is_dedicated_server = Column(Boolean, default=True)  # type: ignore[possibly-unbound]
+        is_recommended = Column(Boolean, default=False)  # type: ignore[possibly-unbound]
+        last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))  # type: ignore[possibly-unbound]
+        source = Column(String(50), default='mojang')  # type: ignore[possibly-unbound]
 
 class MinecraftIDScanner:
     def __init__(self, use_database=True, debug_mode=False):
@@ -75,15 +74,15 @@ class MinecraftIDScanner:
         self.rate_limit_backoff = 1.0  # Reduced from 2.0
         self.max_rate_limit_backoff = 10.0  # Reduced from 30.0
 
-        # Initialize database (NO FALLBACKS)
+        # Initialise database (NO FALLBACKS)
         self.init_database()
 
     def init_database(self):
-        # Initialize SQLAlchemy database connection (NO FALLBACKS)
+        # Initialise SQLAlchemy database connection (NO FALLBACKS)
         try:
-            self.engine = get_minecraft_engine()
-            Base.metadata.create_all(self.engine)
-            Session = sessionmaker(bind=self.engine)
+            self.engine = get_minecraft_engine()  # type: ignore[possibly-unbound]
+            Base.metadata.create_all(self.engine)  # type: ignore[possibly-unbound]
+            Session = sessionmaker(bind=self.engine)  # type: ignore[possibly-unbound]
             self.db_session = Session()
             logger.info("Connected to Minecraft servers database")
         except Exception as e:
@@ -697,11 +696,12 @@ class MinecraftIDScanner:
     def get_database_stats(self):
         # Get database statistics
         try:
+            total = 0
+            by_modloader = {}
             if self.use_database:
-                total = self.db_session.query(MinecraftServer).count()
-                by_modloader = {}
+                total = self.db_session.query(MinecraftServer).count()  # type: ignore[possibly-unbound]
                 for modloader in ["vanilla", "fabric", "forge", "neoforge"]:
-                    count = self.db_session.query(MinecraftServer).filter(MinecraftServer.modloader == modloader).count()
+                    count = self.db_session.query(MinecraftServer).filter(MinecraftServer.modloader == modloader).count()  # type: ignore[possibly-unbound]
                     by_modloader[modloader] = count
 
             return {

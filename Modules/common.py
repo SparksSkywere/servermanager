@@ -1,6 +1,4 @@
 # Common utilities for Server Manager
-# - Registry, paths, process management, system bits
-# - Shared across all modules-don't duplicate this rubbish elsewhere
 import os
 import sys
 import json
@@ -112,11 +110,11 @@ def initialise_registry_values(registry_path):
         
         winreg.CloseKey(key)
         
-        logger.info("Registry values initialized successfully")
+        logger.info("Registry values initialised successfully")
         return True, steam_cmd_path, webserver_port, registry_values
         
     except Exception as e:
-        logger.error(f"Failed to initialize registry values: {str(e)}")
+        logger.error(f"Failed to initialise registry values: {str(e)}")
         return False, None, 8080, {}
 
 class ServerManagerPaths:
@@ -170,7 +168,7 @@ class ServerManagerPaths:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to initialize paths from registry: {str(e)}")
+            logger.error(f"Failed to initialise paths from registry: {str(e)}")
             
             # Registry failed-try fallback
             if not self.initialise_fallback():

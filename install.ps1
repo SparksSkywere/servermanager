@@ -115,7 +115,7 @@ function Set-NoConsolePrompts {
     $ProgressPreference = "SilentlyContinue"
     $ErrorActionPreference = "SilentlyContinue"
     
-    # Force all cmdlets to default to non-interactive behavior
+    # Force all cmdlets to default to non-interactive behaviour
     $Global:PSDefaultParameterValues = @{
         '*:Confirm' = $false
         '*:Force' = $true
@@ -1310,9 +1310,9 @@ function Get-FromWebsite {
 
 # --- Main installer script (continued) ---
 
-# Classic Windows XP-style installer colors
+# Classic Windows XP-style installer colours
 $script:ThemeColors = @{
-    # Classic Windows colors
+    # Classic Windows colours
     FormBackground = [System.Drawing.Color]::FromArgb(236, 233, 216)   # Classic dialog background
     HeaderBlue = [System.Drawing.Color]::FromArgb(0, 78, 152)          # Classic blue header
     HeaderLight = [System.Drawing.Color]::FromArgb(90, 135, 190)       # Lighter blue gradient
@@ -1320,8 +1320,8 @@ $script:ThemeColors = @{
     ButtonFace = [System.Drawing.Color]::FromArgb(236, 233, 216)       # Standard button
     TextBlack = [System.Drawing.Color]::Black                          # Primary text
     TextGray = [System.Drawing.Color]::FromArgb(100, 100, 100)         # Secondary text
-    LinkBlue = [System.Drawing.Color]::FromArgb(0, 102, 204)           # Link color
-    BorderGray = [System.Drawing.Color]::FromArgb(172, 168, 153)       # Border color
+    LinkBlue = [System.Drawing.Color]::FromArgb(0, 102, 204)           # Link colour
+    BorderGray = [System.Drawing.Color]::FromArgb(172, 168, 153)       # Border colour
     Success = [System.Drawing.Color]::FromArgb(0, 128, 0)              # Green for success
     Warning = [System.Drawing.Color]::FromArgb(255, 140, 0)            # Orange for warning
     Danger = [System.Drawing.Color]::FromArgb(178, 34, 34)             # Red for errors
@@ -1921,7 +1921,7 @@ Click Finish to close this wizard.
         $form.Close()
     })
 
-    # Initialize first page
+    # Initialise first page
     Show-Page 0
 
     return $form.ShowDialog()
@@ -2222,19 +2222,19 @@ Provide this token to subhost administrators during their installation process.
 
         Update-Progress "Setting up database..."
         try {
-            # Initialize database and store path for potential future use
+            # Initialise database and store path for potential future use
             # DataFolder should be the db directory path
             $dataFolder = Join-Path $ServerManagerDir "db"
             $null = Initialize-SQLDatabase -SQLType $Settings.SQLType -SQLVersion $Settings.SQLVersion -SQLLocation $Settings.SQLLocation -DataFolder $dataFolder
         } catch {
-            if (-not (Show-StepError "Database Setup" "Failed to initialize database: $($_.Exception.Message)`n`nUser authentication may not work properly.")) {
+            if (-not (Show-StepError "Database Setup" "Failed to initialise database: $($_.Exception.Message)`n`nUser authentication may not work properly.")) {
                 throw "Installation cancelled by user after database setup failed"
             }
         }
 
         Update-Progress "Configuring cluster database..."
         try {
-            # Initialize cluster configuration in database
+            # Initialise cluster configuration in database
             $clusterDbPath = "$ServerManagerDir\db\servermanager.db"
             if (Test-Path $clusterDbPath) {
                 $initClusterScript = @"
@@ -2274,7 +2274,7 @@ except Exception as e:
                 $env:PYTHONDONTWRITEBYTECODE = "1"
                 $clusterInitResult = python $tempClusterInitPy 2>&1
                 Remove-Item $tempClusterInitPy -Force -Confirm:$false
-                Write-Log "Cluster database initialization result: $clusterInitResult"
+                Write-Log "Cluster database initialisation result: $clusterInitResult"
                 
                 # Extract cluster secret if generated (for hosts) or use approval token (for subhosts)
                 if ($clusterInitResult -match "CLUSTER_SECRET: (.+)") {
@@ -2287,7 +2287,7 @@ except Exception as e:
                 }
             }
         } catch {
-            Write-Log "Warning: Failed to initialize cluster database configuration: $($_.Exception.Message)"
+            Write-Log "Warning: Failed to initialise cluster database configuration: $($_.Exception.Message)"
         }
 
         Update-Progress "Creating configuration files..."

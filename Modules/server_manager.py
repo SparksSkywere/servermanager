@@ -1,6 +1,4 @@
 # Server management core
-# - Lifecycle, process monitoring, config handling
-# - The heart of the whole operation
 import os
 import sys
 import json
@@ -101,7 +99,7 @@ class ServerManager(ServerManagerModule):
             config_data = db.get_main_config()
             
             # Migrate from JSON if database is empty
-            if not config_data:
+            if not config_data and self.server_manager_dir:
                 # Try to find config.json in the server manager directory
                 config_file = os.path.join(self.server_manager_dir, "config", "config.json")
                 if os.path.exists(config_file):
@@ -135,7 +133,10 @@ class ServerManager(ServerManagerModule):
                 "max_log_size": 10 * 1024 * 1024  # 10 MB
             }
             
-            db.set_main_config(default_config)
+            # Set each config value individually
+            for key, value in default_config.items():
+                config_type = 'integer' if isinstance(value, int) else 'string'
+                db.set_main_config(key, value, config_type)
             self._config_manager.config.update(default_config)
             logger.debug("Default configuration created in database")
             
@@ -249,25 +250,21 @@ class ServerManager(ServerManagerModule):
             logger.error(f"Error reloading server config for {server_name}: {e}")
         return False
             
-    def is_process_running(self, process_id):
+    def is_process_running(self, pid):
         # Check if a process with the given ID is running
         try:
-            if process_id is None:
+            if pid is None:
                 return False
-            return psutil.pid_exists(process_id)
+            return psutil.pid_exists(pid)
         except Exception:
             return False
     
     def is_server_process_valid(self, server_name, process_id, server_config=None):
-        """
-        Validate that a PID actually belongs to the server it's claimed to be.
-        This prevents issues with Windows PID reuse where an old PID might now
-        belong to a completely different process.
-
-        Enhanced with corruption detection and system state validation.
-
-        Returns: (is_valid, process_or_none)
-        """
+        # Validate that a PID actually belongs to the server it's claimed to be
+        # This prevents issues with Windows PID reuse where an old PID might now
+        # belong to a completely different process
+        # Enhanced with corruption detection and system state validation
+        # Returns: (is_valid, process_or_none)
         try:
             if process_id is None:
                 return False, None
@@ -428,7 +425,7 @@ class ServerManager(ServerManagerModule):
             return False, None
     
     def clear_stale_pid(self, server_name, server_config=None):
-        """Clear stale PID from server config if it's no longer valid"""
+        # Clear stale PID from server config if it's no longer valid
         try:
             if server_config is None:
                 server_config = self.get_server_config(server_name)
@@ -457,12 +454,9 @@ class ServerManager(ServerManagerModule):
             return False
 
     def detect_and_recover_system_corruption(self, server_name, server_config=None, callback=None):
-        """
-        Detect and recover from system corruption after BSODs, power failures, or bad starts.
-        Performs comprehensive system state validation and automatic recovery.
-
-        Returns: (recovery_needed, recovery_actions_taken, errors)
-        """
+        # Detect and recover from system corruption after BSODs, power failures, or bad starts
+        # Performs comprehensive system state validation and automatic recovery
+        # Returns: (recovery_needed, recovery_actions_taken, errors)
         recovery_needed = False
         recovery_actions = []
         errors = []
@@ -749,7 +743,7 @@ class ServerManager(ServerManagerModule):
                 
             # Resolve executable path
             exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
-            # Normalize path separators for Windows compatibility
+            # Normalise path separators for Windows compatibility
             exe_full = os.path.normpath(exe_full)
             if not os.path.exists(exe_full):
                 logger.error(f"Executable not found: {exe_full}")
@@ -762,7 +756,7 @@ class ServerManager(ServerManagerModule):
             config_full = None
             if use_config_file and config_file_path:
                 config_full = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
-                # Normalize config file path separators
+                # Normalise config file path separators
                 config_full = os.path.normpath(config_full)
             
             if use_config_file:
@@ -880,7 +874,7 @@ class ServerManager(ServerManagerModule):
             if callback:
                 callback(f"Starting server '{server_name}'...")
             
-            # Initialize log files (console will handle the actual logging)
+            # Initialise log files (console will handle the actual logging)
             with open(stdout_log, 'w') as stdout_file, open(stderr_log, 'w') as stderr_file:
                 start_time = datetime.now()
                 time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1013,7 +1007,7 @@ class ServerManager(ServerManagerModule):
                                 universal_newlines=True,
                                 creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
                             )
-                        time.sleep(1)  # Wait for process to initialize
+                        time.sleep(1)  # Wait for process to initialise
                     except Exception as retry_error:
                         logger.error(f"Failed to retry process creation: {retry_error}")
                         break
@@ -1059,6 +1053,7 @@ class ServerManager(ServerManagerModule):
             # commands to be queued even from other processes
             if _COMMAND_QUEUE_AVAILABLE:
                 try:
+                    from services.command_queue import start_command_relay
                     start_command_relay(server_name, process)
                     logger.debug(f"Started command queue relay for {server_name}")
                 except Exception as e:
@@ -1067,6 +1062,7 @@ class ServerManager(ServerManagerModule):
             # Also start the named pipe stdin relay as a backup method
             if _STDIN_RELAY_AVAILABLE:
                 try:
+                    from services.stdin_relay import start_relay_for_server
                     start_relay_for_server(server_name, process, process.pid)
                     logger.debug(f"Started stdin relay for {server_name}")
                 except Exception as e:
@@ -1359,8 +1355,8 @@ class ServerManager(ServerManagerModule):
             
             # Check if server is running
             is_running = False
-            if 'ProcessId' in server_config:
-                process_id = server_config['ProcessId']
+            process_id = server_config.get('ProcessId')
+            if process_id:
                 is_running = self.is_process_running(process_id)
             
             if callback:
@@ -1898,7 +1894,6 @@ class ServerManager(ServerManagerModule):
                             
                             # Also kill any child processes on Windows
                             try:
-                                import psutil
                                 parent = psutil.Process(process.pid)
                                 children = parent.children(recursive=True)
                                 for child in children:
@@ -1909,7 +1904,7 @@ class ServerManager(ServerManagerModule):
                                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                                         pass
                                 parent.kill()
-                            except (ImportError, psutil.NoSuchProcess, psutil.AccessDenied):
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
                                 # Fallback to Windows taskkill if psutil fails
                                 try:
                                     subprocess.call(['taskkill', '/F', '/T', '/PID', str(process.pid)], 

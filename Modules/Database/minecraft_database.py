@@ -1,11 +1,8 @@
 # Minecraft servers database
-# - SQLAlchemy connections for MC server data
-
 from sqlalchemy import text
-
 from .database_utils import get_sql_config_from_registry as db_get_sql_config, build_db_url, get_engine_by_type
-
 from Modules.common import setup_module_logging, setup_module_path
+
 setup_module_path()
 logger = setup_module_logging("MinecraftDatabase")
 

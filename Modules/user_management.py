@@ -1,6 +1,4 @@
 # User management
-# - Auth, 2FA, database ops
-# - TOTP via pyotp if available
 import os
 import sys
 import logging

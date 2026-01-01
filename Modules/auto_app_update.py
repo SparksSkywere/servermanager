@@ -1,5 +1,4 @@
 # Steam server auto-updater
-# - Check and apply Steam game server updates
 import os
 import sys
 import json
@@ -99,7 +98,7 @@ class AutoUpdater:
             return True
             
         except Exception as e:
-            log_exception(e, "Initialization failed")
+            log_exception(e, "Initialisation failed")
             return False
     
     def get_server_list(self):

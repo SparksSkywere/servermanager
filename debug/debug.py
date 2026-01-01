@@ -198,7 +198,7 @@ class DebugManager:
         # Get status of a specific server
         try:
             if not self.server_manager_dir:
-                return {"error": "Server manager directory not initialized"}
+                return {"error": "Server manager directory not initialised"}
                 
             servers_dir = os.path.join(self.server_manager_dir, "servers")
             
@@ -590,7 +590,7 @@ class DebugManager:
         # Get detailed process information for a specific server
         try:
             if not self.server_manager_dir:
-                return {"error": "Server manager directory not initialized"}
+                return {"error": "Server manager directory not initialised"}
                 
             # Get server config file path
             config_file = os.path.join(self.server_manager_dir, "servers", f"{server_name}.json")

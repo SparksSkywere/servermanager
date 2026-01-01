@@ -1,6 +1,4 @@
 # Server console interface
-# - Real-time output, command input
-# - Named pipes, stdin relay, command queue
 # -*- coding: utf-8 -*-
 # pyright: reportArgumentType=false
 import os
@@ -18,26 +16,41 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import psutil
+from typing import Any, Optional, TYPE_CHECKING
 
-# Windows named pipe support
+# Windows named pipe support - declare module-level placeholders for type checking
+win32pipe: Any = None
+win32file: Any = None
+pywintypes: Any = None
+
 _NAMED_PIPES_AVAILABLE = False
 _WIN32_CONSOLE_AVAILABLE = False
+
+# Windows console API support - declare module-level placeholders
+ctypes: Any = None
+wintypes: Any = None
+kernel32: Any = None
+ATTACH_PARENT_PROCESS = -1
+STD_INPUT_HANDLE = -10
+
 if sys.platform == 'win32':
     try:
-        import win32pipe
-        import win32file
-        import pywintypes
+        import win32pipe as _win32pipe
+        import win32file as _win32file
+        import pywintypes as _pywintypes
+        win32pipe = _win32pipe
+        win32file = _win32file
+        pywintypes = _pywintypes
         _NAMED_PIPES_AVAILABLE = True
     except ImportError:
         pass
     
     # Console API for attached process input
     try:
-        import ctypes
-        from ctypes import wintypes
-        
-        ATTACH_PARENT_PROCESS = -1
-        STD_INPUT_HANDLE = -10
+        import ctypes as _ctypes
+        from ctypes import wintypes as _wintypes
+        ctypes = _ctypes
+        wintypes = _wintypes
         
         kernel32 = ctypes.windll.kernel32
         
@@ -58,18 +71,28 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from Modules.common import setup_module_logging
 
-# Stdin relay for persistent command input
+# Stdin relay for persistent command input - declare placeholder for type checking
+send_command_via_relay: Any = None
 _STDIN_RELAY_AVAILABLE = False
 try:
-    from services.stdin_relay import send_command_via_relay
+    from services.stdin_relay import send_command_via_relay as _send_command_via_relay
+    send_command_via_relay = _send_command_via_relay
     _STDIN_RELAY_AVAILABLE = True
 except ImportError:
     pass
 
-# File-based command queue
+# File-based command queue - declare placeholders for type checking
+queue_command: Any = None
+is_relay_active: Any = None
+start_command_relay: Any = None
 _COMMAND_QUEUE_AVAILABLE = False
 try:
-    from services.command_queue import queue_command, is_relay_active, start_command_relay
+    from services.command_queue import queue_command as _queue_command
+    from services.command_queue import is_relay_active as _is_relay_active
+    from services.command_queue import start_command_relay as _start_command_relay
+    queue_command = _queue_command
+    is_relay_active = _is_relay_active
+    start_command_relay = _start_command_relay
     _COMMAND_QUEUE_AVAILABLE = True
 except ImportError:
     pass
@@ -308,7 +331,7 @@ class RealTimeConsole:
             logger.error(f"Error cleaning up console on stop for {self.server_name}: {e}")
     
     def _start_pipe_server(self):
-        """Start named pipe server for IPC command input (Windows only)"""
+        # Start named pipe server for IPC command input (Windows only)
         if not _NAMED_PIPES_AVAILABLE or not self._pipe_name:
             return False
             
@@ -330,7 +353,7 @@ class RealTimeConsole:
             return False
     
     def _stop_pipe_server(self):
-        """Stop named pipe server"""
+        # Stop named pipe server
         try:
             self._pipe_server_active = False
             if self._pipe_handle:
@@ -344,7 +367,7 @@ class RealTimeConsole:
             logger.debug(f"Error stopping pipe server for {self.server_name}: {e}")
     
     def _pipe_server_loop(self):
-        """Named pipe server loop - listens for commands and forwards to process stdin"""
+        # Named pipe server loop - listens for commands and forwards to process stdin
         if not _NAMED_PIPES_AVAILABLE:
             return
             
@@ -430,7 +453,7 @@ class RealTimeConsole:
                 self._pipe_handle = None
     
     def _send_command_via_pipe(self, command):
-        """Send command to server via named pipe (for reattached consoles)"""
+        # Send command to server via named pipe (for reattached consoles)
         if not _NAMED_PIPES_AVAILABLE or not self._pipe_name:
             return False
             
@@ -470,7 +493,7 @@ class RealTimeConsole:
             return False
     
     def _send_command_via_console_api(self, command):
-        """Send command to reattached process via Windows Console API (AttachConsole)"""
+        # Send command to reattached process via Windows Console API (AttachConsole)
         if not _WIN32_CONSOLE_AVAILABLE:
             return False
         

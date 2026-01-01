@@ -1,5 +1,4 @@
 # Documentation dialogs
-# - Help, about, troubleshooting
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import winreg
@@ -105,7 +104,7 @@ Button Controls:
 • Import Server: Import server from file or directory
 • Export Server: Export selected server configuration
 • Refresh: Update all server statuses and system info
-• Sync All: Synchronize all server configurations
+• Sync All: Synchronise all server configurations
 • Add Agent: Create automated monitoring agents
 
 Context Menu Options:
@@ -336,7 +335,7 @@ def show_about_dialog(parent_window, logger=None):
                   width=15).pack()
         
         # Centre dialog relative to parent
-        center_window(about_dialog, 400, 300, parent_window)
+        centre_window(about_dialog, 400, 300, parent_window)
         
     except Exception as e:
         error_msg = f"Error showing about dialog: {str(e)}"
@@ -366,7 +365,7 @@ def test_documentation():
     ttk.Button(frame, text="Exit", command=root.destroy).pack(pady=10)
     
     # Centre the test window
-    center_window(root, 400, 200)
+    centre_window(root, 400, 200)
     
     root.mainloop()
 

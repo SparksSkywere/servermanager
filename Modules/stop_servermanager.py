@@ -1,6 +1,4 @@
 # Shutdown utility
-# - Stops all SM processes
-# - Cleans up PID files
 import os
 import sys
 import json

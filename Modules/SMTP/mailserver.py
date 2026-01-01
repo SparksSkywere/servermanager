@@ -87,7 +87,7 @@ class MailServer:
     }
 
     def __init__(self, config=None):
-        # Initialize mail server with configuration
+        # Initialise mail server with configuration
         self.config = config or self._load_config()
         self.server = None
         self.connected = False
@@ -243,7 +243,7 @@ class MailServer:
             return False, "OAuth not configured"
 
         try:
-            # Generate authorization URL
+            # Generate authorisation URL
             auth_url = self.msal_app.get_authorization_request_url(
                 scopes=self.MICROSOFT_OAUTH_CONFIG['scope'],
                 redirect_uri=self.MICROSOFT_OAUTH_CONFIG['redirect_uri']

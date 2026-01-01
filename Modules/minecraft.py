@@ -1,5 +1,4 @@
 # Minecraft server management
-# - Java detection, version compatibility, modloader support
 import json
 import os
 import sys
@@ -294,7 +293,7 @@ class MinecraftServerManager:
     # Class to manage Minecraft server operations and installations
     
     def __init__(self, server_manager_dir, config=None):
-        # Initialize the Minecraft server manager
+        # Initialise the Minecraft server manager
         # Args: server_manager_dir (str): Base directory for server manager
         #       config (dict): Configuration dictionary
         self.server_manager_dir = server_manager_dir

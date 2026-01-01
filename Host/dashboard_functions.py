@@ -867,7 +867,6 @@ def update_system_info(metric_labels, system_name, os_info, variables):
 
         # Update network info
         try:
-            import time
             current_time = time.time()
             network_stats = psutil.net_io_counters()
             
@@ -978,12 +977,6 @@ def update_system_info(metric_labels, system_name, os_info, variables):
 
 def collect_system_info_data():
     # Collect system information data in a thread-safe manner (no UI updates)
-    import platform
-    import psutil
-    import subprocess
-    import time
-    from typing import Dict, Any
-    
     global _previous_network_stats, _previous_network_time
     
     logger.debug("[SUBPROCESS_TRACE] collect_system_info_data() called")
@@ -2309,7 +2302,6 @@ def find_appid_in_directory(directory_path):
 def is_process_running(pid):
     # Check if a process with the given PID is running
     try:
-        import psutil
         return psutil.pid_exists(pid)
     except:
         return False
@@ -3177,7 +3169,6 @@ def cleanup_orphaned_process_entries(server_manager, logger):
                     else:
                         # Fallback to basic pid_exists check
                         try:
-                            import psutil
                             if not psutil.pid_exists(pid):
                                 # Process is not running, clean up the entry
                                 logger.debug(f"Cleaning up orphaned PID {pid} for server {server_name}")
@@ -3241,7 +3232,6 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                 pid = server_config.get('ProcessId') or server_config.get('PID')
                 if pid:
                     try:
-                        import psutil
                         if psutil.pid_exists(pid):
                             process = psutil.Process(pid)
                             if process.is_running():
@@ -3315,8 +3305,6 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
         # Third, try improved process discovery - scan all processes
         reattached_by_discovery = 0
         try:
-            import psutil
-            
             # Get all running processes
             all_processes = psutil.process_iter(['pid', 'name', 'exe', 'cmdline', 'cwd'])
             
@@ -3726,8 +3714,8 @@ def _refresh_remote_subhost_async(subhost_name, server_lists, server_manager_dir
             
             # Try to get servers with timeout
             servers = None
+            import requests
             try:
-                import requests
                 response = requests.get(f"http://{node.ip}:8080/api/servers", timeout=5)  # Reduced timeout
                 if response.status_code == 200:
                     servers = response.json().get('servers', [])

@@ -1,6 +1,4 @@
 # Flask web server
-# - REST API for server management
-# - Authentication, rate limiting, the works
 import os
 import sys
 import json
@@ -333,44 +331,47 @@ class ServerManager:
         self.servers_path = servers_path
 
     def get_all_servers(self):
+        # Get all servers as a dict keyed by server name
         try:
-            servers = []
+            servers = {}
             if os.path.exists(self.servers_path):
                 for file in os.listdir(self.servers_path):
                     if file.endswith(".json"):
                         try:
                             with open(os.path.join(self.servers_path, file), 'r') as f:
                                 server_config = json.load(f)
-                            server = {
-                                "id": server_config.get("Name", "unknown"),
-                                "name": server_config.get("Name", "Unknown Server"),
-                                "status": "running" if "ProcessId" in server_config else "stopped",
-                                "type": server_config.get("Type", "other").lower(),
-                                "cpu": 0,
-                                "memory": 0,
-                                "disk": 0
-                            }
-                            if "ProcessId" in server_config and psutil:
-                                try:
-                                    process = psutil.Process(server_config["ProcessId"])
-                                    server["cpu"] = round(process.cpu_percent(interval=0.1), 1)
-                                    server["memory"] = round(process.memory_percent(), 1)
-                                except Exception:
-                                    pass
-                            servers.append(server)
+                            server_name = server_config.get("Name", file[:-5])
+                            servers[server_name] = server_config
                         except Exception as e:
                             logger.error(f"Error reading server config {file}: {e}")
             return servers
         except Exception as e:
             logger.error(f"Error getting servers: {e}")
-            return []
+            return {}
+
+    def get_server_status(self, server_name):
+        # Get the status and PID of a server
+        try:
+            config_file = os.path.join(self.servers_path, f"{server_name}.json")
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    server_config = json.load(f)
+                pid = server_config.get("ProcessId") or server_config.get("PID")
+                if pid and psutil:
+                    try:
+                        if psutil.pid_exists(pid):
+                            return "Running", pid
+                    except Exception:
+                        pass
+                return "Stopped", None
+        except Exception as e:
+            logger.error(f"Error getting server status for {server_name}: {e}")
+        return "Unknown", None
 
     def get_server(self, server_id):
+        # Get a server config by its name/id
         servers = self.get_all_servers()
-        for server in servers:
-            if server["id"] == server_id:
-                return server
-        return None
+        return servers.get(server_id)
 
     def start_server(self, server_id):
         server = self.get_server(server_id)
@@ -481,7 +482,7 @@ class ServerManagerWebServer(ServerManagerModule):
         parser.add_argument('--port', type=int, help='Web server port')
         args = parser.parse_args()
         
-        # Continue initialization with the rest of the setup
+        # Continue initialisation with the rest of the setup
         self._continue_init(args)
 
     def _get_or_create_secret_key(self):
@@ -508,7 +509,7 @@ class ServerManagerWebServer(ServerManagerModule):
         return secret_key.encode()
 
     def _continue_init(self, args):
-        # Continue initialization after parsing args
+        # Continue initialisation after parsing args
         if args.port:
             self._web_port = args.port
 
@@ -648,6 +649,14 @@ class ServerManagerWebServer(ServerManagerModule):
     def web_port(self):
         # Get the web server port
         return self._web_port
+    
+    @web_port.setter
+    def web_port(self, value):
+        # Set the web server port
+        try:
+            self._web_port = int(value) if value else 8080
+        except (ValueError, TypeError):
+            self._web_port = 8080
     
     @property
     def cluster_port(self):
@@ -2034,7 +2043,7 @@ class ServerManagerWebServer(ServerManagerModule):
                     else:
                         logger.debug("SECURITY: Using secure default localhost binding (127.0.0.1)")
                 else:
-                    # Legacy behavior - only bind to all interfaces if explicitly configured as cluster host
+                    # Legacy behaviour - only bind to all interfaces if explicitly configured as cluster host
                     if host_type == "Host" and cluster_enabled:
                         # For cluster hosts, allow external binding but log security warning
                         default_host = "0.0.0.0"

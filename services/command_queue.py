@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 # File-based command queue for server stdin
-# - File-backed queue for sending commands to server
-
 import os
 import sys
 import time
@@ -23,13 +21,11 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
-
 def _get_queue_dir() -> Path:
     # Queue directory path
     queue_dir = Path(__file__).parent.parent / "temp" / "command_queues"
     queue_dir.mkdir(parents=True, exist_ok=True)
     return queue_dir
-
 
 def _sanitise_name(server_name: str) -> str:
     # Filesystem-safe name
@@ -40,20 +36,16 @@ def get_queue_file(server_name: str) -> Path:
     # Queue file path for server
     return _get_queue_dir() / f"{_sanitise_name(server_name)}_commands.txt"
 
-
 def get_relay_info_file(server_name: str) -> Path:
     # Relay info file path
     return _get_queue_dir() / f"{_sanitise_name(server_name)}_relay.json"
-
 
 # Active relay registry
 _active_relays: dict = {}
 _relays_lock = threading.Lock()
 
-
 class CommandQueueRelay:
     # Reads commands from queue file, writes to server stdin
-    
     def __init__(self, server_name: str, stdin_writer: Callable[[str], bool]):
         # server_name: Server name
         # stdin_writer: Func that writes to stdin, returns True on success
@@ -99,7 +91,7 @@ class CommandQueueRelay:
         logger.info(f"Started command queue relay for {self.server_name}")
     
     def stop(self):
-        """Stop the relay thread."""
+        # Stop the relay thread
         self.stop_event.set()
         if self.thread:
             self.thread.join(timeout=2.0)
@@ -113,7 +105,7 @@ class CommandQueueRelay:
         logger.info(f"Stopped command queue relay for {self.server_name}")
     
     def _relay_loop(self):
-        """Main relay loop - polls queue file and sends commands."""
+        # Main relay loop - polls queue file and sends commands
         logger.debug(f"Relay loop started for {self.server_name}")
         
         while not self.stop_event.is_set():
@@ -154,7 +146,7 @@ class CommandQueueRelay:
         logger.debug(f"Relay loop ended for {self.server_name}")
     
     def _read_pending_commands(self) -> List[Tuple[str, str]]:
-        """Read commands from the queue file."""
+        # Read commands from the queue file
         if not self.queue_file.exists():
             return []
         
@@ -175,7 +167,7 @@ class CommandQueueRelay:
             return []
     
     def _clean_queue_file(self):
-        """Remove processed commands from the queue file."""
+        # Remove processed commands from the queue file
         try:
             if not self.queue_file.exists():
                 return
@@ -196,18 +188,10 @@ class CommandQueueRelay:
         except Exception as e:
             logger.debug(f"Error cleaning queue file: {e}")
 
-
 def queue_command(server_name: str, command: str) -> Tuple[bool, str]:
-    """
-    Queue a command for a server. The relay will pick it up and send it.
-    
-    Args:
-        server_name: Name of the server
-        command: Command to send
-        
-    Returns:
-        Tuple of (success, message)
-    """
+    # Queue a command for a server. The relay will pick it up and send it.
+    # Args: server_name - Name of the server, command - Command to send
+    # Returns: Tuple of (success, message)
     queue_file = get_queue_file(server_name)
     
     try:
@@ -227,7 +211,7 @@ def queue_command(server_name: str, command: str) -> Tuple[bool, str]:
 
 
 def is_relay_active(server_name: str) -> bool:
-    """Check if a command relay is active for the server."""
+    # Check if a command relay is active for the server
     info_file = get_relay_info_file(server_name)
     if not info_file.exists():
         return False
@@ -249,24 +233,16 @@ def is_relay_active(server_name: str) -> bool:
         logger.debug(f"Error checking relay status: {e}")
         return False
 
-
 def start_command_relay(server_name: str, process: subprocess.Popen) -> Optional[CommandQueueRelay]:
-    """
-    Start a command queue relay for a server.
-    
-    Args:
-        server_name: Name of the server
-        process: The subprocess.Popen object with stdin
-        
-    Returns:
-        The relay object, or None if failed
-    """
+    # Start a command queue relay for a server
+    # Args: server_name - Name of the server, process - The subprocess.Popen object with stdin
+    # Returns: The relay object, or None if failed
     if not hasattr(process, 'stdin') or process.stdin is None:
         logger.error(f"Process for {server_name} has no stdin")
         return None
     
     def stdin_writer(command: str) -> bool:
-        """Write command to the process stdin."""
+        # Write command to the process stdin
         try:
             if process.stdin and not process.stdin.closed:
                 process.stdin.write(command + '\n')
@@ -285,17 +261,15 @@ def start_command_relay(server_name: str, process: subprocess.Popen) -> Optional
     
     return relay
 
-
 def stop_command_relay(server_name: str):
-    """Stop the command relay for a server."""
+    # Stop the command relay for a server
     with _relays_lock:
         relay = _active_relays.pop(server_name, None)
     
     if relay:
         relay.stop()
 
-
 def get_active_relay(server_name: str) -> Optional[CommandQueueRelay]:
-    """Get the active relay for a server, if any."""
+    # Get the active relay for a server, if any
     with _relays_lock:
         return _active_relays.get(server_name)

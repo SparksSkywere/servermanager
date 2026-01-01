@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # Admin 2FA reset utility
-# - Disables 2FA for admin account
-# - Use with caution!
 import os
 import sys
 

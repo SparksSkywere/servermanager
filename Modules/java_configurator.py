@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # Java config utility for Minecraft
-# - Manage Java installations and server compat
 import os
 import sys
 import json

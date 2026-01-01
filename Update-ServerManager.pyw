@@ -46,7 +46,7 @@ class DatabaseUpdateGUI:
         status_frame = tk.Frame(self.root)
         status_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        self.status_label = tk.Label(status_frame, text="Initializing...", 
+        self.status_label = tk.Label(status_frame, text="Initialising...", 
                                    relief=tk.SUNKEN, anchor=tk.W)
         self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
@@ -189,7 +189,7 @@ class DatabaseUpdateGUI:
                 self.log_message(traceback.format_exc())
                 raise
             
-            # Normalize backend name
+            # Normalise backend name
             if backend.startswith("mssql"):
                 backend = "mssql"
             elif backend.startswith("mysql"):
@@ -199,7 +199,7 @@ class DatabaseUpdateGUI:
             elif backend.startswith("sqlite"):
                 backend = "sqlite"
             
-            self.log_message(f"Normalized backend: {backend}")
+            self.log_message(f"Normalised backend: {backend}")
 
             # Check if users table exists
             self.log_message("Step 4: Getting table names...")

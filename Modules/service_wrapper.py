@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # Windows service wrapper
-# - Install, start, stop, debug
 import os
 import sys
 import time
@@ -76,7 +75,7 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
                 )
                 
                 self.logger = logging.getLogger("ServerManagerService")
-                self.logger.info("Service logging initialized with fallback logger")
+                self.logger.info("Service logging initialised with fallback logger")
                 
             except Exception as e2:
                 # Final fallback logging if registry read fails
@@ -123,7 +122,7 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
     def main_loop(self):
         # Main service loop
         try:
-            # Initialize and start the launcher in service mode
+            # Initialise and start the launcher in service mode
             self.launcher = ServerManagerLauncher()
             self.launcher.is_service = True
             

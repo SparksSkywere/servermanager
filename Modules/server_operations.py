@@ -1,5 +1,4 @@
 # Server operations
-# - Start, stop, restart, status
 import os
 import sys
 import json
@@ -58,7 +57,7 @@ class ServerOperations:
                     logger.error(f"Dir create failed {path_name}: {str(e)}")
                     return False
                 
-            logger.info(f"Server operations initialized from registry")
+            logger.info(f"Server operations initialised from registry")
             return True
             
         except FileNotFoundError:
@@ -68,7 +67,7 @@ class ServerOperations:
             logger.error(f"Registry error: {str(e)}")
             return False
         except Exception as e:
-            logger.error(f"Failed to initialize server operations from registry: {str(e)}")
+            logger.error(f"Failed to initialise server operations from registry: {str(e)}")
             return False
 
 # Create instance

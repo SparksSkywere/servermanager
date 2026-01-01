@@ -1,5 +1,4 @@
 # Network management
-# - IP detection, connectivity checks, firewall bits
 import os
 import sys
 import socket

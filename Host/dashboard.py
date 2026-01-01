@@ -125,7 +125,7 @@ class ServerManagerDashboard(ServerManagerModule):
         # Load Minecraft server info from database
         self.minecraft_servers, self.minecraft_metadata = load_minecraft_scanner_list(self.server_manager_dir)
 
-        # Initialize runtime variables from config
+        # Initialise runtime variables from config
         self.variables = {
             "previousNetworkStats": {},
             "previousNetworkTime": datetime.datetime.now(),
@@ -177,35 +177,35 @@ class ServerManagerDashboard(ServerManagerModule):
             logger.error("Registry init failed")
             sys.exit(1)
         
-        # Initialize user management system
+        # Initialise user management system
         try:
             engine, self.user_manager = initialize_user_manager()
         except Exception as e:
-            logger.error(f"Failed to initialize user management: {e}")
+            logger.error(f"Failed to initialise user management: {e}")
             messagebox.showerror("Database Error", f"Failed to connect to user database:\n{str(e)}")
             sys.exit(1)
             
-        # Initialize server manager
+        # Initialise server manager
         try:
             self.server_manager = ServerManager()
-            logger.debug("Server manager initialized")
+            logger.debug("Server manager initialised")
         except Exception as e:
-            logger.error(f"Failed to initialize server manager: {e}")
+            logger.error(f"Failed to initialise server manager: {e}")
             # Continue without server manager but show warning
             self.server_manager = None
             messagebox.showwarning("Server Manager Warning", 
-                                 f"Server manager failed to initialize:\n{str(e)}\n\n"
+                                 f"Server manager failed to initialise:\n{str(e)}\n\n"
                                  "Some server operations may not be available.")
         
-        # Initialize server console manager
+        # Initialise server console manager
         try:
             self.console_manager = ConsoleManager(self.server_manager)
-            logger.debug("Server console manager initialized")
+            logger.debug("Server console manager initialised")
         except Exception as e:
-            logger.error(f"Failed to initialize server console manager: {e}")
+            logger.error(f"Failed to initialise server console manager: {e}")
             self.console_manager = None
             
-        # Configure dashboard logging after paths are initialized
+        # Configure dashboard logging after paths are initialised
         configure_dashboard_logging(self.debug_mode, self.config)
         
         # Create root window (temporarily hidden for login)
@@ -218,11 +218,11 @@ class ServerManagerDashboard(ServerManagerModule):
         # On Windows, when launched from trayicon (detached process), ensure proper window handling
         if os.name == 'nt' and '--debug' not in sys.argv:
             try:
-                # Force the window to be properly initialized
+                # Force the window to be properly initialised
                 self.root.update_idletasks()
                 # Don't withdraw initially - let the login dialog handle visibility
             except Exception as e:
-                logger.warning(f"Window initialization issue (likely from trayicon launch): {e}")
+                logger.warning(f"Window initialisation issue (likely from trayicon launch): {e}")
                 # Continue anyway
         # Pass our existing root window to avoid multiple Tkinter root windows
         try:            
@@ -289,35 +289,35 @@ class ServerManagerDashboard(ServerManagerModule):
         # Write PID file
         self.write_pid_file("dashboard", os.getpid())
         
-        # Initialize timer manager (now using SchedulerManager)
+        # Initialise timer manager (now using SchedulerManager)
         self.timer_manager = SchedulerManager(self)
         
         # Set agent manager for database syncing
         if hasattr(self, 'agent_manager') and self.agent_manager:
             self.timer_manager.set_agent_manager(self.agent_manager)
         
-        # Initialize server update manager
+        # Initialise server update manager
         try:
             self.update_manager = ServerUpdateManager(self.server_manager_dir, self.config)
             self.update_manager.set_server_manager(self.server_manager)
             self.update_manager.set_steam_cmd_path(self.steam_cmd_path)
             self.timer_manager.set_update_manager(self.update_manager)
-            logger.debug("Server update manager initialized")
+            logger.debug("Server update manager initialised")
         except Exception as e:
-            logger.error(f"Failed to initialize server update manager: {str(e)}")
+            logger.error(f"Failed to initialise server update manager: {str(e)}")
             self.update_manager = None
         
-        # Initialize cluster manager
+        # Initialise cluster manager
         try:
             # Use database-backed cluster management (no longer using JSON)
             agents_config_path = None  # Migration already done
             self.agent_manager = AgentManager(agents_config_path)
-            logger.debug("Cluster manager initialized")
+            logger.debug("Cluster manager initialised")
         except Exception as e:
-            logger.error(f"Failed to initialize cluster manager: {str(e)}")
+            logger.error(f"Failed to initialise cluster manager: {str(e)}")
             self.agent_manager = None
         
-        # Initialize system info and timers - defer UI updates until after mainloop starts
+        # Initialise system info and timers - defer UI updates until after mainloop starts
         # Note: Heavy operations like server list refresh and system info collection are deferred
         self.timer_manager.start_timers()
         
@@ -331,7 +331,7 @@ class ServerManagerDashboard(ServerManagerModule):
             self.supported_server_types = ["Steam", "Minecraft", "Other"]
 
     def _init_dpi_scaling(self):
-        """Initialize DPI scaling factors for proper UI sizing across different displays"""
+        # Initialise DPI scaling factors for proper UI sizing across different displays
         try:
             # Get DPI from the root window
             dpi = self.root.winfo_fpixels('1i')  # Pixels per inch
@@ -342,13 +342,13 @@ class ServerManagerDashboard(ServerManagerModule):
             # Clamp scaling factor to reasonable range (avoid extreme values)
             self.dpi_scale = max(1.0, min(self.dpi_scale, 3.0))
             
-            logger.debug(f"DPI scaling initialized: DPI={dpi}, scale_factor={self.dpi_scale:.2f}")
+            logger.debug(f"DPI scaling initialised: DPI={dpi}, scale_factor={self.dpi_scale:.2f}")
         except Exception as e:
             logger.warning(f"Could not calculate DPI scaling: {e}")
             self.dpi_scale = 1.0
     
     def scale_value(self, value):
-        """Scale a value according to the current DPI scaling factor"""
+        # Scale a value according to the current DPI scaling factor
         return int(value * getattr(self, 'dpi_scale', 1.0))
     
     def _reattach_to_running_servers(self):
@@ -378,19 +378,19 @@ class ServerManagerDashboard(ServerManagerModule):
         # Setup the menu bar first
         self.setup_menu_bar()
         
-        # Create loading overlay that covers the entire window during initialization
+        # Create loading overlay that covers the entire window during initialisation
         self.loading_frame = ttk.Frame(self.root)
         self.loading_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.loading_frame.lift()  # Ensure it's on top
         
-        # Center the loading content
+        # Centre the loading content
         loading_content = ttk.Frame(self.loading_frame)
         loading_content.place(relx=0.5, rely=0.5, anchor="center")
         
         # Loading label with icon
         ttk.Label(loading_content, text="⏳", font=("Segoe UI", 32)).pack(pady=(0, 10))
         ttk.Label(loading_content, text="Loading Dashboard...", font=("Segoe UI", 14, "bold")).pack()
-        self.loading_status_label = ttk.Label(loading_content, text="Initializing...", font=("Segoe UI", 10), foreground="gray")
+        self.loading_status_label = ttk.Label(loading_content, text="Initialising...", font=("Segoe UI", 10), foreground="gray")
         self.loading_status_label.pack(pady=(5, 10))
         
         # Progress bar for visual feedback
@@ -498,7 +498,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_lists = {}
         self.tab_frames = {}
         
-        # Initialize with local host tab
+        # Initialise with local host tab
         self.add_subhost_tab("Local Host", is_local=True)
         
         # Load cluster nodes and create tabs for subhosts
@@ -530,18 +530,18 @@ class ServerManagerDashboard(ServerManagerModule):
         self.server_context_menu.add_command(label="Open Folder Directory", command=self.open_server_directory)
         self.server_context_menu.add_command(label="Remove Server", command=self.remove_server)
         
-        # Collapse toggle frame (vertical bar between panes with centered arrow)
+        # Collapse toggle frame (vertical bar between panes with centred arrow)
         self.system_info_visible = self.variables.get("systemInfoVisible", True)
         self.collapse_frame = ttk.Frame(self.main_pane, width=20)
         self.main_pane.add(self.collapse_frame, weight=0)
         
-        # Configure collapse frame to center the button vertically
+        # Configure collapse frame to centre the button vertically
         self.collapse_frame.columnconfigure(0, weight=1)
         self.collapse_frame.rowconfigure(0, weight=1)
         self.collapse_frame.rowconfigure(1, weight=0)
         self.collapse_frame.rowconfigure(2, weight=1)
         
-        # Collapse/Expand toggle button (centered vertically with horizontal arrows)
+        # Collapse/Expand toggle button (centred vertically with horizontal arrows)
         self.system_toggle_btn = ttk.Button(
             self.collapse_frame,
             text="◀" if self.system_info_visible else "▶",
@@ -634,7 +634,7 @@ class ServerManagerDashboard(ServerManagerModule):
             base_wrap = 150 if metric["name"] == "gpu" else 120
             
             # Scale the wrap width based on screen size ratio and DPI
-            screen_scale = screen_width / 1920.0  # Normalize to 1080p base
+            screen_scale = screen_width / 1920.0  # Normalise to 1080p base
             wrap_width = int(base_wrap * max(0.7, min(1.5, screen_scale)) * self.dpi_scale)
             
             # Use DPI-aware font size
@@ -1252,7 +1252,7 @@ class ServerManagerDashboard(ServerManagerModule):
     def add_server(self):
         # Add a new game server (Steam, Minecraft, or Other)
         if self.server_manager is None:
-            messagebox.showerror("Error", "Server manager not initialized.")
+            messagebox.showerror("Error", "Server manager not initialised.")
             return
             
         # Use the new function to get server type selection
@@ -1409,7 +1409,7 @@ class ServerManagerDashboard(ServerManagerModule):
                 # Bind modloader change event
                 form_vars['modloader'].trace('w', update_version_list)
                 
-                # Initialize with default modloader
+                # Initialise with default modloader
                 update_version_list()
                 
             except Exception as e:
@@ -2094,7 +2094,7 @@ class ServerManagerDashboard(ServerManagerModule):
         server_name = current_list.item(selected_items[0])['values'][0]
         
         if self.server_manager is None:
-            messagebox.showerror("Error", "Server manager not initialized.")
+            messagebox.showerror("Error", "Server manager not initialised.")
             return
         
         def start_in_background():
@@ -2102,7 +2102,7 @@ class ServerManagerDashboard(ServerManagerModule):
                 # Ensure server_manager is not None before using it
                 if self.server_manager is None:
                     def show_error():
-                        messagebox.showerror("Error", "Server manager not initialized.")
+                        messagebox.showerror("Error", "Server manager not initialised.")
                     self.root.after(0, show_error)
                     return
 
@@ -2165,7 +2165,7 @@ class ServerManagerDashboard(ServerManagerModule):
         server_name = current_list.item(selected_items[0])['values'][0]
         
         if self.server_manager is None:
-            messagebox.showerror("Error", "Server manager not initialized.")
+            messagebox.showerror("Error", "Server manager not initialised.")
             return
             
         # Confirm server stop
@@ -2181,7 +2181,7 @@ class ServerManagerDashboard(ServerManagerModule):
                 # Ensure server_manager is not None before using it
                 if self.server_manager is None:
                     def show_error():
-                        messagebox.showerror("Error", "Server manager not initialized.")
+                        messagebox.showerror("Error", "Server manager not initialised.")
                     self.root.after(0, show_error)
                     return
 
@@ -2241,7 +2241,7 @@ class ServerManagerDashboard(ServerManagerModule):
         server_name = current_list.item(selected_items[0])['values'][0]
         
         if self.server_manager is None:
-            messagebox.showerror("Error", "Server manager not initialized.")
+            messagebox.showerror("Error", "Server manager not initialised.")
             return
         
         # Confirm restart
@@ -2257,7 +2257,7 @@ class ServerManagerDashboard(ServerManagerModule):
                 # Ensure server_manager is not None before using it
                 if self.server_manager is None:
                     def show_error():
-                        messagebox.showerror("Error", "Server manager not initialized.")
+                        messagebox.showerror("Error", "Server manager not initialised.")
                     self.root.after(0, show_error)
                     return
 
@@ -2326,7 +2326,7 @@ class ServerManagerDashboard(ServerManagerModule):
             main_frame = ttk.Frame(dialog, padding=10)
             main_frame.pack(fill=tk.BOTH, expand=True)
             
-            # Create notebook for organized tabs
+            # Create notebook for organised tabs
             notebook = ttk.Notebook(main_frame)
             notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
             
@@ -2619,7 +2619,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         current_subhost = self.get_current_subhost()
         
         if self.server_manager is None:
-            messagebox.showerror("Error", "Server manager not initialized.")
+            messagebox.showerror("Error", "Server manager not initialised.")
             return
             
         # Get server configuration from server manager
@@ -2907,7 +2907,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         ttk.Button(identity_frame, text="Test Path", command=test_install_dir_path, width=10).grid(row=3, column=3, padx=5, pady=5)
         
         def update_paths_for_new_install_dir(old_dir, new_dir):
-            """Update relative paths when install directory changes"""
+            # Update relative paths when install directory changes
             try:
                 # Only update if both directories exist and are different
                 if not old_dir or not new_dir or old_dir == new_dir:
@@ -3152,7 +3152,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         # Server Type-Specific Configuration Sections
         server_type = server_config.get('Type', 'Other')
         
-        # Initialize server-type-specific variables
+        # Initialise server-type-specific variables
         java_path_var = ram_var = jvm_args_var = mc_version_var = None
         auto_update_var = validate_files_var = None
         notes_var = None
@@ -4072,7 +4072,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         current_subhost = self.get_current_subhost()
         
         if self.server_manager is None:
-            messagebox.showerror("Error", "Server manager not initialized.")
+            messagebox.showerror("Error", "Server manager not initialised.")
             return
         
         # Remove server directly without confirmation dialog
@@ -4084,7 +4084,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                 )
             else:
                 success = False
-                message = "Server manager not initialized"
+                message = "Server manager not initialised"
 
             if success:
                 # Update server list
@@ -4185,19 +4185,19 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             messagebox.showerror("Error", f"Failed to refresh dashboard: {str(e)}")
 
     def sync_all(self):
-        # Synchronize all server data with the database
+        # Synchronise all server data with the database
         try:
             if self.variables["offlineMode"]:
                 messagebox.showinfo("Offline Mode", "Cannot sync while in offline mode.")
                 return
                 
             if not self.current_user:
-                messagebox.showinfo("Authentication Required", "Please log in to synchronize data.")
+                messagebox.showinfo("Authentication Required", "Please log in to synchronise data.")
                 return
                 
             # Create progress dialog
             progress_dialog = tk.Toplevel(self.root)
-            progress_dialog.title("Synchronizing Data")
+            progress_dialog.title("Synchronising Data")
             progress_dialog.transient(self.root)
             progress_dialog.grab_set()
             
@@ -4248,7 +4248,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                     # Auto-close after 2 seconds
                     progress_dialog.after(2000, progress_dialog.destroy)
                     
-                    logger.info(f"Sync completed. {synced_count} servers synchronized.")
+                    logger.info(f"Sync completed. {synced_count} servers synchronised.")
                     
                 except Exception as e:
                     logger.error(f"Error during sync: {str(e)}")
@@ -4267,13 +4267,13 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             
         except Exception as e:
             logger.error(f"Error in sync all: {str(e)}")
-            messagebox.showerror("Error", f"Failed to synchronize data: {str(e)}")
+            messagebox.showerror("Error", f"Failed to synchronise data: {str(e)}")
 
     def add_agent(self):
         try:
             if self.agent_manager is None:
-                logger.error("Cluster manager not initialized")
-                messagebox.showerror("Error", "Cluster manager not initialized. Cannot access cluster management.")
+                logger.error("Cluster manager not initialised")
+                messagebox.showerror("Error", "Cluster manager not initialised. Cannot access cluster management.")
                 return
 
             # Show the cluster management dialog
@@ -4655,7 +4655,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
                         logger.error(f"Console callback error: {e}, message: {message}")
 
                 if self.update_manager:
-                    # Use scheduled parameter to control dialog behavior in update manager
+                    # Use scheduled parameter to control dialog behaviour in update manager
                     results = self.update_manager.update_all_steam_servers(progress_callback=progress_callback, scheduled=scheduled)
                 else:
                     results = {"error": (False, "Update manager not available")}
@@ -4820,7 +4820,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             # Show confirmation dialog first
             response = messagebox.askyesno(
                 "Update Server Types",
-                "This will analyze all server configurations and update their types based on:\n"
+                "This will analyse all server configurations and update their types based on:\n"
                 "• Steam AppIDs in the database\n"
                 "• Directory contents and files\n"
                 "• Executable paths\n\n"
@@ -4843,7 +4843,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             progress_frame = ttk.Frame(progress_dialog, padding=20)
             progress_frame.pack(fill=tk.BOTH, expand=True)
             
-            status_var = tk.StringVar(value="Analyzing server configurations...")
+            status_var = tk.StringVar(value="Analysing server configurations...")
             status_label = ttk.Label(progress_frame, textvariable=status_var)
             status_label.pack(pady=(0, 10))
             
@@ -5187,7 +5187,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             except Exception as e:
                 logger.debug(f"Error processing category item {category_item}: {e}")
 
-        logger.debug(f"refresh_categories: Found {len(current_servers)} servers to reorganize")
+        logger.debug(f"refresh_categories: Found {len(current_servers)} servers to reorganise")
 
         # Get updated categories from database
         from Host.dashboard_functions import load_categories

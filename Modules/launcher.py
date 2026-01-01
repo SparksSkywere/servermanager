@@ -1,6 +1,4 @@
 # Launcher
-# - Process manager, startup orchestrator
-# - Kicks off webserver, trayicon, dashboard
 import os
 import sys
 import time

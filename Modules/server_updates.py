@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # Server update management
-# - Scheduled updates, restarts
 import os
 import sys
 import json
@@ -73,7 +72,7 @@ class ServerUpdateManager(ServerManagerModule):
             
         except Exception as e:
             logger.error(f"Error loading update config from database: {str(e)}")
-            # Initialize with defaults
+            # Initialise with defaults
             self.update_schedules = {}
             self.restart_schedules = {}
             self.global_schedule = None
@@ -104,6 +103,7 @@ class ServerUpdateManager(ServerManagerModule):
     def check_for_updates(self, server_name: str, app_id: str, credentials: Optional[Dict] = None,
                          progress_callback: Optional[Callable] = None) -> Tuple[bool, str, bool]:
         # Check if a Steam server has updates available
+        process = None
         try:
             if not self.steam_cmd_path:
                 return False, "SteamCMD path not configured", False
@@ -175,7 +175,7 @@ class ServerUpdateManager(ServerManagerModule):
                 return False, error_msg, False
                 
         except subprocess.TimeoutExpired:
-            if 'process' in locals():
+            if process is not None:
                 process.kill()
             return False, "Update check timed out", False
         except Exception as e:

@@ -1,6 +1,4 @@
 # Database utilities
-# - Shared DB functions for user/steam databases
-
 import os
 import sys
 import winreg

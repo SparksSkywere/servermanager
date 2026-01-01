@@ -1,5 +1,4 @@
-# Network security management for Server Manager
-# Provides IP filtering, network access control, and cluster security decorators
+# Network security
 import ipaddress
 import logging
 from datetime import datetime
@@ -135,7 +134,7 @@ def require_cluster_network_security(security_manager):
                 logger.warning(f"Cluster API access denied for IP address: {client_ip} on endpoint: {request.endpoint}")
                 return jsonify({
                     "error": "Cluster access denied", 
-                    "message": "Your IP address is not authorized for cluster communication",
+                    "message": "Your IP address is not authorised for cluster communication",
                     "timestamp": datetime.now().isoformat(),
                     "client_ip": client_ip
                 }), 403

@@ -1,5 +1,4 @@
 # SteamDB AppID Scanner
-# - Scans SteamDB for AppIDs, stores in database
 import os
 import sys
 import logging
@@ -36,26 +35,26 @@ if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
 
 # DB models
 if SQLALCHEMY_AVAILABLE:
-    Base = declarative_base()
+    Base = declarative_base()  # type: ignore[possibly-unbound]
     
-    class SteamApp(Base):
+    class SteamApp(Base):  # type: ignore[valid-type, misc]
         __tablename__ = 'steam_apps'
         
-        appid = Column(Integer, primary_key=True)
-        name = Column(String(255), nullable=False)
-        type = Column(String(50))
-        is_server = Column(Boolean, default=False)
-        is_dedicated_server = Column(Boolean, default=False)
-        requires_subscription = Column(Boolean, default=False)  # Paid subscription required
-        anonymous_install = Column(Boolean, default=True)  # Anon install allowed
-        publisher = Column(String(255))
-        release_date = Column(String(50))
-        description = Column(Text)
-        tags = Column(Text)  # JSON tags
-        price = Column(String(20))
-        platforms = Column(String(100))  # JSON platforms
-        last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-        source = Column(String(50), default='steamdb')
+        appid = Column(Integer, primary_key=True)  # type: ignore[possibly-unbound]
+        name = Column(String(255), nullable=False)  # type: ignore[possibly-unbound]
+        type = Column(String(50))  # type: ignore[possibly-unbound]
+        is_server = Column(Boolean, default=False)  # type: ignore[possibly-unbound]
+        is_dedicated_server = Column(Boolean, default=False)  # type: ignore[possibly-unbound]
+        requires_subscription = Column(Boolean, default=False)  # type: ignore[possibly-unbound]
+        anonymous_install = Column(Boolean, default=True)  # type: ignore[possibly-unbound]
+        publisher = Column(String(255))  # type: ignore[possibly-unbound]
+        release_date = Column(String(50))  # type: ignore[possibly-unbound]
+        description = Column(Text)  # type: ignore[possibly-unbound]
+        tags = Column(Text)  # type: ignore[possibly-unbound]
+        price = Column(String(20))  # type: ignore[possibly-unbound]
+        platforms = Column(String(100))  # type: ignore[possibly-unbound]
+        last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))  # type: ignore[possibly-unbound]
+        source = Column(String(50), default='steamdb')  # type: ignore[possibly-unbound]
 
 class AppIDScanner:
     def __init__(self, use_database=True, debug_mode=False, migrate_json=True):
@@ -87,18 +86,18 @@ class AppIDScanner:
             'server tool', 'server files', 'server software'
         ]
         
-        # Initialize database
+        # Initialise database
         if self.use_database:
             self.init_database()
         else:
             self.init_sqlite_fallback()
     
     def init_database(self):
-        # Initialize SQLAlchemy database connection using Steam database engine
+        # Initialise SQLAlchemy database connection using Steam database engine
         try:
-            self.engine = get_steam_engine()
-            Base.metadata.create_all(self.engine)
-            Session = sessionmaker(bind=self.engine)
+            self.engine = get_steam_engine()  # type: ignore[possibly-unbound]
+            Base.metadata.create_all(self.engine)  # type: ignore[possibly-unbound]
+            Session = sessionmaker(bind=self.engine)  # type: ignore[possibly-unbound]
             self.db_session = Session()
             logger.info("Connected to Steam apps database")
             
@@ -167,9 +166,9 @@ class AppIDScanner:
             logger.warning(f"Database migration failed (this may be normal for new installations): {e}")
     
     def init_sqlite_fallback(self):
-        # Initialize SQLite fallback database
+        # Initialise SQLite fallback database
         try:
-            # Create db directory if it doesn't exist - using centralized db directory
+            # Create db directory if it doesn't exist - using centralised db directory
             db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
             os.makedirs(db_dir, exist_ok=True)
             
@@ -200,7 +199,7 @@ class AppIDScanner:
             # Run database migration if needed
             self.migrate_database_schema()
         except Exception as e:
-            logger.error(f"Failed to initialize SQLite database: {e}")
+            logger.error(f"Failed to initialise SQLite database: {e}")
             raise
     
     def migrate_json_to_database(self):

@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # Admin password reset utility
-# - Resets admin password to default
-# - Use with caution!
 import os
 import sys
 import hashlib

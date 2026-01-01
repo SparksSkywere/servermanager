@@ -1,6 +1,4 @@
 # System tray icon
-# - Web interface, dashboard, admin controls
-# - Right-click menu for quick actions
 import os
 import sys
 import subprocess
@@ -525,7 +523,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
                 self.icon.notify(f"Failed to open web interface: {str(e)}", "Server Manager Error")
 
     def open_dashboard(self):
-        """Open the Python dashboard - runs in background thread to avoid blocking trayicon"""
+        # Open the Python dashboard - runs in background thread to avoid blocking trayicon
         try:
             logger.debug("open_dashboard() called")
             # Run the actual launch in a background thread to prevent trayicon from freezing
@@ -536,7 +534,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
             logger.error(traceback.format_exc())
     
     def _open_dashboard_async(self):
-        """Async implementation of dashboard launch - runs in background thread"""
+        # Async implementation of dashboard launch - runs in background thread
         try:
             logger.debug("Starting dashboard launch...")
             
@@ -594,7 +592,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
                             self.icon.notify("Dashboard script not found", "Server Manager Error")
                         return
             
-            # Normalize the path
+            # Normalise the path
             dashboard_script = os.path.normpath(dashboard_script)
             
             # Use pythonw.exe for GUI applications to prevent console window

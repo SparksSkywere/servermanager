@@ -1,5 +1,4 @@
 # Analytics and metrics collection
-# - System stats, server metrics, SNMP/Grafana hooks
 import os
 import sys
 import json
@@ -500,12 +499,12 @@ class AnalyticsCollector(ServerManagerModule):
 
     # Backward compatibility methods - these delegate to module-level functions
     def get_prometheus_metrics(self, enabled=True):
-        """Backward compatibility: Get Prometheus metrics"""
+        # Backward compatibility: Get Prometheus metrics
         from Modules.analytics import get_prometheus_metrics as _get_prometheus_metrics
         return _get_prometheus_metrics(self, enabled)
     
     def get_snmp_metrics(self, enabled=True):
-        """Backward compatibility: Get SNMP metrics"""
+        # Backward compatibility: Get SNMP metrics
         from Modules.analytics import get_snmp_metrics as _get_snmp_metrics
         return _get_snmp_metrics(self, enabled)
 
@@ -527,10 +526,8 @@ def stop_analytics():
 
 # Conditional helper functions for SNMP and Grafana integration
 def get_prometheus_metrics(analytics_instance=None, enabled=True):
-    """
-    Get Prometheus metrics for Grafana integration
-    Can be called conditionally based on user configuration
-    """
+    # Get Prometheus metrics for Grafana integration
+    # Can be called conditionally based on user configuration
     if not enabled:
         return ""
         
@@ -545,10 +542,8 @@ def get_prometheus_metrics(analytics_instance=None, enabled=True):
         return ""
 
 def get_snmp_metrics(analytics_instance=None, enabled=True):
-    """
-    Get SNMP metrics with OID structure
-    Can be called conditionally based on user configuration
-    """
+    # Get SNMP metrics with OID structure
+    # Can be called conditionally based on user configuration
     if not enabled:
         return {}
         
@@ -563,41 +558,41 @@ def get_snmp_metrics(analytics_instance=None, enabled=True):
         return {}
 
 def initialize_snmp_module(analytics_instance=None):
-    """Initialize SNMP module if user has enabled SNMP monitoring"""
+    # Initialise SNMP module if user has enabled SNMP monitoring
     global _snmp_manager
     try:
         from Modules.SMNP.snmp_manager import initialize_snmp
         _snmp_manager = initialize_snmp(analytics_instance or analytics)
-        logger.info("SNMP module initialized")
+        logger.info("SNMP module initialised")
         return _snmp_manager
     except Exception as e:
-        logger.error(f"Failed to initialize SNMP module: {e}")
+        logger.error(f"Failed to initialise SNMP module: {e}")
         return None
 
 def initialize_grafana_module(analytics_instance=None):
-    """Initialize Grafana module if user has enabled Grafana integration"""
+    # Initialise Grafana module if user has enabled Grafana integration
     global _grafana_manager
     try:
         from Modules.SMNP.graphana import initialize_grafana
         _grafana_manager = initialize_grafana(analytics_instance or analytics)
-        logger.info("Grafana module initialized")
+        logger.info("Grafana module initialised")
         return _grafana_manager
     except Exception as e:
-        logger.error(f"Failed to initialize Grafana module: {e}")
+        logger.error(f"Failed to initialise Grafana module: {e}")
         return None
 
 def get_snmp_manager():
-    """Get the SNMP manager instance (if initialized)"""
+    # Get the SNMP manager instance (if initialised)
     return _snmp_manager
 
 def get_grafana_manager():
-    """Get the Grafana manager instance (if initialized)"""
+    # Get the Grafana manager instance (if initialised)
     return _grafana_manager
 
 def is_snmp_enabled():
-    """Check if SNMP module is initialized and available"""
+    # Check if SNMP module is initialised and available
     return _snmp_manager is not None
 
 def is_grafana_enabled():
-    """Check if Grafana module is initialized and available"""
+    # Check if Grafana module is initialised and available
     return _grafana_manager is not None

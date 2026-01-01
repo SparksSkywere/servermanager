@@ -1,5 +1,4 @@
 # SNMP management module
-# - OID-based metrics for SNMP monitoring
 import logging
 from datetime import datetime
 
@@ -7,13 +6,15 @@ try:
     from Modules.common import ServerManagerModule
     from Modules.server_logging import get_component_logger
     logger = get_component_logger("SNMP")
+    _HAS_SERVER_MANAGER_MODULE = True
 except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger("SNMP")
+    _HAS_SERVER_MANAGER_MODULE = False
+    ServerManagerModule = object  # type: ignore[misc, assignment]
 
-class SNMPManager(ServerManagerModule):
+class SNMPManager(ServerManagerModule):  # type: ignore[valid-type, misc]
     # - SNMP monitoring integration
-    # - OID structure for metrics
     
     def __init__(self, analytics_instance=None):
         try:
@@ -146,8 +147,8 @@ def get_snmp_manager(analytics_instance=None):
     return snmp_manager
 
 def initialize_snmp(analytics_instance):
-    # Initialize SNMP manager with analytics integration
+    # Initialise SNMP manager with analytics integration
     global snmp_manager
     snmp_manager = SNMPManager(analytics_instance)
-    logger.info("SNMP manager initialized with analytics integration")
+    logger.info("SNMP manager initialised with analytics integration")
     return snmp_manager

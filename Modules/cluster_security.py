@@ -1,5 +1,4 @@
 # Cluster management
-# - Host/Subhost roles, node discovery
 import os
 import sys
 import winreg
@@ -12,7 +11,6 @@ from Modules.common import REGISTRY_ROOT, REGISTRY_PATH, setup_module_logging
 from Modules.Database.cluster_database import get_cluster_database
 
 logger = setup_module_logging("SimpleCluster")
-
 
 class SimpleClusterManager:
     # - Basic clustering like Hyper-V
@@ -133,7 +131,6 @@ class SimpleClusterManager:
             }
             
             try:
-                import requests
                 response = requests.post(f"http://{master_ip}:5000/api/cluster/request-join", 
                                        json=join_data, timeout=30)
                 

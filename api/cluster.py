@@ -1,5 +1,4 @@
 # Cluster API
-# - Host/subhost communication
 import os
 import sys
 import winreg
@@ -127,7 +126,7 @@ def _forward_request_to_subhost(url, method='GET', json_data=None, headers=None,
         return jsonify({"error": f"Failed to connect to subhost: {str(e)}"}), 503
 
 def _create_server_manager():
-    # Create and initialize server manager instance
+    # Create and initialise server manager instance
     server_manager = ServerManager()
     server_manager.load_config()
     server_manager.load_servers()
@@ -821,11 +820,11 @@ def api_cluster_status():
             "timestamp": datetime.now().isoformat()
         }
         
+        subhost_count = 0  # Initialize before conditional block
         if role == "Host":
             # Include subhost information for hosts
             all_nodes = cluster_db.get_all_cluster_nodes()
             subhosts = {}
-            subhost_count = 0
             
             for node in all_nodes:
                 if node['node_type'] == 'subhost':
@@ -854,7 +853,8 @@ def api_cluster_status():
                 cluster_status["dashboard_active"] = True
                 cluster_status["maintenance_mode"] = False
             
-        logger.debug(f"Cluster status requested - Role: {role}, Subhosts: {subhost_count if role == 'Host' else 'N/A'}")
+        subhost_count_str = str(subhost_count) if role == 'Host' else 'N/A'
+        logger.debug(f"Cluster status requested - Role: {role}, Subhosts: {subhost_count_str}")
         
         return jsonify(cluster_status)
         
@@ -1124,7 +1124,7 @@ def api_remote_login():
         
         # Import user management for authentication
         try:
-            engine, user_manager = initialize_user_manager()
+            engine, user_manager = initialise_user_manager()  # Use already imported function
             
             # Authenticate user
             user = user_manager.authenticate_user(username, password)

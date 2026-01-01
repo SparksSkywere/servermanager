@@ -1,6 +1,4 @@
 # Logging management
-# - Rotation, compression, stats
-# - Component loggers, early crash logging
 import os
 import sys
 import traceback
@@ -101,14 +99,14 @@ class LogManager:
             # Ensure log directory exists
             os.makedirs(self.paths["logs"], exist_ok=True)
             
-            # Log the fallback initialization
-            print(f"Registry initialization failed, using fallback path: {self.server_manager_dir}")
+            # Log the fallback initialisation
+            print(f"Registry initialisation failed, using fallback path: {self.server_manager_dir}")
             self._setup_main_logger()
 
     def _setup_main_logger(self):
         main_log_file = os.path.join(self.paths["logs"], "components", "Main.log")
         self.main_logger = self.get_logger("servermanager.main", main_log_file, formatter_name="detailed")
-        self.main_logger.info("LogManager initialized successfully")
+        self.main_logger.info("LogManager initialised successfully")
 
     def set_log_level(self, level_name):
         # Set the log level based on a string name

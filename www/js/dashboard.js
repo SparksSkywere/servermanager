@@ -12,7 +12,7 @@ export class Dashboard {
         this.refreshInterval = null;
         this.refreshRate = 10; // Default refresh rate in seconds
         
-        // Initialize dashboard
+        // Initialise dashboard
         this.initializeGridStack();
         this.setupEventListeners();
         this.refreshData();
@@ -22,7 +22,7 @@ export class Dashboard {
     }
     
     initializeGridStack() {
-        // Initialize GridStack for draggable panels
+        // Initialise GridStack for draggable panels
         this.grid = GridStack.init({
             cellHeight: 80,
             minRow: 1,

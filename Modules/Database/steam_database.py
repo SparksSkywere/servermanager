@@ -1,11 +1,8 @@
 # Steam apps database
-# - SQLAlchemy connections for Steam app data
-
 from sqlalchemy import text
-
 from .database_utils import get_sql_config_from_registry, build_db_url, get_engine_by_type
-
 from Modules.common import setup_module_logging, setup_module_path
+
 setup_module_path()
 logger = setup_module_logging("SteamDatabase")
 

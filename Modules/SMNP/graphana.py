@@ -1,5 +1,4 @@
 # Grafana integration
-# - Prometheus format metrics for dashboards
 import logging
 from datetime import datetime
 import json
@@ -8,11 +7,14 @@ try:
     from Modules.common import ServerManagerModule
     from Modules.server_logging import get_component_logger
     logger = get_component_logger("Grafana")
+    _HAS_SERVER_MANAGER_MODULE = True
 except Exception:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger("Grafana")
+    _HAS_SERVER_MANAGER_MODULE = False
+    ServerManagerModule = object  # type: ignore[misc, assignment]
 
-class GrafanaManager(ServerManagerModule):
+class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
     # - Prometheus format metrics
     # - Analytics integration
     
@@ -279,8 +281,8 @@ def get_grafana_manager(analytics_instance=None):
     return grafana_manager
 
 def initialize_grafana(analytics_instance):
-    # Initialize Grafana manager with analytics integration
+    # Initialise Grafana manager with analytics integration
     global grafana_manager
     grafana_manager = GrafanaManager(analytics_instance)
-    logger.info("Grafana manager initialized with analytics integration")
+    logger.info("Grafana manager initialised with analytics integration")
     return grafana_manager

@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 # pyright: reportArgumentType=false
 # Stdin relay background process
-# - Maintains stdin access to server processes
-
 import os
 import sys
 import time
@@ -12,6 +10,7 @@ import subprocess
 import signal
 import logging
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -28,15 +27,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger("StdinRelay")
 
-# Windows named pipe support
+# Windows named pipe support - declare module-level placeholders for type checking
+win32pipe: Any = None
+win32file: Any = None
+pywintypes: Any = None
+win32security: Any = None
+con: Any = None
+
 _NAMED_PIPES_AVAILABLE = False
 if sys.platform == 'win32':
     try:
-        import win32pipe
-        import win32file
-        import pywintypes
-        import win32security
-        import ntsecuritycon as con
+        import win32pipe as _win32pipe
+        import win32file as _win32file
+        import pywintypes as _pywintypes
+        import win32security as _win32security
+        import ntsecuritycon as _con
+        win32pipe = _win32pipe
+        win32file = _win32file
+        pywintypes = _pywintypes
+        win32security = _win32security
+        con = _con
         _NAMED_PIPES_AVAILABLE = True
     except ImportError:
         logger.warning("pywin32 not available - stdin relay cannot function")
@@ -91,18 +101,10 @@ def is_relay_running(server_name: str) -> bool:
 
 
 def start_relay_for_server(server_name: str, server_process: subprocess.Popen, server_pid: int) -> bool:
-    """
-    Start the stdin relay service for a server.
-    This launches a SEPARATE PROCESS that survives dashboard restarts.
-    
-    Args:
-        server_name: The name of the server
-        server_process: The subprocess.Popen object for the server
-        server_pid: The PID of the server process
-        
-    Returns:
-        True if relay was started successfully, False otherwise
-    """
+    # Start the stdin relay service for a server
+    # This launches a SEPARATE PROCESS that survives dashboard restarts
+    # Args: server_name, server_process (subprocess.Popen), server_pid (PID)
+    # Returns: True if relay was started successfully, False otherwise
     if not _NAMED_PIPES_AVAILABLE:
         logger.error("Named pipes not available - cannot start stdin relay")
         return False
@@ -290,17 +292,9 @@ def _run_relay_thread(server_name: str, server_process: subprocess.Popen, server
 
 
 def send_command_via_relay(server_name: str, command: str, timeout: float = 5.0) -> tuple[bool, str]:
-    """
-    Send a command to a server via its stdin relay pipe.
-    
-    Args:
-        server_name: The name of the server
-        command: The command to send
-        timeout: Timeout in seconds
-        
-    Returns:
-        Tuple of (success, message)
-    """
+    # Send a command to a server via its stdin relay pipe
+    # Args: server_name - The name of the server, command - The command to send, timeout - Timeout in seconds
+    # Returns: Tuple of (success, message)
     if not _NAMED_PIPES_AVAILABLE:
         return False, "Named pipes not available"
     

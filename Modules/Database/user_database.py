@@ -1,6 +1,4 @@
 # User database management
-# - Auth connections, login dialogs, user manager init
-
 import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox
