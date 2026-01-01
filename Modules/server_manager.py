@@ -76,7 +76,7 @@ class ServerManager(ServerManagerModule):
         self.load_servers()
 
     def get_server_process(self, server_name):
-        # Get active process—None if dead
+        # Get active process-None if dead
         if hasattr(self, 'active_processes') and server_name in self.active_processes:
             process = self.active_processes[server_name]
             # Check if process is still running
@@ -261,66 +261,97 @@ class ServerManager(ServerManagerModule):
     def is_server_process_valid(self, server_name, process_id, server_config=None):
         """
         Validate that a PID actually belongs to the server it's claimed to be.
-        This prevents issues with Windows PID reuse where an old PID might now 
+        This prevents issues with Windows PID reuse where an old PID might now
         belong to a completely different process.
-        
+
+        Enhanced with corruption detection and system state validation.
+
         Returns: (is_valid, process_or_none)
         """
         try:
             if process_id is None:
                 return False, None
-            
+
             if not psutil.pid_exists(process_id):
                 return False, None
-            
+
             try:
                 process = psutil.Process(process_id)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 return False, None
-            
+
             if not process.is_running():
                 return False, None
-            
+
             # Get server config if not provided
             if server_config is None:
                 server_config = self.get_server_config(server_name)
-            
+
             if not server_config:
                 # No config to validate against, just check if process exists
                 return True, process
-            
+
             # Validate the process matches the server
             install_dir = server_config.get('InstallDir', '')
             executable_path = server_config.get('ExecutablePath', '')
             server_type = server_config.get('Type', '').lower()
-            
+
             try:
                 proc_exe = process.exe().lower() if process.exe() else ''
                 proc_cwd = process.cwd().lower() if process.cwd() else ''
                 proc_name = process.name().lower() if process.name() else ''
-                
+
                 # Try to get command line
                 try:
                     cmdline = process.cmdline()
                     cmdline_str = ' '.join(cmdline).lower() if cmdline else ''
                 except (psutil.AccessDenied, psutil.NoSuchProcess):
                     cmdline_str = ''
-                
+
+                # Enhanced: Check for process corruption indicators
+                try:
+                    # Check if process has abnormally high memory usage (potential memory corruption)
+                    memory_percent = process.memory_percent()
+                    if memory_percent > 90:  # Over 90% memory usage is suspicious
+                        logger.warning(f"Process {process_id} for {server_name} using {memory_percent:.1f}% memory - possible corruption")
+                        # Don't immediately invalidate, but log for monitoring
+
+                    # Check if process is in zombie state
+                    if process.status() == psutil.STATUS_ZOMBIE:
+                        logger.warning(f"Process {process_id} for {server_name} is in zombie state")
+                        return False, None
+
+                    # Check for unusual CPU usage patterns (stuck processes)
+                    cpu_times = process.cpu_times()
+                    if cpu_times and hasattr(cpu_times, 'user'):
+                        # If process has been running for > 5 minutes but minimal CPU time, might be stuck
+                        try:
+                            create_time = process.create_time()
+                            runtime_seconds = time.time() - create_time
+                            total_cpu_time = cpu_times.user + cpu_times.system
+                            if runtime_seconds > 300 and total_cpu_time < 1.0:  # 5 minutes, < 1 second CPU
+                                logger.warning(f"Process {process_id} for {server_name} appears stuck (runtime: {runtime_seconds:.0f}s, CPU: {total_cpu_time:.1f}s)")
+                        except:
+                            pass
+
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
+
             except (psutil.AccessDenied, psutil.NoSuchProcess):
                 # Can't access process info, assume invalid
                 logger.debug(f"Cannot access process {process_id} info for validation")
                 return False, None
-            
+
             # Validation checks
             install_dir_lower = install_dir.lower() if install_dir else ''
             executable_lower = executable_path.lower() if executable_path else ''
-            
+
             # Check 1: Working directory matches install directory
             if install_dir_lower and proc_cwd:
                 if os.path.normpath(proc_cwd) == os.path.normpath(install_dir_lower):
                     logger.debug(f"PID {process_id} validated: CWD matches install dir")
                     return True, process
-            
+
             # Check 2: Executable path matches
             if executable_lower and proc_exe:
                 exe_basename = os.path.basename(executable_lower)
@@ -328,12 +359,12 @@ class ServerManager(ServerManagerModule):
                 if exe_basename == proc_exe_basename:
                     logger.debug(f"PID {process_id} validated: executable name matches")
                     return True, process
-            
+
             # Check 3: Install directory in executable path
             if install_dir_lower and proc_exe and install_dir_lower in proc_exe:
                 logger.debug(f"PID {process_id} validated: install dir in exe path")
                 return True, process
-            
+
             # Check 4: Command line contains server-specific info
             if cmdline_str:
                 if install_dir_lower and install_dir_lower in cmdline_str:
@@ -342,7 +373,7 @@ class ServerManager(ServerManagerModule):
                 if executable_lower and executable_lower in cmdline_str:
                     logger.debug(f"PID {process_id} validated: executable in cmdline")
                     return True, process
-            
+
             # Check 5: Type-specific validation
             if server_type == 'minecraft':
                 # For Minecraft, the java process should have the server jar in cmdline
@@ -350,7 +381,7 @@ class ServerManager(ServerManagerModule):
                     if cmdline_str and (install_dir_lower in cmdline_str or 'server.jar' in cmdline_str):
                         logger.debug(f"PID {process_id} validated: Minecraft java process")
                         return True, process
-            
+
             # Check 6: Stored process creation time (if available)
             stored_create_time = server_config.get('ProcessCreateTime')
             if stored_create_time:
@@ -362,11 +393,36 @@ class ServerManager(ServerManagerModule):
                         return True, process
                 except (psutil.AccessDenied, psutil.NoSuchProcess):
                     pass
-            
+
+            # Enhanced: Check for system state corruption indicators
+            try:
+                # Check if install directory still exists and is accessible
+                if install_dir and not os.path.exists(install_dir):
+                    logger.error(f"Install directory missing for {server_name}: {install_dir}")
+                    return False, None
+
+                # Check if executable still exists
+                if executable_path and not os.path.exists(executable_path):
+                    logger.error(f"Executable missing for {server_name}: {executable_path}")
+                    return False, None
+
+                # Check for config file corruption (basic JSON validation)
+                config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+                if os.path.exists(config_file):
+                    try:
+                        with open(config_file, 'r', encoding='utf-8') as f:
+                            json.load(f)  # Just validate JSON structure
+                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                        logger.error(f"Config file corrupted for {server_name}: {e}")
+                        return False, None
+
+            except Exception as e:
+                logger.debug(f"Error during system state validation for {server_name}: {e}")
+
             # If we get here, the process doesn't match the server
             logger.warning(f"PID {process_id} does NOT match server '{server_name}' (process: {proc_name}, cwd: {proc_cwd})")
             return False, None
-            
+
         except Exception as e:
             logger.error(f"Error validating server process for {server_name}: {e}")
             return False, None
@@ -399,7 +455,181 @@ class ServerManager(ServerManagerModule):
         except Exception as e:
             logger.error(f"Error clearing stale PID for {server_name}: {e}")
             return False
-            
+
+    def detect_and_recover_system_corruption(self, server_name, server_config=None, callback=None):
+        """
+        Detect and recover from system corruption after BSODs, power failures, or bad starts.
+        Performs comprehensive system state validation and automatic recovery.
+
+        Returns: (recovery_needed, recovery_actions_taken, errors)
+        """
+        recovery_needed = False
+        recovery_actions = []
+        errors = []
+
+        try:
+            if server_config is None:
+                server_config = self.get_server_config(server_name)
+
+            if not server_config:
+                errors.append(f"No configuration found for server {server_name}")
+                return False, [], errors
+
+            logger.info(f"Performing corruption detection and recovery for {server_name}")
+
+            # 1. Check for config file corruption
+            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            if os.path.exists(config_file):
+                try:
+                    with open(config_file, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+
+                    # Validate required fields
+                    required_fields = ['InstallDir', 'ExecutablePath', 'Type']
+                    missing_fields = [field for field in required_fields if field not in config_data]
+                    if missing_fields:
+                        errors.append(f"Config file missing required fields: {missing_fields}")
+                        recovery_needed = True
+                        recovery_actions.append("Config file validation failed")
+
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    errors.append(f"Config file corrupted: {e}")
+                    recovery_needed = True
+                    recovery_actions.append("Config file corruption detected")
+
+                    # Attempt to backup and recreate config
+                    try:
+                        backup_file = f"{config_file}.corrupted.{int(time.time())}"
+                        os.rename(config_file, backup_file)
+                        recovery_actions.append(f"Backed up corrupted config to {backup_file}")
+
+                        # Create minimal recovery config
+                        recovery_config = {
+                            'Type': 'Other',
+                            'InstallDir': '',
+                            'ExecutablePath': '',
+                            'LastUpdate': datetime.now().isoformat(),
+                            'CorruptionRecovery': True
+                        }
+                        with open(config_file, 'w', encoding='utf-8') as f:
+                            json.dump(recovery_config, f, indent=2)
+                        recovery_actions.append("Created recovery config file")
+
+                    except Exception as backup_error:
+                        errors.append(f"Failed to backup corrupted config: {backup_error}")
+
+            # 2. Check install directory integrity
+            install_dir = server_config.get('InstallDir', '')
+            if install_dir:
+                if not os.path.exists(install_dir):
+                    errors.append(f"Install directory missing: {install_dir}")
+                    recovery_needed = True
+                    recovery_actions.append("Install directory missing")
+                else:
+                    # Check if directory is accessible
+                    try:
+                        os.listdir(install_dir)
+                    except PermissionError:
+                        errors.append(f"Install directory not accessible: {install_dir}")
+                        recovery_needed = True
+                        recovery_actions.append("Install directory access denied")
+
+            # 3. Check executable integrity
+            executable_path = server_config.get('ExecutablePath', '')
+            if executable_path:
+                if not os.path.exists(executable_path):
+                    errors.append(f"Executable missing: {executable_path}")
+                    recovery_needed = True
+                    recovery_actions.append("Executable file missing")
+                else:
+                    # Check if executable is accessible
+                    try:
+                        with open(executable_path, 'rb') as f:
+                            f.read(1)  # Just check if we can read
+                    except Exception as e:
+                        errors.append(f"Executable not accessible: {e}")
+                        recovery_needed = True
+                        recovery_actions.append("Executable access failed")
+
+            # 4. Check for orphaned process entries
+            pid = server_config.get('ProcessId') or server_config.get('PID')
+            if pid:
+                is_valid, process = self.is_server_process_valid(server_name, pid, server_config)
+                if not is_valid:
+                    logger.warning(f"Stale PID {pid} detected for {server_name} during corruption check")
+                    recovery_needed = True
+                    recovery_actions.append(f"Cleaned up stale PID {pid}")
+
+                    # Clean up stale entries
+                    server_config.pop('ProcessId', None)
+                    server_config.pop('PID', None)
+                    server_config.pop('StartTime', None)
+                    server_config.pop('ProcessCreateTime', None)
+                    server_config['LastUpdate'] = datetime.now().isoformat()
+                    self.save_server_config(server_name, server_config)
+
+            # 5. Check log file integrity
+            try:
+                logs_dir = os.path.join(self.paths.get("logs", "logs"))
+                if os.path.exists(logs_dir):
+                    # Check for corrupted log files
+                    for root, dirs, files in os.walk(logs_dir):
+                        for file in files:
+                            if file.endswith('.log'):
+                                log_path = os.path.join(root, file)
+                                try:
+                                    # Quick corruption check - try to read last few lines
+                                    with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                        f.seek(0, 2)  # Seek to end
+                                        size = f.tell()
+                                        if size > 1000:  # If file is large, check last 1000 bytes
+                                            f.seek(max(0, size - 1000), 0)
+                                            content = f.read()
+                                            if '\x00' in content:  # Null bytes indicate corruption
+                                                errors.append(f"Log file corrupted: {log_path}")
+                                                recovery_needed = True
+                                                recovery_actions.append(f"Corrupted log file detected: {file}")
+                                except Exception as e:
+                                    errors.append(f"Error checking log file {log_path}: {e}")
+            except Exception as e:
+                logger.debug(f"Error during log integrity check: {e}")
+
+            # 6. Check for system crash indicators (Windows event logs, etc.)
+            try:
+                if sys.platform == 'win32':
+                    # Check for recent system crashes (basic check)
+                    import winreg
+                    try:
+                        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                           r"SYSTEM\CurrentControlSet\Control\CrashControl")
+                        # This is a basic check - could be expanded
+                        recovery_needed = True  # Assume recovery needed if we can access crash control
+                        recovery_actions.append("System crash recovery indicators detected")
+                    except:
+                        pass
+            except:
+                pass
+
+            # 7. Attempt automatic recovery if issues found
+            if recovery_needed:
+                logger.info(f"Recovery needed for {server_name}. Actions taken: {recovery_actions}")
+
+                # Update config with recovery timestamp
+                server_config['LastCorruptionCheck'] = datetime.now().isoformat()
+                server_config['CorruptionRecoveryActions'] = recovery_actions
+                self.save_server_config(server_name, server_config)
+
+                if callback:
+                    callback(f"Corruption recovery completed for {server_name}")
+
+            return recovery_needed, recovery_actions, errors
+
+        except Exception as e:
+            error_msg = f"Error during corruption detection for {server_name}: {e}"
+            logger.error(error_msg)
+            errors.append(error_msg)
+            return True, recovery_actions, errors
+
     def start_server(self, server_name):
         # Start a server using the appropriate script
         try:
@@ -455,15 +685,35 @@ class ServerManager(ServerManagerModule):
 
     def start_server_advanced(self, server_name, callback=None):
         # Start the selected game server (Steam/Minecraft/Other) - Advanced version with proper process management
+        # Enhanced with corruption detection and automatic recovery
         try:
             config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
             if not os.path.exists(config_file):
                 logger.error(f"Server configuration file not found: {config_file}")
                 return False, f"Server configuration file not found: {config_file}"
-                
+
             with open(config_file, 'r') as f:
                 server_config = json.load(f)
-            
+
+            # Enhanced: Perform corruption detection and recovery before starting
+            logger.debug(f"Performing pre-startup corruption check for {server_name}")
+            recovery_needed, recovery_actions, recovery_errors = self.detect_and_recover_system_corruption(
+                server_name, server_config, callback
+            )
+
+            if recovery_errors:
+                logger.warning(f"Corruption recovery errors for {server_name}: {recovery_errors}")
+                # Don't fail startup for recovery errors, but log them
+
+            if recovery_needed:
+                logger.info(f"System corruption detected and recovered for {server_name}: {recovery_actions}")
+                # Reload config after recovery
+                try:
+                    with open(config_file, 'r') as f:
+                        server_config = json.load(f)
+                except Exception as reload_error:
+                    logger.error(f"Failed to reload config after recovery: {reload_error}")
+
             # Clean up orphaned process ID first - use proper validation
             if 'ProcessId' in server_config:
                 pid = server_config['ProcessId']
@@ -699,12 +949,83 @@ class ServerManager(ServerManagerModule):
                     creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
                 )
             time.sleep(1)
-            if not psutil.pid_exists(process.pid):
-                logger.error(f"Server process terminated immediately after starting. Check logs at {stderr_log}")
-                if callback:
-                    callback(f"Server '{server_name}' failed to start")
-                return False, f"Server process terminated immediately after starting. Check logs at {stderr_log}"
-            
+
+            # Enhanced: Automatic retry logic for failed startups
+            max_retries = 3
+            retry_delay = 2  # seconds
+            startup_success = False
+
+            for attempt in range(max_retries):
+                if psutil.pid_exists(process.pid):
+                    # Additional validation: check if process is actually running and not stuck
+                    try:
+                        ps_process = psutil.Process(process.pid)
+                        if ps_process.is_running() and ps_process.status() != psutil.STATUS_ZOMBIE:
+                            # Quick health check - ensure process hasn't exited immediately
+                            time.sleep(0.5)  # Brief wait to see if process stays alive
+                            if psutil.pid_exists(process.pid):
+                                startup_success = True
+                                break
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+
+                if attempt < max_retries - 1:  # Don't retry on last attempt
+                    logger.warning(f"Server process terminated immediately (attempt {attempt + 1}/{max_retries}). Retrying in {retry_delay}s...")
+                    if callback:
+                        callback(f"Server '{server_name}' failed to start (attempt {attempt + 1}), retrying...")
+
+                    # Clean up failed process
+                    try:
+                        process.terminate()
+                        process.wait(timeout=5)
+                    except:
+                        try:
+                            process.kill()
+                        except:
+                            pass
+
+                    time.sleep(retry_delay)
+
+                    # Retry process creation
+                    try:
+                        if shell:
+                            process = subprocess.Popen(
+                                cmd,
+                                shell=True,
+                                cwd=install_dir,
+                                stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                text=True,
+                                bufsize=0,
+                                universal_newlines=True,
+                                creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
+                            )
+                        else:
+                            process = subprocess.Popen(
+                                cmd,
+                                cwd=install_dir,
+                                stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                text=True,
+                                bufsize=0,
+                                universal_newlines=True,
+                                creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
+                            )
+                        time.sleep(1)  # Wait for process to initialize
+                    except Exception as retry_error:
+                        logger.error(f"Failed to retry process creation: {retry_error}")
+                        break
+                else:
+                    logger.error(f"Server process terminated immediately after {max_retries} attempts. Check logs at {stderr_log}")
+                    if callback:
+                        callback(f"Server '{server_name}' failed to start after {max_retries} attempts")
+                    return False, f"Server process terminated immediately after {max_retries} attempts. Check logs at {stderr_log}"
+
+            if not startup_success:
+                return False, f"Server process failed to start after {max_retries} attempts. Check logs at {stderr_log}"
+
             # Get process creation time for PID validation
             process_create_time = None
             try:

@@ -270,13 +270,18 @@ def api_register_subhost():
 @cluster_api.route("/api/cluster/request-join", methods=["POST"])
 def api_request_join():
     # Request to join cluster - requires approval
+    # This endpoint is unauthenticated so subhosts can send join requests
     try:
+        logger.info(f"Join request received from {request.remote_addr}")
+        
         data = request.get_json()
         if not data:
+            logger.warning("Join request received with no data")
             return jsonify({"error": "No data provided"}), 400
             
         subhost_id = data.get("subhost_id")
         if not subhost_id:
+            logger.warning("Join request missing subhost_id")
             return jsonify({"error": "subhost_id is required"}), 400
         
         # Extract subhost information from the join request
@@ -284,20 +289,50 @@ def api_request_join():
         machine_name = info.get("machine_name", "")
         os_info = info.get("os", "")
         
-        # Store pending request in database
+        # Use IP from info if provided (subhost knows its own IP better), fallback to remote_addr
+        # This supports both hostname and IP address connections
+        client_ip = info.get("ip_address") or request.remote_addr or "unknown"
+        hostname = info.get("hostname") or machine_name or subhost_id
+        
+        logger.info(f"Join request details - ID: {subhost_id}, Machine: {machine_name}, IP: {client_ip}, Remote: {request.remote_addr}")
+        
+        # Check if this subhost already has a pending request
+        existing_requests = cluster_db.get_pending_requests()
+        for existing in existing_requests:
+            if existing['node_name'] == subhost_id:
+                logger.info(f"Subhost {subhost_id} already has a pending request (ID: {existing['id']})")
+                return jsonify({
+                    "status": "pending_approval",
+                    "subhost_id": subhost_id,
+                    "request_id": existing['id'],
+                    "message": "Join request already pending. Awaiting approval from cluster administrator."
+                })
+        
+        # Check if already registered as an active node
+        existing_node = cluster_db.get_cluster_node(subhost_id)
+        if existing_node:
+            logger.info(f"Subhost {subhost_id} is already registered")
+            return jsonify({
+                "status": "already_registered",
+                "subhost_id": subhost_id,
+                "message": "This subhost is already registered in the cluster."
+            })
+        
+        # Store pending request in database with both IP and hostname
         request_id = cluster_db.add_pending_request(
             node_name=subhost_id,
-            ip_address=request.remote_addr or "unknown",
+            ip_address=client_ip,
             port=8080,
-            machine_name=machine_name,
+            machine_name=hostname,
             os_info=os_info,
             request_data=json.dumps(data)
         )
         
         if request_id is None:
+            logger.error(f"Failed to store join request for {subhost_id}")
             return jsonify({"error": "Failed to store join request"}), 500
         
-        logger.info(f"Subhost {subhost_id} requested to join cluster from {request.remote_addr}")
+        logger.info(f"Subhost {subhost_id} requested to join cluster from {client_ip} (request ID: {request_id})")
         
         return jsonify({
             "status": "pending_approval",
@@ -308,6 +343,172 @@ def api_request_join():
         
     except Exception as e:
         logger.error(f"Error processing join request: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+@cluster_api.route("/api/cluster/requests", methods=["GET"])
+@require_cluster_auth
+def api_get_requests():
+    # Get pending and approved cluster join requests for dashboard display
+    try:
+        role, _ = get_cluster_role()
+        
+        if role != "Host":
+            return jsonify({"error": "This operation is only available on host instances"}), 403
+        
+        # Get pending requests
+        pending_requests = cluster_db.get_pending_requests()
+        
+        # Format pending requests for frontend
+        pending = []
+        for req in pending_requests:
+            pending.append({
+                "id": req['node_name'],
+                "name": req['machine_name'] or req['node_name'],
+                "hostname": req['machine_name'] or req['node_name'],
+                "ip": req['ip_address'],
+                "address": req['ip_address'],
+                "requested_at": req['requested_at'],
+                "status": req['status']
+            })
+        
+        # Get approved/active nodes
+        all_nodes = cluster_db.get_all_cluster_nodes()
+        approved = []
+        for node in all_nodes:
+            if node['node_type'] == 'subhost':
+                # Check if node is online based on last ping
+                is_online = False
+                if node['last_ping']:
+                    try:
+                        from datetime import datetime
+                        last_ping = datetime.fromisoformat(node['last_ping'])
+                        time_diff = datetime.now() - last_ping
+                        is_online = time_diff.total_seconds() < 300  # 5 minutes
+                    except:
+                        pass
+                
+                # Use hostname from node data, fallback to name
+                display_hostname = node.get('hostname') or node['name']
+                
+                approved.append({
+                    "id": node['name'],
+                    "name": display_hostname,
+                    "hostname": display_hostname,
+                    "ip": node['ip_address'],
+                    "address": node['ip_address'],
+                    "last_seen": node['last_ping'] or node['added_at'],
+                    "online": is_online,
+                    "status": node['status']
+                })
+        
+        return jsonify({
+            "pending": pending,
+            "approved": approved
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting cluster requests: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@cluster_api.route("/api/cluster/requests/<node_id>/approve", methods=["POST"])
+@require_cluster_auth
+def api_approve_request(node_id):
+    # Approve a pending cluster join request via dashboard
+    try:
+        role, _ = get_cluster_role()
+        if role != "Host":
+            return jsonify({"error": "This operation is only available on host instances"}), 403
+        
+        # Find the pending request
+        pending_requests = cluster_db.get_pending_requests()
+        matching_request = None
+        for req in pending_requests:
+            if req['node_name'] == node_id:
+                matching_request = req
+                break
+        
+        if not matching_request:
+            return jsonify({"error": f"No pending request found for node {node_id}"}), 404
+        
+        # Generate approval token for secure communication
+        import uuid
+        import secrets
+        # Use cryptographically secure token for cluster communication
+        approval_token = secrets.token_urlsafe(32)
+        
+        # Approve the request
+        success = cluster_db.approve_request(
+            request_id=matching_request['id'],
+            approved_by="dashboard",
+            approval_token=approval_token
+        )
+        
+        if not success:
+            return jsonify({"error": "Failed to approve request"}), 500
+        
+        # Add to registered nodes with hostname
+        cluster_db.add_cluster_node(
+            name=node_id,
+            ip_address=matching_request['ip_address'],
+            port=matching_request['port'],
+            node_type='subhost',
+            cluster_token=approval_token,
+            hostname=matching_request['machine_name']
+        )
+        
+        logger.info(f"Approved cluster request from dashboard: {node_id} (hostname: {matching_request['machine_name']})")
+        
+        return jsonify({
+            "status": "approved",
+            "node_id": node_id,
+            "message": f"Node {node_id} approved successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error approving request: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@cluster_api.route("/api/cluster/requests/<node_id>/reject", methods=["POST"])
+@require_cluster_auth
+def api_reject_request(node_id):
+    # Reject a pending cluster join request via dashboard
+    try:
+        role, _ = get_cluster_role()
+        if role != "Host":
+            return jsonify({"error": "This operation is only available on host instances"}), 403
+        
+        # Find the pending request
+        pending_requests = cluster_db.get_pending_requests()
+        matching_request = None
+        for req in pending_requests:
+            if req['node_name'] == node_id:
+                matching_request = req
+                break
+        
+        if not matching_request:
+            return jsonify({"error": f"No pending request found for node {node_id}"}), 404
+        
+        # Reject the request
+        success = cluster_db.reject_request(
+            request_id=matching_request['id'],
+            rejected_by="dashboard"
+        )
+        
+        if not success:
+            return jsonify({"error": "Failed to reject request"}), 500
+        
+        logger.info(f"Rejected cluster request from dashboard: {node_id}")
+        
+        return jsonify({
+            "status": "rejected",
+            "node_id": node_id,
+            "message": f"Node {node_id} rejected"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error rejecting request: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @cluster_api.route("/api/cluster/pending", methods=["GET"])
@@ -379,9 +580,9 @@ def api_approve_subhost(subhost_id):
         if not matching_request:
             return jsonify({"error": f"No pending request found for subhost {subhost_id}"}), 404
         
-        # Generate approval token
-        import uuid
-        approval_token = str(uuid.uuid4())
+        # Generate cryptographically secure approval token
+        import secrets
+        approval_token = secrets.token_urlsafe(32)
         
         # Approve the request in database
         success = cluster_db.approve_request(
@@ -393,16 +594,17 @@ def api_approve_subhost(subhost_id):
         if not success:
             return jsonify({"error": "Failed to approve request"}), 500
         
-        # Add to registered nodes
+        # Add to registered nodes with hostname
         cluster_db.add_cluster_node(
             name=subhost_id,
             ip_address=matching_request['ip_address'],
             port=matching_request['port'],
             node_type='subhost',
-            cluster_token=approval_token
+            cluster_token=approval_token,
+            hostname=matching_request['machine_name']
         )
         
-        logger.info(f"Subhost {subhost_id} approved and registered")
+        logger.info(f"Subhost {subhost_id} approved and registered (hostname: {matching_request['machine_name']})")
         
         return jsonify({
             "status": "approved",
@@ -608,9 +810,8 @@ def api_list_subhosts():
         return jsonify({"error": str(e)}), 500
 
 @cluster_api.route("/api/cluster/status", methods=["GET"])
-@require_cluster_auth
 def api_cluster_status():
-    # Get overall cluster status
+    # Get overall cluster status - no auth required for initial connection checks
     try:
         role, host_address = get_cluster_role()
         
@@ -860,6 +1061,37 @@ def api_cluster_nodes():
         logger.error(f"Error getting cluster nodes: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+@cluster_api.route("/api/cluster/nodes/<node_id>", methods=["DELETE"])
+@require_cluster_auth
+def api_revoke_node(node_id):
+    # Revoke/remove a cluster node
+    try:
+        host_check = _check_host_role()
+        if host_check:
+            return host_check
+        
+        # Check if node exists
+        existing_node = cluster_db.get_cluster_node(node_id)
+        if not existing_node:
+            return jsonify({"error": f"Node {node_id} not found"}), 404
+        
+        # Remove the node
+        success = cluster_db.remove_cluster_node(node_id)
+        if not success:
+            return jsonify({"error": "Failed to remove node"}), 500
+        
+        logger.info(f"Revoked cluster node: {node_id}")
+        
+        return jsonify({
+            "status": "revoked",
+            "node_id": node_id,
+            "message": f"Node {node_id} has been removed from the cluster"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error revoking node: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 
 # ====== REMOTE HOST API ENDPOINTS (Separate from Cluster) ======
 # These endpoints handle one-time remote connections without cluster membership
@@ -879,7 +1111,7 @@ def api_server_status():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@cluster_api.route("/api/auth/login", methods=["POST"])
+@cluster_api.route("/api/cluster/auth/login", methods=["POST"])
 def api_remote_login():
     # Authenticate remote host connection (separate from cluster auth)
     try:
@@ -917,7 +1149,7 @@ def api_remote_login():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@cluster_api.route("/api/auth/logout", methods=["POST"])
+@cluster_api.route("/api/cluster/auth/logout", methods=["POST"])
 def api_remote_logout():
     # Logout from remote host connection
     try:

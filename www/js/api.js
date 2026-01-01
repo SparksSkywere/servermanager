@@ -74,7 +74,9 @@ class API {
      * @returns {Promise<Array>} List of servers
      */
     static async getServers() {
-        return this.request('/servers');
+        const response = await this.request('/servers');
+        // API returns {count, servers, success} - extract the servers array
+        return response.servers || [];
     }
 
     /**

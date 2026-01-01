@@ -34,6 +34,14 @@ $DebugPreference = 'SilentlyContinue'
 # Prevent Python from creating __pycache__ directories
 $env:PYTHONDONTWRITEBYTECODE = "1"
 
+# Define global variables
+$global:logMemory = @()
+$global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Install-Log.txt"
+$CurrentVersion = "1.0"
+$steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
+$registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
+$gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"
+
 # Load Windows Forms and Drawing assemblies
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -441,16 +449,8 @@ function Remove-ServerManagerFirewallRules {
     }
 }
 
-# Define global variables first
-$global:logMemory = @()
-$global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Install-Log.txt"
-$CurrentVersion = "0.9"
-$steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
-$registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
-$gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"
-
 # Add this function after global variable definitions
-function Prompt-Reinstall {
+function Request-ReinstallConfirmation {
     $result = [System.Windows.Forms.MessageBox]::Show(
         "An existing Server Manager installation was detected. Do you want to reinstall (this will overwrite previous settings)?",
         "Reinstall Server Manager",
@@ -464,16 +464,6 @@ function Prompt-Reinstall {
 function Test-ExistingInstallation {
     param([string]$RegPath)
     return Test-Path $RegPath
-}
-
-function Request-Reinstall {
-    $result = [System.Windows.Forms.MessageBox]::Show(
-        "An existing Server Manager installation was detected. Do you want to reinstall (this will overwrite previous settings)?",
-        "Reinstall Server Manager",
-        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-        [System.Windows.Forms.MessageBoxIcon]::Question
-    )
-    return $result -eq [System.Windows.Forms.DialogResult]::Yes
 }
 
 # Add all missing functions from original script
@@ -556,8 +546,13 @@ function Initialize-SQLDatabase {
     Write-Log "Setting up SQL databases..."
 
     if ($SQLType -eq "SQLite" -or [string]::IsNullOrEmpty($SQLType)) {
-        # Create separate user and Steam databases in db folder
-        $dbFolder = $DataFolder -replace "data$", "db"
+        # Validate DataFolder parameter
+        if ([string]::IsNullOrWhiteSpace($DataFolder)) {
+            throw "DataFolder parameter is required but was not provided"
+        }
+        
+        # Use the DataFolder directly as the db folder
+        $dbFolder = $DataFolder
         if (-not (Test-Path $dbFolder)) {
             New-Item -ItemType Directory -Force -Path $dbFolder | Out-Null
         }
@@ -837,7 +832,11 @@ function Install-Git {
             Write-Log "Running Git installer..."
             Start-Process -FilePath $installerPath -ArgumentList "/VERYSILENT /NORESTART" -Wait
 
-            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+            # Refresh PATH environment variable safely
+            $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+            $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+            $newPath = @($machinePath, $userPath) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd(';') }
+            $env:Path = ($newPath -join ';')
             if (-Not (Get-Command git -ErrorAction SilentlyContinue)) {
                 throw "Git installation failed verification"
             }
@@ -971,7 +970,7 @@ function Remove-ExistingInstallation {
     
     try {
         # First attempt: Try the .NET method directly (most reliable)
-        if (Force-DeleteDirectory -Path $destination) {
+        if (Remove-DirectoryForce -Path $destination) {
             Write-Log "Successfully removed directory using .NET method"
             return $true
         }
@@ -1057,7 +1056,8 @@ function Initialize-GitRepo {
                 }
             } catch {
                 if ($_.Exception.Message -like "ALTERNATIVE_PATH:*") {
-                    $actualDestination = $_.Exception.Message.Split(':')[1]
+                    # Use Substring to extract path after "ALTERNATIVE_PATH:" prefix (handles Windows paths with drive letter colons)
+                    $actualDestination = $_.Exception.Message.Substring(17)
                     Write-Log "Using alternative installation path: $actualDestination"
                 } else {
                     throw
@@ -1147,7 +1147,7 @@ function Initialize-GitRepo {
         # Clean up any partial clone
         if (Test-Path $actualDestination) {
             try {
-                Force-DeleteDirectory -Path $actualDestination
+                Remove-DirectoryForce -Path $actualDestination
             } catch {
                 # Ignore cleanup errors
             }
@@ -1160,7 +1160,7 @@ function Initialize-GitRepo {
         }
         
         try {
-            Download-FromWebsite -destination $destination -StatusLabel $StatusLabel -Form $Form
+            Get-FromWebsite -destination $destination -StatusLabel $StatusLabel -Form $Form
             Write-Log "Successfully downloaded Server Manager from website"
             return
         } catch {
@@ -1310,96 +1310,104 @@ function Get-FromWebsite {
 
 # --- Main installer script (continued) ---
 
-# Unified installer form
+# Classic Windows XP-style installer colors
+$script:ThemeColors = @{
+    # Classic Windows colors
+    FormBackground = [System.Drawing.Color]::FromArgb(236, 233, 216)   # Classic dialog background
+    HeaderBlue = [System.Drawing.Color]::FromArgb(0, 78, 152)          # Classic blue header
+    HeaderLight = [System.Drawing.Color]::FromArgb(90, 135, 190)       # Lighter blue gradient
+    PanelBackground = [System.Drawing.Color]::FromArgb(255, 255, 255)  # White content area
+    ButtonFace = [System.Drawing.Color]::FromArgb(236, 233, 216)       # Standard button
+    TextBlack = [System.Drawing.Color]::Black                          # Primary text
+    TextGray = [System.Drawing.Color]::FromArgb(100, 100, 100)         # Secondary text
+    LinkBlue = [System.Drawing.Color]::FromArgb(0, 102, 204)           # Link color
+    BorderGray = [System.Drawing.Color]::FromArgb(172, 168, 153)       # Border color
+    Success = [System.Drawing.Color]::FromArgb(0, 128, 0)              # Green for success
+    Warning = [System.Drawing.Color]::FromArgb(255, 140, 0)            # Orange for warning
+    Danger = [System.Drawing.Color]::FromArgb(178, 34, 34)             # Red for errors
+}
+
+# Unified installer form - Classic Windows XP Style
 function Show-InstallerWizard {
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Server Manager Installer v$CurrentVersion"
-    $form.Size = New-Object System.Drawing.Size(650, 550)
+    $form.Text = "Server Manager Setup"
+    $form.Size = New-Object System.Drawing.Size(500, 400)
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = 'FixedDialog'
     $form.MaximizeBox = $false
-    $form.MinimizeBox = $false
+    $form.MinimizeBox = $true
+    $form.BackColor = $script:ThemeColors.FormBackground
+    $form.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon("$env:SystemRoot\System32\msiexec.exe")
 
-    # Header panel
-    $headerPanel = New-Object System.Windows.Forms.Panel
-    $headerPanel.Location = New-Object System.Drawing.Point(0, 0)
-    $headerPanel.Size = New-Object System.Drawing.Size(650, 60)
-    $headerPanel.BackColor = [System.Drawing.Color]::White
-    $form.Controls.Add($headerPanel)
+    # Left side banner panel (classic wizard style)
+    $bannerPanel = New-Object System.Windows.Forms.Panel
+    $bannerPanel.Location = New-Object System.Drawing.Point(0, 0)
+    $bannerPanel.Size = New-Object System.Drawing.Size(165, 315)
+    $bannerPanel.BackColor = $script:ThemeColors.HeaderBlue
+    $form.Controls.Add($bannerPanel)
 
-    # Header title
-    $headerTitle = New-Object System.Windows.Forms.Label
-    $headerTitle.Text = "Server Manager Setup Wizard"
-    $headerTitle.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
-    $headerTitle.Location = New-Object System.Drawing.Point(20, 10)
-    $headerTitle.Size = New-Object System.Drawing.Size(400, 25)
-    $headerPanel.Controls.Add($headerTitle)
+    # Banner title
+    $bannerTitle = New-Object System.Windows.Forms.Label
+    $bannerTitle.Text = "Server`nManager`nSetup"
+    $bannerTitle.Font = New-Object System.Drawing.Font("Tahoma", 14, [System.Drawing.FontStyle]::Bold)
+    $bannerTitle.Location = New-Object System.Drawing.Point(15, 20)
+    $bannerTitle.Size = New-Object System.Drawing.Size(135, 80)
+    $bannerTitle.ForeColor = [System.Drawing.Color]::White
+    $bannerPanel.Controls.Add($bannerTitle)
 
-    # Header subtitle
-    $headerSubtitle = New-Object System.Windows.Forms.Label
-    $headerSubtitle.Text = "This wizard will guide you through the installation of Server Manager"
-    $headerSubtitle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-    $headerSubtitle.Location = New-Object System.Drawing.Point(20, 35)
-    $headerSubtitle.Size = New-Object System.Drawing.Size(500, 20)
-    $headerPanel.Controls.Add($headerSubtitle)
+    # Version label
+    $versionLabel = New-Object System.Windows.Forms.Label
+    $versionLabel.Text = "Version $CurrentVersion"
+    $versionLabel.Font = New-Object System.Drawing.Font("Tahoma", 8)
+    $versionLabel.Location = New-Object System.Drawing.Point(15, 280)
+    $versionLabel.Size = New-Object System.Drawing.Size(135, 20)
+    $versionLabel.ForeColor = [System.Drawing.Color]::FromArgb(180, 200, 220)
+    $bannerPanel.Controls.Add($versionLabel)
 
-    # Main content panel
+    # Main content panel (white area)
     $contentPanel = New-Object System.Windows.Forms.Panel
-    $contentPanel.Location = New-Object System.Drawing.Point(0, 60)
-    $contentPanel.Size = New-Object System.Drawing.Size(650, 380)
-    $contentPanel.BackColor = [System.Drawing.Color]::White
+    $contentPanel.Location = New-Object System.Drawing.Point(165, 0)
+    $contentPanel.Size = New-Object System.Drawing.Size(325, 315)
+    $contentPanel.BackColor = $script:ThemeColors.PanelBackground
     $form.Controls.Add($contentPanel)
 
-    # Bottom panel for buttons and progress
+    # Bottom button panel (gray area with buttons)
     $bottomPanel = New-Object System.Windows.Forms.Panel
-    $bottomPanel.Location = New-Object System.Drawing.Point(0, 440)
-    $bottomPanel.Size = New-Object System.Drawing.Size(650, 80)
-    $bottomPanel.BackColor = [System.Drawing.SystemColors]::Control
+    $bottomPanel.Location = New-Object System.Drawing.Point(0, 315)
+    $bottomPanel.Size = New-Object System.Drawing.Size(500, 55)
+    $bottomPanel.BackColor = $script:ThemeColors.FormBackground
     $form.Controls.Add($bottomPanel)
 
-    # Separator line
+    # Horizontal separator line
     $separator = New-Object System.Windows.Forms.Label
-    $separator.BorderStyle = [System.Windows.Forms.BorderStyle]::Fixed3D
+    $separator.BackColor = $script:ThemeColors.BorderGray
     $separator.Location = New-Object System.Drawing.Point(0, 0)
-    $separator.Size = New-Object System.Drawing.Size(650, 2)
+    $separator.Size = New-Object System.Drawing.Size(500, 2)
     $bottomPanel.Controls.Add($separator)
 
-    # Progress bar
-    $progressBar = New-Object System.Windows.Forms.ProgressBar
-    $progressBar.Location = New-Object System.Drawing.Point(20, 15)
-    $progressBar.Size = New-Object System.Drawing.Size(610, 20)
-    $progressBar.Style = 'Continuous'
-    $progressBar.Visible = $false
-    $bottomPanel.Controls.Add($progressBar)
-
-    # Status label
-    $statusLabel = New-Object System.Windows.Forms.Label
-    $statusLabel.Text = ""
-    $statusLabel.Location = New-Object System.Drawing.Point(20, 40)
-    $statusLabel.Size = New-Object System.Drawing.Size(500, 20)
-    $statusLabel.Visible = $false
-    $bottomPanel.Controls.Add($statusLabel)
-
-    # Navigation buttons
+    # Navigation buttons - Classic Windows style
     $cancelButton = New-Object System.Windows.Forms.Button
     $cancelButton.Text = "Cancel"
-    $cancelButton.Location = New-Object System.Drawing.Point(365, 35)
-    $cancelButton.Size = New-Object System.Drawing.Size(85, 30)
+    $cancelButton.Location = New-Object System.Drawing.Point(395, 15)
+    $cancelButton.Size = New-Object System.Drawing.Size(75, 25)
+    $cancelButton.UseVisualStyleBackColor = $true
     $bottomPanel.Controls.Add($cancelButton)
-
-    $backButton = New-Object System.Windows.Forms.Button
-    $backButton.Text = "< Back"
-    $backButton.Location = New-Object System.Drawing.Point(450, 35)
-    $backButton.Size = New-Object System.Drawing.Size(85, 30)
-    $backButton.Enabled = $false
-    $bottomPanel.Controls.Add($backButton)
 
     $nextButton = New-Object System.Windows.Forms.Button
     $nextButton.Text = "Next >"
-    $nextButton.Location = New-Object System.Drawing.Point(545, 35)
-    $nextButton.Size = New-Object System.Drawing.Size(85, 30)
+    $nextButton.Location = New-Object System.Drawing.Point(310, 15)
+    $nextButton.Size = New-Object System.Drawing.Size(75, 25)
+    $nextButton.UseVisualStyleBackColor = $true
     $bottomPanel.Controls.Add($nextButton)
+
+    $backButton = New-Object System.Windows.Forms.Button
+    $backButton.Text = "< Back"
+    $backButton.Location = New-Object System.Drawing.Point(230, 15)
+    $backButton.Size = New-Object System.Drawing.Size(75, 25)
+    $backButton.Enabled = $false
+    $backButton.UseVisualStyleBackColor = $true
+    $bottomPanel.Controls.Add($backButton)
 
     # Create wizard pages
     $pages = @()
@@ -1407,168 +1415,204 @@ function Show-InstallerWizard {
 
     # Page 1: Welcome
     $welcomePage = New-Object System.Windows.Forms.Panel
-    $welcomePage.Location = New-Object System.Drawing.Point(20, 20)
-    $welcomePage.Size = New-Object System.Drawing.Size(610, 340)
+    $welcomePage.Location = New-Object System.Drawing.Point(10, 10)
+    $welcomePage.Size = New-Object System.Drawing.Size(305, 295)
     $welcomePage.Visible = $true
+    $welcomePage.BackColor = $script:ThemeColors.PanelBackground
     $contentPanel.Controls.Add($welcomePage)
 
     $welcomeTitle = New-Object System.Windows.Forms.Label
-    $welcomeTitle.Text = "Welcome to Server Manager Setup"
-    $welcomeTitle.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
-    $welcomeTitle.Location = New-Object System.Drawing.Point(20, 20)
-    $welcomeTitle.Size = New-Object System.Drawing.Size(400, 30)
+    $welcomeTitle.Text = "Welcome to the Server Manager Setup Wizard"
+    $welcomeTitle.Font = New-Object System.Drawing.Font("Tahoma", 10, [System.Drawing.FontStyle]::Bold)
+    $welcomeTitle.Location = New-Object System.Drawing.Point(0, 5)
+    $welcomeTitle.Size = New-Object System.Drawing.Size(300, 40)
+    $welcomeTitle.ForeColor = $script:ThemeColors.TextBlack
     $welcomePage.Controls.Add($welcomeTitle)
 
     $welcomeText = New-Object System.Windows.Forms.Label
     $welcomeText.Text = @"
 This wizard will install Server Manager on your computer.
 
-Server Manager is a comprehensive tool for managing game servers, providing an easy-to-use web interface for server administration, user management, and automated server deployment.
+Server Manager provides an easy-to-use web interface for managing game servers, user accounts, and automated deployment.
 
 Click Next to continue, or Cancel to exit Setup.
 "@
-    $welcomeText.Location = New-Object System.Drawing.Point(20, 70)
-    $welcomeText.Size = New-Object System.Drawing.Size(550, 150)
+    $welcomeText.Location = New-Object System.Drawing.Point(0, 55)
+    $welcomeText.Size = New-Object System.Drawing.Size(295, 200)
+    $welcomeText.ForeColor = $script:ThemeColors.TextBlack
+    $welcomeText.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $welcomePage.Controls.Add($welcomeText)
 
     $pages += $welcomePage
 
     # Page 2: Installation Options
     $optionsPage = New-Object System.Windows.Forms.Panel
-    $optionsPage.Location = New-Object System.Drawing.Point(20, 20)
-    $optionsPage.Size = New-Object System.Drawing.Size(610, 340)
+    $optionsPage.Location = New-Object System.Drawing.Point(10, 10)
+    $optionsPage.Size = New-Object System.Drawing.Size(305, 295)
     $optionsPage.Visible = $false
+    $optionsPage.BackColor = $script:ThemeColors.PanelBackground
     $contentPanel.Controls.Add($optionsPage)
 
     $optionsTitle = New-Object System.Windows.Forms.Label
     $optionsTitle.Text = "Installation Options"
-    $optionsTitle.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
-    $optionsTitle.Location = New-Object System.Drawing.Point(20, 20)
-    $optionsTitle.Size = New-Object System.Drawing.Size(300, 25)
+    $optionsTitle.Font = New-Object System.Drawing.Font("Tahoma", 10, [System.Drawing.FontStyle]::Bold)
+    $optionsTitle.Location = New-Object System.Drawing.Point(0, 5)
+    $optionsTitle.Size = New-Object System.Drawing.Size(295, 25)
+    $optionsTitle.ForeColor = $script:ThemeColors.TextBlack
     $optionsPage.Controls.Add($optionsTitle)
 
     # SteamCMD Path
     $steamCmdLabel = New-Object System.Windows.Forms.Label
-    $steamCmdLabel.Text = "SteamCMD Installation Directory:"
-    $steamCmdLabel.Location = New-Object System.Drawing.Point(20, 60)
-    $steamCmdLabel.Size = New-Object System.Drawing.Size(220, 20)
+    $steamCmdLabel.Text = "SteamCMD Directory:"
+    $steamCmdLabel.Location = New-Object System.Drawing.Point(0, 35)
+    $steamCmdLabel.Size = New-Object System.Drawing.Size(150, 16)
+    $steamCmdLabel.ForeColor = $script:ThemeColors.TextBlack
+    $steamCmdLabel.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $optionsPage.Controls.Add($steamCmdLabel)
 
     $steamCmdBox = New-Object System.Windows.Forms.TextBox
-    $steamCmdBox.Location = New-Object System.Drawing.Point(20, 85)
-    $steamCmdBox.Size = New-Object System.Drawing.Size(450, 20)
+    $steamCmdBox.Location = New-Object System.Drawing.Point(0, 52)
+    $steamCmdBox.Size = New-Object System.Drawing.Size(220, 20)
     $steamCmdBox.Text = "C:\SteamCMD"
+    $steamCmdBox.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $optionsPage.Controls.Add($steamCmdBox)
 
     $steamCmdBrowse = New-Object System.Windows.Forms.Button
     $steamCmdBrowse.Text = "Browse..."
-    $steamCmdBrowse.Location = New-Object System.Drawing.Point(480, 85)
-    $steamCmdBrowse.Size = New-Object System.Drawing.Size(85, 28)
+    $steamCmdBrowse.Location = New-Object System.Drawing.Point(225, 51)
+    $steamCmdBrowse.Size = New-Object System.Drawing.Size(70, 22)
+    $steamCmdBrowse.UseVisualStyleBackColor = $true
+    $steamCmdBrowse.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $optionsPage.Controls.Add($steamCmdBrowse)
 
     # User Workspace Path
     $workspaceLabel = New-Object System.Windows.Forms.Label
-    $workspaceLabel.Text = "User Workspace Directory:"
-    $workspaceLabel.Location = New-Object System.Drawing.Point(20, 120)
-    $workspaceLabel.Size = New-Object System.Drawing.Size(220, 20)
+    $workspaceLabel.Text = "Workspace Directory:"
+    $workspaceLabel.Location = New-Object System.Drawing.Point(0, 78)
+    $workspaceLabel.Size = New-Object System.Drawing.Size(150, 16)
+    $workspaceLabel.ForeColor = $script:ThemeColors.TextBlack
+    $workspaceLabel.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $optionsPage.Controls.Add($workspaceLabel)
 
     $workspaceBox = New-Object System.Windows.Forms.TextBox
-    $workspaceBox.Location = New-Object System.Drawing.Point(20, 145)
-    $workspaceBox.Size = New-Object System.Drawing.Size(450, 20)
+    $workspaceBox.Location = New-Object System.Drawing.Point(0, 95)
+    $workspaceBox.Size = New-Object System.Drawing.Size(220, 20)
     $workspaceBox.Text = Join-Path $steamCmdBox.Text "user_workspace"
     $workspaceBox.ReadOnly = $true
+    $workspaceBox.BackColor = [System.Drawing.Color]::FromArgb(240, 240, 240)
+    $workspaceBox.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $optionsPage.Controls.Add($workspaceBox)
 
     $workspaceBrowse = New-Object System.Windows.Forms.Button
     $workspaceBrowse.Text = "Browse..."
-    $workspaceBrowse.Location = New-Object System.Drawing.Point(480, 145)
-    $workspaceBrowse.Size = New-Object System.Drawing.Size(85, 28)
+    $workspaceBrowse.Location = New-Object System.Drawing.Point(225, 94)
+    $workspaceBrowse.Size = New-Object System.Drawing.Size(70, 22)
+    $workspaceBrowse.Enabled = $false
+    $workspaceBrowse.UseVisualStyleBackColor = $true
+    $workspaceBrowse.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $optionsPage.Controls.Add($workspaceBrowse)
 
     # Custom workspace checkbox
     $customWorkspaceCheckbox = New-Object System.Windows.Forms.CheckBox
     $customWorkspaceCheckbox.Text = "Use custom workspace directory"
-    $customWorkspaceCheckbox.Location = New-Object System.Drawing.Point(20, 175)
-    $customWorkspaceCheckbox.Size = New-Object System.Drawing.Size(250, 20)
+    $customWorkspaceCheckbox.Location = New-Object System.Drawing.Point(0, 120)
+    $customWorkspaceCheckbox.Size = New-Object System.Drawing.Size(200, 18)
+    $customWorkspaceCheckbox.ForeColor = $script:ThemeColors.TextBlack
+    $customWorkspaceCheckbox.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $optionsPage.Controls.Add($customWorkspaceCheckbox)
 
     # Service installation
     $serviceCheckbox = New-Object System.Windows.Forms.CheckBox
-    $serviceCheckbox.Text = "Install as Windows Service (recommended - starts automatically with Windows)"
-    $serviceCheckbox.Location = New-Object System.Drawing.Point(20, 210)
-    $serviceCheckbox.Size = New-Object System.Drawing.Size(500, 20)
+    $serviceCheckbox.Text = "Install as Windows Service"
+    $serviceCheckbox.Location = New-Object System.Drawing.Point(0, 142)
+    $serviceCheckbox.Size = New-Object System.Drawing.Size(200, 18)
+    $serviceCheckbox.ForeColor = $script:ThemeColors.TextBlack
+    $serviceCheckbox.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $optionsPage.Controls.Add($serviceCheckbox)
 
-    # Host type group - Simple cluster configuration
+    # Host type group - Cluster configuration
     $hostGroupBox = New-Object System.Windows.Forms.GroupBox
-    $hostGroupBox.Text = "Cluster Type"
-    $hostGroupBox.Location = New-Object System.Drawing.Point(20, 240)
-    $hostGroupBox.Size = New-Object System.Drawing.Size(540, 100)
+    $hostGroupBox.Text = "Cluster Configuration"
+    $hostGroupBox.Location = New-Object System.Drawing.Point(0, 168)
+    $hostGroupBox.Size = New-Object System.Drawing.Size(295, 100)
+    $hostGroupBox.ForeColor = $script:ThemeColors.TextBlack
+    $hostGroupBox.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $optionsPage.Controls.Add($hostGroupBox)
 
     $hostRadio = New-Object System.Windows.Forms.RadioButton
-    $hostRadio.Text = "Master Host - Manage other servers in the cluster"
-    $hostRadio.Location = New-Object System.Drawing.Point(15, 25)
-    $hostRadio.Size = New-Object System.Drawing.Size(350, 20)
+    $hostRadio.Text = "Master Host"
+    $hostRadio.Location = New-Object System.Drawing.Point(10, 18)
+    $hostRadio.Size = New-Object System.Drawing.Size(120, 18)
     $hostRadio.Checked = $true
+    $hostRadio.ForeColor = $script:ThemeColors.TextBlack
+    $hostRadio.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $hostGroupBox.Controls.Add($hostRadio)
 
     $subhostRadio = New-Object System.Windows.Forms.RadioButton
-    $subhostRadio.Text = "Cluster Node - Managed by another Master Host"
-    $subhostRadio.Location = New-Object System.Drawing.Point(15, 50)
-    $subhostRadio.Size = New-Object System.Drawing.Size(300, 20)
+    $subhostRadio.Text = "Cluster Node"
+    $subhostRadio.Location = New-Object System.Drawing.Point(10, 40)
+    $subhostRadio.Size = New-Object System.Drawing.Size(120, 18)
+    $subhostRadio.ForeColor = $script:ThemeColors.TextBlack
+    $subhostRadio.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $hostGroupBox.Controls.Add($subhostRadio)
 
     # Master Host IP for cluster nodes
     $hostAddrLabel = New-Object System.Windows.Forms.Label
-    $hostAddrLabel.Text = "Host IP Address:"
-    $hostAddrLabel.Location = New-Object System.Drawing.Point(320, 50)
-    $hostAddrLabel.Size = New-Object System.Drawing.Size(100, 20)
+    $hostAddrLabel.Text = "Host IP:"
+    $hostAddrLabel.Location = New-Object System.Drawing.Point(10, 65)
+    $hostAddrLabel.Size = New-Object System.Drawing.Size(50, 16)
     $hostAddrLabel.Visible = $false
+    $hostAddrLabel.ForeColor = $script:ThemeColors.TextBlack
+    $hostAddrLabel.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $hostGroupBox.Controls.Add($hostAddrLabel)
 
     $hostAddrBox = New-Object System.Windows.Forms.TextBox
-    $hostAddrBox.Location = New-Object System.Drawing.Point(420, 48)
-    $hostAddrBox.Size = New-Object System.Drawing.Size(100, 20)
+    $hostAddrBox.Location = New-Object System.Drawing.Point(65, 62)
+    $hostAddrBox.Size = New-Object System.Drawing.Size(150, 20)
     $hostAddrBox.Visible = $false
     $hostAddrBox.Text = ""
-    $hostAddrBox.ForeColor = [System.Drawing.Color]::Black
-    
+    $hostAddrBox.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $hostGroupBox.Controls.Add($hostAddrBox)
 
     $pages += $optionsPage
 
     # Page 3: Database Configuration
     $dbPage = New-Object System.Windows.Forms.Panel
-    $dbPage.Location = New-Object System.Drawing.Point(20, 20)
-    $dbPage.Size = New-Object System.Drawing.Size(610, 340)
+    $dbPage.Location = New-Object System.Drawing.Point(10, 10)
+    $dbPage.Size = New-Object System.Drawing.Size(305, 295)
     $dbPage.Visible = $false
+    $dbPage.BackColor = $script:ThemeColors.PanelBackground
     $contentPanel.Controls.Add($dbPage)
 
     $dbTitle = New-Object System.Windows.Forms.Label
     $dbTitle.Text = "Database Configuration"
-    $dbTitle.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
-    $dbTitle.Location = New-Object System.Drawing.Point(20, 20)
-    $dbTitle.Size = New-Object System.Drawing.Size(300, 25)
+    $dbTitle.Font = New-Object System.Drawing.Font("Tahoma", 10, [System.Drawing.FontStyle]::Bold)
+    $dbTitle.Location = New-Object System.Drawing.Point(0, 5)
+    $dbTitle.Size = New-Object System.Drawing.Size(295, 25)
+    $dbTitle.ForeColor = $script:ThemeColors.TextBlack
     $dbPage.Controls.Add($dbTitle)
 
     $dbDesc = New-Object System.Windows.Forms.Label
-    $dbDesc.Text = "Select the database type for storing user accounts and server configurations."
-    $dbDesc.Location = New-Object System.Drawing.Point(20, 50)
-    $dbDesc.Size = New-Object System.Drawing.Size(500, 20)
+    $dbDesc.Text = "Select the database type for storing user accounts and configurations."
+    $dbDesc.Location = New-Object System.Drawing.Point(0, 35)
+    $dbDesc.Size = New-Object System.Drawing.Size(295, 30)
+    $dbDesc.ForeColor = $script:ThemeColors.TextBlack
+    $dbDesc.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $dbPage.Controls.Add($dbDesc)
 
     $sqlTypeLabel = New-Object System.Windows.Forms.Label
     $sqlTypeLabel.Text = "Database Type:"
-    $sqlTypeLabel.Location = New-Object System.Drawing.Point(20, 90)
-    $sqlTypeLabel.Size = New-Object System.Drawing.Size(100, 20)
+    $sqlTypeLabel.Location = New-Object System.Drawing.Point(0, 75)
+    $sqlTypeLabel.ForeColor = $script:ThemeColors.TextBlack
+    $sqlTypeLabel.Size = New-Object System.Drawing.Size(90, 16)
+    $sqlTypeLabel.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $dbPage.Controls.Add($sqlTypeLabel)
 
     $sqlTypeCombo = New-Object System.Windows.Forms.ComboBox
-    $sqlTypeCombo.Location = New-Object System.Drawing.Point(130, 90)
-    $sqlTypeCombo.Size = New-Object System.Drawing.Size(300, 20)
+    $sqlTypeCombo.Location = New-Object System.Drawing.Point(95, 72)
+    $sqlTypeCombo.Size = New-Object System.Drawing.Size(200, 21)
     $sqlTypeCombo.DropDownStyle = 'DropDownList'
+    $sqlTypeCombo.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $dbPage.Controls.Add($sqlTypeCombo)
 
     # Populate SQL types
@@ -1582,89 +1626,107 @@ Click Next to continue, or Cancel to exit Setup.
 
     $sqlLocationLabel = New-Object System.Windows.Forms.Label
     $sqlLocationLabel.Text = "Connection String:"
-    $sqlLocationLabel.Location = New-Object System.Drawing.Point(20, 130)
-    $sqlLocationLabel.Size = New-Object System.Drawing.Size(120, 20)
+    $sqlLocationLabel.Location = New-Object System.Drawing.Point(0, 105)
+    $sqlLocationLabel.Size = New-Object System.Drawing.Size(120, 16)
+    $sqlLocationLabel.ForeColor = $script:ThemeColors.TextBlack
+    $sqlLocationLabel.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $dbPage.Controls.Add($sqlLocationLabel)
 
     $sqlLocationBox = New-Object System.Windows.Forms.TextBox
-    $sqlLocationBox.Location = New-Object System.Drawing.Point(20, 155)
-    $sqlLocationBox.Size = New-Object System.Drawing.Size(540, 20)
+    $sqlLocationBox.Location = New-Object System.Drawing.Point(0, 122)
+    $sqlLocationBox.Size = New-Object System.Drawing.Size(295, 20)
+    $sqlLocationBox.Font = New-Object System.Drawing.Font("Tahoma", 8)
     if ($detected.Count -gt 0) {
-        $sqlLocationBox.Text = if ($detected[0].Type -eq "SQLite") { "(no connection string required)" } else { $detected[0].Location }
+        $sqlLocationBox.Text = if ($detected[0].Type -eq "SQLite") { "(not required)" } else { $detected[0].Location }
         $sqlLocationBox.ReadOnly = ($detected[0].Type -eq "SQLite")
+        if ($detected[0].Type -eq "SQLite") {
+            $sqlLocationBox.BackColor = [System.Drawing.Color]::FromArgb(240, 240, 240)
+        }
     }
     $dbPage.Controls.Add($sqlLocationBox)
 
     $sqlNote = New-Object System.Windows.Forms.Label
-    $sqlNote.Text = "Note: SQLite is recommended for most installations as it requires no additional setup."
-    $sqlNote.Font = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Italic)
-    $sqlNote.Location = New-Object System.Drawing.Point(20, 185)
-    $sqlNote.Size = New-Object System.Drawing.Size(500, 30)
+    $sqlNote.Text = "Note: SQLite is recommended for most installations."
+    $sqlNote.Font = New-Object System.Drawing.Font("Tahoma", 8, [System.Drawing.FontStyle]::Italic)
+    $sqlNote.Location = New-Object System.Drawing.Point(0, 150)
+    $sqlNote.Size = New-Object System.Drawing.Size(295, 30)
+    $sqlNote.ForeColor = $script:ThemeColors.TextGray
     $dbPage.Controls.Add($sqlNote)
 
     $pages += $dbPage
 
     # Page 4: Installation Progress
     $installPage = New-Object System.Windows.Forms.Panel
-    $installPage.Location = New-Object System.Drawing.Point(20, 20)
-    $installPage.Size = New-Object System.Drawing.Size(610, 340)
+    $installPage.Location = New-Object System.Drawing.Point(10, 10)
+    $installPage.Size = New-Object System.Drawing.Size(305, 295)
     $installPage.Visible = $false
+    $installPage.BackColor = $script:ThemeColors.PanelBackground
     $contentPanel.Controls.Add($installPage)
 
     $installTitle = New-Object System.Windows.Forms.Label
-    $installTitle.Text = "Installing Server Manager"
-    $installTitle.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
-    $installTitle.Location = New-Object System.Drawing.Point(20, 20)
-    $installTitle.Size = New-Object System.Drawing.Size(300, 25)
+    $installTitle.Text = "Installing..."
+    $installTitle.Font = New-Object System.Drawing.Font("Tahoma", 10, [System.Drawing.FontStyle]::Bold)
+    $installTitle.Location = New-Object System.Drawing.Point(0, 5)
+    $installTitle.Size = New-Object System.Drawing.Size(295, 25)
+    $installTitle.ForeColor = $script:ThemeColors.TextBlack
     $installPage.Controls.Add($installTitle)
 
     $installDesc = New-Object System.Windows.Forms.Label
-    $installDesc.Text = "Please wait while Server Manager is being installed..."
-    $installDesc.Location = New-Object System.Drawing.Point(20, 50)
-    $installDesc.Size = New-Object System.Drawing.Size(400, 20)
+    $installDesc.Text = "Please wait while Server Manager is being installed on your computer."
+    $installDesc.Location = New-Object System.Drawing.Point(0, 35)
+    $installDesc.Size = New-Object System.Drawing.Size(295, 35)
+    $installDesc.ForeColor = $script:ThemeColors.TextBlack
+    $installDesc.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $installPage.Controls.Add($installDesc)
 
     $installProgressBar = New-Object System.Windows.Forms.ProgressBar
-    $installProgressBar.Location = New-Object System.Drawing.Point(20, 100)
-    $installProgressBar.Size = New-Object System.Drawing.Size(570, 25)
+    $installProgressBar.Location = New-Object System.Drawing.Point(0, 80)
+    $installProgressBar.Size = New-Object System.Drawing.Size(295, 20)
     $installProgressBar.Style = 'Continuous'
     $installPage.Controls.Add($installProgressBar)
 
     $installStatusLabel = New-Object System.Windows.Forms.Label
     $installStatusLabel.Text = "Preparing installation..."
-    $installStatusLabel.Location = New-Object System.Drawing.Point(20, 140)
-    $installStatusLabel.Size = New-Object System.Drawing.Size(570, 20)
+    $installStatusLabel.Location = New-Object System.Drawing.Point(0, 108)
+    $installStatusLabel.Size = New-Object System.Drawing.Size(295, 50)
+    $installStatusLabel.ForeColor = $script:ThemeColors.TextGray
+    $installStatusLabel.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $installPage.Controls.Add($installStatusLabel)
 
     $pages += $installPage
 
     # Page 5: Completion
     $completePage = New-Object System.Windows.Forms.Panel
-    $completePage.Location = New-Object System.Drawing.Point(20, 20)
-    $completePage.Size = New-Object System.Drawing.Size(610, 340)
+    $completePage.Location = New-Object System.Drawing.Point(10, 10)
+    $completePage.Size = New-Object System.Drawing.Size(305, 295)
     $completePage.Visible = $false
+    $completePage.BackColor = $script:ThemeColors.PanelBackground
     $contentPanel.Controls.Add($completePage)
 
     $completeTitle = New-Object System.Windows.Forms.Label
-    $completeTitle.Text = "Installation Complete"
-    $completeTitle.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
-    $completeTitle.Location = New-Object System.Drawing.Point(20, 20)
-    $completeTitle.Size = New-Object System.Drawing.Size(400, 30)
+    $completeTitle.Text = "Setup Complete"
+    $completeTitle.Font = New-Object System.Drawing.Font("Tahoma", 10, [System.Drawing.FontStyle]::Bold)
+    $completeTitle.Location = New-Object System.Drawing.Point(0, 5)
+    $completeTitle.Size = New-Object System.Drawing.Size(295, 25)
+    $completeTitle.ForeColor = $script:ThemeColors.Success
     $completePage.Controls.Add($completeTitle)
 
     $completeText = New-Object System.Windows.Forms.Label
     $completeText.Text = @"
-Server Manager has been successfully installed on your computer.
+Server Manager has been installed successfully.
 
 You can now:
-Access the web interface at http://localhost:8080
-Log in with username: admin, password: admin
-Start managing your game servers
+- Access the web interface at:
+  http://localhost:8080
+- Log in with the credentials you created
+- Start managing your game servers
 
-Click Finish to complete the setup.
+Click Finish to close this wizard.
 "@
-    $completeText.Location = New-Object System.Drawing.Point(20, 70)
-    $completeText.Size = New-Object System.Drawing.Size(550, 150)
+    $completeText.Location = New-Object System.Drawing.Point(0, 40)
+    $completeText.Size = New-Object System.Drawing.Size(295, 200)
+    $completeText.ForeColor = $script:ThemeColors.TextBlack
+    $completeText.Font = New-Object System.Drawing.Font("Tahoma", 8)
     $completePage.Controls.Add($completeText)
 
     $pages += $completePage
@@ -1672,10 +1734,9 @@ Click Finish to complete the setup.
     # Event handlers
     $steamCmdBrowse.Add_Click({
         $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-        $dialog.Description = "Select SteamCMD installation directory"
+        $dialog.Description = "Select SteamCMD directory"
         if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             $steamCmdBox.Text = $dialog.SelectedPath
-            # Update workspace path if not using custom
             if (-not $customWorkspaceCheckbox.Checked) {
                 $workspaceBox.Text = Join-Path $dialog.SelectedPath "user_workspace"
             }
@@ -1684,7 +1745,7 @@ Click Finish to complete the setup.
 
     $workspaceBrowse.Add_Click({
         $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-        $dialog.Description = "Select user workspace parent directory"
+        $dialog.Description = "Select workspace directory"
         if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             $workspaceBox.Text = Join-Path $dialog.SelectedPath "user_workspace"
         }
@@ -1693,10 +1754,12 @@ Click Finish to complete the setup.
     $customWorkspaceCheckbox.Add_CheckedChanged({
         if ($customWorkspaceCheckbox.Checked) {
             $workspaceBox.ReadOnly = $false
+            $workspaceBox.BackColor = [System.Drawing.Color]::White
             $workspaceBrowse.Enabled = $true
             $workspaceBox.Text = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "user_workspace"
         } else {
             $workspaceBox.ReadOnly = $true
+            $workspaceBox.BackColor = [System.Drawing.Color]::FromArgb(240, 240, 240)
             $workspaceBrowse.Enabled = $false
             $workspaceBox.Text = Join-Path $steamCmdBox.Text "user_workspace"
         }
@@ -1711,11 +1774,13 @@ Click Finish to complete the setup.
         if ($sqlTypeCombo.SelectedIndex -ge 0) {
             $selectedItem = $detected[$sqlTypeCombo.SelectedIndex]
             if ($selectedItem.Type -eq "SQLite") {
-                $sqlLocationBox.Text = "(no connection string required)"
+                $sqlLocationBox.Text = "(not required)"
                 $sqlLocationBox.ReadOnly = $true
+                $sqlLocationBox.BackColor = [System.Drawing.Color]::FromArgb(240, 240, 240)
             } else {
                 $sqlLocationBox.Text = $selectedItem.Location
                 $sqlLocationBox.ReadOnly = $false
+                $sqlLocationBox.BackColor = [System.Drawing.Color]::White
             }
         }
     })
@@ -1725,23 +1790,14 @@ Click Finish to complete the setup.
             $pages[$i].Visible = ($i -eq $index)
         }
         
-        # Update header subtitle based on current page
-        switch ($index) {
-            0 { $headerSubtitle.Text = "Welcome to the Server Manager Setup Wizard" }
-            1 { $headerSubtitle.Text = "Choose installation options and directories" }
-            2 { $headerSubtitle.Text = "Configure the database for user accounts" }
-            3 { $headerSubtitle.Text = "Installing Server Manager components..." }
-            4 { $headerSubtitle.Text = "Setup completed successfully" }
-        }
-        
         # Update button states
         $backButton.Enabled = ($index -gt 0 -and $index -ne 3 -and $index -ne 4)
-        $nextButton.Enabled = ($index -ne 3)  # Enable for all pages except installation progress
+        $nextButton.Enabled = ($index -ne 3)
         $cancelButton.Enabled = ($index -ne 3 -and $index -ne 4)
         
         if ($index -eq 2) {
             $nextButton.Text = "Install"
-            $nextButton.Enabled = $true  # Explicitly enable Install button
+            $nextButton.Enabled = $true
         } elseif ($index -eq 4) {
             $nextButton.Text = "Finish"
             $nextButton.Enabled = $true
@@ -1755,7 +1811,33 @@ Click Finish to complete the setup.
     $nextButton.Add_Click({
         switch ($script:currentPageIndex) {
             0 { Show-Page 1 }
-            1 { Show-Page 2 }
+            1 { 
+                # Validate SteamCMD path before moving to next page
+                $steamPath = $steamCmdBox.Text.Trim()
+                if ([string]::IsNullOrWhiteSpace($steamPath)) {
+                    [System.Windows.Forms.MessageBox]::Show(
+                        "SteamCMD Installation Directory is required.", 
+                        "Validation Error", 
+                        [System.Windows.Forms.MessageBoxButtons]::OK, 
+                        [System.Windows.Forms.MessageBoxIcon]::Warning
+                    )
+                    return
+                }
+                
+                # Check for invalid path characters
+                $invalidChars = [System.IO.Path]::GetInvalidPathChars()
+                if ($steamPath.IndexOfAny($invalidChars) -ge 0) {
+                    [System.Windows.Forms.MessageBox]::Show(
+                        "The path contains invalid characters. Please enter a valid directory path.", 
+                        "Validation Error", 
+                        [System.Windows.Forms.MessageBoxButtons]::OK, 
+                        [System.Windows.Forms.MessageBoxIcon]::Warning
+                    )
+                    return
+                }
+                
+                Show-Page 2 
+            }
             2 { 
                 # Simple validation for cluster nodes
                 if ($subhostRadio.Checked) {
@@ -1855,6 +1937,11 @@ function Start-Installation {
     )
 
     try {
+        # Validate settings first
+        if ([string]::IsNullOrWhiteSpace($Settings.SteamCMDPath)) {
+            throw "SteamCMD installation path is empty. Please specify a valid directory."
+        }
+        
         # IMMEDIATELY ensure no console prompts during installation - MAXIMUM SUPPRESSION
         Set-NoConsolePrompts
         
@@ -2080,11 +2167,11 @@ Provide this token to subhost administrators during their installation process.
         } catch {
             $errorMsg = $_.Exception.Message
             if ($errorMsg -match "timeout|timed out") {
-                $errorMsg = "Download operation timed out. This could be due to:`n• Slow internet connection`n• Repository server issues`n• Firewall blocking the connection`n`nOriginal error: $errorMsg"
+                $errorMsg = "Download operation timed out. This could be due to:`n- Slow internet connection`n- Repository server issues`n- Firewall blocking the connection`n`nOriginal error: $errorMsg"
             } elseif ($errorMsg -match "fatal: could not read Username" -or $errorMsg -match "Authentication failed" -or $errorMsg -match "repository not found") {
-                $errorMsg = "Repository access denied. This may be because:`n• The repository is private and requires authentication`n• The repository URL is incorrect`n• Network connectivity issues`n`nAttempted fallback download from website but that also failed.`n`nOriginal error: $errorMsg"
+                $errorMsg = "Repository access denied. This may be because:`n- The repository is private and requires authentication`n- The repository URL is incorrect`n- Network connectivity issues`n`nAttempted fallback download from website but that also failed.`n`nOriginal error: $errorMsg"
             } elseif ($errorMsg -match "Both Git clone and website download failed") {
-                $errorMsg = "Failed to download Server Manager files from both Git repository and website backup.`n`nThis could be due to:`n• Network connectivity issues`n• Repository access restrictions`n• Website availability problems`n• Firewall blocking connections`n`nOriginal error: $errorMsg"
+                $errorMsg = "Failed to download Server Manager files from both Git repository and website backup.`n`nThis could be due to:`n- Network connectivity issues`n- Repository access restrictions`n- Website availability problems`n- Firewall blocking connections`n`nOriginal error: $errorMsg"
             }
             if (-not (Show-StepError "Repository Download" $errorMsg)) {
                 throw "Installation cancelled by user after repository download failed"
@@ -2136,7 +2223,9 @@ Provide this token to subhost administrators during their installation process.
         Update-Progress "Setting up database..."
         try {
             # Initialize database and store path for potential future use
-            $null = Initialize-SQLDatabase -SQLType $Settings.SQLType -SQLVersion $Settings.SQLVersion -SQLLocation $Settings.SQLLocation
+            # DataFolder should be the db directory path
+            $dataFolder = Join-Path $ServerManagerDir "db"
+            $null = Initialize-SQLDatabase -SQLType $Settings.SQLType -SQLVersion $Settings.SQLVersion -SQLLocation $Settings.SQLLocation -DataFolder $dataFolder
         } catch {
             if (-not (Show-StepError "Database Setup" "Failed to initialize database: $($_.Exception.Message)`n`nUser authentication may not work properly.")) {
                 throw "Installation cancelled by user after database setup failed"
@@ -2297,7 +2386,7 @@ except Exception as e:
     }
 }
 
-# Cluster approval dialog for subhosts
+# Cluster approval dialog for subhosts - Classic Windows Style
 function Show-ClusterApprovalDialog {
     param(
         [PSCustomObject]$Settings,
@@ -2305,246 +2394,294 @@ function Show-ClusterApprovalDialog {
         [scriptblock]$OnApproved
     )
     
-    # Create approval request form
-    $approvalForm = New-Object System.Windows.Forms.Form
-    $approvalForm.Text = "Cluster Join Request - Waiting for Approval"
-    $approvalForm.Size = New-Object System.Drawing.Size(500, 300)
-    $approvalForm.StartPosition = "CenterParent"
-    $approvalForm.FormBorderStyle = "FixedDialog"
-    $approvalForm.MaximizeBox = $false
-    $approvalForm.MinimizeBox = $false
-    $approvalForm.ShowIcon = $false
-    $approvalForm.BackColor = [System.Drawing.Color]::FromArgb(45, 45, 48)
-    $approvalForm.ForeColor = [System.Drawing.Color]::White
+    # Create approval request form - Classic Windows style
+    $script:clusterApprovalForm = New-Object System.Windows.Forms.Form
+    $script:clusterApprovalForm.Text = "Cluster Join Request"
+    $script:clusterApprovalForm.Size = New-Object System.Drawing.Size(400, 280)
+    $script:clusterApprovalForm.StartPosition = "CenterParent"
+    $script:clusterApprovalForm.FormBorderStyle = "FixedDialog"
+    $script:clusterApprovalForm.MaximizeBox = $false
+    $script:clusterApprovalForm.MinimizeBox = $false
+    $script:clusterApprovalForm.ShowIcon = $false
+    $script:clusterApprovalForm.BackColor = [System.Drawing.Color]::FromArgb(236, 233, 216)
+    $script:clusterApprovalForm.Font = New-Object System.Drawing.Font("Tahoma", 8)
     
-    # Title label
-    $titleLabel = New-Object System.Windows.Forms.Label
-    $titleLabel.Text = "Requesting to Join Cluster"
-    $titleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
-    $titleLabel.Location = New-Object System.Drawing.Point(20, 20)
-    $titleLabel.Size = New-Object System.Drawing.Size(450, 25)
-    $titleLabel.ForeColor = [System.Drawing.Color]::White
-    $approvalForm.Controls.Add($titleLabel)
+    # Status label - script scope for timer access
+    $script:clusterStatusLabel = New-Object System.Windows.Forms.Label
+    $script:clusterStatusLabel.Text = "Connecting to master host..."
+    $script:clusterStatusLabel.Location = New-Object System.Drawing.Point(20, 20)
+    $script:clusterStatusLabel.Size = New-Object System.Drawing.Size(350, 20)
+    $script:clusterStatusLabel.Font = New-Object System.Drawing.Font("Tahoma", 8, [System.Drawing.FontStyle]::Bold)
+    $script:clusterApprovalForm.Controls.Add($script:clusterStatusLabel)
     
-    # Status label
-    $statusLabel = New-Object System.Windows.Forms.Label
-    $statusLabel.Text = "Sending join request to master host...`nPlease wait for approval from the administrator."
-    $statusLabel.Location = New-Object System.Drawing.Point(20, 60)
-    $statusLabel.Size = New-Object System.Drawing.Size(450, 60)
-    $statusLabel.ForeColor = [System.Drawing.Color]::LightGray
-    $statusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-    $approvalForm.Controls.Add($statusLabel)
+    # Detail label - script scope for timer access
+    $script:clusterDetailLabel = New-Object System.Windows.Forms.Label
+    $script:clusterDetailLabel.Text = "Please wait..."
+    $script:clusterDetailLabel.Location = New-Object System.Drawing.Point(20, 45)
+    $script:clusterDetailLabel.Size = New-Object System.Drawing.Size(350, 35)
+    $script:clusterApprovalForm.Controls.Add($script:clusterDetailLabel)
     
-    # Progress indicator
-    $progressBar = New-Object System.Windows.Forms.ProgressBar
-    $progressBar.Location = New-Object System.Drawing.Point(20, 130)
-    $progressBar.Size = New-Object System.Drawing.Size(450, 20)
-    $progressBar.Style = "Marquee"
-    $progressBar.MarqueeAnimationSpeed = 30
-    $approvalForm.Controls.Add($progressBar)
+    # Progress bar - script scope for timer access
+    $script:clusterProgressBar = New-Object System.Windows.Forms.ProgressBar
+    $script:clusterProgressBar.Location = New-Object System.Drawing.Point(20, 90)
+    $script:clusterProgressBar.Size = New-Object System.Drawing.Size(350, 18)
+    $script:clusterProgressBar.Style = "Marquee"
+    $script:clusterProgressBar.MarqueeAnimationSpeed = 30
+    $script:clusterApprovalForm.Controls.Add($script:clusterProgressBar)
     
-    # Details label  
-    $detailsLabel = New-Object System.Windows.Forms.Label
-    $detailsLabel.Text = "Master Host: $($Settings.HostAddress)`nHost Name: $env:COMPUTERNAME`nSubhost ID: $($Settings.SubhostID)`n`nTimeout: 5 minutes maximum"
-    $detailsLabel.Location = New-Object System.Drawing.Point(20, 160)
-    $detailsLabel.Size = New-Object System.Drawing.Size(450, 80)
-    $detailsLabel.ForeColor = [System.Drawing.Color]::LightGray
-    $detailsLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-    $approvalForm.Controls.Add($detailsLabel)
+    # Info group
+    $infoGroup = New-Object System.Windows.Forms.GroupBox
+    $infoGroup.Text = "Connection Details"
+    $infoGroup.Location = New-Object System.Drawing.Point(20, 115)
+    $infoGroup.Size = New-Object System.Drawing.Size(350, 75)
+    $script:clusterApprovalForm.Controls.Add($infoGroup)
     
-    # Cancel button
-    $cancelButton = New-Object System.Windows.Forms.Button
-    $cancelButton.Text = "Cancel Installation"
-    $cancelButton.Location = New-Object System.Drawing.Point(350, 250)
-    $cancelButton.Size = New-Object System.Drawing.Size(120, 25)
-    $cancelButton.BackColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
-    $cancelButton.ForeColor = [System.Drawing.Color]::White
-    $cancelButton.FlatStyle = "Flat"
-    $cancelButton.Add_Click({
-        $approvalForm.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-        $approvalForm.Close()
+    $infoText = New-Object System.Windows.Forms.Label
+    $infoText.Text = "Master Host: $($Settings.HostAddress)`nLocal Machine: $env:COMPUTERNAME`nTimeout: 5 minutes"
+    $infoText.Location = New-Object System.Drawing.Point(10, 18)
+    $infoText.Size = New-Object System.Drawing.Size(330, 50)
+    $infoGroup.Controls.Add($infoText)
+    
+    # Buttons - script scope for timer access
+    $script:clusterRetryButton = New-Object System.Windows.Forms.Button
+    $script:clusterRetryButton.Text = "Retry"
+    $script:clusterRetryButton.Location = New-Object System.Drawing.Point(130, 205)
+    $script:clusterRetryButton.Size = New-Object System.Drawing.Size(75, 25)
+    $script:clusterRetryButton.Visible = $false
+    $script:clusterRetryButton.UseVisualStyleBackColor = $true
+    $script:clusterApprovalForm.Controls.Add($script:clusterRetryButton)
+    
+    $script:clusterSkipButton = New-Object System.Windows.Forms.Button
+    $script:clusterSkipButton.Text = "Skip"
+    $script:clusterSkipButton.Location = New-Object System.Drawing.Point(215, 205)
+    $script:clusterSkipButton.Size = New-Object System.Drawing.Size(75, 25)
+    $script:clusterSkipButton.Visible = $false
+    $script:clusterSkipButton.UseVisualStyleBackColor = $true
+    $script:clusterApprovalForm.Controls.Add($script:clusterSkipButton)
+    
+    $script:clusterCancelButton = New-Object System.Windows.Forms.Button
+    $script:clusterCancelButton.Text = "Cancel"
+    $script:clusterCancelButton.Location = New-Object System.Drawing.Point(300, 205)
+    $script:clusterCancelButton.Size = New-Object System.Drawing.Size(75, 25)
+    $script:clusterCancelButton.UseVisualStyleBackColor = $true
+    $script:clusterApprovalForm.Controls.Add($script:clusterCancelButton)
+    
+    # State variables
+    $script:approvalRequestId = $null
+    $script:requestSent = $false
+    $script:attemptCount = 0
+    $script:maxAttempts = 60
+    $script:consecutiveErrors = 0
+    $script:isPaused = $false
+    $script:lastErrorMessage = ""
+    $script:clusterHostAddress = $Settings.HostAddress
+    $script:clusterSubhostID = $Settings.SubhostID
+    $script:clusterSettings = $Settings
+    $script:clusterOnApproved = $OnApproved
+    $script:clusterParentForm = $Form
+    
+    # Timer - script scope
+    $script:clusterTimer = New-Object System.Windows.Forms.Timer
+    $script:clusterTimer.Interval = 5000
+    
+    # Cancel click
+    $script:clusterCancelButton.Add_Click({
+        $script:clusterTimer.Stop()
+        $script:clusterApprovalForm.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $script:clusterApprovalForm.Close()
     })
-    $approvalForm.Controls.Add($cancelButton)
     
-    # Show the approval form
-    $approvalForm.Show()
-    $approvalForm.BringToFront()
+    # Skip click
+    $script:clusterSkipButton.Add_Click({
+        $script:clusterTimer.Stop()
+        Write-Log "User chose to skip cluster join"
+        $script:clusterApprovalForm.Hide()
+        if ($script:clusterOnApproved) { & $script:clusterOnApproved }
+        $script:clusterApprovalForm.Close()
+    })
     
-    # Start approval request process
-    $timer = New-Object System.Windows.Forms.Timer
-    $timer.Interval = 5000 # Check every 5 seconds
-    $approvalRequestId = $null
-    $requestSent = $false
-    $attemptCount = 0
-    $maxAttempts = 60  # 5 minutes total (60 * 5 seconds)
-    $lastErrorMessage = ""
+    # Retry click
+    $script:clusterRetryButton.Add_Click({
+        Write-Log "User initiated retry"
+        $script:consecutiveErrors = 0
+        $script:isPaused = $false
+        $script:requestSent = $false
+        $script:clusterStatusLabel.Text = "Retrying connection..."
+        $script:clusterDetailLabel.Text = "Attempting to connect to master host..."
+        $script:clusterProgressBar.Style = "Marquee"
+        $script:clusterRetryButton.Visible = $false
+        $script:clusterSkipButton.Visible = $false
+        $script:clusterTimer.Start()
+    })
     
-    $timer.Add_Tick({
-        try {
-            $script:attemptCount++
-            
-            # Check for timeout
-            if ($script:attemptCount -gt $script:maxAttempts) {
-                $timer.Stop()
-                $statusLabel.Text = "Timeout waiting for approval. Installation will continue without cluster membership."
-                $progressBar.Style = "Continuous"
-                $progressBar.Value = 0
+    # Timer tick - main logic
+    $script:clusterTimer.Add_Tick({
+        if ($script:isPaused) { return }
+        
+        $script:attemptCount++
+        $remaining = ($script:maxAttempts - $script:attemptCount) * 5
+        $mins = [math]::Floor($remaining / 60)
+        $secs = $remaining % 60
+        
+        # Timeout check
+        if ($script:attemptCount -gt $script:maxAttempts) {
+            $script:clusterTimer.Stop()
+            $script:clusterStatusLabel.Text = "Request Timed Out"
+            $script:clusterDetailLabel.Text = "Administrator did not respond within 5 minutes."
+            $script:clusterProgressBar.Style = "Continuous"
+            $script:clusterProgressBar.Value = 0
+            $script:clusterRetryButton.Visible = $true
+            $script:clusterSkipButton.Visible = $true
+            $script:isPaused = $true
+            Write-Log "Cluster join request timed out"
+            return
+        }
+        
+        if (-not $script:requestSent) {
+            # Check host availability
+            try {
+                $script:clusterStatusLabel.Text = "Checking host... (${mins}:$($secs.ToString('00')) remaining)"
+                $script:clusterDetailLabel.Text = "Connecting to $($script:clusterHostAddress)..."
                 
-                Write-Log "[WARNING] Cluster join request timed out after $($script:maxAttempts * 5) seconds"
+                $hostStatus = Invoke-RestMethod -Uri "http://$($script:clusterHostAddress):8080/api/cluster/status" -Method GET -TimeoutSec 10
                 
-                [System.Windows.Forms.MessageBox]::Show(
-                    "The request to join the cluster has timed out.`n`nPossible causes:`n- Master host is offline`n- Network connectivity issues`n- Administrator has not approved the request`n`nThe installation will complete without cluster membership.",
-                    "Cluster Join Timeout",
-                    [System.Windows.Forms.MessageBoxButtons]::OK,
-                    [System.Windows.Forms.MessageBoxIcon]::Warning
-                )
-                
-                $approvalForm.Hide()
-                if ($OnApproved) {
-                    & $OnApproved
-                }
-                $approvalForm.Close()
-                return
-            }
-            
-            if (-not $requestSent) {
-                # First check if host is online and available
-                try {
-                    $statusLabel.Text = "Checking host availability..."
-                    $hostStatus = Invoke-RestMethod -Uri "http://$($Settings.HostAddress):8080/api/cluster/status" -Method GET -TimeoutSec 10
-                    
-                    if ($hostStatus.host_status -eq "offline" -or $hostStatus.dashboard_active -eq $false) {
-                        $statusLabel.Text = "Host is currently offline or dashboard is not active. Retrying..."
-                        Write-Log "[WARNING] Host is offline or dashboard inactive. Status: $($hostStatus.host_status), Dashboard Active: $($hostStatus.dashboard_active)"
-                        return  # Wait for next timer tick
+                if ($hostStatus.host_status -eq "offline" -or $hostStatus.dashboard_active -eq $false) {
+                    $script:consecutiveErrors++
+                    $script:clusterDetailLabel.Text = "Host is offline. Waiting... (attempt $script:attemptCount)"
+                    if ($script:consecutiveErrors -ge 3) {
+                        $script:clusterRetryButton.Visible = $true
+                        $script:clusterSkipButton.Visible = $true
                     }
-                    
-                    if ($hostStatus.maintenance_mode -eq $true) {
-                        $statusLabel.Text = "Host is in maintenance mode. Waiting for maintenance to complete..."
-                        Write-Log "[WARNING] Host is in maintenance mode. Waiting for completion."
-                        return  # Wait for next timer tick
-                    }
-                    
-                    Write-Log "[INFO] Host is online and available. Dashboard active: $($hostStatus.dashboard_active)"
-                    $statusLabel.Text = "Host is online. Sending join request..."
-                    
-                } catch {
-                    $statusLabel.Text = "Unable to connect to host. Retrying in 5 seconds...`nError: $($_.Exception.Message)"
-                    Write-Log "[WARNING] Host status check failed: $($_.Exception.Message). Will retry."
-                    return  # Wait for next timer tick
+                    return
                 }
                 
-                # Send the join request (host is confirmed online and available)
+                $script:consecutiveErrors = 0
+                $script:clusterStatusLabel.Text = "Sending join request..."
+                
+                # Get local IP
+                $localIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notmatch "Loopback" -and $_.PrefixOrigin -ne "WellKnown" } | Select-Object -First 1).IPAddress
+                if (-not $localIP) {
+                    $localIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notmatch "Loopback" } | Select-Object -First 1).IPAddress
+                }
+                
+                $hostname = $env:COMPUTERNAME
+                try { $hostname = [System.Net.Dns]::GetHostEntry($env:COMPUTERNAME).HostName } catch {}
+                
                 $requestBody = @{
-                    subhost_id = $Settings.SubhostID
+                    subhost_id = $script:clusterSubhostID
                     info = @{
                         machine_name = $env:COMPUTERNAME
+                        hostname = $hostname
                         os = (Get-ComputerInfo).WindowsProductName
                         install_time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-                        ip_address = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notmatch "Loopback" } | Select-Object -First 1).IPAddress
+                        ip_address = $localIP
                     }
                 } | ConvertTo-Json -Depth 3
                 
-                $response = Invoke-RestMethod -Uri "http://$($Settings.HostAddress):8080/api/cluster/request-join" -Method POST -Body $requestBody -ContentType "application/json" -TimeoutSec 15
+                Write-Log "Sending join request with IP: $localIP"
+                $response = Invoke-RestMethod -Uri "http://$($script:clusterHostAddress):8080/api/cluster/request-join" -Method POST -Body $requestBody -ContentType "application/json" -TimeoutSec 15
                 
                 if ($response.request_id) {
                     $script:approvalRequestId = $response.request_id
-                    $requestSent = $true
-                    $statusLabel.Text = "Request sent! Waiting for administrator approval...`nRequest ID: $($response.request_id)"
-                    Write-Log "[INFO] Cluster join request sent with ID: $($response.request_id)"
+                    $script:requestSent = $true
+                    $script:consecutiveErrors = 0
+                    $script:clusterStatusLabel.Text = "Waiting for Approval..."
+                    $script:clusterDetailLabel.Text = "Request sent. Awaiting administrator response."
+                    Write-Log "Join request sent with ID: $($response.request_id)"
                 } else {
-                    throw "Invalid response from master host"
+                    throw "No request_id in response"
                 }
-            } else {
-                # Check approval status using the dedicated endpoint
-                try {
-                    $approvalResponse = Invoke-RestMethod -Uri "http://$($Settings.HostAddress):8080/api/cluster/check-approval/$($Settings.SubhostID)" -Method GET -TimeoutSec 10
+                
+            } catch {
+                $script:consecutiveErrors++
+                $script:lastErrorMessage = $_.Exception.Message
+                $script:clusterDetailLabel.Text = "Error: $script:lastErrorMessage"
+                Write-Log "Connection error: $script:lastErrorMessage"
+                
+                if ($script:consecutiveErrors -ge 3) {
+                    $script:clusterTimer.Stop()
+                    $script:clusterStatusLabel.Text = "Connection Failed"
+                    $script:clusterProgressBar.Style = "Continuous"
+                    $script:clusterProgressBar.Value = 0
+                    $script:clusterRetryButton.Visible = $true
+                    $script:clusterSkipButton.Visible = $true
+                    $script:isPaused = $true
+                }
+            }
+        } else {
+            # Check approval status
+            try {
+                $script:clusterStatusLabel.Text = "Waiting for Approval... (${mins}:$($secs.ToString('00')) remaining)"
+                $approvalResponse = Invoke-RestMethod -Uri "http://$($script:clusterHostAddress):8080/api/cluster/check-approval/$($script:clusterSubhostID)" -Method GET -TimeoutSec 10
+                
+                if ($approvalResponse.status -eq "approved") {
+                    $script:clusterTimer.Stop()
+                    $script:clusterStatusLabel.Text = "Approved!"
+                    $script:clusterDetailLabel.Text = "Join request accepted."
+                    $script:clusterProgressBar.Style = "Continuous"
+                    $script:clusterProgressBar.Value = 100
+                    $script:clusterSettings.ClusterToken = $approvalResponse.approval_token
+                    Write-Log "Cluster join approved! Token: $($approvalResponse.approval_token)"
+                    Start-Sleep -Milliseconds 500
+                    $script:clusterApprovalForm.Hide()
+                    if ($script:clusterOnApproved) { & $script:clusterOnApproved }
+                    $script:clusterApprovalForm.Close()
                     
-                    if ($approvalResponse.status -eq "approved") {
-                        $timer.Stop()
-                        $statusLabel.Text = "Approved! Completing installation..."
-                        $progressBar.Style = "Continuous"
-                        $progressBar.Value = 100
-                        
-                        Write-Log "[INFO] Cluster join request approved! Token: $($approvalResponse.approval_token)"
-                        
-                        # Store the approval token for later use
-                        $Settings.ClusterToken = $approvalResponse.approval_token
-                        
-                        # Close approval dialog and continue
-                        $approvalForm.Hide()
-                        if ($OnApproved) {
-                            & $OnApproved
-                        }
-                        $approvalForm.Close()
-                    } elseif ($approvalResponse.status -eq "rejected") {
-                        $timer.Stop()
-                        $statusLabel.Text = "Request rejected by administrator"
-                        $progressBar.Style = "Continuous"
-                        $progressBar.Value = 0
-                        
-                        Write-Log "[WARNING] Cluster join request rejected"
-                        
-                        [System.Windows.Forms.MessageBox]::Show(
-                            "Your request to join the cluster was rejected by the administrator.`n`nThe installation is complete but this host will not be part of the cluster.",
-                            "Cluster Join Rejected",
-                            [System.Windows.Forms.MessageBoxButtons]::OK,
-                            [System.Windows.Forms.MessageBoxIcon]::Warning
-                        )
-                        
-                        $approvalForm.Hide()
-                        if ($OnApproved) {
-                            & $OnApproved
-                        }
-                        $approvalForm.Close()
-                    } elseif ($approvalResponse.status -eq "pending") {
-                        $statusLabel.Text = "Still waiting for approval...`nRequest ID: $script:approvalRequestId`n`nStatus: $($approvalResponse.message)"
-                        Write-Log "[INFO] Request still pending approval"
-                    } else {
-                        $statusLabel.Text = "Unexpected status: $($approvalResponse.status)`nMessage: $($approvalResponse.message)"
-                        Write-Log "[WARNING] Unexpected approval status: $($approvalResponse.status)"
-                    }
-                } catch {
-                    Write-Log "[ERROR] Error checking approval status: $($_.Exception.Message)"
-                    $statusLabel.Text = "Error checking approval status. Retrying..."
+                } elseif ($approvalResponse.status -eq "rejected") {
+                    $script:clusterTimer.Stop()
+                    $script:clusterStatusLabel.Text = "Request Rejected"
+                    $script:clusterDetailLabel.Text = "Administrator declined the request."
+                    $script:clusterProgressBar.Style = "Continuous"
+                    $script:clusterProgressBar.Value = 0
+                    $script:clusterSkipButton.Visible = $true
+                    $script:isPaused = $true
+                    Write-Log "Cluster join rejected"
+                    
+                } elseif ($approvalResponse.status -eq "pending") {
+                    $script:clusterDetailLabel.Text = "Request pending administrator review..."
+                }
+                
+                $script:consecutiveErrors = 0
+                
+            } catch {
+                $script:consecutiveErrors++
+                $script:lastErrorMessage = $_.Exception.Message
+                $script:clusterDetailLabel.Text = "Status check error (attempt $script:consecutiveErrors/3)"
+                Write-Log "Status check error: $script:lastErrorMessage"
+                
+                if ($script:consecutiveErrors -ge 3) {
+                    $script:clusterTimer.Stop()
+                    $script:clusterStatusLabel.Text = "Connection Lost"
+                    $script:clusterProgressBar.Style = "Continuous"
+                    $script:clusterProgressBar.Value = 0
+                    $script:clusterRetryButton.Visible = $true
+                    $script:clusterSkipButton.Visible = $true
+                    $script:isPaused = $true
                 }
             }
-            # If pending, continue waiting
-        }
-        catch {
-            $script:lastErrorMessage = $_.Exception.Message
-            Write-Log "[ERROR] Cluster approval request failed (attempt $script:attemptCount/$script:maxAttempts): $($_.Exception.Message)"
-            
-            if ($script:attemptCount -lt 3) {
-                $statusLabel.Text = "Connection error. Retrying... (attempt $script:attemptCount)"
-            } else {
-                $statusLabel.Text = "Connection issues. Still trying... (attempt $script:attemptCount)`nLast error: $($script:lastErrorMessage)"
-            }
         }
     })
     
-    $timer.Start()
-    
-    # Handle form closing
-    $approvalForm.Add_FormClosing({
+    # Form closing
+    $script:clusterApprovalForm.Add_FormClosing({
         param($formSender, $closeEventArgs)
-        if ($timer) {
-            $timer.Stop()
-            $timer.Dispose()
-        }
-        if ($closeEventArgs.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing -and $approvalForm.DialogResult -eq [System.Windows.Forms.DialogResult]::Cancel) {
-            # User cancelled - close main form too
-            $Form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-            $Form.Close()
+        if ($script:clusterTimer) { $script:clusterTimer.Stop(); $script:clusterTimer.Dispose() }
+        if ($closeEventArgs.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing -and $script:clusterApprovalForm.DialogResult -eq [System.Windows.Forms.DialogResult]::Cancel) {
+            $script:clusterParentForm.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+            $script:clusterParentForm.Close()
         }
     })
+    
+    $script:clusterApprovalForm.Show()
+    $script:clusterApprovalForm.BringToFront()
+    $script:clusterTimer.Start()
 }
 
 function Test-Python310 {
     $python = Get-Command python -ErrorAction SilentlyContinue
     if ($python) {
-        $ver = & python -c "import sys; print(sys.version_info.major, sys.version_info.minor, sys.maxsize > 2**32)"
-        $parts = $ver -split " "
+        $ver = & python -c 'import sys; print(sys.version_info.major, sys.version_info.minor, sys.maxsize > 2**32)'
+        $parts = $ver -split ' '
         if ($parts.Length -eq 3) {
             $major = [int]$parts[0]
             $minor = [int]$parts[1]
@@ -2558,37 +2695,75 @@ function Test-Python310 {
 }
 
 function Install-Python310 {
-    Write-Log "Python 3.10 (64-bit) not found. Downloading and installing Python 3.10 (64-bit)..."
+    Write-Log 'Python 3.10 64-bit not found. Downloading and installing Python 3.10 64-bit...'
     $pythonInstallerUrl = "https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe"
     $installerPath = Join-Path $env:TEMP "python-3.10.11-amd64.exe"
     Invoke-WebRequest -Uri $pythonInstallerUrl -OutFile $installerPath
     Write-Log "Running Python installer..."
     Start-Process -FilePath $installerPath -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0" -Wait
     Remove-Item $installerPath -Force -Confirm:$false
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+    
+    # Refresh PATH environment variable safely
+    $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+    $newPath = @($machinePath, $userPath) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd(';') }
+    $env:Path = ($newPath -join ';')
+    
+    Write-Log "PATH refreshed after Python installation"
 }
 
 function Install-PythonRequirements {
     param([string]$RequirementsPath)
-    Write-Log "Installing Python requirements using pip..." -ForegroundColor Cyan
+    Write-Log "Installing Python requirements using pip..."
     if (-not (Test-Path $RequirementsPath)) {
-        Write-Log "Python requirements.txt not found at: $RequirementsPath" -ForegroundColor Yellow
+        Write-Log "Python requirements.txt not found at: $RequirementsPath"
         return $false
     }
+    
+    # Try to find Python in common locations if not in PATH
     $python = Get-Command python -ErrorAction SilentlyContinue
     if (-not $python) {
-        Write-Log "Python not found in PATH after install. Please restart your shell and try again." -ForegroundColor Red
-        return $false
+        Write-Log "Python not found in PATH, searching common locations..."
+        
+        # Check common Python installation paths
+        $commonPaths = @(
+            "$env:LOCALAPPDATA\Programs\Python\Python310\python.exe",
+            "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
+            "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
+            "C:\Python310\python.exe",
+            "C:\Python311\python.exe",
+            "C:\Python312\python.exe",
+            "C:\Program Files\Python310\python.exe",
+            "C:\Program Files\Python311\python.exe",
+            "C:\Program Files\Python312\python.exe"
+        )
+        
+        foreach ($path in $commonPaths) {
+            if (Test-Path $path) {
+                Write-Log "Found Python at: $path"
+                $pythonExe = $path
+                break
+            }
+        }
+        
+        if (-not $pythonExe) {
+            Write-Log "Python not found in PATH or common locations. Current PATH: $env:Path"
+            return $false
+        }
+    } else {
+        $pythonExe = "python"
     }
+    
+    Write-Log "Using Python: $pythonExe"
     Write-Log "Upgrading pip..."
-    & python -m pip install --upgrade pip | Out-Null
+    & $pythonExe -m pip install --upgrade pip 2>&1 | Out-Null
     Write-Log "Installing requirements from $RequirementsPath..."
-    & python -m pip install -r $RequirementsPath
+    & $pythonExe -m pip install -r $RequirementsPath
     if ($LASTEXITCODE -ne 0) {
-        Write-Log "Failed to install Python requirements." -ForegroundColor Red
+        Write-Log "Failed to install Python requirements."
         return $false
     }
-    Write-Log "Python requirements installed successfully." -ForegroundColor Green
+    Write-Log "Python requirements installed successfully."
     return $true
 }
 
@@ -2905,7 +3080,7 @@ try {
 
     # Check for existing installation and prompt for reinstall
     if (Test-ExistingInstallation -RegPath $registryPath) {
-        if (-not (Prompt-Reinstall)) {
+        if (-not (Request-ReinstallConfirmation)) {
             Write-Log "Installation cancelled by user." -ForegroundColor Yellow
             exit 0
         }

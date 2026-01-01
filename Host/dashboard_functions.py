@@ -42,7 +42,7 @@ def cleanup_cpu_cache():
 
 
 def load_dashboard_config(server_manager_dir):
-    # Load config from database—migrates from JSON if needed
+    # Load config from database-migrates from JSON if needed
     try:
         from Modules.Database.cluster_database import get_cluster_database
         db = get_cluster_database()
@@ -2778,14 +2778,15 @@ def test_remote_host_connection(host, port, username, password, use_ssl=False, t
         # Test basic connectivity first
         test_url = f"{base_url}/api/status"
         
-        response = requests.get(test_url, timeout=timeout, verify=False if use_ssl else True)
+        # Note: verify=False allows self-signed certs when using SSL
+        response = requests.get(test_url, timeout=timeout, verify=not use_ssl)
         
         if response.status_code == 200:
             # Try to authenticate
             auth_url = f"{base_url}/cluster/api/auth/login"
             auth_data = {"username": username, "password": password}
             
-            auth_response = requests.post(auth_url, json=auth_data, timeout=timeout, verify=False if use_ssl else True)
+            auth_response = requests.post(auth_url, json=auth_data, timeout=timeout, verify=not use_ssl)
             
             if auth_response.status_code == 200:
                 return True, "Connection and authentication successful"
@@ -2820,7 +2821,8 @@ class RemoteHostManager:
             
             # Create session
             session = requests.Session()
-            session.verify = False if use_ssl else True
+            # Note: verify=False allows self-signed certs when using SSL
+            session.verify = not use_ssl
             
             # Authenticate
             auth_url = f"{base_url}/cluster/api/auth/login"
@@ -3138,6 +3140,21 @@ def cleanup_orphaned_process_entries(server_manager, logger):
         
         for server_name, server_config in server_configs.items():
             try:
+                # Enhanced: Run corruption detection first
+                recovery_needed, recovery_actions, recovery_errors = server_manager.detect_and_recover_system_corruption(
+                    server_name, server_config
+                )
+                
+                if recovery_needed:
+                    logger.info(f"Corruption recovery performed for {server_name}: {recovery_actions}")
+                    cleaned_count += 1  # Count corruption recoveries as cleanups
+                    
+                if recovery_errors:
+                    logger.warning(f"Corruption recovery errors for {server_name}: {recovery_errors}")
+                
+                # Reload config after potential recovery
+                server_config = server_manager.get_server_config(server_name)
+                
                 pid = server_config.get('ProcessId') or server_config.get('PID')
                 if pid:
                     # Use the comprehensive validation from server_manager
@@ -3196,7 +3213,7 @@ def cleanup_orphaned_process_entries(server_manager, logger):
                 logger.error(f"Error cleaning up process entries for server {server_name}: {e}")
         
         if cleaned_count > 0:
-            logger.info(f"Cleaned up {cleaned_count} stale/orphaned process entries")
+            logger.info(f"Cleaned up {cleaned_count} stale/orphaned process entries and corruption issues")
             
     except Exception as e:
         logger.error(f"Error in cleanup_orphaned_process_entries: {e}")

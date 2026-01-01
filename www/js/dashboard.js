@@ -95,8 +95,6 @@ export class Dashboard {
         this.refreshInterval = setInterval(() => {
             this.refreshData();
         }, this.refreshRate * 1000);
-        
-        console.log(`Auto-refresh set to ${this.refreshRate} seconds`);
     }
     
     updateServerList() {

@@ -123,6 +123,7 @@ class ClusterDatabase:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT NOT NULL UNIQUE,
                         ip_address TEXT NOT NULL,
+                        hostname TEXT,
                         port INTEGER DEFAULT 8080,
                         node_type TEXT DEFAULT 'node',
                         status TEXT DEFAULT 'unknown',
@@ -249,9 +250,27 @@ class ClusterDatabase:
                 conn.commit()
                 logger.info(f"Cluster database initialized at: {self.db_path}")
                 
+                # Run migrations for existing databases
+                self._run_migrations(conn)
+                
         except Exception as e:
             logger.error(f"Failed to initialize cluster database: {e}")
             raise
+    
+    def _run_migrations(self, conn):
+        # Run database migrations for existing databases
+        cursor = conn.cursor()
+        
+        # Migration: Add hostname column to cluster_nodes if it doesn't exist
+        try:
+            cursor.execute("PRAGMA table_info(cluster_nodes)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'hostname' not in columns:
+                cursor.execute("ALTER TABLE cluster_nodes ADD COLUMN hostname TEXT")
+                conn.commit()
+                logger.info("Migration: Added hostname column to cluster_nodes table")
+        except Exception as e:
+            logger.warning(f"Migration warning (hostname column): {e}")
     
     def get_cluster_config(self) -> Optional[Dict]:
         # Get current cluster configuration
@@ -304,19 +323,20 @@ class ClusterDatabase:
             return False
     
     def add_cluster_node(self, name: str, ip_address: str, port: int = 8080, 
-                        node_type: str = 'node', cluster_token: Optional[str] = None) -> bool:
+                        node_type: str = 'node', cluster_token: Optional[str] = None,
+                        hostname: Optional[str] = None) -> bool:
         # Add a new cluster node
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     INSERT OR REPLACE INTO cluster_nodes 
-                    (name, ip_address, port, node_type, cluster_token, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (name, ip_address, port, node_type, cluster_token, datetime.now().isoformat()))
+                    (name, ip_address, hostname, port, node_type, cluster_token, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (name, ip_address, hostname or name, port, node_type, cluster_token, datetime.now().isoformat()))
                 
                 conn.commit()
-                logger.info(f"Added cluster node: {name} at {ip_address}:{port}")
+                logger.info(f"Added cluster node: {name} ({hostname}) at {ip_address}:{port}")
                 return True
                 
         except Exception as e:
@@ -346,7 +366,7 @@ class ClusterDatabase:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT name, ip_address, port, node_type, status, last_ping, 
+                    SELECT name, ip_address, hostname, port, node_type, status, last_ping, 
                            cluster_token, added_at, updated_at
                     FROM cluster_nodes WHERE name = ?
                 ''', (name,))
@@ -356,13 +376,14 @@ class ClusterDatabase:
                     return {
                         'name': row[0],
                         'ip_address': row[1],
-                        'port': row[2],
-                        'node_type': row[3],
-                        'status': row[4],
-                        'last_ping': row[5],
-                        'cluster_token': row[6],
-                        'added_at': row[7],
-                        'updated_at': row[8]
+                        'hostname': row[2] or row[0],
+                        'port': row[3],
+                        'node_type': row[4],
+                        'status': row[5],
+                        'last_ping': row[6],
+                        'cluster_token': row[7],
+                        'added_at': row[8],
+                        'updated_at': row[9]
                     }
                 return None
                 
@@ -376,7 +397,7 @@ class ClusterDatabase:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT name, ip_address, port, node_type, status, last_ping, 
+                    SELECT name, ip_address, hostname, port, node_type, status, last_ping, 
                            cluster_token, added_at, updated_at
                     FROM cluster_nodes ORDER BY name
                 ''')
@@ -386,13 +407,14 @@ class ClusterDatabase:
                     nodes.append({
                         'name': row[0],
                         'ip_address': row[1],
-                        'port': row[2],
-                        'node_type': row[3],
-                        'status': row[4],
-                        'last_ping': row[5],
-                        'cluster_token': row[6],
-                        'added_at': row[7],
-                        'updated_at': row[8]
+                        'hostname': row[2] or row[0],
+                        'port': row[3],
+                        'node_type': row[4],
+                        'status': row[5],
+                        'last_ping': row[6],
+                        'cluster_token': row[7],
+                        'added_at': row[8],
+                        'updated_at': row[9]
                     })
                 
                 return nodes

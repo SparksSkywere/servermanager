@@ -55,7 +55,7 @@ class ServerManagerLauncher(ServerManagerModule):
         self.write_pid_file("launcher", os.getpid())
         
         if not self.force_start and self.check_existing_instance():
-            logger.warning("Another instance running—exiting")
+            logger.warning("Another instance running-exiting")
             sys.exit(0)
     
     def detect_cluster_role(self):

@@ -19,7 +19,7 @@ LOG_DIR = Path(__file__).parent.parent / "logs" / "services"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(LOG_DIR / "stdin_relay.log"),

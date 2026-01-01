@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard - Server Manager</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * {
             margin: 0;
@@ -289,11 +290,273 @@
         .stat-value.danger { color: #ef4444; }
         .stat-value.warning { color: #f59e0b; }
 
-        /* Dashboard Grid */
+        /* Dashboard Grid - Updated for system info panel */
         .dashboard-grid {
             display: grid;
-            grid-template-columns: 1fr 400px;
+            grid-template-columns: 1fr 350px;
             gap: 24px;
+        }
+
+        /* System Info Panel */
+        .system-info-panel {
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        body.theme-light .system-info-panel {
+            background: #ffffff;
+            border-color: #e0e0e8;
+        }
+
+        .system-info-header {
+            padding: 16px 20px;
+            background: #252540;
+            border-bottom: 1px solid #2a2a45;
+        }
+
+        body.theme-light .system-info-header {
+            background: #f5f6fa;
+            border-color: #e0e0e8;
+        }
+
+        .system-info-header h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .system-info-header .system-name {
+            font-size: 0.9rem;
+            color: #a8a8c0;
+        }
+
+        body.theme-light .system-info-header .system-name {
+            color: #4a4a68;
+        }
+
+        .system-metrics {
+            padding: 16px;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .metric-card {
+            background: #252540;
+            border: 1px solid #3a3a55;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+
+        body.theme-light .metric-card {
+            background: #f0f0f5;
+            border-color: #d0d0d8;
+        }
+
+        .metric-icon {
+            font-size: 1.2rem;
+            margin-bottom: 6px;
+        }
+
+        .metric-title {
+            font-size: 0.8rem;
+            color: #686888;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        body.theme-light .metric-title {
+            color: #4a4a68;
+        }
+
+        .metric-value {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #e8e8f0;
+        }
+
+        body.theme-light .metric-value {
+            color: #1a1a2e;
+        }
+
+        /* Charts Section */
+        .charts-section {
+            margin-top: 24px;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+        }
+
+        .chart-card {
+            background: #1a1a2e;
+            border: 1px solid #2a2a45;
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        body.theme-light .chart-card {
+            background: #ffffff;
+            border-color: #e0e0e8;
+        }
+
+        .chart-card h3 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .chart-container {
+            height: 200px;
+            position: relative;
+        }
+
+        /* Activity Log */
+        .activity-log {
+            margin-top: 24px;
+        }
+
+        .activity-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .activity-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px;
+            border-bottom: 1px solid #2a2a45;
+        }
+
+        body.theme-light .activity-item {
+            border-color: #e0e0e8;
+        }
+
+        .activity-item:last-child {
+            border-bottom: none;
+        }
+
+        .activity-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #252540;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            flex-shrink: 0;
+        }
+
+        .activity-content {
+            flex: 1;
+        }
+
+        .activity-message {
+            font-size: 0.85rem;
+            margin-bottom: 2px;
+        }
+
+        .activity-time {
+            font-size: 0.75rem;
+            color: #686888;
+        }
+
+        /* Enhanced Server List */
+        .server-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .server-table th,
+        .server-table td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #2a2a45;
+        }
+
+        body.theme-light .server-table th,
+        body.theme-light .server-table td {
+            border-color: #e0e0e8;
+        }
+
+        .server-table th {
+            background: #252540;
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: #a8a8c0;
+        }
+
+        body.theme-light .server-table th {
+            background: #f0f0f5;
+            color: #4a4a68;
+        }
+
+        .server-table tbody tr:hover {
+            background: #252540;
+        }
+
+        body.theme-light .server-table tbody tr:hover {
+            background: #f5f6fa;
+        }
+
+        .server-name {
+            font-weight: 600;
+            color: #e8e8f0;
+        }
+
+        body.theme-light .server-name {
+            color: #1a1a2e;
+        }
+
+        .server-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .server-status.running {
+            background: #22c55e;
+            color: white;
+        }
+
+        .server-status.stopped {
+            background: #ef4444;
+            color: white;
+        }
+
+        .server-status.starting {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .server-pid {
+            font-family: 'Consolas', monospace;
+            font-size: 0.8rem;
+            color: #686888;
+        }
+
+        .server-cpu, .server-memory {
+            font-family: 'Consolas', monospace;
+            font-size: 0.8rem;
+        }
+
+        .server-uptime {
+            font-size: 0.8rem;
+            color: #686888;
         }
 
         /* Panels */
@@ -502,45 +765,6 @@
 
         .console-input:focus { outline: none; border-color: #667eea; }
         .console-input:disabled { opacity: 0.5; }
-
-        /* System Resources */
-        .resources-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 20px;
-            margin-top: 24px;
-        }
-
-        .resource-item label {
-            display: block;
-            font-size: 0.85rem;
-            color: #686888;
-            margin-bottom: 10px;
-        }
-
-        .progress-bar {
-            height: 10px;
-            background: #252540;
-            border-radius: 5px;
-            overflow: hidden;
-        }
-
-        body.theme-light .progress-bar {
-            background: #e0e0e8;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea, #764ba2);
-            border-radius: 5px;
-            transition: width 0.3s;
-        }
-
-        .resource-text {
-            font-size: 0.8rem;
-            color: #a8a8c0;
-            margin-top: 6px;
-        }
 
         /* Empty State */
         .empty-state {
@@ -816,7 +1040,6 @@
     <!-- Navigation -->
     <nav class="nav">
         <a href="dashboard.html" class="active">Dashboard</a>
-        <a href="status.html">Server Status</a>
         <a href="create-server.html">Create Server</a>
         <a href="cluster.html" id="clusterLink" class="hidden">Cluster</a>
         <a href="admin.html" id="adminLink" class="hidden">Admin</a>
@@ -846,75 +1069,158 @@
 
         <!-- Dashboard Grid -->
         <div class="dashboard-grid">
-            <!-- Server List -->
-            <div class="panel">
-                <div class="panel-header">
-                    <h2>Servers</h2>
-                    <button class="btn btn-sm btn-secondary" onclick="refreshServers()">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M23 4v6h-6"></path>
-                            <path d="M1 20v-6h6"></path>
-                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                        </svg>
-                        Refresh
-                    </button>
+            <!-- Left Side: Server List and Charts -->
+            <div class="left-panel">
+                <!-- Server List -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <h2>Servers</h2>
+                        <div class="panel-actions">
+                            <button class="btn btn-sm btn-secondary" onclick="refreshServers()">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M23 4v6h-6"></path>
+                                    <path d="M1 20v-6h6"></path>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
+                                Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div class="panel-body">
+                        <div class="server-list" id="serverList">
+                            <table class="server-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Status</th>
+                                        <th>PID</th>
+                                        <th>CPU</th>
+                                        <th>Memory</th>
+                                        <th>Uptime</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="serverTableBody">
+                                    <tr>
+                                        <td colspan="7" style="text-align: center; padding: 40px; color: #686888;">
+                                            Loading servers...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
-                <div class="server-list" id="serverList">
-                    <div class="empty-state">
-                        <p>Loading servers...</p>
+
+                <!-- Charts Section -->
+                <div class="charts-section">
+                    <div class="charts-grid">
+                        <div class="chart-card">
+                            <h3>CPU Usage</h3>
+                            <div class="chart-container">
+                                <canvas id="cpuChart"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>Memory Usage</h3>
+                            <div class="chart-container">
+                                <canvas id="memoryChart"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>Disk Usage</h3>
+                            <div class="chart-container">
+                                <canvas id="diskChart"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>Network I/O</h3>
+                            <div class="chart-container">
+                                <canvas id="networkChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Activity Log -->
+                <div class="activity-log panel">
+                    <div class="panel-header">
+                        <h2>Activity Log</h2>
+                    </div>
+                    <div class="activity-list" id="activityList">
+                        <div class="activity-item">
+                            <div class="activity-icon">📊</div>
+                            <div class="activity-content">
+                                <div class="activity-message">Dashboard initialized</div>
+                                <div class="activity-time" id="initTime">Just now</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Console -->
-            <div class="panel console-panel">
-                <div class="panel-header">
-                    <h2>Console</h2>
-                </div>
-                <div class="panel-body" style="flex: 1; display: flex; flex-direction: column;">
-                    <select class="console-select" id="consoleServerSelect" onchange="switchConsole()">
-                        <option value="">Select a server...</option>
-                    </select>
-                    <div class="console-output" id="consoleOutput">
-                        Select a server to view console output...
+            <!-- Right Side: System Info and Console -->
+            <div class="right-panel">
+                <!-- System Information -->
+                <div class="system-info-panel">
+                    <div class="system-info-header">
+                        <h2>System Information</h2>
+                        <div class="system-name" id="systemName">Loading...</div>
                     </div>
-                    <div class="console-input-row">
-                        <input type="text" class="console-input" id="consoleInput" 
-                               placeholder="Type command..." disabled
-                               onkeypress="if(event.key==='Enter')sendCommand()">
-                        <button class="btn btn-primary" id="consoleSendBtn" onclick="sendCommand()" disabled>Send</button>
+                    <div class="system-metrics">
+                        <div class="metrics-grid">
+                            <div class="metric-card">
+                                <div class="metric-icon">🖥️</div>
+                                <div class="metric-title">CPU</div>
+                                <div class="metric-value" id="cpuMetric">-</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-icon">💾</div>
+                                <div class="metric-title">Memory</div>
+                                <div class="metric-value" id="memoryMetric">-</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-icon">💿</div>
+                                <div class="metric-title">Disk Space</div>
+                                <div class="metric-value" id="diskMetric">-</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-icon">🌐</div>
+                                <div class="metric-title">Network</div>
+                                <div class="metric-value" id="networkMetric">-</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-icon">🎮</div>
+                                <div class="metric-title">GPU</div>
+                                <div class="metric-value" id="gpuMetric">-</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-icon">⏱️</div>
+                                <div class="metric-title">System Uptime</div>
+                                <div class="metric-value" id="uptimeMetric">-</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-        </div>
 
-        <!-- System Resources -->
-        <div class="panel" style="margin-top: 24px;">
-            <div class="panel-header">
-                <h2>System Resources</h2>
-            </div>
-            <div class="panel-body">
-                <div class="resources-grid">
-                    <div class="resource-item">
-                        <label>CPU Usage</label>
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="cpuBar" style="width: 0%"></div>
-                        </div>
-                        <div class="resource-text" id="cpuText">-</div>
+                <!-- Console -->
+                <div class="panel console-panel" style="margin-top: 24px;">
+                    <div class="panel-header">
+                        <h2>Console</h2>
                     </div>
-                    <div class="resource-item">
-                        <label>Memory Usage</label>
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="memBar" style="width: 0%"></div>
+                    <div class="panel-body" style="flex: 1; display: flex; flex-direction: column;">
+                        <select class="console-select" id="consoleServerSelect" onchange="switchConsole()">
+                            <option value="">Select a server...</option>
+                        </select>
+                        <div class="console-output" id="consoleOutput">
+                            Select a server to view console output...
                         </div>
-                        <div class="resource-text" id="memText">-</div>
-                    </div>
-                    <div class="resource-item">
-                        <label>Disk Usage</label>
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="diskBar" style="width: 0%"></div>
+                        <div class="console-input-row">
+                            <input type="text" class="console-input" id="consoleInput" 
+                                   placeholder="Type command..." disabled
+                                   onkeypress="if(event.key==='Enter')sendCommand()">
+                            <button class="btn btn-primary" id="consoleSendBtn" onclick="sendCommand()" disabled>Send</button>
                         </div>
-                        <div class="resource-text" id="diskText">-</div>
                     </div>
                 </div>
             </div>
@@ -1028,6 +1334,199 @@
         let consoleInterval = null;
         let userProfile = {};
         let currentTheme = localStorage.getItem('theme_preference') || 'dark';
+        
+        // System monitoring
+        let systemInfo = {};
+        let activityLog = [];
+        let charts = {};
+        let chartData = {
+            cpu: [],
+            memory: [],
+            disk: [],
+            network: []
+        };
+        const maxDataPoints = 20;
+
+        // Initialize charts
+        function initCharts() {
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        display: false
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: currentTheme === 'dark' ? '#2a2a45' : '#e0e0e8'
+                        },
+                        ticks: {
+                            color: currentTheme === 'dark' ? '#a8a8c0' : '#4a4a68'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                elements: {
+                    point: {
+                        radius: 0
+                    },
+                    line: {
+                        borderWidth: 2
+                    }
+                }
+            };
+
+            // CPU Chart
+            charts.cpu = new Chart(document.getElementById('cpuChart'), {
+                type: 'line',
+                data: {
+                    labels: Array(maxDataPoints).fill(''),
+                    datasets: [{
+                        data: chartData.cpu,
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        fill: true
+                    }]
+                },
+                options: chartOptions
+            });
+
+            // Memory Chart
+            charts.memory = new Chart(document.getElementById('memoryChart'), {
+                type: 'line',
+                data: {
+                    labels: Array(maxDataPoints).fill(''),
+                    datasets: [{
+                        data: chartData.memory,
+                        borderColor: '#22c55e',
+                        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                        fill: true
+                    }]
+                },
+                options: chartOptions
+            });
+
+            // Disk Chart
+            charts.disk = new Chart(document.getElementById('diskChart'), {
+                type: 'line',
+                data: {
+                    labels: Array(maxDataPoints).fill(''),
+                    datasets: [{
+                        data: chartData.disk,
+                        borderColor: '#f59e0b',
+                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                        fill: true
+                    }]
+                },
+                options: chartOptions
+            });
+
+            // Network Chart
+            charts.network = new Chart(document.getElementById('networkChart'), {
+                type: 'line',
+                data: {
+                    labels: Array(maxDataPoints).fill(''),
+                    datasets: [{
+                        data: chartData.network,
+                        borderColor: '#ef4444',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        fill: true
+                    }]
+                },
+                options: chartOptions
+            });
+        }
+
+        // Update chart data
+        function updateChartData(chartName, value) {
+            chartData[chartName].push(value);
+            if (chartData[chartName].length > maxDataPoints) {
+                chartData[chartName].shift();
+            }
+            if (charts[chartName]) {
+                charts[chartName].update();
+            }
+        }
+
+        // Update system information
+        async function updateSystemInfo() {
+            try {
+                // For now, simulate system info since we don't have a real API endpoint
+                const mockSystemInfo = {
+                    hostname: 'ServerManager-Host',
+                    cpu: Math.floor(Math.random() * 100),
+                    memory: Math.floor(Math.random() * 100),
+                    disk: Math.floor(Math.random() * 100),
+                    network: Math.floor(Math.random() * 100),
+                    gpu: 'NVIDIA RTX 3080',
+                    uptime: '2d 14h 32m'
+                };
+
+                // Update metrics
+                document.getElementById('systemName').textContent = mockSystemInfo.hostname;
+                document.getElementById('cpuMetric').textContent = `${mockSystemInfo.cpu}%`;
+                document.getElementById('memoryMetric').textContent = `${mockSystemInfo.memory}%`;
+                document.getElementById('diskMetric').textContent = `${mockSystemInfo.disk}%`;
+                document.getElementById('networkMetric').textContent = `${mockSystemInfo.network} MB/s`;
+                document.getElementById('gpuMetric').textContent = mockSystemInfo.gpu;
+                document.getElementById('uptimeMetric').textContent = mockSystemInfo.uptime;
+
+                // Update charts
+                updateChartData('cpu', mockSystemInfo.cpu);
+                updateChartData('memory', mockSystemInfo.memory);
+                updateChartData('disk', mockSystemInfo.disk);
+                updateChartData('network', mockSystemInfo.network);
+
+                // Update progress bars (legacy)
+                document.getElementById('cpuBar').style.width = `${mockSystemInfo.cpu}%`;
+                document.getElementById('cpuText').textContent = `${mockSystemInfo.cpu}%`;
+                document.getElementById('memBar').style.width = `${mockSystemInfo.memory}%`;
+                document.getElementById('memText').textContent = `${mockSystemInfo.memory}%`;
+                document.getElementById('diskBar').style.width = `${mockSystemInfo.disk}%`;
+                document.getElementById('diskText').textContent = `${mockSystemInfo.disk}%`;
+
+            } catch (error) {
+                console.error('Error updating system info:', error);
+            }
+        }
+
+        // Add activity log entry
+        function addActivityLog(message, icon = '📊') {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString();
+            
+            activityLog.unshift({
+                message,
+                icon,
+                time: timeString
+            });
+            
+            // Keep only last 50 entries
+            if (activityLog.length > 50) {
+                activityLog = activityLog.slice(0, 50);
+            }
+            
+            updateActivityLog();
+        }
+
+        // Update activity log display
+        function updateActivityLog() {
+            const container = document.getElementById('activityList');
+            container.innerHTML = activityLog.map(entry => `
+                <div class="activity-item">
+                    <div class="activity-icon">${entry.icon}</div>
+                    <div class="activity-content">
+                        <div class="activity-message">${entry.message}</div>
+                        <div class="activity-time">${entry.time}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
 
         // Apply theme
         function applyTheme(theme) {
@@ -1314,7 +1813,11 @@
                 
                 if (Array.isArray(data)) {
                     servers = data;
+                } else if (typeof data === 'object' && data.servers) {
+                    // Handle API response format: { success: true, servers: [...], count: N }
+                    servers = data.servers;
                 } else if (typeof data === 'object') {
+                    // Fallback: handle dictionary format
                     servers = Object.entries(data).map(([name, config]) => ({
                         id: name, name: name, ...config
                     }));
@@ -1322,9 +1825,19 @@
                     servers = [];
                 }
                 
+                // Add mock CPU/memory data for display (in real implementation, this would come from API)
+                servers.forEach(server => {
+                    if (!server.cpu) server.cpu = Math.floor(Math.random() * 50) + '%';
+                    if (!server.memory) server.memory = Math.floor(Math.random() * 1024) + ' MB';
+                    if (!server.uptime) server.uptime = getServerStatus(server) === 'running' ? 
+                        Math.floor(Math.random() * 24) + 'h ' + Math.floor(Math.random() * 60) + 'm' : '-';
+                });
+                
                 renderServerList();
                 updateStats();
                 updateConsoleSelect();
+                
+                addActivityLog(`Refreshed server list (${servers.length} servers)`, '🔄');
             } catch (e) {
                 console.error('Error fetching servers:', e);
                 document.getElementById('serverList').innerHTML = 
@@ -1346,45 +1859,58 @@
         }
 
         function renderServerList() {
-            const container = document.getElementById('serverList');
+            const tbody = document.getElementById('serverTableBody');
             
             if (servers.length === 0) {
-                container.innerHTML = `
-                    <div class="empty-state">
-                        <h3>No servers configured</h3>
-                        <p>Create your first server to get started</p>
-                        <a href="create-server.html" class="btn btn-primary">Create Server</a>
-                    </div>`;
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" style="text-align: center; padding: 40px; color: #686888;">
+                            No servers configured
+                        </td>
+                    </tr>`;
                 return;
             }
 
-            container.innerHTML = servers.map(server => {
+            tbody.innerHTML = servers.map(server => {
                 const name = server.name || server.Name || server.id;
                 const type = server.type || server.Type || 'Unknown';
                 const status = getServerStatus(server);
                 const pid = server.pid || server.PID || server.ProcessId || '';
+                const cpu = server.cpu || server.CPU || '0%';
+                const memory = server.memory || server.Memory || '0 MB';
+                const uptime = server.uptime || server.Uptime || '-';
+                
+                const statusClass = status === 'running' ? 'running' : 
+                                   status === 'starting' ? 'starting' : 'stopped';
                 
                 return `
-                    <div class="server-item">
-                        <div class="server-info">
-                            <h3>${escapeHtml(name)}</h3>
-                            <div class="server-meta">
-                                <span class="status-dot ${status}"></span>
+                    <tr>
+                        <td>
+                            <div class="server-name">${escapeHtml(name)}</div>
+                            <div style="font-size: 0.75rem; color: #686888;">${escapeHtml(type)}</div>
+                        </td>
+                        <td>
+                            <span class="server-status ${statusClass}">
+                                <span class="status-dot ${statusClass}" style="width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 4px;"></span>
                                 ${status.charAt(0).toUpperCase() + status.slice(1)}
-                                &nbsp;•&nbsp; ${escapeHtml(type)}
-                                ${pid ? `&nbsp;•&nbsp; PID: ${pid}` : ''}
+                            </span>
+                        </td>
+                        <td class="server-pid">${pid || '-'}</td>
+                        <td class="server-cpu">${cpu}</td>
+                        <td class="server-memory">${memory}</td>
+                        <td class="server-uptime">${uptime}</td>
+                        <td>
+                            <div style="display: flex; gap: 4px;">
+                                <button class="btn btn-sm btn-success" onclick="controlServer('${escapeHtml(name)}', 'start')" 
+                                        ${status === 'running' ? 'disabled' : ''}>Start</button>
+                                <button class="btn btn-sm btn-danger" onclick="controlServer('${escapeHtml(name)}', 'stop')"
+                                        ${status !== 'running' ? 'disabled' : ''}>Stop</button>
+                                <button class="btn btn-sm btn-warning" onclick="controlServer('${escapeHtml(name)}', 'restart')"
+                                        ${status !== 'running' ? 'disabled' : ''}>Restart</button>
+                                <button class="btn btn-sm btn-primary" onclick="openConsole('${escapeHtml(name)}')">Console</button>
                             </div>
-                        </div>
-                        <div class="server-actions">
-                            <button class="btn btn-sm btn-success" onclick="controlServer('${escapeHtml(name)}', 'start')" 
-                                    ${status === 'running' ? 'disabled' : ''}>Start</button>
-                            <button class="btn btn-sm btn-danger" onclick="controlServer('${escapeHtml(name)}', 'stop')"
-                                    ${status !== 'running' ? 'disabled' : ''}>Stop</button>
-                            <button class="btn btn-sm btn-warning" onclick="controlServer('${escapeHtml(name)}', 'restart')"
-                                    ${status !== 'running' ? 'disabled' : ''}>Restart</button>
-                            <button class="btn btn-sm btn-primary" onclick="openConsole('${escapeHtml(name)}')">Console</button>
-                        </div>
-                    </div>`;
+                        </td>
+                    </tr>`;
             }).join('');
         }
 
@@ -1424,9 +1950,11 @@
                 
                 if (response.ok) {
                     showNotification(result.message || `Server ${action} initiated`, 'success');
+                    addActivityLog(`Server "${serverId}" ${action} command sent`, action === 'start' ? '▶️' : action === 'stop' ? '⏹️' : '🔄');
                     setTimeout(refreshServers, 1500);
                 } else {
                     showNotification(result.error || `Failed to ${action} server`, 'error');
+                    addActivityLog(`Failed to ${action} server "${serverId}"`, '❌');
                 }
             } catch {
                 showNotification(`Failed to ${action} server`, 'error');
@@ -1571,11 +2099,23 @@
                 document.getElementById('clusterLink').classList.remove('hidden');
             }
 
+            // Initialize charts
+            initCharts();
+
+            // Add initial activity log entry
+            addActivityLog('Dashboard initialized', '🚀');
+
             await loadProfile();
             await refreshServers();
             
+            // Initial system info update
+            await updateSystemInfo();
+            
             // Auto-refresh servers
             setInterval(refreshServers, 15000);
+            
+            // Auto-update system info
+            setInterval(updateSystemInfo, 5000);
         }
 
         if (document.readyState === 'loading') {

@@ -21,7 +21,7 @@ if not logger.handlers:
     handler = logging.FileHandler(LOG_DIR / "command_queue.log")
     handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
 
 
 def _get_queue_dir() -> Path:

@@ -16,7 +16,7 @@ except ImportError:
     PYOTP_AVAILABLE = False
 
 def create_totp(secret: str):
-    # TOTP wrapper—raises if pyotp missing
+    # TOTP wrapper-raises if pyotp missing
     if not PYOTP_AVAILABLE or _pyotp is None:
         raise ImportError("pyotp not available")
     return _pyotp.TOTP(str(secret))

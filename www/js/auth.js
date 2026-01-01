@@ -37,7 +37,7 @@ export async function login(username, password) {
             
             // Provide more specific error messages based on status code
             if (response.status === 401) {
-                errorMsg = 'Invalid username or password. Try using "admin"/"admin" or your Windows credentials.';
+                errorMsg = 'Invalid username or password.';
             } else if (response.status === 500) {
                 errorMsg = 'Server error. Please try again later or contact administrator.';
             } else if (response.status === 400) {

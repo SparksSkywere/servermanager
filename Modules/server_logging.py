@@ -34,7 +34,7 @@ def early_crash_log(component_name, message):
     except Exception:
         pass
 
-# Registry constants—duplicated to avoid circular import
+# Registry constants-duplicated to avoid circular import
 _REGISTRY_ROOT = winreg.HKEY_LOCAL_MACHINE
 _REGISTRY_PATH = r"Software\SkywereIndustries\Servermanager"
 
@@ -45,7 +45,7 @@ class LogManager:
         self.registry_path = _REGISTRY_PATH
         self.server_manager_dir = None
         self.paths = {}
-        self.log_level = logging.WARNING
+        self.log_level = logging.INFO
         self.formatters = {}
         self.handlers = {}
         self.loggers = {}
@@ -202,12 +202,15 @@ class LogManager:
             'Dashboard': 'Dashboard',
             'DashboardTracker': 'Dashboard',
             'DashboardFunctions': 'Dashboard',
+            'SubhostDashboard': 'Dashboard',
             
             # Server management logs -> ServerManager.log
             'ServerManager': 'ServerManager',
             'ServerOperations': 'ServerManager',
             'ServerUpdateManager': 'ServerManager',
             'ServerConsole': 'ServerManager',
+            'ServerManagerWebServer': 'ServerManager',
+            'ServerManagerService': 'ServerManager',
             
             # Database logs -> Database.log
             'UserDatabase': 'Database',
@@ -217,6 +220,8 @@ class LogManager:
             'DatabaseUtils': 'Database',
             'AppIDScanner': 'Database',
             'MinecraftIDScanner': 'Database',
+            'Authentication': 'Database',
+            'SQL_Connection': 'Database',
             
             # Network/Cluster logs -> Network.log
             'Network': 'Network',
@@ -229,6 +234,30 @@ class LogManager:
             'TrayIcon': 'Services',
             'WebServer': 'Services',
             'StopServerManager': 'Services',
+            
+            # Analytics/Monitoring -> Analytics.log
+            'Analytics': 'Analytics',
+            'SNMP': 'Analytics',
+            'Grafana': 'Analytics',
+            
+            # Communication -> Communications.log
+            'Notifications': 'Communications',
+            'MailServer': 'Communications',
+            
+            # Common utilities -> Common.log
+            'Common': 'Common',
+            
+            # User management -> UserManagement.log
+            'UserManagement': 'UserManagement',
+            
+            # Minecraft specific -> Minecraft.log
+            'Minecraft': 'Minecraft',
+            
+            # Scheduling -> Scheduler.log
+            'Scheduler': 'Scheduler',
+            
+            # Verification tools -> ServerVerifier.log
+            'ServerVerifier': 'ServerVerifier',
         }
         
         # Get consolidated log file name, or use component name if not mapped

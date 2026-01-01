@@ -22,7 +22,7 @@ try:
     import pystray
     from PIL import Image, ImageDraw
 except ImportError:
-    print("Installing required packages...")
+    # Logger not yet available, use subprocess to install packages
     subprocess.check_call([sys.executable, "-m", "pip", "install", "pystray", "pillow"])
     import pystray
     from PIL import Image, ImageDraw
@@ -80,8 +80,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
         if not args.force:
             already_running, existing_pid = is_another_trayicon_running()
             if already_running:
-                logger.warning(f"Already running (PID: {existing_pid})—exiting")
-                print(f"Server Manager tray icon is already running (PID: {existing_pid}). Use --force to start anyway.")
+                logger.warning(f"Already running (PID: {existing_pid})-exiting. Use --force to start anyway.")
                 sys.exit(0)
         
         # Configure logging based on arguments

@@ -1,21 +1,32 @@
 #!/bin/bash
-set -e  # Exit on any error
+# Server Manager Linux Installer
+# Installs Server Manager with cluster support for Linux systems
+
+set -e
 
 # Configuration
-CURRENT_VERSION="0.9"
+CURRENT_VERSION="1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/Install-Log.txt"
 SERVER_MANAGER_DIR=""
 STEAMCMD_DIR="$HOME/SteamCMD"
 WORKSPACE_DIR="$STEAMCMD_DIR/user_workspace"
 PYTHON_CMD=""
+GIT_REPO_URL="https://github.com/SparksSkywere/servermanager.git"
 
-# Colors for output
+# Installation options (set during interactive setup)
+INSTALL_SERVICE=true
+HOST_TYPE="Host"
+HOST_ADDRESS=""
+SUBHOST_ID=""
+
+# Colours for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+CYAN='\033[0;36m'
+NC='\033[0m'
 
 # Logging functions
 log() {
@@ -95,11 +106,11 @@ install_package() {
 
 # Find Python executable
 find_python() {
-    local python_cmds=("python3" "python" "python3.10" "python3.9" "python3.8")
+    local python_cmds=("python3" "python" "python3.12" "python3.11" "python3.10" "python3.9" "python3.8")
 
     for cmd in "${python_cmds[@]}"; do
         if command -v "$cmd" &> /dev/null; then
-            # Check version
+            # Check version is at least 3.8
             if "$cmd" -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" 2>/dev/null; then
                 PYTHON_CMD="$cmd"
                 log_info "Found suitable Python: $PYTHON_CMD"
@@ -121,13 +132,13 @@ install_python() {
     case $pm in
         apt)
             sudo apt-get update
-            sudo apt-get install -y python3 python3-pip python3-venv
+            sudo apt-get install -y python3 python3-pip python3-venv python3-dev
             ;;
         yum)
-            sudo yum install -y python3 python3-pip
+            sudo yum install -y python3 python3-pip python3-devel
             ;;
         dnf)
-            sudo dnf install -y python3 python3-pip
+            sudo dnf install -y python3 python3-pip python3-devel
             ;;
         pacman)
             sudo pacman -S --noconfirm python python-pip
@@ -141,17 +152,56 @@ install_python() {
     find_python
 }
 
+# Install Git if not found
+install_git() {
+    if command -v git &> /dev/null; then
+        log_info "Git is already installed"
+        return 0
+    fi
+    
+    log_info "Installing Git..."
+    local pm=$(detect_package_manager)
+    
+    case $pm in
+        apt)
+            sudo apt-get update && sudo apt-get install -y git
+            ;;
+        yum)
+            sudo yum install -y git
+            ;;
+        dnf)
+            sudo dnf install -y git
+            ;;
+        pacman)
+            sudo pacman -S --noconfirm git
+            ;;
+        *)
+            log_error "Please install Git manually."
+            return 1
+            ;;
+    esac
+    
+    log_success "Git installed successfully"
+}
+
 # Install Python requirements
 install_requirements() {
     local requirements_file="$SCRIPT_DIR/requirements.txt"
 
     if [[ ! -f "$requirements_file" ]]; then
-        log_error "Requirements file not found: $requirements_file"
-        return 1
+        log_warning "Requirements file not found: $requirements_file"
+        return 0
     fi
 
     log_info "Installing Python requirements..."
+    
+    # Upgrade pip first
+    "$PYTHON_CMD" -m pip install --upgrade pip --user 2>/dev/null || true
+    
+    # Install requirements
     "$PYTHON_CMD" -m pip install --user -r "$requirements_file"
+    
+    log_success "Python requirements installed"
 }
 
 # Setup directories
@@ -162,29 +212,40 @@ setup_directories() {
     mkdir -p "$STEAMCMD_DIR"
     mkdir -p "$WORKSPACE_DIR"
 
-    # Create server manager directory (assume current directory for now)
+    # Set server manager directory
     SERVER_MANAGER_DIR="$SCRIPT_DIR"
+    
+    # Create required subdirectories
+    mkdir -p "$SERVER_MANAGER_DIR/db"
+    mkdir -p "$SERVER_MANAGER_DIR/logs"
+    mkdir -p "$SERVER_MANAGER_DIR/temp"
+    mkdir -p "$SERVER_MANAGER_DIR/servers"
 
     log_info "Directories created successfully"
 }
 
-# Initialize databases
-initialize_databases() {
-    log_info "Initializing databases..."
+# Initialise databases
+initialise_databases() {
+    log_info "Initialising databases..."
 
-    local db_dir="$SCRIPT_DIR/db"
+    local db_dir="$SERVER_MANAGER_DIR/db"
     mkdir -p "$db_dir"
 
     # Create user database
-    local user_db="$db_dir/user_database.db"
+    local user_db="$db_dir/servermanager_users.db"
     if [[ ! -f "$user_db" ]]; then
         log_info "Creating user database..."
-        "$PYTHON_CMD" -c "
+        "$PYTHON_CMD" << EOF
 import sqlite3
-import sys
+import hashlib
+import uuid
+from datetime import datetime
+
 dbfile = '$user_db'
 conn = sqlite3.connect(dbfile)
 c = conn.cursor()
+
+# Create users table
 c.execute('''
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -200,25 +261,41 @@ CREATE TABLE IF NOT EXISTS users (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_login DATETIME,
     two_factor_enabled INTEGER DEFAULT 0,
-    two_factor_secret TEXT
+    two_factor_secret TEXT,
+    avatar TEXT,
+    bio TEXT,
+    timezone TEXT DEFAULT 'UTC',
+    theme_preference TEXT DEFAULT 'dark'
 )
 ''')
+
+# Create default admin user
+admin_password = hashlib.sha256('admin'.encode()).hexdigest()
+account_number = str(uuid.uuid4())[:8].upper()
+created_at = datetime.utcnow().isoformat()
+
+c.execute('''
+    INSERT OR IGNORE INTO users (username, password, email, first_name, last_name, display_name, account_number, is_admin, is_active, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+''', ('admin', admin_password, 'admin@localhost', 'System', 'Administrator', 'Admin', account_number, 1, 1, created_at))
+
 conn.commit()
 conn.close()
 print('User database created successfully')
-"
+EOF
     fi
 
     # Create Steam database
     local steam_db="$db_dir/steam_ID.db"
     if [[ ! -f "$steam_db" ]]; then
         log_info "Creating Steam database..."
-        "$PYTHON_CMD" -c "
+        "$PYTHON_CMD" << EOF
 import sqlite3
-import sys
+
 dbfile = '$steam_db'
 conn = sqlite3.connect(dbfile)
 c = conn.cursor()
+
 c.execute('''
 CREATE TABLE IF NOT EXISTS steam_apps (
     appid INTEGER PRIMARY KEY,
@@ -238,20 +315,21 @@ CREATE TABLE IF NOT EXISTS steam_apps (
     source TEXT DEFAULT 'steamdb'
 )
 ''')
+
 conn.commit()
 conn.close()
 print('Steam database created successfully')
-"
+EOF
     fi
 
     # Create cluster database
     local cluster_db="$db_dir/servermanager.db"
     if [[ ! -f "$cluster_db" ]]; then
         log_info "Creating cluster database..."
-        "$PYTHON_CMD" -c "
+        "$PYTHON_CMD" << EOF
 import sqlite3
-import sys
 from datetime import datetime
+
 dbfile = '$cluster_db'
 conn = sqlite3.connect(dbfile)
 c = conn.cursor()
@@ -311,32 +389,83 @@ CREATE TABLE IF NOT EXISTS cluster_communication_log (
 )
 ''')
 
+# Pending cluster requests table
+c.execute('''
+CREATE TABLE IF NOT EXISTS cluster_pending_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_name TEXT NOT NULL,
+    ip_address TEXT NOT NULL,
+    port INTEGER DEFAULT 8080,
+    machine_name TEXT,
+    os_info TEXT,
+    request_data TEXT,
+    status TEXT DEFAULT 'pending',
+    requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    approved_at DATETIME,
+    approved_by TEXT,
+    approval_token TEXT,
+    rejected_at DATETIME,
+    rejected_by TEXT
+)
+''')
+
+# Host status table
+c.execute('''
+CREATE TABLE IF NOT EXISTS host_status (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT DEFAULT 'online',
+    dashboard_active INTEGER DEFAULT 1,
+    maintenance_mode INTEGER DEFAULT 0,
+    status_message TEXT,
+    last_heartbeat DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+''')
+
+# Insert default host status
+c.execute('INSERT OR IGNORE INTO host_status (id, status, dashboard_active) VALUES (1, "online", 1)')
+
+# Insert cluster configuration
+c.execute('INSERT OR IGNORE INTO cluster_config (id, host_type, cluster_name) VALUES (1, "$HOST_TYPE", "ServerManager-Cluster")')
+
 conn.commit()
 conn.close()
 print('Cluster database created successfully')
-"
+EOF
     fi
+    
+    log_success "Databases initialised"
 }
 
-# Setup firewall rules (basic)
+# Setup firewall rules
 setup_firewall() {
     log_info "Setting up firewall rules..."
 
     # Check if ufw is available
     if command -v ufw &> /dev/null; then
         log_info "Using UFW firewall"
-        sudo ufw allow 8080/tcp
-        sudo ufw allow 80/tcp
-        sudo ufw allow 443/tcp
+        sudo ufw allow 8080/tcp comment "Server Manager Web Interface" 2>/dev/null || true
+        sudo ufw allow 80/tcp comment "Server Manager HTTP" 2>/dev/null || true
+        sudo ufw allow 443/tcp comment "Server Manager HTTPS" 2>/dev/null || true
+        
+        # Game server ports range
+        sudo ufw allow 27015:27050/tcp comment "Steam Game Servers TCP" 2>/dev/null || true
+        sudo ufw allow 27015:27050/udp comment "Steam Game Servers UDP" 2>/dev/null || true
+        
+        log_success "UFW rules configured"
+        
     # Check if firewalld is available
     elif command -v firewall-cmd &> /dev/null; then
         log_info "Using firewalld"
-        sudo firewall-cmd --permanent --add-port=8080/tcp
-        sudo firewall-cmd --permanent --add-port=80/tcp
-        sudo firewall-cmd --permanent --add-port=443/tcp
-        sudo firewall-cmd --reload
+        sudo firewall-cmd --permanent --add-port=8080/tcp 2>/dev/null || true
+        sudo firewall-cmd --permanent --add-port=80/tcp 2>/dev/null || true
+        sudo firewall-cmd --permanent --add-port=443/tcp 2>/dev/null || true
+        sudo firewall-cmd --permanent --add-port=27015-27050/tcp 2>/dev/null || true
+        sudo firewall-cmd --permanent --add-port=27015-27050/udp 2>/dev/null || true
+        sudo firewall-cmd --reload 2>/dev/null || true
+        
+        log_success "firewalld rules configured"
     else
-        log_warning "No supported firewall manager found. Please manually open ports 80, 443, and 8080."
+        log_warning "No supported firewall manager found. Please manually open ports 80, 443, 8080, and 27015-27050."
     fi
 }
 
@@ -358,41 +487,274 @@ Comment=Game Server Management Tool
 Exec=$PYTHON_CMD $SCRIPT_DIR/Start-ServerManager.pyw
 Icon=$SCRIPT_DIR/icons/servermanager.ico
 Terminal=false
-Categories=Utility;System;
+Categories=Utility;System;Game;
+Keywords=server;game;steam;manager;
 EOF
 
     chmod +x "$desktop_file"
+    
+    # Update desktop database
+    if command -v update-desktop-database &>/dev/null; then
+        update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+    fi
+    
     log_info "Desktop shortcut created"
 }
 
-# Setup auto-start (basic systemd user service)
+# Setup auto-start systemd user service
 setup_autostart() {
+    if [[ "$INSTALL_SERVICE" != true ]]; then
+        log_info "Skipping service installation (not requested)"
+        return 0
+    fi
+    
     log_info "Setting up auto-start service..."
 
-    local service_file="$HOME/.config/systemd/user/servermanager.service"
+    local service_dir="$HOME/.config/systemd/user"
+    local service_file="$service_dir/servermanager.service"
 
-    mkdir -p "$(dirname "$service_file")"
+    mkdir -p "$service_dir"
 
     cat > "$service_file" << EOF
 [Unit]
-Description=Server Manager
-After=network.target
+Description=Server Manager - Game Server Management
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+WorkingDirectory=$SCRIPT_DIR
 ExecStart=$PYTHON_CMD $SCRIPT_DIR/Start-ServerManager.pyw
 Restart=always
-RestartSec=5
+RestartSec=10
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=default.target
 EOF
 
-    # Enable and start the service
+    # Enable lingering for user services to run without login
+    loginctl enable-linger "$USER" 2>/dev/null || true
+
+    # Reload and enable service
     systemctl --user daemon-reload
     systemctl --user enable servermanager.service
 
-    log_info "Auto-start service configured"
+    log_success "Auto-start service configured"
+}
+
+# Configure cluster settings
+configure_cluster() {
+    log_info "Configuring cluster settings..."
+    
+    local cluster_db="$SERVER_MANAGER_DIR/db/servermanager.db"
+    
+    if [[ "$HOST_TYPE" == "Host" ]]; then
+        # Generate cluster secret for master host
+        local cluster_secret=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
+        
+        "$PYTHON_CMD" << EOF
+import sqlite3
+
+dbfile = '$cluster_db'
+conn = sqlite3.connect(dbfile)
+c = conn.cursor()
+
+c.execute('UPDATE cluster_config SET host_type = ?, cluster_secret = ? WHERE id = 1', ('Host', '$cluster_secret'))
+
+conn.commit()
+conn.close()
+print('Cluster configured as Master Host')
+EOF
+        
+        # Save cluster token to file
+        local token_file="$SERVER_MANAGER_DIR/cluster-security-token.txt"
+        cat > "$token_file" << EOF
+Server Manager Cluster Security Token
+Generated: $(date -Iseconds)
+Master Host: $SERVER_MANAGER_DIR
+
+SECURITY TOKEN:
+$cluster_secret
+
+IMPORTANT NOTES:
+- This token provides full access to your Server Manager cluster
+- Store it securely and share only with trusted subhost administrators
+- This token cannot be recovered if lost - you will need to generate a new one
+- All existing subhosts will need to update their tokens if regenerated
+
+Provide this token to subhost administrators during their installation process.
+EOF
+        chmod 600 "$token_file"
+        log_info "Cluster security token saved to: $token_file"
+        
+    elif [[ "$HOST_TYPE" == "Subhost" ]] && [[ -n "$HOST_ADDRESS" ]]; then
+        # Configure as subhost
+        "$PYTHON_CMD" << EOF
+import sqlite3
+
+dbfile = '$cluster_db'
+conn = sqlite3.connect(dbfile)
+c = conn.cursor()
+
+c.execute('UPDATE cluster_config SET host_type = ?, master_ip = ? WHERE id = 1', ('Subhost', '$HOST_ADDRESS'))
+
+conn.commit()
+conn.close()
+print('Cluster configured as Subhost')
+EOF
+        log_info "Configured as cluster subhost, master host: $HOST_ADDRESS"
+    fi
+    
+    log_success "Cluster configuration complete"
+}
+
+# Request to join cluster (for subhosts)
+request_cluster_join() {
+    if [[ "$HOST_TYPE" != "Subhost" ]] || [[ -z "$HOST_ADDRESS" ]]; then
+        return 0
+    fi
+    
+    log_info "Requesting to join cluster at $HOST_ADDRESS..."
+    
+    # Generate subhost ID
+    SUBHOST_ID="${HOSTNAME:-$(hostname)}-$(date +%s | tail -c 5)"
+    
+    # Get local IP
+    local local_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "unknown")
+    
+    # Try to send join request
+    local response
+    response=$("$PYTHON_CMD" << EOF
+import urllib.request
+import urllib.error
+import json
+import sys
+
+host = '$HOST_ADDRESS'
+subhost_id = '$SUBHOST_ID'
+local_ip = '$local_ip'
+
+request_data = {
+    "subhost_id": subhost_id,
+    "info": {
+        "machine_name": "$(hostname)",
+        "os": "$(uname -s) $(uname -r)",
+        "install_time": "$(date -Iseconds)",
+        "ip_address": local_ip
+    }
+}
+
+try:
+    # First check if host is available
+    status_url = f"http://{host}:8080/api/cluster/status"
+    try:
+        status_req = urllib.request.Request(status_url, method='GET')
+        status_resp = urllib.request.urlopen(status_req, timeout=10)
+        status_data = json.loads(status_resp.read().decode())
+        print(f"Host status: {status_data.get('host_status', 'unknown')}", file=sys.stderr)
+    except Exception as e:
+        print(f"WARNING: Could not check host status: {e}", file=sys.stderr)
+    
+    # Send join request
+    url = f"http://{host}:8080/api/cluster/request-join"
+    data = json.dumps(request_data).encode('utf-8')
+    req = urllib.request.Request(url, data=data, method='POST')
+    req.add_header('Content-Type', 'application/json')
+    
+    resp = urllib.request.urlopen(req, timeout=30)
+    result = json.loads(resp.read().decode())
+    
+    if result.get('status') == 'pending_approval':
+        print(f"SUCCESS: Join request submitted. Request ID: {result.get('request_id')}")
+        print("Please wait for the cluster administrator to approve your request.")
+    else:
+        print(f"Response: {result}")
+        
+except urllib.error.URLError as e:
+    print(f"ERROR: Could not connect to host at {host}:8080 - {e}")
+    print("Make sure the master host is running and accessible.")
+except Exception as e:
+    print(f"ERROR: {e}")
+EOF
+)
+    
+    echo "$response"
+    log_info "$response"
+}
+
+# Interactive installation prompts
+interactive_setup() {
+    echo ""
+    echo -e "${CYAN}========================================${NC}"
+    echo -e "${CYAN}   Server Manager Installer v$CURRENT_VERSION${NC}"
+    echo -e "${CYAN}========================================${NC}"
+    echo ""
+    
+    # SteamCMD directory
+    echo -e "${YELLOW}SteamCMD Installation Directory${NC}"
+    echo "Default: $STEAMCMD_DIR"
+    read -p "Enter directory (or press Enter for default): " input_steamcmd
+    if [[ -n "$input_steamcmd" ]]; then
+        STEAMCMD_DIR="$input_steamcmd"
+        WORKSPACE_DIR="$STEAMCMD_DIR/user_workspace"
+    fi
+    echo ""
+    
+    # Install as service
+    echo -e "${YELLOW}Install as System Service${NC}"
+    echo "This will start Server Manager automatically on boot."
+    read -p "Install as service? (Y/n): " input_service
+    if [[ "$input_service" =~ ^[Nn]$ ]]; then
+        INSTALL_SERVICE=false
+    else
+        INSTALL_SERVICE=true
+    fi
+    echo ""
+    
+    # Cluster type
+    echo -e "${YELLOW}Cluster Configuration${NC}"
+    echo "1) Master Host - Manage other servers in the cluster"
+    echo "2) Cluster Node - Managed by another Master Host"
+    read -p "Select cluster type (1/2) [1]: " input_cluster
+    
+    if [[ "$input_cluster" == "2" ]]; then
+        HOST_TYPE="Subhost"
+        echo ""
+        read -p "Enter Master Host IP Address: " input_host_addr
+        if [[ -z "$input_host_addr" ]]; then
+            log_error "Master Host IP Address is required for cluster nodes"
+            exit 1
+        fi
+        # Validate IP format
+        if [[ ! "$input_host_addr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            log_error "Invalid IP address format"
+            exit 1
+        fi
+        HOST_ADDRESS="$input_host_addr"
+    else
+        HOST_TYPE="Host"
+    fi
+    echo ""
+    
+    # Confirm settings
+    echo -e "${YELLOW}Installation Summary${NC}"
+    echo "SteamCMD Directory: $STEAMCMD_DIR"
+    echo "Workspace Directory: $WORKSPACE_DIR"
+    echo "Install Service: $INSTALL_SERVICE"
+    echo "Cluster Type: $HOST_TYPE"
+    if [[ -n "$HOST_ADDRESS" ]]; then
+        echo "Master Host: $HOST_ADDRESS"
+    fi
+    echo ""
+    
+    read -p "Proceed with installation? (Y/n): " confirm
+    if [[ "$confirm" =~ ^[Nn]$ ]]; then
+        log_info "Installation cancelled by user"
+        exit 0
+    fi
+    echo ""
 }
 
 # Main installation function
@@ -402,7 +764,12 @@ main_install() {
     # Check prerequisites
     check_root
 
-    # Find Python
+    # Run interactive setup if not in quiet mode
+    if [[ "$QUIET_MODE" != true ]]; then
+        interactive_setup
+    fi
+
+    # Find or install Python
     if ! find_python; then
         echo "Python 3.8+ is required. Attempting to install..."
         if ! install_python; then
@@ -411,14 +778,20 @@ main_install() {
         fi
     fi
 
+    # Install Git
+    install_git
+
     # Setup directories
     setup_directories
 
     # Install requirements
     install_requirements
 
-    # Initialize databases
-    initialize_databases
+    # Initialise databases
+    initialise_databases
+
+    # Configure cluster
+    configure_cluster
 
     # Setup firewall
     setup_firewall
@@ -429,14 +802,33 @@ main_install() {
     # Setup auto-start
     setup_autostart
 
+    # Request cluster join for subhosts
+    request_cluster_join
+
     log_success "Server Manager installation completed!"
-    echo
+    echo ""
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}   Installation Complete!${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo ""
     echo "You can now:"
     echo "1. Start Server Manager: $PYTHON_CMD $SCRIPT_DIR/Start-ServerManager.pyw"
     echo "2. Access the web interface at: http://localhost:8080"
     echo "3. Default login: admin / admin"
-    echo
-    echo "The service will start automatically on system boot."
+    echo ""
+    
+    if [[ "$INSTALL_SERVICE" == true ]]; then
+        echo "The service will start automatically on system boot."
+        echo "Start now with: systemctl --user start servermanager.service"
+    fi
+    
+    if [[ "$HOST_TYPE" == "Host" ]]; then
+        echo ""
+        echo -e "${YELLOW}Cluster Security Token saved to:${NC}"
+        echo "$SERVER_MANAGER_DIR/cluster-security-token.txt"
+    fi
+    
+    echo ""
 }
 
 # Service management functions
@@ -464,6 +856,7 @@ service_status() {
 
 service_install() {
     log_info "Installing Server Manager service..."
+    INSTALL_SERVICE=true
     setup_autostart
     service_start
     log_success "Service installed and started"
@@ -487,31 +880,60 @@ Usage: $0 [OPTIONS] [ACTION]
 
 Actions:
     install     Install Server Manager (default)
-    uninstall   Uninstall Server Manager
+    uninstall   Uninstall Server Manager service
     start       Start the Server Manager service
     stop        Stop the Server Manager service
     restart     Restart the Server Manager service
     status      Show service status
 
 Options:
-    --help, -h  Show this help message
+    --quiet, -q         Run without interactive prompts (use defaults)
+    --steamcmd PATH     Set SteamCMD installation directory
+    --host-type TYPE    Set cluster type: Host or Subhost
+    --host-addr IP      Set Master Host IP address (for Subhost type)
+    --no-service        Do not install as system service
+    --help, -h          Show this help message
 
 Examples:
-    $0                    # Install Server Manager
-    $0 install           # Same as above
-    $0 start             # Start the service
-    $0 status            # Check service status
+    $0                              # Interactive installation
+    $0 install                      # Same as above
+    $0 -q --host-type Host          # Quiet install as master host
+    $0 -q --host-type Subhost --host-addr 192.168.1.50
+    $0 start                        # Start the service
+    $0 status                       # Check service status
 
 EOF
 }
 
 # Parse command line arguments
 ACTION="install"
+QUIET_MODE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         install|uninstall|start|stop|restart|status)
             ACTION="$1"
+            shift
+            ;;
+        --quiet|-q)
+            QUIET_MODE=true
+            shift
+            ;;
+        --steamcmd)
+            STEAMCMD_DIR="$2"
+            WORKSPACE_DIR="$STEAMCMD_DIR/user_workspace"
+            shift 2
+            ;;
+        --host-type)
+            HOST_TYPE="$2"
+            shift 2
+            ;;
+        --host-addr)
+            HOST_ADDRESS="$2"
+            shift 2
+            ;;
+        --no-service)
+            INSTALL_SERVICE=false
             shift
             ;;
         --help|-h)
@@ -526,7 +948,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Initialize log file
+# Initialise log file
 echo "=== Server Manager Installation Log $(date) ===" > "$LOG_FILE"
 
 # Execute action
@@ -536,7 +958,7 @@ case $ACTION in
         ;;
     uninstall)
         service_uninstall
-        log_success "Server Manager uninstalled"
+        log_success "Server Manager service uninstalled"
         ;;
     start)
         service_start

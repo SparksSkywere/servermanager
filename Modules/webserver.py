@@ -36,7 +36,7 @@ logger = setup_module_logging("WebServer")
 
 
 def get_server_manager_dir():
-    # Grab SM dir from registry—fallback to script parent
+    # Grab SM dir from registry-fallback to script parent
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
@@ -454,6 +454,9 @@ class ServerManagerWebServer(ServerManagerModule):
         self.tracker = None
         self.subhost_thread = None
         self.auth_tokens = {}  # Initialise auth_tokens attribute
+        self.cluster_db = None  # Cluster database for host/subhost management
+        self.analytics = None  # Analytics collector for metrics
+        # Note: server_manager_dir is inherited from ServerManagerModule base class
         
         # Read from environment first, fall back to inherited web_port property or default
         try:
@@ -477,7 +480,35 @@ class ServerManagerWebServer(ServerManagerModule):
         parser = argparse.ArgumentParser(description='Server Manager Web Server')
         parser.add_argument('--port', type=int, help='Web server port')
         args = parser.parse_args()
+        
+        # Continue initialization with the rest of the setup
+        self._continue_init(args)
 
+    def _get_or_create_secret_key(self):
+        # Get or create a persistent Flask secret key from registry
+        import secrets
+        try:
+            key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH, 0, winreg.KEY_READ)
+            secret_key = winreg.QueryValueEx(key, "FlaskSecretKey")[0]
+            winreg.CloseKey(key)
+            return secret_key.encode() if isinstance(secret_key, str) else secret_key
+        except (FileNotFoundError, OSError):
+            pass
+        
+        # Generate new secret key
+        secret_key = secrets.token_hex(32)
+        try:
+            key = winreg.CreateKey(REGISTRY_ROOT, REGISTRY_PATH)
+            winreg.SetValueEx(key, "FlaskSecretKey", 0, winreg.REG_SZ, secret_key)
+            winreg.CloseKey(key)
+            logger.debug("Created new persistent Flask secret key")
+        except Exception as e:
+            logger.warning(f"Could not persist Flask secret key: {e}")
+        
+        return secret_key.encode()
+
+    def _continue_init(self, args):
+        # Continue initialization after parsing args
         if args.port:
             self._web_port = args.port
 
@@ -512,7 +543,26 @@ class ServerManagerWebServer(ServerManagerModule):
             static_folder=os.path.join(self.server_manager_dir or "", "www")
         )
         CORS(self.app)
-        self.app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(24))
+        self.app.secret_key = self._get_or_create_secret_key()
+        
+        # Configure secure session settings
+        self.app.config.update(
+            SESSION_COOKIE_SECURE=os.getenv("SSL_ENABLED", "false").lower() == "true",
+            SESSION_COOKIE_HTTPONLY=True,
+            SESSION_COOKIE_SAMESITE='Lax'
+        )
+        
+        # Add security headers to all responses
+        @self.app.after_request
+        def add_security_headers(response):
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+            response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+            response.headers['X-XSS-Protection'] = '1; mode=block'
+            response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+            # Add HSTS header when SSL is enabled
+            if os.getenv("SSL_ENABLED", "false").lower() == "true":
+                response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+            return response
         
         # Rate limiter disabled - server manager used by many users
         self.limiter = None
@@ -717,19 +767,23 @@ class ServerManagerWebServer(ServerManagerModule):
             # Import the cluster API
             import sys
             api_path = os.path.join(self.server_manager_dir or "", "api")
+            logger.info(f"Cluster API path: {api_path}")
             if api_path not in sys.path:
                 sys.path.insert(0, api_path)
                 
             # Import using absolute path to avoid issues
             cluster_module_path = os.path.join(api_path, "cluster.py")
+            logger.info(f"Cluster module path: {cluster_module_path}, exists: {os.path.exists(cluster_module_path)}")
             if os.path.exists(cluster_module_path):
                 import importlib.util
                 spec = importlib.util.spec_from_file_location("cluster", cluster_module_path)
                 if spec and spec.loader:
                     cluster_module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(cluster_module)
-                    app.register_blueprint(cluster_module.cluster_api, url_prefix='/cluster')
-                    logger.debug("Cluster API registered successfully on main server")
+                    # Register without url_prefix since routes already have /api/cluster/ prefix
+                    app.register_blueprint(cluster_module.cluster_api)
+                    cluster_routes = [rule.rule for rule in list(app.url_map.iter_rules()) if 'cluster' in rule.rule]
+                    logger.info(f"Cluster API registered successfully. Routes: {cluster_routes}")
                 else:
                     logger.warning("Failed to create module spec for cluster API")
             else:
@@ -921,8 +975,58 @@ class ServerManagerWebServer(ServerManagerModule):
                     if self.server_manager is None:
                         return jsonify({"error": "Server manager not available"}), 500
                         
+                    # Get all servers with their current status (similar to cluster API)
                     servers = self.server_manager.get_all_servers()
-                    return jsonify(servers), 200
+                    result = []
+                    
+                    for server_name, server_config in servers.items():
+                        try:
+                            # Get server status
+                            status, pid = self.server_manager.get_server_status(server_name)
+                            server_info = {
+                                "id": server_name,
+                                "name": server_name,
+                                "status": status,
+                                "cpu": 0,  # Placeholder - would need system monitoring
+                                "memory": 0,  # Placeholder - would need system monitoring
+                                "disk": 0,  # Placeholder - would need system monitoring
+                                "pid": pid,
+                                "type": server_config.get("Type", "Unknown"),
+                                "path": server_config.get("InstallDir", ""),
+                                "executable": server_config.get("ExecutablePath", ""),
+                                "app_id": server_config.get("AppID", ""),
+                                "args": server_config.get("StartupArgs", ""),
+                                "auto_start": server_config.get("AutoStart", False),
+                                "last_started": server_config.get("StartTime", "")
+                            }
+                            result.append(server_info)
+                            
+                        except Exception as server_error:
+                            logger.debug(f"Error getting status for server {server_name}: {str(server_error)}")
+                            # Add server with error status if status check fails
+                            server_info = {
+                                "id": server_name,
+                                "name": server_name,
+                                "status": "Error",
+                                "cpu": 0,
+                                "memory": 0,
+                                "disk": 0,
+                                "pid": None,
+                                "type": server_config.get("Type", "Unknown"),
+                                "path": server_config.get("InstallDir", ""),
+                                "executable": server_config.get("ExecutablePath", ""),
+                                "app_id": server_config.get("AppID", ""),
+                                "args": server_config.get("StartupArgs", ""),
+                                "auto_start": server_config.get("AutoStart", False),
+                                "last_started": server_config.get("StartTime", "")
+                            }
+                            result.append(server_info)
+                    
+                    return jsonify({
+                        "success": True,
+                        "servers": result,
+                        "count": len(result)
+                    })
 
                 elif request.method == 'POST':
                     if self.server_manager is None:
@@ -948,8 +1052,8 @@ class ServerManagerWebServer(ServerManagerModule):
 
                     # Create server configuration
                     try:
-                        if hasattr(self.server_manager, 'create_server_config'):
-                            success, message = self.server_manager.create_server_config(
+                        if self.server_manager and hasattr(self.server_manager, 'create_server_config'):
+                            result = self.server_manager.create_server_config(
                                 server_name=server_name,
                                 server_type=server_type,
                                 install_dir=server_path,
@@ -959,6 +1063,7 @@ class ServerManagerWebServer(ServerManagerModule):
                                 version="",
                                 modloader=""
                             )
+                            success, message = result if isinstance(result, tuple) else (result, "Operation completed")
                         else:
                             # Fallback: create config file directly
                             # Get server manager directory from registry
@@ -1072,6 +1177,8 @@ class ServerManagerWebServer(ServerManagerModule):
                 lines = request.args.get('lines', 100, type=int)
                 
                 # Read console state file
+                if not self.server_manager_dir:
+                    return jsonify({"error": "Server manager directory not configured"}), 500
                 temp_dir = os.path.join(self.server_manager_dir, "temp", "console_states")
                 state_file = os.path.join(temp_dir, f"{server_id}_console.json")
                 
@@ -1117,6 +1224,8 @@ class ServerManagerWebServer(ServerManagerModule):
                     return jsonify({"error": "No command provided"}), 400
 
                 # Try to send via command queue
+                if not self.server_manager_dir:
+                    return jsonify({"error": "Server manager directory not configured"}), 500
                 queue_dir = os.path.join(self.server_manager_dir, "temp", "command_queues")
                 os.makedirs(queue_dir, exist_ok=True)
                 queue_file = os.path.join(queue_dir, f"{server_id}.queue")
@@ -1355,8 +1464,9 @@ class ServerManagerWebServer(ServerManagerModule):
 
                 username = token_data.get("username")
                 
-                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager'):
-                    user = self.sql_auth.user_manager.get_user(username)
+                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager') and self.sql_auth.user_manager:
+                    user_mgr = self.sql_auth.user_manager
+                    user = user_mgr.get_user(username)
                     if user:
                         return jsonify({
                             "username": user.username,
@@ -1370,8 +1480,8 @@ class ServerManagerWebServer(ServerManagerModule):
                             "theme_preference": getattr(user, 'theme_preference', 'dark') or "dark",
                             "is_admin": user.is_admin,
                             "two_factor_enabled": getattr(user, 'two_factor_enabled', False),
-                            "created_at": user.created_at.isoformat() if user.created_at else None,
-                            "last_login": user.last_login.isoformat() if user.last_login else None
+                            "created_at": getattr(user.created_at, 'isoformat', lambda: None)() if user.created_at is not None else None,
+                            "last_login": getattr(user.last_login, 'isoformat', lambda: None)() if user.last_login is not None else None
                         })
                     return jsonify({"error": "User not found"}), 404
                 else:
@@ -1418,8 +1528,9 @@ class ServerManagerWebServer(ServerManagerModule):
                 if not update_data:
                     return jsonify({"error": "No valid fields to update"}), 400
 
-                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager'):
-                    success = self.sql_auth.user_manager.update_user(username, **update_data)
+                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager') and self.sql_auth.user_manager:
+                    user_mgr = self.sql_auth.user_manager
+                    success = user_mgr.update_user(username, **update_data)
                     if success:
                         return jsonify({"message": "Profile updated successfully"})
                     return jsonify({"error": "Failed to update profile"}), 500
@@ -1466,7 +1577,11 @@ class ServerManagerWebServer(ServerManagerModule):
                         return jsonify({"error": "Current password is incorrect"}), 401
                     
                     # Update password
-                    success = self.sql_auth.user_manager.update_user(username, password=new_password)
+                    user_mgr = self.sql_auth.user_manager
+                    if user_mgr:
+                        success = user_mgr.update_user(username, password=new_password)
+                    else:
+                        return jsonify({"error": "User manager not available"}), 501
                     if success:
                         return jsonify({"message": "Password changed successfully"})
                     return jsonify({"error": "Failed to change password"}), 500
@@ -1503,8 +1618,9 @@ class ServerManagerWebServer(ServerManagerModule):
                 if len(avatar_data) > 700000:
                     return jsonify({"error": "Avatar too large (max 500KB)"}), 400
 
-                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager'):
-                    success = self.sql_auth.user_manager.update_user(username, avatar=avatar_data)
+                if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager') and self.sql_auth.user_manager:
+                    user_mgr = self.sql_auth.user_manager
+                    success = user_mgr.update_user(username, avatar=avatar_data)
                     if success:
                         return jsonify({"message": "Avatar updated successfully"})
                     return jsonify({"error": "Failed to update avatar"}), 500
@@ -1769,11 +1885,13 @@ class ServerManagerWebServer(ServerManagerModule):
                     
                 # Return SNMP-formatted metrics
                 snmp_metrics = self.analytics.get_snmp_metrics()
+                if not snmp_metrics or not isinstance(snmp_metrics, dict):
+                    return jsonify({"error": "No SNMP metrics available"}), 503
                 
                 # Format as SNMP walk output if requested
                 if request.args.get('format') == 'walk':
                     output_lines = []
-                    for oid, value in snmp_metrics.items():
+                    for oid, value in dict(snmp_metrics).items():
                         output_lines.append(f"{oid} = {value}")
                     return '\n'.join(output_lines), 200, {'Content-Type': 'text/plain'}
                 
@@ -1814,6 +1932,10 @@ class ServerManagerWebServer(ServerManagerModule):
         # Static file serving routes
         @app.route('/<path:filename>')
         def serve_static_files(filename):
+            # Skip API routes - these should be handled by blueprints
+            if filename.startswith('api/'):
+                return jsonify({"error": "API endpoint not found"}), 404
+            
             # Serve static files from the www directory
             try:
                 # Try multiple possible www directory locations

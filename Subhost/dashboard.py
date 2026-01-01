@@ -24,37 +24,44 @@ except Exception:
 app = Flask(__name__)
 
 def get_subhost_config():
-    # Subhost config from registry
+    # Subhost config from registry - required for proper cluster operation
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         try:
             host_address = winreg.QueryValueEx(key, "HostAddress")[0]
-        except:
-            host_address = "localhost:5001"
+            if not host_address:
+                raise ValueError("HostAddress is empty")
+        except Exception:
+            logger.error("HostAddress not configured in registry - cluster mode requires proper setup")
+            raise RuntimeError("Subhost requires HostAddress to be configured. Run installer to configure cluster settings.")
         
         try:
             subhost_id = winreg.QueryValueEx(key, "SubhostID")[0]
-        except:
+            if not subhost_id:
+                import socket
+                subhost_id = f"{socket.gethostname()}-{os.getpid()}"
+        except Exception:
             import socket
             subhost_id = f"{socket.gethostname()}-{os.getpid()}"
             
         winreg.CloseKey(key)
         return subhost_id, host_address
+    except RuntimeError:
+        raise
     except Exception as e:
-        logger.warning(f"Registry read failed: {e}")
-        import socket
-        return f"{socket.gethostname()}-{os.getpid()}", "localhost:5001"
+        logger.error(f"Registry read failed: {e}")
+        raise RuntimeError("Subhost requires proper cluster configuration. Run installer to configure cluster settings.")
 
 SUBHOST_ID, HOST_ADDRESS = get_subhost_config()
 HOST_URL = f"http://{HOST_ADDRESS}"
 INFO = {
     "os": os.name,
     "cwd": os.getcwd(),
-    "api_url": f"http://localhost:8080",
+    "api_url": HOST_URL,
     "python_version": sys.version,
     "subhost_version": "1.0.0"
 }
-WEB_API = os.environ.get("WEB_API", "http://localhost:8080/api/tracker/servers")
+WEB_API = os.environ.get("WEB_API", f"{HOST_URL}/api/tracker/servers")
 # No authentication tokens needed in simplified cluster system
 
 def get_headers():

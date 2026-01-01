@@ -1,6 +1,6 @@
 # Common utilities for Server Manager
 # - Registry, paths, process management, system bits
-# - Shared across all modules—don't duplicate this rubbish elsewhere
+# - Shared across all modules-don't duplicate this rubbish elsewhere
 import os
 import sys
 import json
@@ -10,11 +10,11 @@ import time
 import datetime
 import psutil
 
-# Centralised registry constants—use these, not hardcoded strings
+# Centralised registry constants-use these, not hardcoded strings
 REGISTRY_ROOT = winreg.HKEY_LOCAL_MACHINE
 REGISTRY_PATH = r"Software\SkywereIndustries\Servermanager"
 
-# Logging setup—falls back to basic config if server_logging unavailable
+# Logging setup-falls back to basic config if server_logging unavailable
 try:
     from Modules.server_logging import get_component_logger
     logger = get_component_logger("Common")
@@ -28,7 +28,7 @@ if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
 
 # Registry utility functions
 def initialise_paths_from_registry(registry_path):
-    # Grab paths from registry—returns (success, dir, paths dict)
+    # Grab paths from registry-returns (success, dir, paths dict)
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, registry_path)
         server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
@@ -60,7 +60,7 @@ def initialise_paths_from_registry(registry_path):
 
 
 def initialise_registry_values(registry_path):
-    # Pull config values from registry—SteamCmd path, web port, etc.
+    # Pull config values from registry-SteamCmd path, web port, etc.
     try:
         # Read registry for all installation-managed values
         key = winreg.OpenKey(REGISTRY_ROOT, registry_path)
@@ -131,7 +131,7 @@ class ServerManagerPaths:
         self.initialise_from_registry()
         
     def initialise_from_registry(self):
-        # Try registry first—fallback kicks in if this fails
+        # Try registry first-fallback kicks in if this fails
         try:
             # Read registry for paths
             key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
@@ -160,7 +160,7 @@ class ServerManagerPaths:
                 "dashboard": os.path.join(self.paths["temp"], "dashboard.pid")
             }
             
-            # Create dirs if missing (skip config/data—database handles those)
+            # Create dirs if missing (skip config/data-database handles those)
             for path_key, path in self.paths.items():
                 if path_key not in ["config", "data"]:
                     os.makedirs(path, exist_ok=True)
@@ -172,7 +172,7 @@ class ServerManagerPaths:
         except Exception as e:
             logger.error(f"Failed to initialize paths from registry: {str(e)}")
             
-            # Registry failed—try fallback
+            # Registry failed-try fallback
             if not self.initialise_fallback():
                 raise Exception("Path initialisation failed")
                 
@@ -219,7 +219,7 @@ class ServerManagerPaths:
             return False
             
     def get_path(self, path_key):
-        # Return path for key—raises if uninitialised
+        # Return path for key-raises if uninitialised
         if not self.initialised:
             raise Exception("Paths not initialised")
             
@@ -268,7 +268,7 @@ class ProcessManager:
             return False
             
     def read_pid_file(self, process_type):
-        # Load PID info from file—returns None if missing/corrupt
+        # Load PID info from file-returns None if missing/corrupt
         try:
             pid_file = self.paths_manager.get_pid_file(process_type)
             
@@ -301,7 +301,7 @@ class ProcessManager:
             return False
             
     def is_process_running(self, pid):
-        # Quick PID check—False if dead/missing
+        # Quick PID check-False if dead/missing
         try:
             if not pid:
                 return False
@@ -320,7 +320,7 @@ class ProcessManager:
         return self.is_process_running(pid_info.get("ProcessId"))
             
     def kill_process(self, pid, force=False):
-        # Terminate or kill process—force=True uses SIGKILL
+        # Terminate or kill process-force=True uses SIGKILL
         try:
             if not pid or not self.is_process_running(pid):
                 return True
@@ -471,7 +471,7 @@ except ImportError:
 
 # System utils
 class SystemUtils:
-    # Quick system info helpers—CPU, memory, disk, process stats
+    # Quick system info helpers-CPU, memory, disk, process stats
     @staticmethod
     def get_system_info():
         # Returns dict of system metrics
@@ -504,7 +504,7 @@ class SystemUtils:
     
     @staticmethod
     def get_process_info(pid):
-        # Grab process stats by PID—returns None if dead
+        # Grab process stats by PID-returns None if dead
         try:
             # Try to use debug module first
             try:
@@ -535,7 +535,7 @@ class SystemUtils:
             log_exception(e, f"Failed to get process information for PID {pid}")
             return None
 
-# Global instances—use these, don't create your own
+# Global instances-use these, don't create your own
 paths = ServerManagerPaths()
 process_manager = ProcessManager(paths)
 config_manager = ConfigManager(paths)
@@ -578,7 +578,7 @@ class ServerManagerModule:
         
     @property
     def web_port(self):
-        # Web port—always int, defaults to 8080
+        # Web port-always int, defaults to 8080
         port = self.get_config_value("web_port", 8080)
         try:
             return int(port) if port else 8080
@@ -627,7 +627,7 @@ class ServerManagerModule:
 
 # Utility functions
 def setup_module_logging(module_name):
-    # Logging setup for modules—use this, not raw basicConfig
+    # Logging setup for modules-use this, not raw basicConfig
     try:
         from Modules.server_logging import get_component_logger
         logger = get_component_logger(module_name)
@@ -651,7 +651,7 @@ def setup_module_path():
     sys.path.insert(0, project_root)
 
 def get_server_manager_dir():
-    # Get SM dir from registry—falls back to script parent
+    # Get SM dir from registry-falls back to script parent
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
         server_manager_dir = winreg.QueryValueEx(key, "ServerManagerPath")[0]
@@ -686,7 +686,7 @@ def get_absolute_path(relative_path):
 
 # Subprocess flags for Windows console hiding
 def get_subprocess_creation_flags(hide_window=True, new_process_group=False):
-    # Get creation flags for subprocess—Windows only
+    # Get creation flags for subprocess-Windows only
     import subprocess
     if sys.platform != 'win32':
         return 0

@@ -81,7 +81,6 @@ from Host.dashboard_functions import (
     get_current_server_list, get_current_subhost,
     reattach_to_running_servers, update_server_list_for_subhost,
     refresh_all_subhost_servers, refresh_current_subhost_servers, refresh_subhost_servers,
-    create_remote_host_connection_dialog, RemoteHostManager,
     load_categories
 )
 
@@ -142,7 +141,7 @@ class ServerManagerDashboard(ServerManagerModule):
             "processStatHistory": {},
             "failedProcessRestarts": {},
             # Load configuration values
-            "debugMode": self.config.get("configuration", {}).get("debugMode", True),
+            "debugMode": self.config.get("configuration", {}).get("debugMode", False),
             "offlineMode": self.config.get("configuration", {}).get("offlineMode", False),
             "systemRefreshInterval": self.config.get("configuration", {}).get("systemRefreshInterval", 4),
             "processMonitoringInterval": self.config.get("configuration", {}).get("processMonitoringInterval", 5),
@@ -379,6 +378,26 @@ class ServerManagerDashboard(ServerManagerModule):
         # Setup the menu bar first
         self.setup_menu_bar()
         
+        # Create loading overlay that covers the entire window during initialization
+        self.loading_frame = ttk.Frame(self.root)
+        self.loading_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.loading_frame.lift()  # Ensure it's on top
+        
+        # Center the loading content
+        loading_content = ttk.Frame(self.loading_frame)
+        loading_content.place(relx=0.5, rely=0.5, anchor="center")
+        
+        # Loading label with icon
+        ttk.Label(loading_content, text="⏳", font=("Segoe UI", 32)).pack(pady=(0, 10))
+        ttk.Label(loading_content, text="Loading Dashboard...", font=("Segoe UI", 14, "bold")).pack()
+        self.loading_status_label = ttk.Label(loading_content, text="Initializing...", font=("Segoe UI", 10), foreground="gray")
+        self.loading_status_label.pack(pady=(5, 10))
+        
+        # Progress bar for visual feedback
+        self.loading_progress = ttk.Progressbar(loading_content, mode='indeterminate', length=250)
+        self.loading_progress.pack(pady=(0, 10))
+        self.loading_progress.start(10)
+        
         # Create top frame for action buttons
         self.top_frame = ttk.Frame(self.root)
         self.top_frame.pack(fill=tk.X, padx=10, pady=(8, 5))
@@ -429,18 +448,7 @@ class ServerManagerDashboard(ServerManagerModule):
         self.main_pane.grid(row=0, column=0, sticky="nsew")
         
         # Server tabs frame (left side) - Tabbed interface for subhosts
-        self.servers_frame = ttk.LabelFrame(self.main_pane, text="", padding=10)
-        
-        # Header frame for "Host Servers" title and Remote Host button
-        self.servers_header_frame = ttk.Frame(self.servers_frame)
-        self.servers_header_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        ttk.Label(self.servers_header_frame, text="Host Servers", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
-        
-        # Remote Host button on far right of header
-        self.remote_host_button = ttk.Button(self.servers_header_frame, text="Remote Host", 
-                                           command=self.connect_remote_host, width=12)
-        self.remote_host_button.pack(side=tk.RIGHT)
+        self.servers_frame = ttk.LabelFrame(self.main_pane, text="Host Servers", padding=10)
         
         # Adjust pane weights based on screen size for better responsiveness
         screen_width = self.root.winfo_screenwidth()
@@ -1882,6 +1890,17 @@ class ServerManagerDashboard(ServerManagerModule):
         self.update_webserver_status()
         logger.info(f"Offline mode set to {self.variables['offlineMode']}")
     
+    def _hide_loading_overlay(self):
+        # Hide the loading overlay and stop the progress bar
+        try:
+            if hasattr(self, 'loading_progress'):
+                self.loading_progress.stop()
+            if hasattr(self, 'loading_frame') and self.loading_frame.winfo_exists():
+                self.loading_frame.destroy()
+            logger.debug("Loading overlay hidden")
+        except Exception as e:
+            logger.debug(f"Error hiding loading overlay: {e}")
+    
     def toggle_system_info(self):
         # Toggle visibility of the system information panel
         self.system_info_visible = not self.system_info_visible
@@ -1973,22 +1992,40 @@ class ServerManagerDashboard(ServerManagerModule):
             def delayed_initial_update():
                 try:
                     logger.info("[SUBPROCESS_TRACE] Starting delayed initial updates - watching for console popup...")
+                    
+                    # Update loading status
+                    def update_loading_status(text):
+                        try:
+                            if hasattr(self, 'loading_status_label') and self.loading_status_label.winfo_exists():
+                                self.loading_status_label.config(text=text)
+                                self.root.update_idletasks()
+                        except Exception:
+                            pass
+                    
                     # Perform heavy operations that were previously blocking __init__
+                    update_loading_status("Loading system information...")
                     logger.info("[SUBPROCESS_TRACE] Calling update_system_info()...")
                     self.update_system_info()  # Initial system info update (now threaded)
                     logger.info("[SUBPROCESS_TRACE] update_system_info() completed")
                     
+                    update_loading_status("Loading server list...")
                     logger.info("[SUBPROCESS_TRACE] Calling update_server_list()...")
                     self.update_server_list(force_refresh=True)  # Initial server list refresh
                     logger.info("[SUBPROCESS_TRACE] update_server_list() completed")
                     
+                    update_loading_status("Detecting running servers...")
                     logger.info("[SUBPROCESS_TRACE] Calling _reattach_to_running_servers()...")
                     self._reattach_to_running_servers()  # Reattach to running servers
                     logger.info("[SUBPROCESS_TRACE] _reattach_to_running_servers() completed")
                     
+                    # Hide loading overlay
+                    self._hide_loading_overlay()
+                    
                     logger.info("Delayed initial updates completed")
                 except Exception as e:
                     logger.error(f"Error in delayed initial update: {str(e)}")
+                    # Hide loading overlay even on error
+                    self._hide_loading_overlay()
 
             logger.info("Scheduling delayed initial update")
             self.root.after(100, delayed_initial_update)  # 100ms delay
@@ -2055,12 +2092,6 @@ class ServerManagerDashboard(ServerManagerModule):
             return
             
         server_name = current_list.item(selected_items[0])['values'][0]
-        current_subhost = self.get_current_subhost()
-        
-        # Check if this is a remote host
-        if self.is_remote_host(current_subhost):
-            self.start_remote_server(server_name, current_subhost)
-            return
         
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
@@ -2117,131 +2148,7 @@ class ServerManagerDashboard(ServerManagerModule):
         start_thread = threading.Thread(target=start_in_background, daemon=True)
         start_thread.start()
 
-    def start_remote_server(self, server_name, subhost_name):
-        # Start a server on a remote host
-        try:
-            host, port = self.get_remote_connection_details(subhost_name)
-            if not host or not port or not hasattr(self, 'remote_host_manager'):
-                messagebox.showerror("Error", "Remote host connection not available")
-                return
-            
-            # Show starting message
-            self.update_server_status(server_name, "Starting...")
-            
-            def start_remote_in_background():
-                try:
-                    success, message = self.remote_host_manager.start_server(host, port, server_name)
-                    
-                    def update_ui():
-                        if success:
-                            self.update_server_status(server_name, "Running")
-                            messagebox.showinfo("Success", f"Server '{server_name}' started successfully on remote host")
-                        else:
-                            self.update_server_status(server_name, "Failed")
-                            messagebox.showerror("Error", f"Failed to start server '{server_name}': {message}")
-                        self.update_server_list(force_refresh=True)
-                    
-                    self.root.after(0, update_ui)
-                    
-                except Exception as e:
-                    logger.error(f"Error starting remote server: {str(e)}")
-                    def show_error():
-                        self.update_server_status(server_name, "Error")
-                        messagebox.showerror("Error", f"Failed to start remote server: {str(e)}")
-                        self.update_server_list(force_refresh=True)
-                    self.root.after(0, show_error)
-            
-            # Run in background thread
-            start_thread = threading.Thread(target=start_remote_in_background, daemon=True)
-            start_thread.start()
-            
-        except Exception as e:
-            logger.error(f"Error starting remote server: {str(e)}")
-            messagebox.showerror("Error", f"Failed to start remote server: {str(e)}")
 
-    def stop_remote_server(self, server_name, subhost_name):
-        # Stop a server on a remote host
-        try:
-            host, port = self.get_remote_connection_details(subhost_name)
-            if not host or not port or not hasattr(self, 'remote_host_manager'):
-                messagebox.showerror("Error", "Remote host connection not available")
-                return
-            
-            # Show stopping message
-            self.update_server_status(server_name, "Stopping...")
-            
-            def stop_remote_in_background():
-                try:
-                    success, message = self.remote_host_manager.stop_server(host, port, server_name)
-                    
-                    def update_ui():
-                        if success:
-                            self.update_server_status(server_name, "Stopped")
-                            messagebox.showinfo("Success", f"Server '{server_name}' stopped successfully on remote host")
-                        else:
-                            self.update_server_status(server_name, "Failed")
-                            messagebox.showerror("Error", f"Failed to stop server '{server_name}': {message}")
-                        self.update_server_list(force_refresh=True)
-                    
-                    self.root.after(0, update_ui)
-                    
-                except Exception as e:
-                    logger.error(f"Error stopping remote server: {str(e)}")
-                    def show_error():
-                        self.update_server_status(server_name, "Error")
-                        messagebox.showerror("Error", f"Failed to stop remote server: {str(e)}")
-                        self.update_server_list(force_refresh=True)
-                    self.root.after(0, show_error)
-            
-            # Run in background thread
-            stop_thread = threading.Thread(target=stop_remote_in_background, daemon=True)
-            stop_thread.start()
-            
-        except Exception as e:
-            logger.error(f"Error stopping remote server: {str(e)}")
-            messagebox.showerror("Error", f"Failed to stop remote server: {str(e)}")
-
-    def restart_remote_server(self, server_name, subhost_name):
-        # Restart a server on a remote host
-        try:
-            host, port = self.get_remote_connection_details(subhost_name)
-            if not host or not port or not hasattr(self, 'remote_host_manager'):
-                messagebox.showerror("Error", "Remote host connection not available")
-                return
-            
-            # Show restarting message
-            self.update_server_status(server_name, "Restarting...")
-            
-            def restart_remote_in_background():
-                try:
-                    success, message = self.remote_host_manager.restart_server(host, port, server_name)
-                    
-                    def update_ui():
-                        if success:
-                            self.update_server_status(server_name, "Running")
-                            messagebox.showinfo("Success", f"Server '{server_name}' restarted successfully on remote host")
-                        else:
-                            self.update_server_status(server_name, "Failed")
-                            messagebox.showerror("Error", f"Failed to restart server '{server_name}': {message}")
-                        self.update_server_list(force_refresh=True)
-                    
-                    self.root.after(0, update_ui)
-                    
-                except Exception as e:
-                    logger.error(f"Error restarting remote server: {str(e)}")
-                    def show_error():
-                        self.update_server_status(server_name, "Error")
-                        messagebox.showerror("Error", f"Failed to restart remote server: {str(e)}")
-                        self.update_server_list(force_refresh=True)
-                    self.root.after(0, show_error)
-            
-            # Run in background thread
-            restart_thread = threading.Thread(target=restart_remote_in_background, daemon=True)
-            restart_thread.start()
-            
-        except Exception as e:
-            logger.error(f"Error restarting remote server: {str(e)}")
-            messagebox.showerror("Error", f"Failed to restart remote server: {str(e)}")
 
     def stop_server(self):
         # Stop the selected game server
@@ -2256,12 +2163,6 @@ class ServerManagerDashboard(ServerManagerModule):
             return
             
         server_name = current_list.item(selected_items[0])['values'][0]
-        current_subhost = self.get_current_subhost()
-        
-        # Check if this is a remote host
-        if self.is_remote_host(current_subhost):
-            self.stop_remote_server(server_name, current_subhost)
-            return
         
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
@@ -2338,17 +2239,6 @@ class ServerManagerDashboard(ServerManagerModule):
             return
             
         server_name = current_list.item(selected_items[0])['values'][0]
-        current_subhost = self.get_current_subhost()
-        
-        # Check if this is a remote host
-        if self.is_remote_host(current_subhost):
-            # Confirm restart
-            confirm = messagebox.askyesno("Confirm Restart", 
-                                        f"Are you sure you want to restart the remote server '{server_name}'?",
-                                        icon=messagebox.WARNING)
-            if confirm:
-                self.restart_remote_server(server_name, current_subhost)
-            return
         
         if self.server_manager is None:
             messagebox.showerror("Error", "Server manager not initialized.")
@@ -4393,168 +4283,6 @@ Working Directory: {process_details.get('cwd', 'N/A')}
             logger.error(f"Error in cluster management: {str(e)}")
             messagebox.showerror("Error", f"Failed to open cluster management: {str(e)}")
 
-    def connect_remote_host(self):
-        # Open the remote host connection dialog
-        try:
-            create_remote_host_connection_dialog(self.root, self)
-        except Exception as e:
-            logger.error(f"Error opening remote host connection dialog: {str(e)}")
-            messagebox.showerror("Error", f"Failed to open remote host connection dialog: {str(e)}")
-
-    def add_remote_host(self, host, port, username, password, database="", use_ssl=False, timeout=10):
-        # Add a remote host to the dashboard with full connection management
-        try:
-            remote_host_name = f"Remote-{host}"
-            
-            # Check if tab already exists
-            if remote_host_name in self.tab_frames:
-                messagebox.showwarning("Warning", f"Remote host '{host}' is already connected")
-                return False
-            
-            # Initialize remote hosts manager if not exists
-            if not hasattr(self, 'remote_host_manager'):
-                self.remote_host_manager = RemoteHostManager()
-            
-            # Create connection using RemoteHostManager with SSL and timeout options
-            success, message = self.remote_host_manager.connect(host, port, username, password, use_ssl, timeout)
-            
-            if success:
-                # Connection successful, create tab and store connection
-                self.add_subhost_tab(remote_host_name, is_local=False)
-                
-                # Store the connection details for this tab
-                if not hasattr(self, 'remote_host_tabs'):
-                    self.remote_host_tabs = {}
-                
-                self.remote_host_tabs[remote_host_name] = {
-                    'host': host,
-                    'port': port,
-                    'username': username,
-                    'database': database,
-                    'use_ssl': use_ssl,
-                    'timeout': timeout
-                }
-                
-                # Load servers for this remote host
-                self.load_remote_host_servers(remote_host_name)
-                
-                logger.info(f"Successfully connected to remote host: {remote_host_name}")
-                messagebox.showinfo("Success", f"Successfully connected to remote host '{host}'")
-                return True
-            else:
-                messagebox.showerror("Connection Failed", f"Failed to connect to remote host '{host}': {message}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error adding remote host: {str(e)}")
-            messagebox.showerror("Error", f"Error connecting to remote host: {str(e)}")
-            return False
-
-    def load_remote_host_servers(self, remote_host_name):
-        # Load servers from a remote host into the dashboard
-        try:
-            if not hasattr(self, 'remote_host_manager') or remote_host_name not in self.remote_host_tabs:
-                return
-            
-            host = self.remote_host_tabs[remote_host_name]['host']
-            port = self.remote_host_tabs[remote_host_name]['port']
-            
-            # Get servers from remote host
-            success, servers_data = self.remote_host_manager.get_servers(host, port)
-            
-            if success and servers_data and remote_host_name in self.tab_frames:
-                # Parse servers data - handle both list and dict responses
-                servers = []
-                if isinstance(servers_data, list):
-                    servers = servers_data
-                elif isinstance(servers_data, dict):
-                    servers = servers_data.get('servers', [])
-                elif isinstance(servers_data, str):
-                    try:
-                        import json
-                        parsed_data = json.loads(servers_data)
-                        if isinstance(parsed_data, list):
-                            servers = parsed_data
-                        elif isinstance(parsed_data, dict):
-                            servers = parsed_data.get('servers', [])
-                    except:
-                        logger.warning(f"Could not parse servers data: {servers_data}")
-                        servers = []
-                
-                # Get the server list widget for this tab
-                tab_frame = self.tab_frames[remote_host_name]
-                server_list = None
-                
-                # Find the server list widget in the tab
-                for widget in tab_frame.winfo_children():
-                    if hasattr(widget, 'winfo_children'):
-                        for child in widget.winfo_children():
-                            if isinstance(child, ttk.Treeview):
-                                server_list = child
-                                break
-                        if server_list:
-                            break
-                
-                if server_list:
-                    # Clear existing items
-                    for item in server_list.get_children():
-                        server_list.delete(item)
-                    
-                    # Add remote servers to list
-                    for server in servers:
-                        server_list.insert('', 'end', values=(
-                            server.get('name', 'Unknown'),
-                            server.get('status', 'Unknown'),
-                            server.get('type', 'Unknown'),
-                            server.get('port', 'Unknown'),
-                            server.get('players', '0/0')
-                        ))
-                
-                logger.info(f"Loaded {len(servers)} servers for remote host: {remote_host_name}")
-            
-        except Exception as e:
-            logger.error(f"Error loading servers for remote host {remote_host_name}: {str(e)}")
-
-    def disconnect_remote_host(self, remote_host_name):
-        # Disconnect from a remote host and remove its tab
-        try:
-            if hasattr(self, 'remote_host_tabs') and remote_host_name in self.remote_host_tabs:
-                host = self.remote_host_tabs[remote_host_name]['host']
-                port = self.remote_host_tabs[remote_host_name]['port']
-                
-                # Disconnect using RemoteHostManager
-                if hasattr(self, 'remote_host_manager'):
-                    self.remote_host_manager.disconnect(host, port)
-                
-                # Remove from tracking
-                del self.remote_host_tabs[remote_host_name]
-                
-                # Remove tab if it exists - use the existing pattern from remove_subhost_tab
-                if remote_host_name in self.tab_frames:
-                    try:
-                        tab_index = self.server_notebook.index(self.tab_frames[remote_host_name])
-                        self.server_notebook.forget(tab_index)
-                    except:
-                        # If we can't find the tab index, just remove from dict
-                        pass
-                    del self.tab_frames[remote_host_name]
-                
-                logger.info(f"Disconnected from remote host: {remote_host_name}")
-                
-        except Exception as e:
-            logger.error(f"Error disconnecting from remote host {remote_host_name}: {str(e)}")
-
-    def get_remote_connection_details(self, subhost_name):
-        # Get the host and port for a remote host
-        if self.is_remote_host(subhost_name):
-            return (self.remote_host_tabs[subhost_name]['host'], 
-                    self.remote_host_tabs[subhost_name]['port'])
-        return None, None
-
-    def is_remote_host(self, subhost_name):
-        # Check if the given subhost is a remote host
-        return hasattr(self, 'remote_host_tabs') and subhost_name in self.remote_host_tabs
-
     def check_server_updates(self):
         # Check for updates for the selected server
         current_list = self.get_current_server_list()
@@ -5556,6 +5284,10 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         dashboard_frame = ttk.Frame(notebook)
         notebook.add(dashboard_frame, text="Dashboard")
         
+        # Cluster Settings Tab
+        cluster_frame = ttk.Frame(notebook)
+        notebook.add(cluster_frame, text="Cluster")
+        
         # Update Settings Tab
         update_frame = ttk.Frame(notebook)
         notebook.add(update_frame, text="Updates")
@@ -5580,6 +5312,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         
         # Dashboard Settings
         self._create_dashboard_settings_tab(dashboard_frame, dashboard_config, db)
+        
+        # Cluster Settings
+        self._create_cluster_settings_tab(cluster_frame, db)
         
         # Update Settings
         self._create_update_settings_tab(update_frame, update_config, db)
@@ -5628,6 +5363,266 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         ]
         
         self._create_settings_controls(scrollable_frame, settings, "dashboard")
+    
+    def _create_cluster_settings_tab(self, parent, db):
+        # Create cluster settings controls
+        import winreg
+        
+        main_frame = ttk.Frame(parent, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = ttk.Label(main_frame, text="Cluster Configuration", font=("Segoe UI", 12, "bold"))
+        title_label.pack(anchor=tk.W, pady=(0, 15))
+        
+        # Description
+        desc_label = ttk.Label(main_frame, text="Configure this installation's role in a Server Manager cluster.\nChanges require a restart to take effect.", wraplength=700)
+        desc_label.pack(anchor=tk.W, pady=(0, 15))
+        
+        # Get current role from registry
+        current_role = "Host"
+        current_host_address = ""
+        try:
+            from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+            key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
+            try:
+                current_role = winreg.QueryValueEx(key, "HostType")[0]
+            except:
+                pass
+            try:
+                current_host_address = winreg.QueryValueEx(key, "HostAddress")[0] or ""
+            except:
+                pass
+            winreg.CloseKey(key)
+        except Exception as e:
+            logger.warning(f"Could not read cluster config from registry: {e}")
+        
+        # Role selection frame
+        role_frame = ttk.LabelFrame(main_frame, text="Cluster Role", padding=10)
+        role_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        self.cluster_role_var = tk.StringVar(value=current_role)
+        
+        # Host radio button
+        host_radio = ttk.Radiobutton(role_frame, text="Host (Master)", variable=self.cluster_role_var, value="Host")
+        host_radio.pack(anchor=tk.W, pady=2)
+        
+        host_desc = ttk.Label(role_frame, text="This installation manages subhosts and accepts cluster join requests.", foreground="gray")
+        host_desc.pack(anchor=tk.W, padx=(20, 0), pady=(0, 10))
+        
+        # Subhost radio button
+        subhost_radio = ttk.Radiobutton(role_frame, text="Subhost (Slave)", variable=self.cluster_role_var, value="Subhost")
+        subhost_radio.pack(anchor=tk.W, pady=2)
+        
+        subhost_desc = ttk.Label(role_frame, text="This installation connects to a master host for centralized management.", foreground="gray")
+        subhost_desc.pack(anchor=tk.W, padx=(20, 0), pady=(0, 5))
+        
+        # Master host address frame (shown when Subhost is selected)
+        master_frame = ttk.Frame(role_frame)
+        master_frame.pack(fill=tk.X, padx=(20, 0), pady=(5, 0))
+        
+        ttk.Label(master_frame, text="Master Host IP:").pack(side=tk.LEFT)
+        self.master_ip_var = tk.StringVar(value=current_host_address)
+        self.master_ip_entry = ttk.Entry(master_frame, textvariable=self.master_ip_var, width=20)
+        self.master_ip_entry.pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Update master IP entry state based on role
+        def update_master_ip_state(*args):
+            if self.cluster_role_var.get() == "Subhost":
+                self.master_ip_entry.configure(state="normal")
+            else:
+                self.master_ip_entry.configure(state="disabled")
+        
+        self.cluster_role_var.trace_add("write", update_master_ip_state)
+        update_master_ip_state()  # Set initial state
+        
+        # Pending requests section (only shown for hosts)
+        if current_role == "Host":
+            requests_frame = ttk.LabelFrame(main_frame, text="Pending Join Requests", padding=10)
+            requests_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+            
+            # Treeview for pending requests
+            columns = ("id", "machine", "ip", "requested")
+            requests_tree = ttk.Treeview(requests_frame, columns=columns, show="headings", height=5)
+            requests_tree.heading("id", text="ID")
+            requests_tree.heading("machine", text="Machine Name")
+            requests_tree.heading("ip", text="IP Address")
+            requests_tree.heading("requested", text="Requested At")
+            
+            requests_tree.column("id", width=150)
+            requests_tree.column("machine", width=150)
+            requests_tree.column("ip", width=120)
+            requests_tree.column("requested", width=150)
+            
+            requests_scrollbar = ttk.Scrollbar(requests_frame, orient=tk.VERTICAL, command=requests_tree.yview)
+            requests_tree.configure(yscrollcommand=requests_scrollbar.set)
+            
+            requests_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            requests_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            # Load pending requests
+            try:
+                pending = db.get_pending_requests()
+                for req in pending:
+                    if req['status'] == 'pending':
+                        requests_tree.insert("", tk.END, values=(
+                            req['node_name'],
+                            req.get('machine_name', 'Unknown'),
+                            req.get('ip_address', 'Unknown'),
+                            req.get('requested_at', 'Unknown')
+                        ))
+            except Exception as e:
+                logger.error(f"Failed to load pending requests: {e}")
+            
+            # Approve/Reject buttons
+            button_frame = ttk.Frame(requests_frame)
+            button_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            def approve_selected():
+                selection = requests_tree.selection()
+                if not selection:
+                    messagebox.showwarning("No Selection", "Please select a request to approve.")
+                    return
+                    
+                for item in selection:
+                    values = requests_tree.item(item, 'values')
+                    node_name = values[0]
+                    try:
+                        # Find the request_id for this node_name
+                        pending = db.get_pending_requests()
+                        request_id = None
+                        for req in pending:
+                            if req['node_name'] == node_name and req['status'] == 'pending':
+                                request_id = req['id']
+                                break
+                        
+                        if request_id is None:
+                            messagebox.showerror("Error", f"Could not find pending request for {node_name}")
+                            continue
+                        
+                        # Generate approval token
+                        import secrets
+                        approval_token = secrets.token_urlsafe(32)
+                        
+                        # Approve the request using the correct method
+                        if db.approve_request(request_id, "admin", approval_token):
+                            # Also add to cluster nodes
+                            req_data = next((r for r in pending if r['id'] == request_id), None)
+                            if req_data:
+                                db.add_cluster_node(
+                                    name=node_name,
+                                    ip_address=req_data.get('ip_address', ''),
+                                    port=req_data.get('port', 8080),
+                                    node_type='subhost',
+                                    cluster_token=approval_token,
+                                    hostname=req_data.get('machine_name', '')
+                                )
+                            requests_tree.delete(item)
+                            messagebox.showinfo("Approved", f"Request from {node_name} has been approved.")
+                        else:
+                            messagebox.showerror("Error", f"Failed to approve request from {node_name}")
+                    except Exception as e:
+                        messagebox.showerror("Error", f"Failed to approve: {e}")
+            
+            def reject_selected():
+                selection = requests_tree.selection()
+                if not selection:
+                    messagebox.showwarning("No Selection", "Please select a request to reject.")
+                    return
+                    
+                for item in selection:
+                    values = requests_tree.item(item, 'values')
+                    node_name = values[0]
+                    try:
+                        # Find the request_id for this node_name
+                        pending = db.get_pending_requests()
+                        request_id = None
+                        for req in pending:
+                            if req['node_name'] == node_name and req['status'] == 'pending':
+                                request_id = req['id']
+                                break
+                        
+                        if request_id is None:
+                            messagebox.showerror("Error", f"Could not find pending request for {node_name}")
+                            continue
+                        
+                        # Reject the request using the correct method
+                        if db.reject_request(request_id, "admin"):
+                            requests_tree.delete(item)
+                            messagebox.showinfo("Rejected", f"Request from {node_name} has been rejected.")
+                        else:
+                            messagebox.showerror("Error", f"Failed to reject request from {node_name}")
+                    except Exception as e:
+                        messagebox.showerror("Error", f"Failed to reject: {e}")
+            
+            def refresh_requests():
+                # Clear existing
+                for item in requests_tree.get_children():
+                    requests_tree.delete(item)
+                # Reload
+                try:
+                    pending = db.get_pending_requests()
+                    for req in pending:
+                        if req['status'] == 'pending':
+                            requests_tree.insert("", tk.END, values=(
+                                req['node_name'],
+                                req.get('machine_name', 'Unknown'),
+                                req.get('ip_address', 'Unknown'),
+                                req.get('requested_at', 'Unknown')
+                            ))
+                except Exception as e:
+                    logger.error(f"Failed to refresh pending requests: {e}")
+            
+            ttk.Button(button_frame, text="Approve", command=approve_selected).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(button_frame, text="Reject", command=reject_selected).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(button_frame, text="Refresh", command=refresh_requests).pack(side=tk.LEFT)
+            
+            # Auto-refresh indicator
+            auto_refresh_label = ttk.Label(button_frame, text="Auto-refresh: 10s", foreground="gray")
+            auto_refresh_label.pack(side=tk.RIGHT, padx=(10, 0))
+            
+            # Auto-refresh timer for pending requests
+            def auto_refresh():
+                try:
+                    # Only refresh if the parent widget still exists
+                    if requests_frame.winfo_exists():
+                        refresh_requests()
+                        # Schedule next refresh after 10 seconds
+                        requests_frame.after(10000, auto_refresh)
+                except Exception:
+                    pass  # Widget may have been destroyed
+            
+            # Start auto-refresh after initial load (delay by 10 seconds)
+            requests_frame.after(10000, auto_refresh)
+        
+        # Save cluster settings function
+        def save_cluster_settings():
+            new_role = self.cluster_role_var.get()
+            new_host_address = self.master_ip_var.get().strip() if new_role == "Subhost" else ""
+            
+            # Validate subhost settings
+            if new_role == "Subhost" and not new_host_address:
+                messagebox.showerror("Validation Error", "Master Host IP is required for Subhost mode.")
+                return False
+            
+            try:
+                from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+                key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH, 0, winreg.KEY_SET_VALUE)
+                winreg.SetValueEx(key, "HostType", 0, winreg.REG_SZ, new_role)
+                winreg.SetValueEx(key, "HostAddress", 0, winreg.REG_SZ, new_host_address)
+                winreg.CloseKey(key)
+                
+                logger.info(f"Cluster settings updated - Role: {new_role}, Master: {new_host_address}")
+                messagebox.showinfo("Settings Saved", "Cluster settings saved successfully.\nPlease restart the application for changes to take effect.")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to save cluster settings: {e}")
+                messagebox.showerror("Error", f"Failed to save cluster settings: {e}")
+                return False
+        
+        # Save button for cluster settings
+        save_btn = ttk.Button(main_frame, text="Save Cluster Settings", command=save_cluster_settings)
+        save_btn.pack(anchor=tk.E, pady=(10, 0))
     
     def _create_update_settings_tab(self, parent, config, db):
         # Create update settings controls

@@ -33,7 +33,7 @@ def get_java_version(java_path="java"):
         logger.debug(f"[SUBPROCESS_TRACE] returncode: {result.returncode}")
         version_output = result.stderr
         
-        # Parse version—handles "1.8.0_271" and "21.0.1" formats
+        # Parse version-handles "1.8.0_271" and "21.0.1" formats
         version_match = re.search(r'version "([^"]+)"', version_output)
         if version_match:
             version_str = version_match.group(1)

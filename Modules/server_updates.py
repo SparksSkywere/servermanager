@@ -42,7 +42,7 @@ class ServerUpdateManager(ServerManagerModule):
         self.steam_cmd_path = steam_cmd_path
     
     def load_update_config(self):
-        # Load from DB—migrates JSON if needed
+        # Load from DB-migrates JSON if needed
         try:
             db = get_cluster_database()
             

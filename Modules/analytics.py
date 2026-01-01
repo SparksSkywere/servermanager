@@ -84,7 +84,7 @@ class AnalyticsCollector(ServerManagerModule):
         logger.info("Metrics collection stopped")
 
     def _collection_loop(self):
-        # Loop forever collecting metrics—recovers from errors
+        # Loop forever collecting metrics-recovers from errors
         while not self._stop_event.is_set():
             try:
                 self.collect_all_metrics()
@@ -94,7 +94,7 @@ class AnalyticsCollector(ServerManagerModule):
                 self._stop_event.wait(30)
 
     def collect_all_metrics(self):
-        # Grab all metrics—thread-safe
+        # Grab all metrics-thread-safe
         timestamp = datetime.now()
         
         with self.lock:
