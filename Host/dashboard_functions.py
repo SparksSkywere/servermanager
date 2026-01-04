@@ -148,29 +148,80 @@ def create_server_type_selection_dialog(root, supported_server_types):
     return type_var.get()
 
 
-def get_steam_credentials(root):
+def get_steam_credentials(root, use_stored=True):
     # Open a dialog to get Steam credentials
-    credentials = {"anonymous": False, "username": "", "password": ""}
+    # If use_stored=True, will try to load saved credentials first
+    from Modules.Database.cluster_database import ClusterDatabase
+    
+    credentials = {"anonymous": False, "username": "", "password": "", "steam_guard_code": ""}
+    
+    # Try to load stored credentials
+    if use_stored:
+        try:
+            db = ClusterDatabase()
+            stored_creds = db.get_steam_credentials()
+            if stored_creds:
+                if stored_creds.get('use_anonymous'):
+                    return {"anonymous": True, "username": "", "password": "", "steam_guard_code": ""}
+                elif stored_creds.get('username') and stored_creds.get('password'):
+                    # Use stored credentials
+                    creds = {
+                        "anonymous": False,
+                        "username": stored_creds['username'],
+                        "password": stored_creds['password'],
+                        "steam_guard_code": ""
+                    }
+                    # Generate SteamGuard code if secret is stored
+                    if stored_creds.get('steam_guard_secret'):
+                        try:
+                            import pyotp
+                            totp = pyotp.TOTP(stored_creds['steam_guard_secret'])
+                            creds['steam_guard_code'] = totp.now()
+                        except ImportError:
+                            logger.debug("pyotp not available for SteamGuard code generation")
+                        except Exception as e:
+                            logger.debug(f"Failed to generate SteamGuard code: {e}")
+                    return creds
+        except Exception as e:
+            logger.debug(f"Could not load stored Steam credentials: {e}")
     
     # Create dialog window
     dialog = tk.Toplevel(root)
     dialog.title("Steam Login")
-    dialog.geometry("350x300")
+    dialog.geometry("400x380")
     dialog.resizable(False, False)
     dialog.transient(root)
     dialog.grab_set()
     
+    # Main frame with padding
+    main_frame = ttk.Frame(dialog, padding=20)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Title
+    ttk.Label(main_frame, text="Steam Credentials", font=("Segoe UI", 12, "bold")).pack(anchor=tk.W, pady=(0, 15))
+    
     # Username field
-    ttk.Label(dialog, text="Username:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
+    ttk.Label(main_frame, text="Username:").pack(anchor=tk.W, pady=(0, 5))
     username_var = tk.StringVar()
-    username_entry = ttk.Entry(dialog, textvariable=username_var, width=25)
-    username_entry.grid(row=0, column=1, padx=10, pady=10)
+    username_entry = ttk.Entry(main_frame, textvariable=username_var, width=35)
+    username_entry.pack(fill=tk.X, pady=(0, 10))
     
     # Password field
-    ttk.Label(dialog, text="Password:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
+    ttk.Label(main_frame, text="Password:").pack(anchor=tk.W, pady=(0, 5))
     password_var = tk.StringVar()
-    password_entry = ttk.Entry(dialog, textvariable=password_var, width=25, show="*")
-    password_entry.grid(row=1, column=1, padx=10, pady=10)
+    password_entry = ttk.Entry(main_frame, textvariable=password_var, width=35, show="*")
+    password_entry.pack(fill=tk.X, pady=(0, 10))
+    
+    # Steam Guard code field (optional)
+    ttk.Label(main_frame, text="Steam Guard Code (optional):").pack(anchor=tk.W, pady=(0, 5))
+    guard_var = tk.StringVar()
+    guard_entry = ttk.Entry(main_frame, textvariable=guard_var, width=35)
+    guard_entry.pack(fill=tk.X, pady=(0, 10))
+    
+    # Save credentials checkbox
+    save_var = tk.BooleanVar(value=True)
+    save_check = ttk.Checkbutton(main_frame, text="Save credentials for future use", variable=save_var)
+    save_check.pack(anchor=tk.W, pady=(0, 15))
     
     # Result variable
     result = {"success": False}
@@ -179,21 +230,48 @@ def get_steam_credentials(root):
     def on_login():
         credentials["username"] = username_var.get()
         credentials["password"] = password_var.get()
+        credentials["steam_guard_code"] = guard_var.get()
+        credentials["anonymous"] = False
         result["success"] = True
+        
+        # Save credentials if requested
+        if save_var.get() and credentials["username"]:
+            try:
+                db = ClusterDatabase()
+                db.save_steam_credentials(
+                    username=credentials["username"],
+                    password=credentials["password"],
+                    use_anonymous=False
+                )
+            except Exception as e:
+                logger.debug(f"Failed to save Steam credentials: {e}")
+        
         dialog.destroy()
         
     def on_anonymous():
         credentials["anonymous"] = True
         result["success"] = True
+        
+        # Save anonymous preference if requested
+        if save_var.get():
+            try:
+                db = ClusterDatabase()
+                db.save_steam_credentials(use_anonymous=True)
+            except Exception as e:
+                logger.debug(f"Failed to save anonymous preference: {e}")
+        
         dialog.destroy()
         
     def on_cancel():
         dialog.destroy()
     
-    # Buttons
-    ttk.Button(dialog, text="Login", command=on_login).grid(row=3, column=0, columnspan=2, padx=10, pady=10)
-    ttk.Button(dialog, text="Anonymous", command=on_anonymous).grid(row=4, column=0, columnspan=2, padx=10, pady=5)
-    ttk.Button(dialog, text="Cancel", command=on_cancel).grid(row=5, column=0, columnspan=2, padx=10, pady=5)
+    # Buttons frame
+    button_frame = ttk.Frame(main_frame)
+    button_frame.pack(fill=tk.X, pady=(10, 0))
+    
+    ttk.Button(button_frame, text="Login", command=on_login, width=12).pack(side=tk.RIGHT, padx=(5, 0))
+    ttk.Button(button_frame, text="Anonymous", command=on_anonymous, width=12).pack(side=tk.RIGHT, padx=(5, 0))
+    ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
     
     # Centre dialog on parent window
     dialog.update_idletasks()
@@ -201,11 +279,229 @@ def get_steam_credentials(root):
     y = root.winfo_rooty() + (root.winfo_height() - dialog.winfo_height()) // 2
     dialog.geometry(f"+{x}+{y}")
     
+    # Focus on username field
+    username_entry.focus_set()
+    
     # Wait for dialog to close
     root.wait_window(dialog)
     
     # Return credentials if successful, None otherwise
     return credentials if result["success"] else None
+
+
+def show_steam_credentials_dialog(root):
+    # Show dialog to manage Steam credentials with SteamGuard support
+    from Modules.Database.cluster_database import ClusterDatabase
+    
+    dialog = tk.Toplevel(root)
+    dialog.title("Steam Credentials Manager")
+    dialog.geometry("500x550")
+    dialog.resizable(False, False)
+    dialog.transient(root)
+    dialog.grab_set()
+    
+    # Main frame
+    main_frame = ttk.Frame(dialog, padding=20)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # Title
+    title_label = ttk.Label(main_frame, text="🎮 Steam Credentials", font=("Segoe UI", 14, "bold"))
+    title_label.pack(anchor=tk.W, pady=(0, 5))
+    
+    desc_label = ttk.Label(main_frame, text="Save your Steam credentials for automatic login during server installations and updates.", 
+                          wraplength=450, foreground="gray")
+    desc_label.pack(anchor=tk.W, pady=(0, 20))
+    
+    # Load existing credentials
+    db = ClusterDatabase()
+    stored_creds = db.get_steam_credentials() or {}
+    
+    # Anonymous mode toggle
+    anon_var = tk.BooleanVar(value=stored_creds.get('use_anonymous', False))
+    
+    def toggle_fields(*args):
+        state = 'disabled' if anon_var.get() else 'normal'
+        username_entry.config(state=state)
+        password_entry.config(state=state)
+        guard_entry.config(state=state)
+        show_qr_btn.config(state=state)
+    
+    anon_frame = ttk.Frame(main_frame)
+    anon_frame.pack(fill=tk.X, pady=(0, 15))
+    
+    anon_check = ttk.Checkbutton(anon_frame, text="Use Anonymous Login (limited to free games)", 
+                                  variable=anon_var, command=toggle_fields)
+    anon_check.pack(anchor=tk.W)
+    
+    # Credentials frame
+    creds_frame = ttk.LabelFrame(main_frame, text="Steam Account", padding=15)
+    creds_frame.pack(fill=tk.X, pady=(0, 15))
+    
+    # Username
+    ttk.Label(creds_frame, text="Username:").pack(anchor=tk.W, pady=(0, 5))
+    username_var = tk.StringVar(value=stored_creds.get('username', ''))
+    username_entry = ttk.Entry(creds_frame, textvariable=username_var, width=40)
+    username_entry.pack(fill=tk.X, pady=(0, 10))
+    
+    # Password
+    ttk.Label(creds_frame, text="Password:").pack(anchor=tk.W, pady=(0, 5))
+    password_var = tk.StringVar(value=stored_creds.get('password', ''))
+    password_entry = ttk.Entry(creds_frame, textvariable=password_var, width=40, show="*")
+    password_entry.pack(fill=tk.X, pady=(0, 10))
+    
+    # Show/hide password button
+    show_pass_var = tk.BooleanVar(value=False)
+    def toggle_password():
+        password_entry.config(show="" if show_pass_var.get() else "*")
+    show_pass_check = ttk.Checkbutton(creds_frame, text="Show password", variable=show_pass_var, command=toggle_password)
+    show_pass_check.pack(anchor=tk.W, pady=(0, 5))
+    
+    # SteamGuard frame
+    guard_frame = ttk.LabelFrame(main_frame, text="Steam Guard (2FA)", padding=15)
+    guard_frame.pack(fill=tk.X, pady=(0, 15))
+    
+    guard_desc = ttk.Label(guard_frame, 
+                          text="Enter your Steam Guard shared secret to automatically generate 2FA codes.\n"
+                               "This is the same secret used by mobile authenticators.",
+                          wraplength=420, foreground="gray")
+    guard_desc.pack(anchor=tk.W, pady=(0, 10))
+    
+    ttk.Label(guard_frame, text="Shared Secret:").pack(anchor=tk.W, pady=(0, 5))
+    guard_var = tk.StringVar(value=stored_creds.get('steam_guard_secret', ''))
+    guard_entry = ttk.Entry(guard_frame, textvariable=guard_var, width=40)
+    guard_entry.pack(fill=tk.X, pady=(0, 10))
+    
+    # QR code display frame
+    qr_frame = ttk.Frame(guard_frame)
+    qr_frame.pack(fill=tk.X)
+    
+    qr_label = ttk.Label(qr_frame, text="")
+    qr_label.pack(side=tk.LEFT)
+    
+    def show_qr_code():
+        # Show QR code for Steam Guard setup
+        secret = guard_var.get().strip()
+        username = username_var.get().strip()
+        
+        if not secret:
+            from tkinter import messagebox
+            messagebox.showwarning("No Secret", "Please enter a Steam Guard shared secret first.")
+            return
+        
+        try:
+            import pyotp
+            # Create TOTP URI for Steam
+            totp = pyotp.TOTP(secret)
+            uri = totp.provisioning_uri(name=username or "Steam", issuer_name="Steam")
+            
+            # Try to generate QR code
+            try:
+                import qrcode  # type: ignore[import-not-found]
+                from PIL import Image, ImageTk
+                import io
+                
+                qr = qrcode.QRCode(version=1, box_size=4, border=2)
+                qr.add_data(uri)
+                qr.make(fit=True)
+                
+                img = qr.make_image(fill_color="black", back_color="white")
+                
+                # Convert to PhotoImage
+                img_bytes = io.BytesIO()
+                img.save(img_bytes, format='PNG')  # type: ignore[call-arg]
+                img_bytes.seek(0)
+                
+                pil_img = Image.open(img_bytes)
+                photo = ImageTk.PhotoImage(pil_img)
+                
+                # Show in new window
+                qr_window = tk.Toplevel(dialog)
+                qr_window.title("Steam Guard QR Code")
+                qr_window.geometry("250x300")
+                qr_window.transient(dialog)
+                
+                ttk.Label(qr_window, text="Scan with authenticator app:", font=("Segoe UI", 10)).pack(pady=10)
+                qr_display = ttk.Label(qr_window, image=photo)
+                qr_display.image = photo  # type: ignore[attr-defined] # Keep reference
+                qr_display.pack(pady=10)
+                
+                # Show current code
+                code = totp.now()
+                code_label = ttk.Label(qr_window, text=f"Current Code: {code}", font=("Courier", 14, "bold"))
+                code_label.pack(pady=10)
+                
+                ttk.Button(qr_window, text="Close", command=qr_window.destroy).pack(pady=10)
+                
+            except ImportError:
+                # QR code libraries not available, just show the code
+                from tkinter import messagebox
+                code = totp.now()
+                messagebox.showinfo("Steam Guard Code", 
+                                   f"Current 2FA Code: {code}\n\n"
+                                   f"(Install qrcode and Pillow packages for QR code display)")
+                
+        except ImportError:
+            from tkinter import messagebox
+            messagebox.showerror("Missing Package", 
+                               "pyotp package is required for Steam Guard support.\n"
+                               "Install with: pip install pyotp")
+        except Exception as e:
+            from tkinter import messagebox
+            messagebox.showerror("Error", f"Failed to generate QR code: {e}")
+    
+    show_qr_btn = ttk.Button(qr_frame, text="Show QR / Test Code", command=show_qr_code)
+    show_qr_btn.pack(side=tk.RIGHT)
+    
+    # Status label
+    status_var = tk.StringVar()
+    status_label = ttk.Label(main_frame, textvariable=status_var, foreground="green")
+    status_label.pack(anchor=tk.W, pady=(0, 10))
+    
+    # Apply initial state
+    toggle_fields()
+    
+    # Buttons
+    button_frame = ttk.Frame(main_frame)
+    button_frame.pack(fill=tk.X, pady=(10, 0))
+    
+    def save_credentials():
+        try:
+            success = db.save_steam_credentials(
+                username=username_var.get().strip(),
+                password=password_var.get(),
+                steam_guard_secret=guard_var.get().strip(),
+                use_anonymous=anon_var.get()
+            )
+            if success:
+                status_var.set("✓ Credentials saved successfully!")
+                dialog.after(1500, dialog.destroy)
+            else:
+                status_var.set("✗ Failed to save credentials")
+                status_label.config(foreground="red")
+        except Exception as e:
+            status_var.set(f"✗ Error: {e}")
+            status_label.config(foreground="red")
+    
+    def clear_credentials():
+        from tkinter import messagebox
+        if messagebox.askyesno("Confirm", "Are you sure you want to delete saved Steam credentials?"):
+            db.delete_steam_credentials()
+            username_var.set("")
+            password_var.set("")
+            guard_var.set("")
+            anon_var.set(False)
+            toggle_fields()
+            status_var.set("✓ Credentials cleared")
+    
+    ttk.Button(button_frame, text="Save", command=save_credentials, width=12).pack(side=tk.RIGHT, padx=(5, 0))
+    ttk.Button(button_frame, text="Clear", command=clear_credentials, width=12).pack(side=tk.RIGHT, padx=(5, 0))
+    ttk.Button(button_frame, text="Cancel", command=dialog.destroy, width=12).pack(side=tk.LEFT)
+    
+    # Centre dialog
+    dialog.update_idletasks()
+    x = (dialog.winfo_screenwidth() - dialog.winfo_width()) // 2
+    y = (dialog.winfo_screenheight() - dialog.winfo_height()) // 2
+    dialog.geometry(f"+{x}+{y}")
 
 
 def load_appid_scanner_list(server_manager_dir):
@@ -1000,11 +1296,11 @@ def collect_system_info_data():
 
         # CPU usage (per-core and overall)
         try:
-            # Get overall CPU usage
-            overall_cpu = psutil.cpu_percent(interval=0.1)
-            
-            # Get per-core CPU usage
+            # Get per-core CPU usage (includes overall calculation)
+            # Use interval=0.1 for more accurate reading since this runs in background thread
+            # Single call with percpu=True is more efficient than two separate calls
             per_core_cpu = psutil.cpu_percent(percpu=True, interval=0.1)
+            overall_cpu = sum(per_core_cpu) / len(per_core_cpu) if per_core_cpu else 0
             
             # Format CPU display
             if len(per_core_cpu) <= 8:  # Show per-core for systems with 8 or fewer cores
@@ -3138,11 +3434,11 @@ def cleanup_orphaned_process_entries(server_manager, logger):
                 )
                 
                 if recovery_needed:
-                    logger.info(f"Corruption recovery performed for {server_name}: {recovery_actions}")
+                    logger.debug(f"Corruption recovery performed for {server_name}: {recovery_actions}")
                     cleaned_count += 1  # Count corruption recoveries as cleanups
                     
                 if recovery_errors:
-                    logger.warning(f"Corruption recovery errors for {server_name}: {recovery_errors}")
+                    logger.debug(f"Corruption recovery errors for {server_name}: {recovery_errors}")
                 
                 # Reload config after potential recovery
                 server_config = server_manager.get_server_config(server_name)
@@ -3204,7 +3500,7 @@ def cleanup_orphaned_process_entries(server_manager, logger):
                 logger.error(f"Error cleaning up process entries for server {server_name}: {e}")
         
         if cleaned_count > 0:
-            logger.info(f"Cleaned up {cleaned_count} stale/orphaned process entries and corruption issues")
+            logger.debug(f"Cleaned up {cleaned_count} stale/orphaned process entries and corruption issues")
             
     except Exception as e:
         logger.error(f"Error in cleanup_orphaned_process_entries: {e}")
@@ -3237,8 +3533,15 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                             if process.is_running():
                                 # IMPORTANT: Verify the process actually belongs to this server
                                 # Windows reuses PIDs, so an old PID might belong to a different process
-                                if not _process_matches_server(process, server_name, server_config):
-                                    logger.warning(f"PID {pid} for {server_name} is now a different process ({process.name()}), clearing stale PID")
+                                # Prefer is_server_process_valid which uses ProcessCreateTime (most secure)
+                                is_valid = False
+                                if hasattr(server_manager, 'is_server_process_valid'):
+                                    is_valid, _ = server_manager.is_server_process_valid(server_name, pid, server_config)
+                                else:
+                                    is_valid = _process_matches_server(process, server_name, server_config)
+                                
+                                if not is_valid:
+                                    logger.debug(f"PID {pid} for {server_name} is now a different process ({process.name()}), clearing stale PID")
                                     # Clear the stale PID from config
                                     server_config.pop('ProcessId', None)
                                     server_config.pop('PID', None)
@@ -3254,16 +3557,30 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                                 
                                 logger.debug(f"Found running server process for {server_name} (PID: {pid})")
                                 
-                                # Ensure StartTime is set from process creation time if missing
+                                # Ensure StartTime and ProcessCreateTime are set from process creation time if missing
+                                config_updated = False
                                 if 'StartTime' not in server_config or not server_config.get('StartTime'):
                                     try:
                                         create_time = process.create_time()
                                         start_dt = datetime.datetime.fromtimestamp(create_time)
                                         server_config['StartTime'] = start_dt.isoformat()
-                                        server_manager.save_server_config(server_name, server_config)
-                                        logger.debug(f"Set StartTime for {server_name} from process creation time")
+                                        server_config['ProcessCreateTime'] = create_time
+                                        config_updated = True
+                                        logger.debug(f"Set StartTime and ProcessCreateTime for {server_name} from process creation time")
                                     except Exception as e:
                                         logger.debug(f"Could not get process creation time for {server_name}: {e}")
+                                elif 'ProcessCreateTime' not in server_config:
+                                    # StartTime exists but ProcessCreateTime doesn't - add it
+                                    try:
+                                        create_time = process.create_time()
+                                        server_config['ProcessCreateTime'] = create_time
+                                        config_updated = True
+                                        logger.debug(f"Set ProcessCreateTime for {server_name} from running process")
+                                    except Exception as e:
+                                        logger.debug(f"Could not get process creation time for {server_name}: {e}")
+                                
+                                if config_updated:
+                                    server_manager.save_server_config(server_name, server_config)
                                 
                                 # Reattach console to the running process
                                 success = console_manager.attach_console_to_process(
@@ -3337,12 +3654,13 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                                 server_config['ProcessId'] = proc.info['pid']
                                 server_config['PID'] = proc.info['pid']
                                 
-                                # Set StartTime from process creation time
+                                # Store ProcessCreateTime for secure PID validation
                                 try:
                                     create_time = proc.create_time()
+                                    server_config['ProcessCreateTime'] = create_time
                                     start_dt = datetime.datetime.fromtimestamp(create_time)
                                     server_config['StartTime'] = start_dt.isoformat()
-                                    logger.debug(f"Set StartTime for {server_name} from discovered process")
+                                    logger.debug(f"Set StartTime and ProcessCreateTime for {server_name} from discovered process")
                                 except Exception as e:
                                     logger.debug(f"Could not get process creation time for discovered {server_name}: {e}")
                                 
@@ -3375,51 +3693,63 @@ def _process_matches_server(process, server_name, server_config):
     try:
         proc_info = process.info
         install_dir = server_config.get('InstallDir', '').lower()
+        executable_path = server_config.get('ExecutablePath', '').lower()
         
-        # Check 1: Working directory matches install directory
+        # If we don't have install_dir, we can't reliably match
+        if not install_dir:
+            return False
+        
+        # Normalise paths for comparison
+        install_dir_norm = os.path.normpath(install_dir)
+        
+        # Check 1: Working directory matches install directory (strongest match)
         if proc_info.get('cwd') and install_dir:
-            if os.path.normpath(proc_info['cwd'].lower()) == os.path.normpath(install_dir):
+            cwd_norm = os.path.normpath(proc_info['cwd'].lower())
+            if cwd_norm == install_dir_norm:
                 return True
         
-        # Check 2: Executable path contains server name or install directory
+        # Check 2: Executable path is inside install directory
         exe_path = proc_info.get('exe', '').lower()
-        if exe_path and install_dir and install_dir in exe_path:
-            return True
+        if exe_path and install_dir:
+            exe_norm = os.path.normpath(exe_path)
+            if exe_norm.startswith(install_dir_norm + os.sep) or exe_norm == install_dir_norm:
+                return True
             
-        # Check 3: Command line contains server-specific information
+        # Check 3: Command line contains install directory path (not just server name)
         cmdline = proc_info.get('cmdline', [])
         if cmdline:
             cmdline_str = ' '.join(cmdline).lower()
             
-            # Check for server name in command line
-            if server_name.lower() in cmdline_str:
-                return True
-                
-            # Check for install directory in command line
+            # Check for install directory in command line (more reliable than server name)
             if install_dir and install_dir in cmdline_str:
                 return True
                 
-            # Check for executable path from config
-            exe_config = server_config.get('ExecutablePath', '').lower()
-            if exe_config and exe_config in cmdline_str:
-                return True
+            # Check for executable path from config (if it's an absolute path within install dir)
+            if executable_path:
+                if os.path.isabs(executable_path):
+                    exe_config_norm = os.path.normpath(executable_path)
+                    if exe_config_norm.startswith(install_dir_norm + os.sep):
+                        if executable_path in cmdline_str:
+                            return True
+                else:
+                    # Relative executable - check if full path is in cmdline
+                    full_exe = os.path.normpath(os.path.join(install_dir, executable_path))
+                    if full_exe.lower() in cmdline_str:
+                        return True
         
-        # Check 4: Process name matches known server executables
+        # Check 4: Type-specific validation with stricter requirements
         proc_name = proc_info.get('name', '').lower()
         server_type = server_config.get('Type', '').lower()
         
-        # Minecraft servers
+        # Minecraft servers - require install directory in cmdline, not just any java process
         if server_type == 'minecraft' and ('java' in proc_name or 'javaw' in proc_name):
-            # Additional check: look for jar file in command line
-            if cmdline and any('.jar' in arg.lower() for arg in cmdline):
-                return True
-                
-        # Steam servers
-        elif server_type == 'steam':
-            steam_executables = ['srcds', 'steamcmd', 'valheim_server', 'vrising']
-            if any(exe in proc_name for exe in steam_executables):
-                return True
-        
+            if cmdline:
+                cmdline_str = ' '.join(cmdline).lower()
+                # Must have BOTH a jar file AND the install directory in cmdline
+                has_jar = any('.jar' in arg.lower() for arg in cmdline)
+                has_install_dir = install_dir in cmdline_str
+                if has_jar and has_install_dir:
+                    return True
         return False
         
     except Exception as e:

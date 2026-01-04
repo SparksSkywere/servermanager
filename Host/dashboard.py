@@ -75,7 +75,7 @@ from Host.dashboard_functions import (
     load_dashboard_config, update_webserver_status, update_system_info_threaded, centre_window,
     create_server_type_selection_dialog, load_appid_scanner_list,
     load_minecraft_scanner_list, get_minecraft_versions_from_database,
-    get_steam_credentials,perform_server_installation, import_server_from_directory_dialog, import_server_from_export_dialog,
+    get_steam_credentials, show_steam_credentials_dialog, perform_server_installation, import_server_from_directory_dialog, import_server_from_export_dialog,
     export_server_dialog, create_progress_dialog_with_console, rename_server_configuration, show_java_configuration_dialog, batch_update_server_types,
     update_server_status_in_treeview, open_directory_in_explorer,
     get_current_server_list, get_current_subhost,
@@ -1987,50 +1987,37 @@ class ServerManagerDashboard(ServerManagerModule):
             self.root.protocol("WM_DELETE_WINDOW", self.on_close)
             self.variables["formDisplayed"] = True
 
-            # Schedule initial updates after mainloop starts
-            # This prevents Tkinter widget updates before the event loop is running
-            def delayed_initial_update():
+            # Hide loading overlay immediately so UI is responsive
+            # System info, server list, etc. will load in background with placeholders
+            self._hide_loading_overlay()
+            
+            # Schedule background initialization without blocking UI
+            def background_init_thread():
+                # This runs in a background thread - all UI updates must use root.after()
                 try:
-                    logger.info("[SUBPROCESS_TRACE] Starting delayed initial updates - watching for console popup...")
+                    logger.info("[SUBPROCESS_TRACE] Starting background initialisation thread")
                     
-                    # Update loading status
-                    def update_loading_status(text):
-                        try:
-                            if hasattr(self, 'loading_status_label') and self.loading_status_label.winfo_exists():
-                                self.loading_status_label.config(text=text)
-                                self.root.update_idletasks()
-                        except Exception:
-                            pass
+                    # System info updates (already threaded internally)
+                    logger.debug("[SUBPROCESS_TRACE] Triggering system info update...")
+                    self.root.after(0, self.update_system_info)
                     
-                    # Perform heavy operations that were previously blocking __init__
-                    update_loading_status("Loading system information...")
-                    logger.info("[SUBPROCESS_TRACE] Calling update_system_info()...")
-                    self.update_system_info()  # Initial system info update (now threaded)
-                    logger.info("[SUBPROCESS_TRACE] update_system_info() completed")
+                    # Server list update - schedule on main thread
+                    logger.debug("[SUBPROCESS_TRACE] Scheduling server list update...")
+                    self.root.after(50, lambda: self.update_server_list(force_refresh=True))
                     
-                    update_loading_status("Loading server list...")
-                    logger.info("[SUBPROCESS_TRACE] Calling update_server_list()...")
-                    self.update_server_list(force_refresh=True)  # Initial server list refresh
-                    logger.info("[SUBPROCESS_TRACE] update_server_list() completed")
+                    # Reattach to running servers - schedule on main thread with slight delay
+                    logger.debug("[SUBPROCESS_TRACE] Scheduling reattach to running servers...")
+                    self.root.after(200, self._reattach_to_running_servers)
                     
-                    update_loading_status("Detecting running servers...")
-                    logger.info("[SUBPROCESS_TRACE] Calling _reattach_to_running_servers()...")
-                    self._reattach_to_running_servers()  # Reattach to running servers
-                    logger.info("[SUBPROCESS_TRACE] _reattach_to_running_servers() completed")
-                    
-                    # Hide loading overlay
-                    self._hide_loading_overlay()
-                    
-                    logger.info("Delayed initial updates completed")
+                    logger.info("[SUBPROCESS_TRACE] Background initialisation thread completed")
                 except Exception as e:
-                    logger.error(f"Error in delayed initial update: {str(e)}")
-                    # Hide loading overlay even on error
-                    self._hide_loading_overlay()
+                    logger.error(f"Error in background init thread: {str(e)}")
+            
+            # Start background init in a daemon thread so it doesn't block
+            init_thread = threading.Thread(target=background_init_thread, daemon=True)
+            init_thread.start()
 
-            logger.info("Scheduling delayed initial update")
-            self.root.after(100, delayed_initial_update)  # 100ms delay
-
-            # Start main loop
+            # Start main loop immediately - UI is responsive right away
             logger.info("Starting Tkinter mainloop")
             self.root.mainloop()
             logger.info("Tkinter mainloop exited")
@@ -5292,6 +5279,10 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         update_frame = ttk.Frame(notebook)
         notebook.add(update_frame, text="Updates")
         
+        # Steam Settings Tab
+        steam_frame = ttk.Frame(notebook)
+        notebook.add(steam_frame, text="Steam")
+        
         # System Settings Tab
         system_frame = ttk.Frame(notebook)
         notebook.add(system_frame, text="System")
@@ -5318,6 +5309,9 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         
         # Update Settings
         self._create_update_settings_tab(update_frame, update_config, db)
+        
+        # Steam Settings
+        self._create_steam_settings_tab(steam_frame, db)
         
         # System Settings
         self._create_system_settings_tab(system_frame, main_config, db)
@@ -5669,6 +5663,152 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         # Store reference for saving
         self.update_config_text = text_widget
     
+    def _create_steam_settings_tab(self, parent, db):
+        # Create Steam credentials settings tab
+        main_frame = ttk.Frame(parent, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = ttk.Label(main_frame, text="🎮 Steam Credentials", font=("Segoe UI", 14, "bold"))
+        title_label.pack(anchor=tk.W, pady=(0, 5))
+        
+        desc_label = ttk.Label(main_frame, 
+                              text="Configure your Steam credentials for automatic login during server installations and updates. "
+                                   "Credentials are stored locally with encryption.", 
+                              wraplength=700, foreground="gray")
+        desc_label.pack(anchor=tk.W, pady=(0, 20))
+        
+        # Load current credentials
+        stored_creds = db.get_steam_credentials() or {}
+        
+        # Status indicator
+        status_frame = ttk.Frame(main_frame)
+        status_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        if stored_creds.get('use_anonymous'):
+            status_text = "✓ Using Anonymous Login"
+            status_color = "blue"
+        elif stored_creds.get('username'):
+            status_text = f"✓ Credentials saved for: {stored_creds['username']}"
+            status_color = "green"
+        else:
+            status_text = "○ No credentials configured"
+            status_color = "gray"
+        
+        self.steam_status_label = ttk.Label(status_frame, text=status_text, foreground=status_color, font=("Segoe UI", 11))
+        self.steam_status_label.pack(anchor=tk.W)
+        
+        if stored_creds.get('steam_guard_secret'):
+            guard_status = ttk.Label(status_frame, text="✓ Steam Guard (2FA) configured", foreground="green")
+            guard_status.pack(anchor=tk.W)
+        
+        # Credentials configuration frame
+        config_frame = ttk.LabelFrame(main_frame, text="Configuration", padding=15)
+        config_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Anonymous mode toggle
+        self.steam_anon_var = tk.BooleanVar(value=stored_creds.get('use_anonymous', False))
+        anon_check = ttk.Checkbutton(config_frame, text="Use Anonymous Login (limited to free games)", 
+                                     variable=self.steam_anon_var)
+        anon_check.pack(anchor=tk.W, pady=(0, 15))
+        
+        # Username
+        user_frame = ttk.Frame(config_frame)
+        user_frame.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(user_frame, text="Username:", width=15, anchor=tk.W).pack(side=tk.LEFT)
+        self.steam_username_var = tk.StringVar(value=stored_creds.get('username', ''))
+        self.steam_username_entry = ttk.Entry(user_frame, textvariable=self.steam_username_var, width=30)
+        self.steam_username_entry.pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Password
+        pass_frame = ttk.Frame(config_frame)
+        pass_frame.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(pass_frame, text="Password:", width=15, anchor=tk.W).pack(side=tk.LEFT)
+        self.steam_password_var = tk.StringVar(value=stored_creds.get('password', ''))
+        self.steam_password_entry = ttk.Entry(pass_frame, textvariable=self.steam_password_var, width=30, show="*")
+        self.steam_password_entry.pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Show password toggle
+        self.show_steam_pass_var = tk.BooleanVar(value=False)
+        def toggle_pass_visibility():
+            self.steam_password_entry.config(show="" if self.show_steam_pass_var.get() else "*")
+        show_pass_btn = ttk.Checkbutton(pass_frame, text="Show", variable=self.show_steam_pass_var, command=toggle_pass_visibility)
+        show_pass_btn.pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Steam Guard section
+        guard_frame = ttk.LabelFrame(main_frame, text="Steam Guard (2FA)", padding=15)
+        guard_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        guard_desc = ttk.Label(guard_frame, 
+                              text="Enter your Steam Guard shared secret to automatically generate 2FA codes during login. "
+                                   "This is the same secret used by mobile authenticators like WinAuth or SteamDesktopAuthenticator.",
+                              wraplength=650, foreground="gray")
+        guard_desc.pack(anchor=tk.W, pady=(0, 10))
+        
+        secret_frame = ttk.Frame(guard_frame)
+        secret_frame.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(secret_frame, text="Shared Secret:", width=15, anchor=tk.W).pack(side=tk.LEFT)
+        self.steam_guard_var = tk.StringVar(value=stored_creds.get('steam_guard_secret', ''))
+        self.steam_guard_entry = ttk.Entry(secret_frame, textvariable=self.steam_guard_var, width=35)
+        self.steam_guard_entry.pack(side=tk.LEFT, padx=(10, 0))
+        
+        def test_steam_guard():
+            # Test Steam Guard code generation
+            secret = self.steam_guard_var.get().strip()
+            if not secret:
+                messagebox.showwarning("No Secret", "Please enter a Steam Guard shared secret first.")
+                return
+            try:
+                import pyotp
+                totp = pyotp.TOTP(secret)
+                code = totp.now()
+                messagebox.showinfo("Steam Guard Test", f"Current 2FA Code: {code}\n\nThis code changes every 30 seconds.")
+            except ImportError:
+                messagebox.showerror("Missing Package", "pyotp package is required for Steam Guard.\nInstall with: pip install pyotp")
+            except Exception as e:
+                messagebox.showerror("Error", f"Invalid secret: {e}")
+        
+        ttk.Button(secret_frame, text="Test Code", command=test_steam_guard).pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Toggle field states based on anonymous mode
+        def update_field_states(*args):
+            state = 'disabled' if self.steam_anon_var.get() else 'normal'
+            self.steam_username_entry.config(state=state)
+            self.steam_password_entry.config(state=state)
+            self.steam_guard_entry.config(state=state)
+        
+        self.steam_anon_var.trace_add("write", update_field_states)
+        update_field_states()
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        def save_steam_credentials():
+            success = db.save_steam_credentials(
+                username=self.steam_username_var.get().strip(),
+                password=self.steam_password_var.get(),
+                steam_guard_secret=self.steam_guard_var.get().strip(),
+                use_anonymous=self.steam_anon_var.get()
+            )
+            if success:
+                self.steam_status_label.config(text="✓ Credentials saved successfully!", foreground="green")
+                messagebox.showinfo("Success", "Steam credentials saved successfully!")
+            else:
+                messagebox.showerror("Error", "Failed to save Steam credentials.")
+        
+        def clear_steam_credentials():
+            if messagebox.askyesno("Confirm", "Are you sure you want to delete saved Steam credentials?"):
+                db.delete_steam_credentials()
+                self.steam_username_var.set("")
+                self.steam_password_var.set("")
+                self.steam_guard_var.set("")
+                self.steam_anon_var.set(False)
+                self.steam_status_label.config(text="○ No credentials configured", foreground="gray")
+        
+        ttk.Button(button_frame, text="Save Steam Credentials", command=save_steam_credentials).pack(side=tk.RIGHT, padx=(5, 0))
+        ttk.Button(button_frame, text="Clear Credentials", command=clear_steam_credentials).pack(side=tk.RIGHT)
+    
     def _create_system_settings_tab(self, parent, config, db):
         # Create system settings controls
         canvas = tk.Canvas(parent)
@@ -5779,11 +5919,151 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         # Show about dialog using the documentation module
         show_about_dialog(self.root, logger)
 
+
+def is_dashboard_already_running():
+    # Check if another dashboard instance is already running using a lock file with PID
+    import tempfile
+    import psutil
+    
+    lock_file = os.path.join(tempfile.gettempdir(), 'servermanager_dashboard.lock')
+    current_pid = os.getpid()
+    
+    try:
+        # Check if lock file exists
+        if os.path.exists(lock_file):
+            try:
+                with open(lock_file, 'r') as f:
+                    stored_pid = int(f.read().strip())
+                
+                # Check if the stored PID is still running and is a dashboard process
+                if psutil.pid_exists(stored_pid) and stored_pid != current_pid:
+                    try:
+                        proc = psutil.Process(stored_pid)
+                        proc_name = proc.name().lower()
+                        cmdline = ' '.join(proc.cmdline()).lower()
+                        
+                        # Check if it's actually a dashboard process
+                        if 'python' in proc_name or 'pythonw' in proc_name:
+                            if 'dashboard' in cmdline:
+                                # Another dashboard is running
+                                return True, stored_pid
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        pass
+                
+                # PID doesn't exist or isn't dashboard - stale lock file
+            except (ValueError, IOError):
+                pass
+        
+        # Write our PID to the lock file
+        with open(lock_file, 'w') as f:
+            f.write(str(current_pid))
+        
+        return False, None
+        
+    except Exception as e:
+        early_crash_log("Dashboard", f"Single-instance check failed: {e}")
+        return False, None
+
+
+def cleanup_dashboard_lock():
+    # Clean up the lock file when dashboard exits
+    import tempfile
+    
+    lock_file = os.path.join(tempfile.gettempdir(), 'servermanager_dashboard.lock')
+    try:
+        if os.path.exists(lock_file):
+            with open(lock_file, 'r') as f:
+                stored_pid = int(f.read().strip())
+            
+            # Only remove if it's our lock file
+            if stored_pid == os.getpid():
+                os.remove(lock_file)
+    except Exception:
+        pass
+
+
+def bring_existing_dashboard_to_front(pid):
+    # Try to bring the existing dashboard window to the front (Windows only)
+    if sys.platform != 'win32':
+        return False
+    
+    try:
+        import ctypes
+        from ctypes import wintypes
+        
+        # Windows API functions
+        user32 = ctypes.windll.user32
+        
+        EnumWindows = user32.EnumWindows
+        EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        GetWindowThreadProcessId = user32.GetWindowThreadProcessId
+        SetForegroundWindow = user32.SetForegroundWindow
+        ShowWindow = user32.ShowWindow
+        IsWindowVisible = user32.IsWindowVisible
+        
+        SW_RESTORE = 9
+        target_hwnd = None
+        
+        def enum_callback(hwnd, lparam):
+            nonlocal target_hwnd
+            window_pid = wintypes.DWORD()
+            GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
+            
+            if window_pid.value == pid and IsWindowVisible(hwnd):
+                target_hwnd = hwnd
+                return False  # Stop enumeration
+            return True
+        
+        EnumWindows(EnumWindowsProc(enum_callback), 0)
+        
+        if target_hwnd:
+            ShowWindow(target_hwnd, SW_RESTORE)
+            SetForegroundWindow(target_hwnd)
+            return True
+            
+    except Exception as e:
+        early_crash_log("Dashboard", f"Could not bring existing window to front: {e}")
+    
+    return False
+
+
 def main():
     import traceback as tb
+    import atexit
     from Modules.server_logging import early_crash_log
     
     early_crash_log("Dashboard", "Startup initiated")
+    
+    # Check for existing dashboard instance
+    already_running, existing_pid = is_dashboard_already_running()
+    if already_running:
+        early_crash_log("Dashboard", f"Another dashboard instance is already running (PID: {existing_pid})")
+        
+        # Try to bring the existing window to front
+        brought_to_front = bring_existing_dashboard_to_front(existing_pid)
+        
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            
+            if brought_to_front:
+                messagebox.showinfo("Dashboard Already Running", 
+                                   f"The Server Manager Dashboard is already running.\n\n"
+                                   f"The existing window has been brought to the front.")
+            else:
+                messagebox.showwarning("Dashboard Already Running", 
+                                      f"The Server Manager Dashboard is already running (PID: {existing_pid}).\n\n"
+                                      f"Please use the existing instance.")
+            root.destroy()
+        except:
+            pass
+        
+        return
+    
+    # Register cleanup on exit
+    atexit.register(cleanup_dashboard_lock)
     
     try:
         parser = argparse.ArgumentParser(description='Server Manager Dashboard')
@@ -5811,5 +6091,8 @@ def main():
             pass
         
         raise
+    finally:
+        # Ensure lock is cleaned up
+        cleanup_dashboard_lock()
 
 main()

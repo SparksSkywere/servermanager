@@ -47,35 +47,35 @@ class ClusterDatabase:
                     for key_name in ["ServerManagerDirectory", "InstallPath", "Directory"]:
                         try:
                             server_manager_dir = winreg.QueryValueEx(key, key_name)[0]
-                            logger.info(f"Found {key_name} in registry: {server_manager_dir}")
+                            logger.debug(f"Found {key_name} in registry: {server_manager_dir}")
                             break
                         except:
                             continue
                     
                     if server_manager_dir:
                         db_dir = os.path.join(server_manager_dir, 'db')
-                        logger.info(f"Using registry DB dir: {db_dir}")
+                        logger.debug(f"Using registry DB dir: {db_dir}")
                     else:
                         # Production path fallback
                         production_path = r"C:\SteamCMD\Servermanager"
                         if os.path.exists(production_path):
                             db_dir = os.path.join(production_path, 'db')
-                            logger.info(f"Using production path: {db_dir}")
+                            logger.debug(f"Using production path: {db_dir}")
                         else:
                             # Relative path fallback
                             db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
-                            logger.info(f"Using relative path: {db_dir}")
+                            logger.debug(f"Using relative path: {db_dir}")
                     
                 except Exception as inner_e:
                     # Production fallback
                     production_path = r"C:\SteamCMD\Servermanager"
                     if os.path.exists(production_path):
                         db_dir = os.path.join(production_path, 'db')
-                        logger.info(f"Registry keys not found, using detected production path: {db_dir}")
+                        logger.debug(f"Registry keys not found, using detected production path: {db_dir}")
                     else:
                         # Fallback to relative path
                         db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
-                        logger.info(f"Registry keys not found, using relative path: {db_dir}")
+                        logger.debug(f"Registry keys not found, using relative path: {db_dir}")
                         
                 winreg.CloseKey(key)
             except Exception as e:
@@ -94,7 +94,7 @@ class ClusterDatabase:
         else:
             self.db_path = db_path
             
-        logger.info(f"ClusterDatabase initialised with path: {self.db_path}")
+        logger.debug(f"ClusterDatabase initialised with path: {self.db_path}")
         self.init_database()
     
     def init_database(self):
@@ -240,6 +240,22 @@ class ClusterDatabase:
                     )
                 ''')
                 
+                # Steam credentials storage (encrypted)
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS steam_credentials (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        profile_name TEXT NOT NULL UNIQUE DEFAULT 'default',
+                        username TEXT,
+                        password_encrypted TEXT,
+                        steam_guard_secret TEXT,
+                        use_anonymous INTEGER DEFAULT 0,
+                        is_default INTEGER DEFAULT 1,
+                        last_used DATETIME,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
                 # Insert default "Uncategorized" category if it doesn't exist
                 cursor.execute('''
                     INSERT OR IGNORE INTO server_categories (name, display_order)
@@ -247,7 +263,7 @@ class ClusterDatabase:
                 ''')
                 
                 conn.commit()
-                logger.info(f"Cluster database initialised at: {self.db_path}")
+                logger.debug(f"Cluster database schema ready at: {self.db_path}")
                 
                 # Run migrations for existing databases
                 self._run_migrations(conn)
@@ -789,7 +805,7 @@ class ClusterDatabase:
                       1 if maintenance_mode else 0, status_message, datetime.now().isoformat()))
                 
                 conn.commit()
-                logger.info(f"Host status updated: {status}, dashboard_active={dashboard_active}")
+                logger.debug(f"Host status updated: {status}, dashboard_active={dashboard_active}")
                 return True
                 
         except Exception as e:
@@ -1244,4 +1260,161 @@ class ClusterDatabase:
                 
         except Exception as e:
             logger.error(f"Failed to migrate main config from JSON: {e}")
+            return False
+
+    # Steam credentials management methods
+    def _encrypt_password(self, password: str) -> str:
+        # Simple XOR encryption with machine-specific key for password storage
+        # This provides basic obfuscation - for production, consider using keyring
+        import base64
+        import hashlib
+        import socket
+        
+        # Create machine-specific key from hostname and a salt
+        machine_key = hashlib.sha256(f"{socket.gethostname()}_steam_creds_salt".encode()).digest()
+        
+        # XOR encrypt
+        encrypted = bytes([b ^ machine_key[i % len(machine_key)] for i, b in enumerate(password.encode('utf-8'))])
+        return base64.b64encode(encrypted).decode('ascii')
+    
+    def _decrypt_password(self, encrypted: str) -> str:
+        # Decrypt password encrypted with _encrypt_password
+        import base64
+        import hashlib
+        import socket
+        
+        if not encrypted:
+            return ""
+        
+        try:
+            machine_key = hashlib.sha256(f"{socket.gethostname()}_steam_creds_salt".encode()).digest()
+            encrypted_bytes = base64.b64decode(encrypted.encode('ascii'))
+            decrypted = bytes([b ^ machine_key[i % len(machine_key)] for i, b in enumerate(encrypted_bytes)])
+            return decrypted.decode('utf-8')
+        except Exception as e:
+            logger.error(f"Failed to decrypt password: {e}")
+            return ""
+    
+    def save_steam_credentials(self, username: str = "", password: str = "", 
+                               steam_guard_secret: str = "", use_anonymous: bool = False,
+                               profile_name: str = "default") -> bool:
+        # Save Steam credentials to database
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Encrypt password if provided
+                encrypted_password = self._encrypt_password(password) if password else ""
+                
+                # Check if profile exists
+                cursor.execute('SELECT id FROM steam_credentials WHERE profile_name = ?', (profile_name,))
+                existing = cursor.fetchone()
+                
+                if existing:
+                    cursor.execute('''
+                        UPDATE steam_credentials 
+                        SET username = ?, password_encrypted = ?, steam_guard_secret = ?,
+                            use_anonymous = ?, updated_at = ?
+                        WHERE profile_name = ?
+                    ''', (username, encrypted_password, steam_guard_secret,
+                          1 if use_anonymous else 0, datetime.now().isoformat(), profile_name))
+                else:
+                    cursor.execute('''
+                        INSERT INTO steam_credentials 
+                        (profile_name, username, password_encrypted, steam_guard_secret, 
+                         use_anonymous, is_default, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                    ''', (profile_name, username, encrypted_password, steam_guard_secret,
+                          1 if use_anonymous else 0, datetime.now().isoformat(), 
+                          datetime.now().isoformat()))
+                
+                conn.commit()
+                logger.debug(f"Steam credentials saved for profile: {profile_name}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to save Steam credentials: {e}")
+            return False
+    
+    def get_steam_credentials(self, profile_name: str = "default") -> Optional[Dict]:
+        # Get Steam credentials from database
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT username, password_encrypted, steam_guard_secret, use_anonymous, last_used
+                    FROM steam_credentials WHERE profile_name = ?
+                ''', (profile_name,))
+                
+                row = cursor.fetchone()
+                if row:
+                    # Update last_used timestamp
+                    cursor.execute('''
+                        UPDATE steam_credentials SET last_used = ? WHERE profile_name = ?
+                    ''', (datetime.now().isoformat(), profile_name))
+                    conn.commit()
+                    
+                    return {
+                        'username': row[0] or "",
+                        'password': self._decrypt_password(row[1]) if row[1] else "",
+                        'steam_guard_secret': row[2] or "",
+                        'use_anonymous': bool(row[3]),
+                        'anonymous': bool(row[3]),  # Alias for compatibility
+                        'last_used': row[4]
+                    }
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to get Steam credentials: {e}")
+            return None
+    
+    def get_all_steam_profiles(self) -> List[Dict]:
+        # Get all Steam credential profiles
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT profile_name, username, use_anonymous, is_default, last_used
+                    FROM steam_credentials ORDER BY is_default DESC, last_used DESC
+                ''')
+                
+                profiles = []
+                for row in cursor.fetchall():
+                    profiles.append({
+                        'profile_name': row[0],
+                        'username': row[1] or "Anonymous",
+                        'use_anonymous': bool(row[2]),
+                        'is_default': bool(row[3]),
+                        'last_used': row[4]
+                    })
+                return profiles
+                
+        except Exception as e:
+            logger.error(f"Failed to get Steam profiles: {e}")
+            return []
+    
+    def delete_steam_credentials(self, profile_name: str = "default") -> bool:
+        # Delete Steam credentials profile
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM steam_credentials WHERE profile_name = ?', (profile_name,))
+                conn.commit()
+                logger.debug(f"Steam credentials deleted for profile: {profile_name}")
+                return cursor.rowcount > 0
+                
+        except Exception as e:
+            logger.error(f"Failed to delete Steam credentials: {e}")
+            return False
+    
+    def has_steam_credentials(self) -> bool:
+        # Check if any Steam credentials are stored
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT COUNT(*) FROM steam_credentials')
+                count = cursor.fetchone()[0]
+                return count > 0
+        except Exception as e:
+            logger.error(f"Failed to check Steam credentials: {e}")
             return False

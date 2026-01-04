@@ -84,7 +84,7 @@ class MinecraftIDScanner:
             Base.metadata.create_all(self.engine)  # type: ignore[possibly-unbound]
             Session = sessionmaker(bind=self.engine)  # type: ignore[possibly-unbound]
             self.db_session = Session()
-            logger.info("Connected to Minecraft servers database")
+            logger.debug("Connected to Minecraft servers database")
         except Exception as e:
             error_msg = f"Failed to connect to Minecraft database: {e}"
             logger.error(error_msg)

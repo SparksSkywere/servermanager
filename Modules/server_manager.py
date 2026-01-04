@@ -263,7 +263,7 @@ class ServerManager(ServerManagerModule):
         # Validate that a PID actually belongs to the server it's claimed to be
         # This prevents issues with Windows PID reuse where an old PID might now
         # belong to a completely different process
-        # Enhanced with corruption detection and system state validation
+        # PRIMARY validation: ProcessCreateTime matching (most secure)
         # Returns: (is_valid, process_or_none)
         try:
             if process_id is None:
@@ -288,7 +288,26 @@ class ServerManager(ServerManagerModule):
                 # No config to validate against, just check if process exists
                 return True, process
 
-            # Validate the process matches the server
+            # PRIMARY CHECK: Stored process creation time (most secure validation)
+            # This is the definitive way to verify PID ownership since creation time
+            # is unique and won't match if Windows reuses the PID for another process
+            stored_create_time = server_config.get('ProcessCreateTime')
+            if stored_create_time:
+                try:
+                    actual_create_time = process.create_time()
+                    # Allow 2 second tolerance for timing differences
+                    if abs(actual_create_time - stored_create_time) < 2:
+                        logger.debug(f"PID {process_id} validated: create time matches (secure)")
+                        return True, process
+                    else:
+                        # Creation time doesn't match - this is definitely a different process
+                        logger.debug(f"PID {process_id} rejected: create time mismatch (stored: {stored_create_time}, actual: {actual_create_time})")
+                        return False, None
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
+
+            # FALLBACK: If no ProcessCreateTime stored, use heuristic checks
+            # This is less secure but necessary for backwards compatibility
             install_dir = server_config.get('InstallDir', '')
             executable_path = server_config.get('ExecutablePath', '')
             server_type = server_config.get('Type', '').lower()
@@ -305,43 +324,20 @@ class ServerManager(ServerManagerModule):
                 except (psutil.AccessDenied, psutil.NoSuchProcess):
                     cmdline_str = ''
 
-                # Enhanced: Check for process corruption indicators
-                try:
-                    # Check if process has abnormally high memory usage (potential memory corruption)
-                    memory_percent = process.memory_percent()
-                    if memory_percent > 90:  # Over 90% memory usage is suspicious
-                        logger.warning(f"Process {process_id} for {server_name} using {memory_percent:.1f}% memory - possible corruption")
-                        # Don't immediately invalidate, but log for monitoring
-
-                    # Check if process is in zombie state
-                    if process.status() == psutil.STATUS_ZOMBIE:
-                        logger.warning(f"Process {process_id} for {server_name} is in zombie state")
-                        return False, None
-
-                    # Check for unusual CPU usage patterns (stuck processes)
-                    cpu_times = process.cpu_times()
-                    if cpu_times and hasattr(cpu_times, 'user'):
-                        # If process has been running for > 5 minutes but minimal CPU time, might be stuck
-                        try:
-                            create_time = process.create_time()
-                            runtime_seconds = time.time() - create_time
-                            total_cpu_time = cpu_times.user + cpu_times.system
-                            if runtime_seconds > 300 and total_cpu_time < 1.0:  # 5 minutes, < 1 second CPU
-                                logger.warning(f"Process {process_id} for {server_name} appears stuck (runtime: {runtime_seconds:.0f}s, CPU: {total_cpu_time:.1f}s)")
-                        except:
-                            pass
-
-                except (psutil.AccessDenied, psutil.NoSuchProcess):
-                    pass
-
             except (psutil.AccessDenied, psutil.NoSuchProcess):
-                # Can't access process info, assume invalid
+                # Can't access process info, assume invalid without create time
                 logger.debug(f"Cannot access process {process_id} info for validation")
                 return False, None
 
-            # Validation checks
+            # Validation checks (fallback when no ProcessCreateTime)
             install_dir_lower = install_dir.lower() if install_dir else ''
             executable_lower = executable_path.lower() if executable_path else ''
+            
+            # Resolve relative executable path
+            if executable_lower and install_dir_lower and not os.path.isabs(executable_path):
+                full_exe_path = os.path.join(install_dir_lower, executable_lower)
+            else:
+                full_exe_path = executable_lower
 
             # Check 1: Working directory matches install directory
             if install_dir_lower and proc_cwd:
@@ -349,75 +345,39 @@ class ServerManager(ServerManagerModule):
                     logger.debug(f"PID {process_id} validated: CWD matches install dir")
                     return True, process
 
-            # Check 2: Executable path matches
+            # Check 2: Executable path matches (handle relative paths)
             if executable_lower and proc_exe:
                 exe_basename = os.path.basename(executable_lower)
                 proc_exe_basename = os.path.basename(proc_exe)
+                # For batch files, java may be running instead
                 if exe_basename == proc_exe_basename:
                     logger.debug(f"PID {process_id} validated: executable name matches")
                     return True, process
+                # Check if proc_exe is within install directory
+                if install_dir_lower and proc_exe.startswith(os.path.normpath(install_dir_lower)):
+                    logger.debug(f"PID {process_id} validated: process exe in install dir")
+                    return True, process
 
-            # Check 3: Install directory in executable path
-            if install_dir_lower and proc_exe and install_dir_lower in proc_exe:
-                logger.debug(f"PID {process_id} validated: install dir in exe path")
-                return True, process
-
-            # Check 4: Command line contains server-specific info
-            if cmdline_str:
-                if install_dir_lower and install_dir_lower in cmdline_str:
+            # Check 3: Install directory in executable path or command line
+            if install_dir_lower:
+                if proc_exe and install_dir_lower in proc_exe:
+                    logger.debug(f"PID {process_id} validated: install dir in exe path")
+                    return True, process
+                if cmdline_str and install_dir_lower in cmdline_str:
                     logger.debug(f"PID {process_id} validated: install dir in cmdline")
                     return True, process
-                if executable_lower and executable_lower in cmdline_str:
-                    logger.debug(f"PID {process_id} validated: executable in cmdline")
-                    return True, process
 
-            # Check 5: Type-specific validation
-            if server_type == 'minecraft':
-                # For Minecraft, the java process should have the server jar in cmdline
+            # Check 4: Type-specific validation
+            if server_type == 'minecraft' or server_type == 'other':
+                # For Minecraft/modded servers, java process with install dir in cmdline
                 if 'java' in proc_name or 'javaw' in proc_name:
-                    if cmdline_str and (install_dir_lower in cmdline_str or 'server.jar' in cmdline_str):
-                        logger.debug(f"PID {process_id} validated: Minecraft java process")
+                    if cmdline_str and install_dir_lower and install_dir_lower in cmdline_str:
+                        logger.debug(f"PID {process_id} validated: Java process with install dir")
                         return True, process
 
-            # Check 6: Stored process creation time (if available)
-            stored_create_time = server_config.get('ProcessCreateTime')
-            if stored_create_time:
-                try:
-                    actual_create_time = process.create_time()
-                    # Allow 2 second tolerance for timing differences
-                    if abs(actual_create_time - stored_create_time) < 2:
-                        logger.debug(f"PID {process_id} validated: create time matches")
-                        return True, process
-                except (psutil.AccessDenied, psutil.NoSuchProcess):
-                    pass
-
-            # Enhanced: Check for system state corruption indicators
-            try:
-                # Check if install directory still exists and is accessible
-                if install_dir and not os.path.exists(install_dir):
-                    logger.error(f"Install directory missing for {server_name}: {install_dir}")
-                    return False, None
-
-                # Check if executable still exists
-                if executable_path and not os.path.exists(executable_path):
-                    logger.error(f"Executable missing for {server_name}: {executable_path}")
-                    return False, None
-
-                # Check for config file corruption (basic JSON validation)
-                config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-                if os.path.exists(config_file):
-                    try:
-                        with open(config_file, 'r', encoding='utf-8') as f:
-                            json.load(f)  # Just validate JSON structure
-                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                        logger.error(f"Config file corrupted for {server_name}: {e}")
-                        return False, None
-
-            except Exception as e:
-                logger.debug(f"Error during system state validation for {server_name}: {e}")
-
-            # If we get here, the process doesn't match the server
-            logger.warning(f"PID {process_id} does NOT match server '{server_name}' (process: {proc_name}, cwd: {proc_cwd})")
+            # If we get here without ProcessCreateTime, we can't reliably validate
+            # Log at debug level to avoid spam
+            logger.debug(f"PID {process_id} could not be validated for '{server_name}' (no ProcessCreateTime, heuristics failed)")
             return False, None
 
         except Exception as e:
@@ -439,7 +399,7 @@ class ServerManager(ServerManagerModule):
             
             is_valid, _ = self.is_server_process_valid(server_name, pid, server_config)
             if not is_valid:
-                logger.info(f"Clearing stale PID {pid} for server '{server_name}'")
+                logger.debug(f"Clearing stale PID {pid} for server '{server_name}'")
                 server_config.pop('ProcessId', None)
                 server_config.pop('PID', None)
                 server_config.pop('StartTime', None)
@@ -469,7 +429,7 @@ class ServerManager(ServerManagerModule):
                 errors.append(f"No configuration found for server {server_name}")
                 return False, [], errors
 
-            logger.info(f"Performing corruption detection and recovery for {server_name}")
+            logger.debug(f"Running corruption detection for {server_name}")
 
             # 1. Check for config file corruption
             config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
@@ -550,7 +510,7 @@ class ServerManager(ServerManagerModule):
             if pid:
                 is_valid, process = self.is_server_process_valid(server_name, pid, server_config)
                 if not is_valid:
-                    logger.warning(f"Stale PID {pid} detected for {server_name} during corruption check")
+                    logger.debug(f"Stale PID {pid} detected for {server_name} during corruption check")
                     recovery_needed = True
                     recovery_actions.append(f"Cleaned up stale PID {pid}")
 
@@ -589,24 +549,34 @@ class ServerManager(ServerManagerModule):
                 logger.debug(f"Error during log integrity check: {e}")
 
             # 6. Check for system crash indicators (Windows event logs, etc.)
+            # NOTE: This should check for actual crash events, not just registry key existence
+            # The CrashControl key always exists on Windows, so we need to check for actual crash dumps
             try:
                 if sys.platform == 'win32':
-                    # Check for recent system crashes (basic check)
                     import winreg
-                    try:
-                        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                                           r"SYSTEM\CurrentControlSet\Control\CrashControl")
-                        # This is a basic check - could be expanded
-                        recovery_needed = True  # Assume recovery needed if we can access crash control
-                        recovery_actions.append("System crash recovery indicators detected")
-                    except:
-                        pass
-            except:
-                pass
+                    # Check for recent crash dumps instead of just key existence
+                    crash_dump_folder = os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Minidump')
+                    if os.path.exists(crash_dump_folder):
+                        # Check for crash dumps created within the last 24 hours
+                        import glob
+                        crash_files = glob.glob(os.path.join(crash_dump_folder, '*.dmp'))
+                        recent_crashes = []
+                        for crash_file in crash_files:
+                            try:
+                                file_mtime = os.path.getmtime(crash_file)
+                                if time.time() - file_mtime < 86400:  # 24 hours
+                                    recent_crashes.append(crash_file)
+                            except:
+                                pass
+                        if recent_crashes:
+                            recovery_needed = True
+                            recovery_actions.append(f"Recent system crash detected ({len(recent_crashes)} dump files)")
+            except Exception as e:
+                logger.debug(f"Error checking for system crash indicators: {e}")
 
             # 7. Attempt automatic recovery if issues found
             if recovery_needed:
-                logger.info(f"Recovery needed for {server_name}. Actions taken: {recovery_actions}")
+                logger.debug(f"Recovery needed for {server_name}. Actions: {recovery_actions}")
 
                 # Update config with recovery timestamp
                 server_config['LastCorruptionCheck'] = datetime.now().isoformat()
@@ -696,11 +666,11 @@ class ServerManager(ServerManagerModule):
             )
 
             if recovery_errors:
-                logger.warning(f"Corruption recovery errors for {server_name}: {recovery_errors}")
+                logger.debug(f"Corruption recovery errors for {server_name}: {recovery_errors}")
                 # Don't fail startup for recovery errors, but log them
 
             if recovery_needed:
-                logger.info(f"System corruption detected and recovered for {server_name}: {recovery_actions}")
+                logger.debug(f"System corruption detected and recovered for {server_name}: {recovery_actions}")
                 # Reload config after recovery
                 try:
                     with open(config_file, 'r') as f:
@@ -1689,6 +1659,7 @@ class ServerManager(ServerManagerModule):
 
     def get_server_status(self, server_name):
         # Get the current status of a server
+        # Uses comprehensive process validation to ensure PID belongs to correct server
         try:
             server_config = self.get_server_config(server_name)
             if not server_config:
@@ -1696,9 +1667,16 @@ class ServerManager(ServerManagerModule):
             
             if 'ProcessId' in server_config:
                 pid = server_config['ProcessId']
-                if self.is_process_running(pid):
+                # Use comprehensive validation - not just pid_exists
+                # This handles Windows PID reuse where old PID might be a different process
+                is_valid, process = self.is_server_process_valid(server_name, pid, server_config)
+                if is_valid and process:
                     return "Running", pid
                 else:
+                    # PID is stale or belongs to different process - clear it
+                    if pid:
+                        logger.debug(f"Clearing stale PID {pid} for {server_name} (process no longer valid)")
+                        self.clear_stale_pid(server_name, server_config)
                     return "Stopped", None
             else:
                 return "Stopped", None

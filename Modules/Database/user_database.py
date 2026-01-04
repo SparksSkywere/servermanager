@@ -76,7 +76,7 @@ def initialise_user_manager():
         engine = get_user_engine()
         from Modules.user_management import UserManager
         user_manager = UserManager(engine)
-        logger.info("User management initialised")
+        logger.debug("User management initialised")
         return engine, user_manager
     except Exception as e:
         logger.error(f"User manager init failed: {e}")

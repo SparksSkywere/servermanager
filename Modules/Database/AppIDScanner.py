@@ -99,13 +99,13 @@ class AppIDScanner:
             Base.metadata.create_all(self.engine)  # type: ignore[possibly-unbound]
             Session = sessionmaker(bind=self.engine)  # type: ignore[possibly-unbound]
             self.db_session = Session()
-            logger.info("Connected to Steam apps database")
+            logger.debug("Connected to Steam apps database")
             
             # Run database migration if needed
             self.migrate_database_schema()
         except Exception as e:
             logger.error(f"Failed to connect to Steam apps database: {e}")
-            logger.info("Falling back to SQLite")
+            logger.debug("Falling back to SQLite")
             self.use_database = False
             self.init_sqlite_fallback()
     
@@ -114,37 +114,31 @@ class AppIDScanner:
         try:
             if self.use_database:
                 # Check if migration is needed by looking for the new columns
-                from sqlalchemy import text
+                from sqlalchemy import text, inspect
                 
-                # Check if the new columns exist
-                result = self.db_session.execute(text("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name = 'steam_apps' AND column_name IN ('requires_subscription', 'anonymous_install')
-                """))
+                # Use SQLAlchemy inspector to check columns (works across all database types)
+                inspector = inspect(self.engine)
+                try:
+                    columns = [col['name'] for col in inspector.get_columns('steam_apps')]
+                except Exception:
+                    # Table doesn't exist yet, migration not needed
+                    logger.debug("steam_apps table not found, skipping migration")
+                    return
                 
-                existing_columns = [row[0] for row in result]
-                
-                if 'requires_subscription' not in existing_columns:
+                if 'requires_subscription' not in columns:
                     logger.info("Migrating database: Adding requires_subscription column")
                     self.db_session.execute(text("ALTER TABLE steam_apps ADD COLUMN requires_subscription BOOLEAN DEFAULT FALSE"))
                 
-                if 'anonymous_install' not in existing_columns:
+                if 'anonymous_install' not in columns:
                     logger.info("Migrating database: Adding anonymous_install column") 
                     self.db_session.execute(text("ALTER TABLE steam_apps ADD COLUMN anonymous_install BOOLEAN DEFAULT TRUE"))
                 
-                # Check if developer column exists and drop it
-                dev_result = self.db_session.execute(text("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name = 'steam_apps' AND column_name = 'developer'
-                """))
-                
-                if list(dev_result):
-                    logger.info("Migrating database: Developer column found (keeping for compatibility)")
-                    # Note: Some databases don't support dropping columns easily, so we'll leave it for now
-                    # self.db_session.execute(text("ALTER TABLE steam_apps DROP COLUMN developer"))
+                # Check if developer column exists
+                if 'developer' in columns:
+                    logger.debug("Developer column found (keeping for compatibility)")
                 
                 self.db_session.commit()
-                logger.info("Database schema migration completed")
+                logger.debug("Database schema migration completed")
                 
             else:
                 # SQLite migration  
