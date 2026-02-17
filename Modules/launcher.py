@@ -9,16 +9,12 @@ import argparse
 import winreg
 import logging
 import ctypes
-import traceback
-from pathlib import Path
-from datetime import datetime
 import socket
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from Modules.common import ServerManagerModule, setup_module_logging
-from Modules.server_logging import log_dashboard_event
+from Modules.common import setup_module_path, ServerManagerModule, setup_module_logging, is_admin, get_registry_value, get_registry_values, REGISTRY_PATH
+setup_module_path()
 
-logger = setup_module_logging("Launcher")
+logger: logging.Logger = setup_module_logging("Launcher")
 
 
 class ServerManagerLauncher(ServerManagerModule):
@@ -59,14 +55,9 @@ class ServerManagerLauncher(ServerManagerModule):
     def detect_cluster_role(self):
         # Check registry for Host/Subhost status
         try:
-            from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-            key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-            self.cluster_role = winreg.QueryValueEx(key, "HostType")[0]
-            try:
-                self.host_address = winreg.QueryValueEx(key, "HostAddress")[0]
-            except Exception:
-                self.host_address = None
-            winreg.CloseKey(key)
+            values = get_registry_values(REGISTRY_PATH, ["HostType", "HostAddress"], defaults={"HostType": "Unknown", "HostAddress": None})
+            self.cluster_role = values["HostType"] or "Unknown"
+            self.host_address = values["HostAddress"]
         except Exception as e:
             logger.warning(f"Cluster role detection failed: {e}")
             self.cluster_role = "Unknown"
@@ -78,16 +69,18 @@ class ServerManagerLauncher(ServerManagerModule):
             if not self.paths or not self.paths.get("temp"):
                 return False
                 
-            # Check for existing PID files
-            for process_type in ["launcher", "trayicon", "webserver"]:
+            # Check for existing PID files - read files efficiently
+            process_types = ["launcher", "trayicon", "webserver"]
+            for process_type in process_types:
                 pid_file = os.path.join(self.paths["temp"], f"{process_type}.pid")
-                
+
                 if os.path.exists(pid_file):
                     try:
+                        # Read and parse PID file
                         with open(pid_file, 'r') as f:
                             pid_data = json.load(f)
                             pid = pid_data.get("ProcessId")
-                            
+
                             if pid and pid != os.getpid():  # Make sure it's not our PID
                                 # Check if process is still running
                                 if sys.platform == "win32":
@@ -112,7 +105,7 @@ class ServerManagerLauncher(ServerManagerModule):
                         logger.warning(f"Invalid PID file for {process_type}: {str(e)}")
                         try:
                             os.remove(pid_file)
-                        except:
+                        except OSError:
                             pass
             
             return False
@@ -264,12 +257,10 @@ class ServerManagerLauncher(ServerManagerModule):
             # Check if the web server is actually listening on the port
             web_port = 8080  # Default port
             try:
-                from Modules.common import REGISTRY_ROOT
                 # Try to get the port from registry
-                key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
-                web_port = int(winreg.QueryValueEx(key, "WebPort")[0])
-                winreg.CloseKey(key)
-            except:
+                port_val = get_registry_value(self.registry_path, "WebPort", "8080")
+                web_port = int(port_val)
+            except (ValueError, TypeError):
                 logger.warning("Could not get web port from registry, using default 8080")
             
             logger.debug(f"Checking if web server is listening on port {web_port}...")
@@ -315,6 +306,70 @@ class ServerManagerLauncher(ServerManagerModule):
             
         except Exception as e:
             logger.error(f"Failed to start web server: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+            
+    def start_server_automation(self):
+        # Start the server automation process for independent operation
+        try:
+            automation_script = os.path.join(self.paths["modules"], "server_automation.py")
+            
+            if not os.path.exists(automation_script):
+                logger.error(f"Server automation script not found: {automation_script}")
+                return False
+
+            # Add the server manager directory to PYTHONPATH for module imports
+            env = os.environ.copy()
+            pythonpath = env.get('PYTHONPATH', '')
+            if pythonpath:
+                env['PYTHONPATH'] = f"{self.server_manager_dir or ''};{pythonpath}"
+            else:
+                env['PYTHONPATH'] = self.server_manager_dir or ''
+                
+            # Start server automation process
+            if sys.platform == 'win32':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0  # SW_HIDE - completely hidden
+                
+                logger.debug("Starting server automation directly with Python")
+                automation_process = subprocess.Popen(
+                    [sys.executable, automation_script],
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    startupinfo=startupinfo,
+                    shell=False,
+                    env=env,
+                    cwd=self.server_manager_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL
+                )
+            else:
+                # On Unix-based systems
+                automation_process = subprocess.Popen(
+                    [sys.executable, automation_script],
+                    start_new_session=True,
+                    shell=False,
+                    env=env,
+                    cwd=self.server_manager_dir
+                )
+            
+            # Wait a bit to see if the process exits immediately
+            time.sleep(3)
+            if automation_process.poll() is not None:
+                exit_code = automation_process.returncode
+                logger.error(f"Server automation process exited immediately with code {exit_code}")
+                return False
+            
+            self.processes["server_automation"] = automation_process
+            self.write_pid_file("server_automation", automation_process.pid)
+            
+            logger.debug(f"Server automation successfully started (PID: {automation_process.pid})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to start server automation: {str(e)}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
@@ -407,7 +462,7 @@ class ServerManagerLauncher(ServerManagerModule):
             result = sock.connect_ex((host, port))
             sock.close()
             return result == 0
-        except:
+        except OSError:
             return False
     
     def check_dependencies(self):
@@ -417,7 +472,6 @@ class ServerManagerLauncher(ServerManagerModule):
             
             # Check if Flask is installed
             try:
-                import flask
                 logger.debug("Flask is installed")
             except ImportError:
                 logger.error("Flask is not installed")
@@ -425,7 +479,6 @@ class ServerManagerLauncher(ServerManagerModule):
                 
             # Check if Flask-CORS is installed
             try:
-                import flask_cors
                 logger.debug("Flask-CORS is installed")
             except ImportError:
                 logger.warning("Flask-CORS is not installed - some features may not work")
@@ -518,6 +571,10 @@ class ServerManagerLauncher(ServerManagerModule):
                 if not self.start_web_server():
                     logger.warning("Failed to start web server, continuing anyway")
                     
+                # Start server automation (independent of dashboard)
+                if not self.start_server_automation():
+                    logger.warning("Failed to start server automation, continuing anyway")
+                    
             elif self.cluster_role == "Subhost":
                 # Subhost should only run minimal components and connect to host
                 logger.debug("Starting as Subhost - launching minimal components")
@@ -555,7 +612,7 @@ class ServerManagerLauncher(ServerManagerModule):
             
     def monitor_processes(self):
         # Monitor and restart processes if they crash
-        restart_attempts = {"tray_icon": 0, "web_server": 0, "subhost_dashboard": 0}
+        restart_attempts = {"tray_icon": 0, "web_server": 0, "subhost_dashboard": 0, "server_automation": 0}
         max_restart_attempts = 3  # Maximum number of restart attempts
         
         while self.running:
@@ -604,6 +661,21 @@ class ServerManagerLauncher(ServerManagerModule):
                     else:
                         # Reset counter if process is running
                         restart_attempts["subhost_dashboard"] = 0
+
+                # Check server automation
+                if "server_automation" in self.processes:
+                    p = self.processes["server_automation"]
+                    if p.poll() is not None:
+                        restart_attempts["server_automation"] += 1
+                        if restart_attempts["server_automation"] <= max_restart_attempts:
+                            logger.warning(f"Server automation process exited with code {p.returncode}, restarting... (Attempt {restart_attempts['server_automation']}/{max_restart_attempts})")
+                            if not self.start_server_automation():
+                                logger.error("Failed to restart server automation process")
+                        else:
+                            logger.error(f"Server automation process has crashed {restart_attempts['server_automation']} times. Giving up.")
+                    else:
+                        # Reset counter if process is running
+                        restart_attempts["server_automation"] = 0
                 
                 # Sleep for a while before checking again
                 time.sleep(5)
@@ -615,7 +687,11 @@ class ServerManagerLauncher(ServerManagerModule):
                 
             except Exception as e:
                 logger.error(f"Error in process monitoring: {str(e)}")
-                time.sleep(10)  # Wait longer if there's an error
+                # Wait longer if there's an error (interruptible)
+                for _ in range(10):
+                    if not self.running:
+                        break
+                    time.sleep(1)
                 
     def cleanup(self):
         # Clean up resources and terminate processes
@@ -727,13 +803,6 @@ class ServerManagerLauncher(ServerManagerModule):
         # Exit immediately to prevent hanging
         logger.info("Launcher exiting due to shutdown signal")
         os._exit(0)  # Force immediate exit
-
-def is_admin():
-    # Check if the script is running with administrator privileges
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except:
-        return False
 
 def main():
     # Check for admin privileges

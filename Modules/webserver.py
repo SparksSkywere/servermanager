@@ -3,7 +3,6 @@ import os
 import sys
 import json
 import logging
-import winreg
 import argparse
 import datetime
 import threading
@@ -12,9 +11,18 @@ import uuid
 import bcrypt
 import win32security
 import traceback
-import ctypes
-from pathlib import Path
+import glob
+from functools import wraps
+from typing import Optional, TYPE_CHECKING
 from waitress import serve
+
+from Modules.common import (
+    setup_module_path, setup_module_logging, REGISTRY_PATH, is_admin, 
+    get_host_type, get_host_address, 
+    is_cluster_enabled, get_registry_value, set_registry_value,
+    get_allowed_origins
+)
+setup_module_path()
 
 try:
     import psutil
@@ -23,27 +31,16 @@ except ImportError:
     
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from Modules.web_security import (
+    init_security_manager, get_security_headers,
+    get_client_ip, InputValidator, PathSecurity
+)
 
-from Modules.common import setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH
+if TYPE_CHECKING:
+    from Modules.analytics import AnalyticsCollector
 
-logger = setup_module_logging("WebServer")
-
-
-def get_server_manager_dir():
-    # Grab SM dir from registry-fallback to script parent
-    try:
-        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-        winreg.CloseKey(key)
-        return server_manager_dir
-    except Exception as e:
-        logger.error(f"Registry lookup failed: {e}")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.dirname(script_dir)
+logger: logging.Logger = setup_module_logging("WebServer")
 
 
 class DummyDashboardTracker:
@@ -57,10 +54,6 @@ class DummyDashboardTracker:
 
 tracker = None
 try:
-    server_manager_dir = get_server_manager_dir()
-    services_path = os.path.join(server_manager_dir, "services")
-    if os.path.exists(services_path):
-        sys.path.insert(0, server_manager_dir)
     from services.dashboard_tracker import tracker
     logger.debug("Dashboard tracker imported successfully")
 except ImportError as e:
@@ -82,16 +75,10 @@ except ImportError:
     class DummyCORS:
         def __init__(self, app):
             logger.warning("Using dummy CORS implementation")
-            pass
     CORS = DummyCORS
 
 # Import SQL modules
 try:
-    # Add server manager directory to Python path for module imports
-    server_manager_dir = get_server_manager_dir()
-    if server_manager_dir not in sys.path:
-        sys.path.insert(0, server_manager_dir)
-    
     from Modules.Database.user_database import get_user_engine, ensure_root_admin, build_user_db_url, get_user_sql_config_from_registry
     from Modules.user_management import User, UserManager
     # Import server manager
@@ -107,6 +94,10 @@ except ImportError as e:
     User = None
     UserManager = None
     CoreServerManager = None
+
+# =============================================================================
+# LEGACY AUTHENTICATION SYSTEM
+# =============================================================================
 
 # Legacy Authentication system (kept for fallback compatibility)
 class Authentication:
@@ -325,37 +316,34 @@ class SQLAuthentication:
         return len(password) >= 8
 
 # Legacy ServerManager class (kept for web API compatibility)
-# Note: This could be replaced with imports from Modules.server_manager in the future
+# Now uses database instead of JSON files
 class ServerManager:
-    def __init__(self, servers_path):
+    def __init__(self, servers_path=None):
+        # servers_path is now ignored - we use database instead
         self.servers_path = servers_path
 
     def get_all_servers(self):
-        # Get all servers as a dict keyed by server name
+        # Get all servers as a dict keyed by server name from database
         try:
+            from Modules.Database.server_configs_database import ServerConfigManager
+            manager = ServerConfigManager()
+            all_servers = manager.get_all_servers()
             servers = {}
-            if os.path.exists(self.servers_path):
-                for file in os.listdir(self.servers_path):
-                    if file.endswith(".json"):
-                        try:
-                            with open(os.path.join(self.servers_path, file), 'r') as f:
-                                server_config = json.load(f)
-                            server_name = server_config.get("Name", file[:-5])
-                            servers[server_name] = server_config
-                        except Exception as e:
-                            logger.error(f"Error reading server config {file}: {e}")
+            for server_config in all_servers:
+                server_name = server_config.get("Name", "Unknown")
+                servers[server_name] = server_config
             return servers
         except Exception as e:
-            logger.error(f"Error getting servers: {e}")
+            logger.error(f"Error getting servers from database: {e}")
             return {}
 
     def get_server_status(self, server_name):
         # Get the status and PID of a server
         try:
-            config_file = os.path.join(self.servers_path, f"{server_name}.json")
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    server_config = json.load(f)
+            from Modules.Database.server_configs_database import ServerConfigManager
+            manager = ServerConfigManager()
+            server_config = manager.get_server(server_name)
+            if server_config:
                 pid = server_config.get("ProcessId") or server_config.get("PID")
                 if pid and psutil:
                     try:
@@ -398,8 +386,12 @@ class ServerManager:
 
     def create_server_config(self, server_name, server_type, install_dir, executable_path="", startup_args="", app_id="", version="", modloader=""):
         try:
-            config_file = os.path.join(self.servers_path, f"{server_name}.json")
-            if os.path.exists(config_file):
+            from Modules.Database.server_configs_database import ServerConfigManager
+            manager = ServerConfigManager()
+            
+            # Check if server already exists
+            existing = manager.get_server(server_name)
+            if existing:
                 return False, "Server already exists"
             
             server_config = {
@@ -415,17 +407,23 @@ class ServerManager:
                 "LastUpdate": datetime.datetime.now().isoformat()
             }
             
-            os.makedirs(self.servers_path, exist_ok=True)
-            with open(config_file, 'w') as f:
-                json.dump(server_config, f, indent=4)
-            
-            return True, "Server configuration created successfully"
+            # Save to database
+            result = manager.update_server(server_name, server_config)
+            if result:
+                return True, "Server configuration created successfully"
+            else:
+                return False, "Failed to save server configuration to database"
         except Exception as e:
             logger.error(f"Error creating server config: {e}")
-            return False, f"Failed to create server config: {str(e)}"
+            return False, f"Failed to create server config"
 
 # Import common module
 from Modules.common import ServerManagerModule
+
+
+# =============================================================================
+# WEB SERVER CLASS
+# =============================================================================
 
 class ServerManagerWebServer(ServerManagerModule):
     def __init__(self):
@@ -456,8 +454,14 @@ class ServerManagerWebServer(ServerManagerModule):
         self.subhost_thread = None
         self.auth_tokens = {}  # Initialise auth_tokens attribute
         self.cluster_db = None  # Cluster database for host/subhost management
-        self.analytics = None  # Analytics collector for metrics
+        self.analytics: Optional['AnalyticsCollector'] = None  # Analytics collector for metrics
+        self._shutdown_event = threading.Event()  # Event for clean shutdown of background threads
         # Note: server_manager_dir is inherited from ServerManagerModule base class
+        
+        # Console monitoring for HTTPS/secured consoles
+        self.console_monitor_thread = None
+        self.console_monitor_active = False
+        self.console_log_positions = {}  # server_name -> log_file -> position
         
         # Read from environment first, fall back to inherited web_port property or default
         try:
@@ -488,23 +492,16 @@ class ServerManagerWebServer(ServerManagerModule):
     def _get_or_create_secret_key(self):
         # Get or create a persistent Flask secret key from registry
         import secrets
-        try:
-            key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH, 0, winreg.KEY_READ)
-            secret_key = winreg.QueryValueEx(key, "FlaskSecretKey")[0]
-            winreg.CloseKey(key)
-            return secret_key.encode() if isinstance(secret_key, str) else secret_key
-        except (FileNotFoundError, OSError):
-            pass
+        existing = get_registry_value(REGISTRY_PATH, "FlaskSecretKey")
+        if existing:
+            return existing.encode() if isinstance(existing, str) else existing
         
         # Generate new secret key
         secret_key = secrets.token_hex(32)
-        try:
-            key = winreg.CreateKey(REGISTRY_ROOT, REGISTRY_PATH)
-            winreg.SetValueEx(key, "FlaskSecretKey", 0, winreg.REG_SZ, secret_key)
-            winreg.CloseKey(key)
+        if set_registry_value(REGISTRY_PATH, "FlaskSecretKey", secret_key):
             logger.debug("Created new persistent Flask secret key")
-        except Exception as e:
-            logger.warning(f"Could not persist Flask secret key: {e}")
+        else:
+            logger.warning("Could not persist Flask secret key to registry")
         
         return secret_key.encode()
 
@@ -517,22 +514,10 @@ class ServerManagerWebServer(ServerManagerModule):
         if os.getenv("SERVERMANAGER_DIR"):
             logger.debug("Using configuration from environment variables")
         else:
-            # Try to read host type from registry for additional info
-            try:
-                from Modules.common import REGISTRY_ROOT
-                key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
-                try:
-                    self.host_type = winreg.QueryValueEx(key, "HostType")[0]
-                except:
-                    pass
-                try:
-                    self.host_address = winreg.QueryValueEx(key, "HostAddress")[0]
-                except:
-                    pass
-                winreg.CloseKey(key)
-                logger.debug("Using configuration from registry")
-            except:
-                logger.debug("Using default configuration")
+            # Read host type from registry using centralized helpers
+            self.host_type = get_host_type()
+            self.host_address = get_host_address() or None
+            logger.debug("Using configuration from registry")
 
         logger.debug(f"initialised webserver. Server Manager directory: {self.server_manager_dir}")
         logger.debug(f"Web server port: {self.web_port}")
@@ -543,30 +528,42 @@ class ServerManagerWebServer(ServerManagerModule):
             __name__,
             static_folder=os.path.join(self.server_manager_dir or "", "www")
         )
-        CORS(self.app)
+        
+        # Configure CORS with restricted origins (not wildcard)
+        allowed_origins = get_allowed_origins(host='localhost', port=self._web_port)
+        CORS(self.app, origins=allowed_origins, supports_credentials=True)
         self.app.secret_key = self._get_or_create_secret_key()
         
+        # Initialise web security manager
+        self.security = init_security_manager({
+            'web_port': self._web_port,
+            'max_login_attempts': 5,
+            'lockout_duration': 900,
+            'allowed_origins': allowed_origins
+        })
+        
+        # Path security for static file serving
+        www_path = os.path.join(self.server_manager_dir or "", "www")
+        self.path_security = PathSecurity(allowed_roots=[www_path])
+        
         # Configure secure session settings
+        ssl_enabled = os.getenv("SSL_ENABLED", "false").lower() == "true"
         self.app.config.update(
-            SESSION_COOKIE_SECURE=os.getenv("SSL_ENABLED", "false").lower() == "true",
+            SESSION_COOKIE_SECURE=ssl_enabled,
             SESSION_COOKIE_HTTPONLY=True,
             SESSION_COOKIE_SAMESITE='Lax'
         )
         
-        # Add security headers to all responses
+        # Add comprehensive security headers to all responses
         @self.app.after_request
         def add_security_headers(response):
-            response.headers['X-Content-Type-Options'] = 'nosniff'
-            response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-            response.headers['X-XSS-Protection'] = '1; mode=block'
-            response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-            # Add HSTS header when SSL is enabled
-            if os.getenv("SSL_ENABLED", "false").lower() == "true":
-                response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+            headers = get_security_headers(
+                ssl_enabled=os.getenv("SSL_ENABLED", "false").lower() == "true",
+                allowed_origins=allowed_origins
+            )
+            for header_name, header_value in headers.items():
+                response.headers[header_name] = header_value
             return response
-        
-        # Rate limiter disabled - server manager used by many users
-        self.limiter = None
 
         self.check_sql_availability()
 
@@ -610,11 +607,13 @@ class ServerManagerWebServer(ServerManagerModule):
 
         # Initialise server manager
         try:
-            self.server_manager = ServerManager(self.paths["servers"])
+            self.server_manager = ServerManager()
+            self.db_manager = self.server_manager  # Alias for backward compatibility
             logger.debug("Server manager initialised successfully")
         except Exception as e:
             logger.error(f"Failed to Initialise server manager: {e}")
             self.server_manager = None
+            self.db_manager = None
 
         # Initialise analytics
         try:
@@ -644,6 +643,9 @@ class ServerManagerWebServer(ServerManagerModule):
         self.subhost_thread = threading.Thread(target=self.subhost_communication_loop, daemon=True)
         self.subhost_thread.start()
         logger.debug("Subhost communication thread started")
+
+        # Auto-configure SSL if certificates are available
+        self._configure_ssl()
 
     @property
     def web_port(self):
@@ -731,16 +733,32 @@ class ServerManagerWebServer(ServerManagerModule):
         return FallbackAuth()
 
     def subhost_communication_loop(self):
-        while True:
+        while not getattr(self, '_shutdown_event', threading.Event()).is_set():
             try:
-                time.sleep(10)
+                self._shutdown_event.wait(10)
             except Exception as e:
                 logger.error(f"Error in subhost communication loop: {e}")
-                time.sleep(30)
+                self._shutdown_event.wait(30)
 
 
 
 
+
+    def _configure_ssl(self):
+        # Auto-configure SSL if certificates are available
+        try:
+            from Modules.ssl_utils import ensure_ssl_certificate
+            cert_path, key_path = ensure_ssl_certificate()
+            if cert_path and key_path:
+                # Set environment variables for SSL
+                os.environ["SSL_ENABLED"] = "true"
+                os.environ["SSL_CERT_PATH"] = cert_path
+                os.environ["SSL_KEY_PATH"] = key_path
+                logger.info(f"SSL auto-configured with certificates: {cert_path}, {key_path}")
+            else:
+                logger.debug("SSL certificates not available, SSL will remain disabled")
+        except Exception as e:
+            logger.error(f"Failed to auto-configure SSL: {e}")
 
     def setup_routes(self):
         if not self.app:
@@ -802,15 +820,13 @@ class ServerManagerWebServer(ServerManagerModule):
             import traceback
             logger.debug(f"Cluster API registration error: {traceback.format_exc()}")
 
-        # Helper function to handle rate limiting
-        def limit_decorator(rate_limit):
-            if self.limiter:
-                return self.limiter.limit(rate_limit)
-            else:
-                # Return a no-op decorator if limiter is not available
-                def no_op_decorator(func):
-                    return func
-                return no_op_decorator
+        # Helper function to handle rate limiting via web_security
+        def check_rate_limit(limit_type='api'):
+            client_ip = get_client_ip(request)
+            allowed, retry_after = self.security.check_rate_limit(client_ip, limit_type)
+            if not allowed:
+                return jsonify({"error": f"Too many requests. Try again in {retry_after} seconds"}), 429
+            return None
 
         # Helper function to safely call auth methods
         def safe_auth_call(method_name, *args, **kwargs):
@@ -843,9 +859,73 @@ class ServerManagerWebServer(ServerManagerModule):
                     method = getattr(auth_instance, method_name)
                     return method(*args, **kwargs)
                 return None
+
+        # ---------- Authentication decorators ----------
+        def require_auth(f):
+            # Decorator that verifies Bearer token and injects token_data
+            @wraps(f)
+            def decorated(*args, **kwargs):
+                # Rate limit API calls
+                rate_resp = check_rate_limit('api')
+                if rate_resp:
+                    return rate_resp
+                
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                request.token_data = token_data  # type: ignore
+                return f(*args, **kwargs)
+            return decorated
+
+        def require_admin(f):
+            # Decorator that verifies Bearer token AND admin privileges
+            @wraps(f)
+            def decorated(*args, **kwargs):
+                # Rate limit API calls
+                rate_resp = check_rate_limit('api')
+                if rate_resp:
+                    return rate_resp
+                
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({"error": "Authentication required"}), 401
+
+                token = auth_header.split(' ')[1]
+                token_data = safe_auth_call('verify_token', token)
+
+                if not token_data:
+                    return jsonify({"error": "Invalid or expired token"}), 401
+
+                if not safe_auth_call('is_admin', token_data["username"]):
+                    return jsonify({"error": "Admin privileges required"}), 403
+
+                request.token_data = token_data  # type: ignore
+                return f(*args, **kwargs)
+            return decorated
+
+        # ---------- Input validation helper ----------
+        def validate_input(value, field_name="input"):
+            # Validate input against SQL injection, XSS, and path traversal
+            is_safe, error_msg = InputValidator.validate_safe_input(value, field_name)
+            if not is_safe:
+                return error_msg
+            return None
+
         @app.route('/api/auth/login', methods=['POST'])
         def api_login():
             try:
+                # Rate limit login attempts
+                rate_resp = check_rate_limit('login')
+                if rate_resp:
+                    return rate_resp
+
                 data = request.json
                 if not data or not isinstance(data, dict):
                     return jsonify({"error": "Invalid request body"}), 400
@@ -856,12 +936,24 @@ class ServerManagerWebServer(ServerManagerModule):
                 if not username or not password or not isinstance(username, str) or not isinstance(password, str):
                     return jsonify({"error": "Username and password must be non-empty strings"}), 400
 
+                # Validate input against injection
+                input_err = validate_input(username, "username")
+                if input_err:
+                    return jsonify({"error": input_err}), 400
+
+                # Check account lockout
+                client_ip = get_client_ip(request)
+                allowed, error_msg = self.security.validate_login_attempt(username, client_ip)
+                if not allowed:
+                    return jsonify({"error": error_msg}), 429
+
                 logger.debug(f"Login attempt for user: {username} with auth type: {auth_type}")
 
                 # Try SQL authentication first (same as dashboard)
                 if self.sql_auth:
                     sql_result = safe_auth_call('authenticate', username, password, auth_instance=self.sql_auth)
                     if sql_result:
+                        self.security.record_login_success(username, client_ip)
                         logger.debug(f"Successful SQL authentication for user: {username}")
                         return jsonify({
                             "token": sql_result["token"],
@@ -874,6 +966,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 if not self.sql_auth:
                     auth_result = safe_auth_call('authenticate', username, password)
                     if auth_result:
+                        self.security.record_login_success(username, client_ip)
                         logger.debug(f"Successful file-based authentication for user: {username}")
                         return jsonify({
                             "token": auth_result["token"],
@@ -913,6 +1006,10 @@ class ServerManagerWebServer(ServerManagerModule):
                     logger.debug(f"Windows authentication attempt failed: {e}")
 
                 logger.warning(f"All authentication methods failed for user: {username}")
+                # Record failed login attempt for lockout
+                is_locked, remaining = self.security.record_login_failure(username, client_ip)
+                if is_locked:
+                    return jsonify({"error": f"Account temporarily locked. Try again later"}), 429
                 return jsonify({"error": "Invalid username or password"}), 401
             except Exception as e:
                 logger.error(f"Login error: {e}")
@@ -968,17 +1065,10 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Authentication verification error"}), 500
 
         @app.route('/api/servers', methods=['GET', 'POST'])
+        @require_auth
         def api_servers():
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
+                token_data = request.token_data  # type: ignore
 
                 if request.method == 'GET':
                     if self.server_manager is None:
@@ -1046,12 +1136,18 @@ class ServerManagerWebServer(ServerManagerModule):
                         return jsonify({"error": "No data provided"}), 400
 
                     # Extract server data
-                    server_name = data.get('name', '').strip()
-                    server_type = data.get('type', '').strip()
-                    server_path = data.get('path', '').strip()
+                    server_name = InputValidator.sanitize_string(data.get('name', ''), max_length=100)
+                    server_type = InputValidator.sanitize_string(data.get('type', ''), max_length=50)
+                    server_path = InputValidator.sanitize_string(data.get('path', ''), max_length=500)
 
                     if not server_name:
                         return jsonify({"error": "Server name is required"}), 400
+
+                    # Validate inputs against injection attacks
+                    for field_name, field_val in [("name", server_name), ("type", server_type), ("path", server_path)]:
+                        err = validate_input(field_val, field_name)
+                        if err:
+                            return jsonify({"error": err}), 400
 
                     if not server_type:
                         return jsonify({"error": "Server type is required"}), 400
@@ -1074,37 +1170,31 @@ class ServerManagerWebServer(ServerManagerModule):
                             )
                             success, message = result if isinstance(result, tuple) else (result, "Operation completed")
                         else:
-                            # Fallback: create config file directly
-                            # Get server manager directory from registry
+                            # Fallback: use database directly
                             try:
-                                import winreg
-                                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\SkywereIndustries\ServerManager")
-                                server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-                                winreg.CloseKey(key)
-                                servers_dir = os.path.join(server_manager_dir, "servers")
-                            except:
-                                # Ultimate fallback
-                                servers_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "servers")
-                            
-                            config_file = os.path.join(servers_dir, f"{server_name}.json")
-                            if os.path.exists(config_file):
-                                return jsonify({"error": "Server already exists"}), 409
-                            
-                            server_config = {
-                                "Name": server_name,
-                                "Type": server_type,
-                                "InstallDir": server_path,
-                                "ExecutablePath": "",
-                                "StartupArgs": "",
-                                "Created": datetime.datetime.now().isoformat(),
-                                "LastUpdate": datetime.datetime.now().isoformat()
-                            }
-                            
-                            os.makedirs(servers_dir, exist_ok=True)
-                            with open(config_file, 'w') as f:
-                                json.dump(server_config, f, indent=4)
-                            
-                            success, message = True, "Server configuration created successfully"
+                                from Modules.Database.server_configs_database import ServerConfigManager
+                                manager = ServerConfigManager()
+                                
+                                # Check if server already exists
+                                existing = manager.get_server(server_name)
+                                if existing:
+                                    return jsonify({"error": "Server already exists"}), 409
+                                
+                                server_config = {
+                                    "Name": server_name,
+                                    "Type": server_type,
+                                    "InstallDir": server_path,
+                                    "ExecutablePath": "",
+                                    "StartupArgs": "",
+                                    "Created": datetime.datetime.now().isoformat(),
+                                    "LastUpdate": datetime.datetime.now().isoformat()
+                                }
+                                
+                                result = manager.update_server(server_name, server_config)
+                                success, message = result, "Server configuration created successfully" if result else "Failed to save"
+                            except Exception as db_err:
+                                logger.error(f"Database fallback failed: {db_err}")
+                                success, message = False, "Database operation failed"
 
                         if success:
                             return jsonify({"success": True, "message": message}), 200
@@ -1120,19 +1210,33 @@ class ServerManagerWebServer(ServerManagerModule):
             # This should not be reached due to method restriction, but for type safety
             return jsonify({"error": "Method not allowed"}), 405
 
+        @app.route('/api/servers/<server_id>', methods=['DELETE'])
+        @require_auth
+        def api_delete_server(server_id):
+            try:
+                if self.server_manager is None:
+                    return jsonify({"error": "Server manager not available"}), 500
+
+                # Check if server exists
+                if server_id not in self.server_manager.servers:  # type: ignore
+                    return jsonify({"error": f"Server {server_id} not found"}), 404
+
+                # Remove server (keep files by default)
+                success, message = self.server_manager.uninstall_server(server_id, remove_files=False)  # type: ignore
+                
+                if success:
+                    return jsonify({"success": True, "message": message}), 200
+                else:
+                    return jsonify({"error": message}), 400
+                    
+            except Exception as e:
+                logger.error(f"Delete server error: {e}")
+                return jsonify({"error": "Failed to delete server"}), 500
+
         @app.route('/api/servers/<server_id>/start', methods=['POST'])
+        @require_auth
         def api_start_server(server_id):
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
                 if self.server_manager is None:
                     return jsonify({"error": "Server manager not available"}), 500
                     
@@ -1145,18 +1249,9 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to start server"}), 500
 
         @app.route('/api/servers/<server_id>/stop', methods=['POST'])
+        @require_auth
         def api_stop_server(server_id):
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
                 if self.server_manager is None:
                     return jsonify({"error": "Server manager not available"}), 500
                     
@@ -1169,43 +1264,31 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to stop server"}), 500
 
         @app.route('/api/servers/<server_id>/console', methods=['GET'])
+        @require_auth
         def api_get_console(server_id):
             # - Get console output for a server
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
                 # Get lines param (default 100)
                 lines = request.args.get('lines', 100, type=int)
                 
-                # Read console state file
-                if not self.server_manager_dir:
-                    return jsonify({"error": "Server manager directory not configured"}), 500
-                temp_dir = os.path.join(self.server_manager_dir, "temp", "console_states")
-                state_file = os.path.join(temp_dir, f"{server_id}_console.json")
-                
-                if os.path.exists(state_file):
-                    try:
-                        with open(state_file, 'r', encoding='utf-8') as f:
-                            state = json.load(f)
-                        output = state.get('output_buffer', [])
+                # Read console state from database
+                try:
+                    from Modules.Database.console_database import load_console_state_db
+                    output_buffer, command_history = load_console_state_db(server_id)
+                    if output_buffer is not None:
                         # Return last N lines
                         return jsonify({
                             "success": True,
-                            "output": output[-lines:] if len(output) > lines else output,
+                            "output": output_buffer[-lines:] if len(output_buffer) > lines else output_buffer,
                             "server_id": server_id
                         })
-                    except Exception as e:
-                        logger.error(f"Error reading console state: {e}")
+                    else:
                         return jsonify({"success": True, "output": [], "server_id": server_id})
-                else:
+                except ImportError:
+                    logger.warning("Console database not available")
+                    return jsonify({"success": True, "output": [], "server_id": server_id})
+                except Exception as e:
+                    logger.error(f"Error reading console state from database: {e}")
                     return jsonify({"success": True, "output": [], "server_id": server_id})
                     
             except Exception as e:
@@ -1213,19 +1296,10 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to get console output"}), 500
 
         @app.route('/api/servers/<server_id>/console', methods=['POST'])
+        @require_auth
         def api_send_command(server_id):
             # - Send command to server console
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
                 data = request.get_json()
                 command = data.get('command', '').strip() if data else ''
                 
@@ -1253,18 +1327,9 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to send command"}), 500
 
         @app.route('/api/servers/<server_id>/restart', methods=['POST'])
+        @require_auth
         def api_restart_server(server_id):
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
                 if self.server_manager is None:
                     return jsonify({"error": "Server manager not available"}), 500
                     
@@ -1276,22 +1341,135 @@ class ServerManagerWebServer(ServerManagerModule):
                 logger.error(f"Restart server error: {e}")
                 return jsonify({"error": "Failed to restart server"}), 500
 
+        @app.route('/api/servers/<server_id>/test-motd', methods=['POST'])
+        @require_auth
+        def api_test_motd(server_id):
+            try:
+                if self.server_manager is None:
+                    return jsonify({"error": "Server manager not available"}), 500
+
+                # Get automation settings
+                from Modules.common import load_automation_settings
+                try:
+                    server_config = self.db_manager.get_server_config(server_id)  # type: ignore
+                    if not server_config:
+                        return jsonify({"error": "Server configuration not found"}), 404
+                    
+                    settings = load_automation_settings(server_config)
+                    motd_cmd = settings.get('motd_command', '')
+                    motd_msg = settings.get('motd_message', '')
+                    
+                    if not motd_cmd or not motd_msg:
+                        return jsonify({"error": "MOTD command or message not configured"}), 400
+                    
+                    # Test MOTD
+                    from Modules.server_automation import ServerAutomationManager
+                    automation = ServerAutomationManager(self.server_manager)
+                    result = automation.send_motd(server_id, motd_msg)
+                    
+                    if result:
+                        return jsonify({"success": True, "message": "MOTD sent successfully"})
+                    return jsonify({"error": "Failed to send MOTD"}), 400
+                    
+                except Exception as e:
+                    logger.error(f"Test MOTD error: {e}")
+                    return jsonify({"error": "Failed to test MOTD"}), 500
+
+            except Exception as e:
+                logger.error(f"Test MOTD API error: {e}")
+                return jsonify({"error": "Failed to test MOTD"}), 500
+
+        @app.route('/api/servers/<server_id>/test-save', methods=['POST'])
+        @require_auth
+        def api_test_save(server_id):
+            try:
+                if self.server_manager is None:
+                    return jsonify({"error": "Server manager not available"}), 500
+
+                # Get automation settings
+                from Modules.common import load_automation_settings
+                try:
+                    server_config = self.db_manager.get_server_config(server_id)  # type: ignore
+                    if not server_config:
+                        return jsonify({"error": "Server configuration not found"}), 404
+                    
+                    settings = load_automation_settings(server_config)
+                    save_cmd = settings.get('save_command', '')
+                    
+                    if not save_cmd:
+                        return jsonify({"error": "Save command not configured"}), 400
+                    
+                    # Test save command
+                    from Modules.server_automation import ServerAutomationManager
+                    automation = ServerAutomationManager(self.server_manager)
+                    result = automation._send_command_to_server(server_id, save_cmd)
+                    
+                    if result:
+                        return jsonify({"success": True, "message": "Save command sent successfully"})
+                    return jsonify({"error": "Failed to send save command"}), 400
+                    
+                except Exception as e:
+                    logger.error(f"Test save error: {e}")
+                    return jsonify({"error": "Failed to test save command"}), 500
+
+            except Exception as e:
+                logger.error(f"Test save API error: {e}")
+                return jsonify({"error": "Failed to test save command"}), 500
+
+        @app.route('/api/servers/<server_id>/test-warning', methods=['POST'])
+        @require_auth
+        def api_test_warning(server_id):
+            try:
+                if self.server_manager is None:
+                    return jsonify({"error": "Server manager not available"}), 500
+
+                # Get request data
+                data = request.get_json() or {}
+                minutes = data.get('minutes', 5)  # Default 5 minutes
+                
+                # Get automation settings
+                from Modules.common import load_automation_settings
+                try:
+                    server_config = self.db_manager.get_server_config(server_id)  # type: ignore
+                    if not server_config:
+                        return jsonify({"error": "Server configuration not found"}), 404
+                    
+                    settings = load_automation_settings(server_config)
+                    warning_cmd = settings.get('warning_command', '')
+                    warning_msg = settings.get('warning_message_template', 'Server restarting in {message}')
+                    
+                    if not warning_cmd:
+                        return jsonify({"error": "Warning command not configured"}), 400
+                    
+                    # Replace {message} placeholder if present in command
+                    if '{message}' in warning_cmd:
+                        message = f"{minutes} minute{'s' if minutes != 1 else ''}"
+                        command = warning_cmd.replace('{message}', message)
+                    else:
+                        command = warning_cmd
+                        message = f"{minutes} minute{'s' if minutes != 1 else ''}"
+                    
+                    # Test warning command
+                    from Modules.server_automation import ServerAutomationManager
+                    automation = ServerAutomationManager(self.server_manager)
+                    result = automation._send_command_to_server(server_id, command)
+                    
+                    if result:
+                        return jsonify({"success": True, "message": f"Warning command sent successfully: {command}"})
+                    return jsonify({"error": "Failed to send warning command"}), 400
+                    
+                except Exception as e:
+                    logger.error(f"Test warning error: {e}")
+                    return jsonify({"error": "Failed to test warning command"}), 500
+
+            except Exception as e:
+                logger.error(f"Test warning API error: {e}")
+                return jsonify({"error": "Failed to test warning command"}), 500
+
         @app.route('/api/users', methods=['GET'])
+        @require_admin
         def api_get_users():
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
-                if not safe_auth_call('is_admin', token_data["username"]):
-                    return jsonify({"error": "Admin privileges required"}), 403
-
                 users = safe_auth_call('get_all_users')
                 return jsonify(users)
             except Exception as e:
@@ -1299,81 +1477,62 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to get users"}), 500
 
         @app.route('/api/users', methods=['POST'])
+        @require_admin
         def api_create_user():
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
-                if not safe_auth_call('is_admin', token_data["username"]):
-                    return jsonify({"error": "Admin privileges required"}), 403
-
                 data = request.json
                 if not data:
                     return jsonify({"error": "No data provided"}), 400
 
-                username = data.get('username', '').strip()
-                email = data.get('email', '').strip()
+                username = InputValidator.sanitize_string(data.get('username', ''), max_length=50)
+                email = InputValidator.sanitize_string(data.get('email', ''), max_length=254)
                 password = data.get('password', '')
-                is_admin = data.get('is_admin', False)
+                is_admin_flag = data.get('is_admin', False)
 
                 if not username or not password:
                     return jsonify({"error": "Username and password are required"}), 400
 
-                if len(password) < 6:
-                    return jsonify({"error": "Password must be at least 6 characters"}), 400
+                # Validate username and password with security rules
+                valid, err = InputValidator.validate_username(username)
+                if not valid:
+                    return jsonify({"error": err}), 400
+                valid, err = InputValidator.validate_password(password)
+                if not valid:
+                    return jsonify({"error": err}), 400
 
                 # Use SQL user management if available
                 if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager') and self.sql_auth.user_manager:
                     try:
-                        success = self.sql_auth.user_manager.add_user(username, password, email, is_admin)
+                        success = self.sql_auth.user_manager.add_user(username, password, email, is_admin_flag)
                         if success:
                             return jsonify({"message": "User created successfully"})
                         else:
                             return jsonify({"error": "Failed to create user - user may already exist"}), 409
                     except Exception as e:
                         logger.error(f"SQL user creation error: {e}")
-                        return jsonify({"error": f"Failed to create user: {str(e)}"}), 500
+                        return jsonify({"error": "Failed to create user"}), 500
                 else:
                     # Fallback to legacy authentication
                     try:
-                        result = safe_auth_call('add_user', username, password, is_admin)
+                        result = safe_auth_call('add_user', username, password, is_admin_flag)
                         if result:
                             return jsonify({"message": "User created successfully"})
                         else:
                             return jsonify({"error": "Failed to create user"}), 500
                     except Exception as e:
                         logger.error(f"Legacy user creation error: {e}")
-                        return jsonify({"error": f"Failed to create user: {str(e)}"}), 500
+                        return jsonify({"error": "Failed to create user"}), 500
 
             except Exception as e:
                 logger.error(f"Create user error: {e}")
                 return jsonify({"error": "Failed to create user"}), 500
 
         @app.route('/api/users/<username>', methods=['DELETE'])
+        @require_admin
         def api_delete_user(username):
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
-                if not safe_auth_call('is_admin', token_data["username"]):
-                    return jsonify({"error": "Admin privileges required"}), 403
-
                 # Prevent deletion of current user
-                if token_data["username"] == username:
+                if request.token_data["username"] == username:
                     return jsonify({"error": "Cannot delete your own account"}), 400
 
                 # Use SQL user management if available
@@ -1386,7 +1545,7 @@ class ServerManagerWebServer(ServerManagerModule):
                             return jsonify({"error": "User not found"}), 404
                     except Exception as e:
                         logger.error(f"SQL user deletion error: {e}")
-                        return jsonify({"error": f"Failed to delete user: {str(e)}"}), 500
+                        return jsonify({"error": "Failed to delete user"}), 500
                 else:
                     # Fallback to legacy authentication
                     try:
@@ -1397,28 +1556,16 @@ class ServerManagerWebServer(ServerManagerModule):
                             return jsonify({"error": "User not found"}), 404
                     except Exception as e:
                         logger.error(f"Legacy user deletion error: {e}")
-                        return jsonify({"error": f"Failed to delete user: {str(e)}"}), 500
+                        return jsonify({"error": "Failed to delete user"}), 500
 
             except Exception as e:
                 logger.error(f"Delete user error: {e}")
                 return jsonify({"error": "Failed to delete user"}), 500
 
         @app.route('/api/users/<username>/password', methods=['PUT'])
+        @require_admin
         def api_reset_password(username):
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
-                if not safe_auth_call('is_admin', token_data["username"]):
-                    return jsonify({"error": "Admin privileges required"}), 403
-
                 data = request.json
                 if not data:
                     return jsonify({"error": "No data provided"}), 400
@@ -1427,8 +1574,9 @@ class ServerManagerWebServer(ServerManagerModule):
                 if not new_password:
                     return jsonify({"error": "New password is required"}), 400
 
-                if len(new_password) < 6:
-                    return jsonify({"error": "Password must be at least 6 characters"}), 400
+                is_valid, pwd_msg = InputValidator.validate_password(new_password)
+                if not is_valid:
+                    return jsonify({"error": pwd_msg}), 400
 
                 # Use SQL user management if available
                 if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager') and self.sql_auth.user_manager:
@@ -1440,7 +1588,7 @@ class ServerManagerWebServer(ServerManagerModule):
                             return jsonify({"error": "User not found"}), 404
                     except Exception as e:
                         logger.error(f"SQL password reset error: {e}")
-                        return jsonify({"error": f"Failed to reset password: {str(e)}"}), 500
+                        return jsonify({"error": "Failed to reset password"}), 500
                 else:
                     # Fallback to legacy authentication
                     try:
@@ -1451,27 +1599,18 @@ class ServerManagerWebServer(ServerManagerModule):
                             return jsonify({"error": "User not found"}), 404
                     except Exception as e:
                         logger.error(f"Legacy password reset error: {e}")
-                        return jsonify({"error": f"Failed to reset password: {str(e)}"}), 500
+                        return jsonify({"error": "Failed to reset password"}), 500
 
             except Exception as e:
                 logger.error(f"Reset password error: {e}")
                 return jsonify({"error": "Failed to reset password"}), 500
 
         @app.route('/api/profile', methods=['GET'])
+        @require_auth
         def api_get_profile():
             # - Get current user's profile
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
-                username = token_data.get("username")
+                username = request.token_data.get("username")
                 
                 if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager') and self.sql_auth.user_manager:
                     user_mgr = self.sql_auth.user_manager
@@ -1506,20 +1645,11 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to get profile"}), 500
 
         @app.route('/api/profile', methods=['PUT'])
+        @require_auth
         def api_update_profile():
             # - Update current user's profile (except username)
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
-                username = token_data.get("username")
+                username = request.token_data.get("username")
                 data = request.json
                 
                 if not data:
@@ -1551,20 +1681,11 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to update profile"}), 500
 
         @app.route('/api/profile/password', methods=['PUT'])
+        @require_auth
         def api_change_own_password():
             # - User changes their own password (requires current password)
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
-                username = token_data.get("username")
+                username = request.token_data.get("username")
                 data = request.json
                 
                 if not data:
@@ -1576,8 +1697,12 @@ class ServerManagerWebServer(ServerManagerModule):
                 if not current_password or not new_password:
                     return jsonify({"error": "Current and new passwords required"}), 400
 
-                if len(new_password) < 6:
-                    return jsonify({"error": "New password must be at least 6 characters"}), 400
+                if len(new_password) < 8:
+                    return jsonify({"error": "New password must be at least 8 characters"}), 400
+
+                is_valid, pwd_msg = InputValidator.validate_password(new_password)
+                if not is_valid:
+                    return jsonify({"error": pwd_msg}), 400
 
                 # Verify current password first
                 if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth:
@@ -1602,20 +1727,11 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to change password"}), 500
 
         @app.route('/api/profile/avatar', methods=['POST'])
+        @require_auth
         def api_upload_avatar():
             # - Upload user avatar (base64 encoded)
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
-                username = token_data.get("username")
+                username = request.token_data.get("username")
                 data = request.json
                 
                 if not data or 'avatar' not in data:
@@ -1641,21 +1757,9 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to upload avatar"}), 500
 
         @app.route('/api/system-settings', methods=['GET'])
+        @require_admin
         def api_get_system_settings():
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
-                if not safe_auth_call('is_admin', token_data["username"]):
-                    return jsonify({"error": "Admin privileges required"}), 403
-
                 # Return default settings for now
                 return jsonify({
                     "autoUpdate": False,
@@ -1667,27 +1771,15 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to get system settings"}), 500
 
         @app.route('/api/system-settings', methods=['POST'])
+        @require_admin
         def api_save_system_settings():
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
-                if not safe_auth_call('is_admin', token_data["username"]):
-                    return jsonify({"error": "Admin privileges required"}), 403
-
                 data = request.json
                 if not data:
                     return jsonify({"error": "No data provided"}), 400
 
                 # For now, just return success - settings would be saved to database/config in a real implementation
-                logger.info(f"System settings update requested by {token_data['username']}: {data}")
+                logger.info(f"System settings update requested by {request.token_data['username']}: {data}")
                 return jsonify({"message": "Settings saved successfully"})
 
             except Exception as e:
@@ -1695,18 +1787,9 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to save system settings"}), 500
 
         @app.route('/api/settings', methods=['GET'])
+        @require_auth
         def api_get_settings():
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
                 return jsonify({
                     "autoUpdate": True,
                     "backupSchedule": 24,
@@ -1717,6 +1800,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to get settings"}), 500
 
         @app.route('/api/cluster/role', methods=['GET'])
+        @require_auth
         def api_cluster_role():
             return jsonify({
                 "role": self.host_type,
@@ -1724,6 +1808,7 @@ class ServerManagerWebServer(ServerManagerModule):
             })
 
         @app.route('/api/tracker/dashboards', methods=['GET'])
+        @require_auth
         def api_tracker_dashboards():
             try:
                 if self.tracker is None or not hasattr(self.tracker, 'get_dashboards'):
@@ -1734,16 +1819,9 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Dashboard tracker not available"}), 500
 
         @app.route('/api/tracker/servers', methods=['GET', 'POST', 'DELETE', 'PATCH'])
+        @require_auth
         def api_tracker_servers():
             try:
-                auth_header = request.headers.get('Authorization')
-                if not auth_header or not auth_header.startswith('Bearer '):
-                    return jsonify({"error": "Authentication required"}), 401
-                token = auth_header.split(' ')[1]
-                token_data = safe_auth_call('verify_token', token)
-                if not token_data:
-                    return jsonify({"error": "Invalid or expired token"}), 401
-
                 if request.method == 'GET':
                     if self.tracker is None or not hasattr(self.tracker, 'get_servers'):
                         return jsonify({"error": "Tracker not available"}), 500
@@ -1757,16 +1835,28 @@ class ServerManagerWebServer(ServerManagerModule):
                     config = data
                     if not name or not isinstance(name, str):
                         return jsonify({"error": "Missing or invalid server name"}), 400
-                    servers_dir = self.paths["servers"]
-                    os.makedirs(servers_dir, exist_ok=True)
-                    config_file = os.path.join(servers_dir, f"{name}.json")
-                    if os.path.exists(config_file):
-                        return jsonify({"error": "Server already exists"}), 409
-                    with open(config_file, 'w') as f:
-                        json.dump(config, f, indent=4)
-                    if self.tracker and hasattr(self.tracker, 'refresh'):
-                        self.tracker.refresh()
-                    return jsonify({"success": True})
+                    
+                    # Use database instead of JSON files
+                    try:
+                        from Modules.Database.server_configs_database import ServerConfigManager
+                        manager = ServerConfigManager()
+                        
+                        # Check if server already exists
+                        existing = manager.get_server(name)
+                        if existing:
+                            return jsonify({"error": "Server already exists"}), 409
+                        
+                        # Save to database
+                        result = manager.update_server(name, config)
+                        if not result:
+                            return jsonify({"error": "Failed to save server config"}), 500
+                            
+                        if self.tracker and hasattr(self.tracker, 'refresh'):
+                            self.tracker.refresh()
+                        return jsonify({"success": True})
+                    except Exception as db_err:
+                        logger.error(f"Database error creating server: {db_err}")
+                        return jsonify({"error": "Failed to create server configuration"}), 500
 
                 if request.method == 'DELETE':
                     data = request.json
@@ -1775,14 +1865,28 @@ class ServerManagerWebServer(ServerManagerModule):
                     name = data.get("Name")
                     if not name or not isinstance(name, str):
                         return jsonify({"error": "Missing or invalid server name"}), 400
-                    servers_dir = self.paths["servers"]
-                    config_file = os.path.join(servers_dir, f"{name}.json")
-                    if not os.path.exists(config_file):
-                        return jsonify({"error": "Server not found"}), 404
-                    os.remove(config_file)
-                    if self.tracker and hasattr(self.tracker, 'refresh'):
-                        self.tracker.refresh()
-                    return jsonify({"success": True})
+                    
+                    # Use database instead of JSON files
+                    try:
+                        from Modules.Database.server_configs_database import ServerConfigManager
+                        manager = ServerConfigManager()
+                        
+                        # Check if server exists
+                        existing = manager.get_server(name)
+                        if not existing:
+                            return jsonify({"error": "Server not found"}), 404
+                        
+                        # Delete from database
+                        result = manager.delete_server(name)
+                        if not result:
+                            return jsonify({"error": "Failed to delete server"}), 500
+                            
+                        if self.tracker and hasattr(self.tracker, 'refresh'):
+                            self.tracker.refresh()
+                        return jsonify({"success": True})
+                    except Exception as db_err:
+                        logger.error(f"Database error deleting server: {db_err}")
+                        return jsonify({"error": "Failed to delete server"}), 500
 
                 if request.method == 'PATCH':
                     data = request.json
@@ -1792,25 +1896,37 @@ class ServerManagerWebServer(ServerManagerModule):
                     action = data.get("Action")
                     if not name or not action or not isinstance(name, str) or not isinstance(action, str):
                         return jsonify({"error": "Missing or invalid server name or action"}), 400
-                    servers_dir = self.paths["servers"]
-                    config_file = os.path.join(servers_dir, f"{name}.json")
-                    if not os.path.exists(config_file):
-                        return jsonify({"error": "Server not found"}), 404
-                    with open(config_file, 'r') as f:
-                        config = json.load(f)
-                    if action == "start":
-                        config["Status"] = "Running"
-                    elif action == "stop":
-                        config["Status"] = "Stopped"
-                    elif action == "restart":
-                        config["Status"] = "Restarting"
-                    else:
-                        return jsonify({"error": "Unknown action"}), 400
-                    with open(config_file, 'w') as f:
-                        json.dump(config, f, indent=4)
-                    if self.tracker and hasattr(self.tracker, 'refresh'):
-                        self.tracker.refresh()
-                    return jsonify({"success": True, "status": config["Status"]})
+                    
+                    # Use database instead of JSON files
+                    try:
+                        from Modules.Database.server_configs_database import ServerConfigManager
+                        manager = ServerConfigManager()
+                        
+                        # Get server config from database
+                        config = manager.get_server(name)
+                        if not config:
+                            return jsonify({"error": "Server not found"}), 404
+                        
+                        if action == "start":
+                            config["Status"] = "Running"
+                        elif action == "stop":
+                            config["Status"] = "Stopped"
+                        elif action == "restart":
+                            config["Status"] = "Restarting"
+                        else:
+                            return jsonify({"error": "Unknown action"}), 400
+                        
+                        # Save updated config
+                        result = manager.update_server(name, config)
+                        if not result:
+                            return jsonify({"error": "Failed to update server"}), 500
+                            
+                        if self.tracker and hasattr(self.tracker, 'refresh'):
+                            self.tracker.refresh()
+                        return jsonify({"success": True, "status": config["Status"]})
+                    except Exception as db_err:
+                        logger.error(f"Database error updating server: {db_err}")
+                        return jsonify({"error": "Failed to update server"}), 500
 
                 return jsonify({"error": "Unsupported method"}), 405
             except Exception as e:
@@ -1819,11 +1935,14 @@ class ServerManagerWebServer(ServerManagerModule):
 
         # Analytics API routes
         @app.route('/api/analytics/metrics', methods=['GET'])
+        @require_auth
         def api_analytics_metrics():
             # Get current system and server metrics
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
+                
+                assert self.analytics is not None  # For type checker
                     
                 format_type = request.args.get('format', 'json')
                 
@@ -1839,11 +1958,14 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to get metrics"}), 500
 
         @app.route('/api/analytics/metrics/<metric_name>', methods=['GET'])
+        @require_auth
         def api_analytics_metric_history(metric_name):
             # Get historical data for a specific metric
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
+                
+                assert self.analytics is not None  # For type checker
                     
                 hours = request.args.get('hours', 24, type=int)
                 history = self.analytics.get_metric_history(metric_name, hours)
@@ -1859,11 +1981,14 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to get metric history"}), 500
 
         @app.route('/api/analytics/servers', methods=['GET'])
+        @require_auth
         def api_analytics_servers():
             # Get server summary with performance metrics
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
+                
+                assert self.analytics is not None  # For type checker
                     
                 return jsonify(self.analytics.get_server_summary())
                 
@@ -1872,11 +1997,14 @@ class ServerManagerWebServer(ServerManagerModule):
                 return jsonify({"error": "Failed to get server analytics"}), 500
 
         @app.route('/api/analytics/health', methods=['GET'])
+        @require_auth
         def api_analytics_health():
             # Get overall system health metrics
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
+                
+                assert self.analytics is not None  # For type checker
                     
                 return jsonify(self.analytics.get_system_health())
                 
@@ -1884,13 +2012,15 @@ class ServerManagerWebServer(ServerManagerModule):
                 logger.error(f"Analytics health error: {e}")
                 return jsonify({"error": "Failed to get system health"}), 500
 
-        @limit_decorator("10 per minute")
         @app.route('/api/analytics/snmp', methods=['GET'])
+        @require_auth
         def api_analytics_snmp():
             # SNMP-compatible metrics endpoint
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
+                
+                assert self.analytics is not None  # For type checker
                     
                 # Return SNMP-formatted metrics
                 snmp_metrics = self.analytics.get_snmp_metrics()
@@ -1912,17 +2042,20 @@ class ServerManagerWebServer(ServerManagerModule):
 
         # Prometheus metrics endpoint (commonly used path)
         @app.route('/metrics', methods=['GET'])
+        @require_auth
         def prometheus_metrics():
             # Standard Prometheus metrics endpoint
             try:
                 if not self.analytics:
                     return "# Analytics not available\n", 503, {'Content-Type': 'text/plain'}
+                
+                assert self.analytics is not None  # For type checker
                     
                 return self.analytics.get_prometheus_metrics(), 200, {'Content-Type': 'text/plain'}
                 
             except Exception as e:
                 logger.error(f"Prometheus metrics error: {e}")
-                return f"# Error: {str(e)}\n", 500, {'Content-Type': 'text/plain'}
+                return "# Error collecting metrics\n", 500, {'Content-Type': 'text/plain'}
 
         @app.errorhandler(404)
         def page_not_found(e):
@@ -1984,10 +2117,7 @@ class ServerManagerWebServer(ServerManagerModule):
             # Start cluster API server in a separate thread if cluster is enabled
             cluster_thread = None
             try:
-                from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-                key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-                host_type = winreg.QueryValueEx(key, "HostType")[0]
-                winreg.CloseKey(key)
+                host_type = get_host_type()
                 
                 if host_type == "Host":
                     logger.debug("Starting cluster API server on port 5001")
@@ -2002,32 +2132,16 @@ class ServerManagerWebServer(ServerManagerModule):
                 import traceback
                 logger.error(f"Cluster API startup traceback: {traceback.format_exc()}")
             
-            # Security-first host binding
             # Default to localhost only for security
-            default_host = "127.0.0.1"  # Secure default - localhost only
+            default_host = "127.0.0.1"
             
             # Load security configuration from database (TODO: implement security_config table)
             security_config = None
-            # try:
-            #     config_path = os.path.join(self.server_manager_dir or "", "config", "security_config.json")
-            #     if os.path.exists(config_path):
-            #         with open(config_path, 'r') as f:
-            #             security_config = json.load(f)
-            #             logger.info("Loaded security configuration from file")
-            # except Exception as e:
-            #     logger.debug(f"Could not load security config file: {e}")
-            
+
             # Check if this is a cluster host that needs external access
             try:
-                # Import registry constants
-                from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-                key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-                host_type = winreg.QueryValueEx(key, "HostType")[0]
-                try:
-                    cluster_enabled = winreg.QueryValueEx(key, "ClusterEnabled")[0] == "true"
-                except Exception:
-                    cluster_enabled = False
-                winreg.CloseKey(key)
+                host_type = get_host_type()
+                cluster_enabled = is_cluster_enabled()
                 
                 # Override with security config if available
                 if security_config:
@@ -2070,18 +2184,21 @@ class ServerManagerWebServer(ServerManagerModule):
             }
             
             # Add SSL configuration if enabled
-            if os.getenv("SSL_ENABLED", "false").lower() == "true":
-                cert_path = os.getenv("SSL_CERT_PATH")
-                key_path = os.getenv("SSL_KEY_PATH")
-                if cert_path and key_path and os.path.exists(cert_path) and os.path.exists(key_path):
-                    server_args.update({
-                        'ssl_cert': cert_path,
-                        'ssl_key': key_path
-                    })
-                    logger.debug(f"SSL enabled with certificate and key files on {host}:{self.web_port}")
-                else:
-                    logger.warning("SSL enabled but certificate or key file missing/invalid - falling back to HTTP")
-                    logger.debug(f"SSL disabled - running HTTP only on {host}:{self.web_port}")
+            ssl_cert_path = os.path.join(self.paths["root"], "ssl", "server.crt")
+            ssl_key_path = os.path.join(self.paths["root"], "ssl", "server.key")
+            ssl_enabled = os.path.exists(ssl_cert_path) and os.path.exists(ssl_key_path)
+            
+            if ssl_enabled:
+                logger.info(f"SSL enabled with certificate and key files on {host}:{self.web_port}")
+                
+                # Start HTTP redirect server on port 8081
+                redirect_thread = threading.Thread(
+                    target=self._run_http_redirect_server,
+                    args=(host, 8081, self.web_port),
+                    daemon=True
+                )
+                redirect_thread.start()
+                logger.info(f"HTTP redirect server started on port 8081 -> HTTPS port {self.web_port}")
             else:
                 logger.debug(f"SSL disabled - running HTTP only on {host}:{self.web_port}")
             
@@ -2089,8 +2206,27 @@ class ServerManagerWebServer(ServerManagerModule):
                 logger.error("Flask app not initialised - cannot start server")
                 return False
                 
-            serve(self.app, **server_args)
-            return True
+            # Start console monitoring for HTTPS/secured consoles
+            self._start_console_monitoring()
+            
+            if ssl_enabled:
+                logger.info(f"Starting HTTPS server on {host}:{self.web_port}")
+                # Use Waitress with SSL instead of Flask dev server for production
+                import ssl as ssl_module
+                ssl_context = ssl_module.SSLContext(ssl_module.PROTOCOL_TLS_SERVER)
+                ssl_context.minimum_version = ssl_module.TLSVersion.TLSv1_2
+                ssl_context.load_cert_chain(ssl_cert_path, ssl_key_path)
+                # Disable weak ciphers
+                ssl_context.set_ciphers('ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS:!RC4')
+                
+                from waitress import create_server
+                server = create_server(self.app, host=host, port=self.web_port, threads=8)
+                server.socket = ssl_context.wrap_socket(server.socket, server_side=True)
+                logger.info(f"HTTPS server ready (TLS 1.2+, Waitress WSGI)")
+                server.run()
+            else:
+                logger.debug(f"Starting HTTP server on {host}:{self.web_port}")
+                serve(self.app, host=host, port=self.web_port, threads=8)
         except KeyboardInterrupt:
             logger.info("Web server stopping due to keyboard interrupt")
             self.cleanup()
@@ -2109,7 +2245,6 @@ class ServerManagerWebServer(ServerManagerModule):
             import socketserver
             import urllib.request
             import urllib.parse
-            import json
             
             class ClusterAPIProxy(http.server.BaseHTTPRequestHandler):
                 def log_message(self, format, *args):
@@ -2175,7 +2310,7 @@ class ServerManagerWebServer(ServerManagerModule):
                             
                     except Exception as e:
                         logger.error(f"Cluster proxy error: {e}")
-                        self.send_error(502, f"Bad Gateway: {str(e)}")
+                        self.send_error(502, "Bad Gateway")
             
             # Start the proxy server on port 5001
             with socketserver.TCPServer(("0.0.0.0", 5001), ClusterAPIProxy) as httpd:
@@ -2187,9 +2322,275 @@ class ServerManagerWebServer(ServerManagerModule):
             import traceback
             logger.error(f"Cluster proxy server traceback: {traceback.format_exc()}")
 
+    def _run_http_redirect_server(self, host, redirect_port, https_port):
+        # Run a simple HTTP server that redirects all requests to HTTPS
+        try:
+            from http.server import HTTPServer, BaseHTTPRequestHandler
+            
+            class RedirectHandler(BaseHTTPRequestHandler):
+                def __init__(self, https_port, *args, **kwargs):
+                    self.https_port = https_port
+                    super().__init__(*args, **kwargs)
+                
+                def do_GET(self):
+                    self.redirect_to_https()
+                
+                def do_POST(self):
+                    self.redirect_to_https()
+                
+                def do_PUT(self):
+                    self.redirect_to_https()
+                
+                def do_DELETE(self):
+                    self.redirect_to_https()
+                
+                def do_HEAD(self):
+                    self.redirect_to_https()
+                
+                def redirect_to_https(self):
+                    # Build HTTPS URL
+                    https_url = f"https://{self.headers.get('Host', f'localhost:{self.https_port}')}{self.path}"
+                    if ':' in self.headers.get('Host', ''):
+                        host_part = self.headers['Host'].split(':')[0]
+                        https_url = f"https://{host_part}:{self.https_port}{self.path}"
+                    
+                    self.send_response(301)
+                    self.send_header('Location', https_url)
+                    self.send_header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+                    self.end_headers()
+                    
+                    logger.debug(f"Redirected HTTP request to: {https_url}")
+                
+                def log_message(self, format, *args):
+                    # Suppress default HTTP server logging
+                    return
+            
+            # Try to bind to the redirect port
+            try:
+                server = HTTPServer((host, redirect_port), lambda *args: RedirectHandler(https_port, *args))
+                logger.info(f"HTTP redirect server listening on {host}:{redirect_port}")
+                server.serve_forever()
+            except OSError as e:
+                if e.errno == 98:  # Address already in use
+                    logger.warning(f"Port {redirect_port} already in use, skipping HTTP redirect server")
+                else:
+                    logger.error(f"Failed to start HTTP redirect server on port {redirect_port}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"HTTP redirect server error: {e}")
+            import traceback
+            logger.error(f"HTTP redirect server traceback: {traceback.format_exc()}")
+
+    def _start_console_monitoring(self):
+        # Start background console monitoring for HTTPS/secured consoles
+        try:
+            if self.console_monitor_thread and self.console_monitor_thread.is_alive():
+                return  # Already running
+            
+            self.console_monitor_active = True
+            self.console_monitor_thread = threading.Thread(
+                target=self._console_monitor_loop,
+                daemon=True,
+                name="WebServer-ConsoleMonitor"
+            )
+            self.console_monitor_thread.start()
+            logger.info("Started HTTPS console monitoring thread")
+        except Exception as e:
+            logger.error(f"Error starting console monitoring: {e}")
+    
+    def _console_monitor_loop(self):
+        # Monitor console log files and update state files
+        try:
+            while self.console_monitor_active:
+                try:
+                    self._update_console_states()
+                    time.sleep(1.0)  # Check every second
+                except Exception as e:
+                    logger.debug(f"Console monitor error: {e}")
+                    time.sleep(5)
+        except Exception as e:
+            logger.error(f"Fatal console monitor error: {e}")
+    
+    def _update_console_states(self):
+        # Update console state files for all running servers
+        try:
+            if not self.server_manager:
+                return
+            
+            # Get all servers
+            try:
+                servers = self.server_manager.get_all_servers()
+            except Exception as e:
+                logger.debug(f"Could not get servers for console monitoring: {e}")
+                return
+            
+            for server_name, server_config in servers.items():
+                try:
+                    self._update_server_console_state(server_name, server_config)
+                except Exception as e:
+                    logger.debug(f"Error updating console state for {server_name}: {e}")
+                    
+        except Exception as e:
+            logger.debug(f"Error in console state update: {e}")
+    
+    def _update_server_console_state(self, server_name, server_config):
+        # Update console state for a specific server
+        try:
+            # Check if server is running
+            pid = server_config.get('ProcessId') or server_config.get('PID')
+            if not pid:
+                return
+            
+            # Check if process is still running
+            try:
+                import psutil
+                if not psutil.pid_exists(pid):
+                    return
+                process = psutil.Process(pid)
+                if not process.is_running():
+                    return
+            except Exception:
+                return
+            
+            # Get log files
+            log_files = self._discover_server_log_files(server_name, server_config)
+            if not log_files:
+                return
+
+            # Read new output from log files - batch file operations for efficiency
+            new_output = []
+            files_to_read = []
+
+            # First pass: identify files that need reading
+            for log_file in log_files:
+                try:
+                    current_size = os.path.getsize(log_file)
+                    last_pos = self.console_log_positions.get(server_name, {}).get(log_file, 0)
+
+                    if current_size > last_pos:
+                        files_to_read.append((log_file, current_size, last_pos))
+                except Exception as e:
+                    logger.debug(f"Error checking log file {log_file} for {server_name}: {e}")
+
+            # Second pass: read the files that have new content
+            for log_file, current_size, last_pos in files_to_read:
+                try:
+                    with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                        f.seek(last_pos)
+                        content = f.read()
+
+                        if content:
+                            lines = content.splitlines()
+                            for line in lines:
+                                line = line.strip()
+                                if line and not self._is_old_console_entry(line):
+                                    new_output.append({
+                                        'text': line,
+                                        'type': 'stdout',
+                                        'timestamp': datetime.datetime.now().strftime("%H:%M:%S")
+                                    })
+
+                    # Update position
+                    self.console_log_positions.setdefault(server_name, {})[log_file] = current_size
+
+                except Exception as e:
+                    logger.debug(f"Error reading log file {log_file} for {server_name}: {e}")
+
+            # Update state file if we have new output
+            if new_output:
+                self._append_to_console_state(server_name, new_output)
+                
+        except Exception as e:
+            logger.debug(f"Error updating console state for {server_name}: {e}")
+    
+    def _discover_server_log_files(self, server_name, server_config):
+        # Discover log files for a server
+        try:
+            log_files = []
+            
+            # Add configured log files
+            stdout_log = server_config.get('LogStdout')
+            stderr_log = server_config.get('LogStderr')
+            
+            if stdout_log and os.path.exists(stdout_log):
+                log_files.append(stdout_log)
+            if stderr_log and os.path.exists(stderr_log) and stderr_log != stdout_log:
+                log_files.append(stderr_log)
+            
+            # Discover additional log files
+            install_dir = server_config.get('InstallDir', '')
+            if install_dir and os.path.exists(install_dir):
+                for pattern in ['*.log', '*.txt', 'logs/*.log', 'logs/*.txt']:
+                    full_pattern = os.path.join(install_dir, pattern)
+                    for log_file in glob.glob(full_pattern):
+                        if log_file not in log_files:
+                            log_files.append(log_file)
+            
+            return log_files
+        except Exception as e:
+            logger.debug(f"Error discovering log files for {server_name}: {e}")
+            return []
+    
+    def _is_old_console_entry(self, line):
+        # Check if a log entry should be skipped
+        try:
+            skip_patterns = [
+                '--- Server started at',
+                'Command:',
+                'Setting breakpad',
+                'SteamInternal_',
+                'Looking up breakpad',
+                'Calling BreakpadMiniDumpSystemInit',
+                'Using breakpad'
+            ]
+            return any(pattern in line for pattern in skip_patterns)
+        except Exception:
+            return False
+    
+    def _append_to_console_state(self, server_name, new_output):
+        # Append new output to console state in database
+        try:
+            # Try database first
+            try:
+                from Modules.Database.console_database import save_console_state_db, load_console_state_db
+
+                # Load existing state
+                existing_output, command_history = load_console_state_db(server_name)
+                if existing_output is None:
+                    existing_output = []
+
+                # Append new output
+                existing_output.extend(new_output)
+
+                # Keep only last 2000 entries
+                if len(existing_output) > 2000:
+                    existing_output = existing_output[-2000:]
+
+                # Save updated state
+                save_console_state_db(
+                    server_name=server_name,
+                    output_buffer=existing_output,
+                    command_history=command_history or [],
+                    is_active=True
+                )
+                return
+            except ImportError:
+                logger.warning("Console database not available, cannot append to console state")
+
+        except Exception as e:
+            logger.debug(f"Error appending to console state for {self.server_name}: {e}")
+
     def cleanup(self):
         # Cleanup resources when shutting down
         try:
+            # Stop console monitoring
+            self.console_monitor_active = False
+            if self.console_monitor_thread and self.console_monitor_thread.is_alive():
+                logger.info("Stopping console monitoring thread...")
+                self.console_monitor_thread.join(timeout=5)
+                if self.console_monitor_thread.is_alive():
+                    logger.warning("Console monitoring thread did not stop gracefully")
+            
             # Update cluster status for shutdown
             self.shutdown_cluster_status()
             
@@ -2240,14 +2641,15 @@ class ServerManagerWebServer(ServerManagerModule):
     def start_host_heartbeat(self):
         # Start the host heartbeat thread to maintain cluster status
         def heartbeat_worker():
-            while True:
+            shutdown = getattr(self, '_shutdown_event', threading.Event())
+            while not shutdown.is_set():
                 try:
                     if hasattr(self, 'cluster_db') and self.cluster_db:
                         self.cluster_db.heartbeat()
-                    time.sleep(30)  # Heartbeat every 30 seconds
+                    shutdown.wait(30)  # Heartbeat every 30 seconds (interruptible)
                 except Exception as e:
                     logger.error(f"Host heartbeat error: {e}")
-                    time.sleep(60)  # Wait longer on error
+                    shutdown.wait(60)  # Wait longer on error (interruptible)
         
         heartbeat_thread = threading.Thread(target=heartbeat_worker, daemon=True)
         heartbeat_thread.start()
@@ -2267,22 +2669,8 @@ class ServerManagerWebServer(ServerManagerModule):
         except Exception as e:
             logger.error(f"Failed to update cluster status on shutdown: {e}")
 
-def is_admin():
-    try:
-        import ctypes
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except:
-        return False
-
 def main():
     try:
-        # Ensure proper path setup for subprocess execution
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        server_manager_dir = os.path.dirname(script_dir)
-        if server_manager_dir not in sys.path:
-            sys.path.insert(0, server_manager_dir)
-            logger.info(f"Added to Python path: {server_manager_dir}")
-        
         if not is_admin():
             logger.warning("Not running with administrator privileges. Some features may be limited.")
         if get_user_engine and ensure_root_admin:

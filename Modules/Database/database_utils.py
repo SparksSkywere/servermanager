@@ -3,57 +3,49 @@ import os
 import sys
 import winreg
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+import logging
 
+# Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from Modules.common import setup_module_path
+setup_module_path()
 
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("DatabaseUtils")
-except Exception:
-    import logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("DatabaseUtils")
+from Modules.server_logging import get_component_logger
+
+logger: logging.Logger = get_component_logger("DatabaseUtils")
 
 def get_sql_config_from_registry(db_type="user"):
     # SQL config from registry for user/steam/minecraft databases
     try:
-        from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
+        from Modules.common import REGISTRY_PATH, get_server_manager_dir, get_registry_value, get_registry_values
 
-        try:
-            sql_type = winreg.QueryValueEx(key, "SQLType")[0]
-        except:
-            sql_type = "SQLite"  # Default
+        sql_type = get_registry_value(REGISTRY_PATH, "SQLType", "SQLite")
 
         # Database path based on type
         if sql_type.lower() == "sqlite":
             if db_type == "user":
-                try:
-                    db_path = winreg.QueryValueEx(key, "UsersSQLDatabasePath")[0]
-                except:
+                db_path = get_registry_value(REGISTRY_PATH, "UsersSQLDatabasePath", None)
+                if not db_path:
                     try:
-                        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
+                        server_manager_dir = get_server_manager_dir()
                         db_path = os.path.join(server_manager_dir, "db", "servermanager_users.db")
-                    except:
+                    except Exception:
                         db_path = "servermanager_users.db"
             elif db_type == "steam":
-                try:
-                    db_path = winreg.QueryValueEx(key, "SteamSQLDatabasePath")[0]
-                except:
+                db_path = get_registry_value(REGISTRY_PATH, "SteamSQLDatabasePath", None)
+                if not db_path:
                     try:
-                        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
+                        server_manager_dir = get_server_manager_dir()
                         db_path = os.path.join(server_manager_dir, "db", "steam_ID.db")
-                    except:
+                    except Exception:
                         db_path = "steam_ID.db"
             elif db_type == "minecraft":
-                try:
-                    db_path = winreg.QueryValueEx(key, "MinecraftSQLDatabasePath")[0]
-                except:
+                db_path = get_registry_value(REGISTRY_PATH, "MinecraftSQLDatabasePath", None)
+                if not db_path:
                     try:
-                        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
+                        server_manager_dir = get_server_manager_dir()
                         db_path = os.path.join(server_manager_dir, "db", "minecraft_ID.db")
-                    except:
+                    except Exception:
                         db_path = "minecraft_ID.db"
             else:
                 db_path = f"{db_type}.db"
@@ -65,33 +57,24 @@ def get_sql_config_from_registry(db_type="user"):
         else:
             # For other SQL types (MySQL, PostgreSQL, etc.)
             if db_type == "user":
-                try:
-                    db_name = winreg.QueryValueEx(key, "UsersSQLDatabase")[0]
-                except:
-                    db_name = "servermanager_users"
+                db_name = get_registry_value(REGISTRY_PATH, "UsersSQLDatabase", "servermanager_users")
             elif db_type == "steam":
-                try:
-                    db_name = winreg.QueryValueEx(key, "SteamSQLDatabase")[0]
-                except:
-                    db_name = "steam_apps"
+                db_name = get_registry_value(REGISTRY_PATH, "SteamSQLDatabase", "steam_apps")
             elif db_type == "minecraft":
-                try:
-                    db_name = winreg.QueryValueEx(key, "MinecraftSQLDatabase")[0]
-                except:
-                    db_name = "minecraft_servers"
+                db_name = get_registry_value(REGISTRY_PATH, "MinecraftSQLDatabase", "minecraft_servers")
             else:
                 db_name = db_type
 
+            sql_conn = get_registry_values(REGISTRY_PATH, ["SQLHost", "SQLPort", "SQLUsername", "SQLPassword"])
             config = {
                 "type": sql_type.lower(),
-                "host": winreg.QueryValueEx(key, "SQLHost")[0],
-                "port": winreg.QueryValueEx(key, "SQLPort")[0],
+                "host": sql_conn["SQLHost"],
+                "port": sql_conn["SQLPort"],
                 "database": db_name,
-                "username": winreg.QueryValueEx(key, "SQLUsername")[0],
-                "password": winreg.QueryValueEx(key, "SQLPassword")[0]
+                "username": sql_conn["SQLUsername"],
+                "password": sql_conn["SQLPassword"]
             }
 
-        winreg.CloseKey(key)
         return config
 
     except Exception as e:

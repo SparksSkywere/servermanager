@@ -1,16 +1,14 @@
 # Cluster management
-import os
-import sys
 import winreg
 from datetime import datetime
 import requests
+import logging
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from Modules.common import REGISTRY_ROOT, REGISTRY_PATH, setup_module_logging
+from Modules.common import setup_module_path, REGISTRY_ROOT, REGISTRY_PATH, setup_module_logging, get_registry_value, set_registry_value
+setup_module_path()
 from Modules.Database.cluster_database import get_cluster_database
 
-logger = setup_module_logging("SimpleCluster")
+logger: logging.Logger = setup_module_logging("SimpleCluster")
 
 class SimpleClusterManager:
     # - Basic clustering like Hyper-V
@@ -29,25 +27,13 @@ class SimpleClusterManager:
         
     def get_host_type(self):
         # Host = master, Subhost = node
-        try:
-            key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-            host_type = winreg.QueryValueEx(key, "HostType")[0]
-            winreg.CloseKey(key)
-            return host_type
-        except:
-            return "Host"
+        return get_registry_value(REGISTRY_PATH, "HostType", "Host")
     
     def get_master_ip(self):
         # Get master IP (None if we are master)
         if self.is_master:
             return None
-        try:
-            key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-            master_ip = winreg.QueryValueEx(key, "HostAddress")[0]
-            winreg.CloseKey(key)
-            return master_ip
-        except:
-            return None
+        return get_registry_value(REGISTRY_PATH, "HostAddress", None)
     
     def load_or_create_cluster(self):
         # Load cluster config from DB or registry
@@ -59,14 +45,10 @@ class SimpleClusterManager:
                     return
                     
             # Fallback to registry check
-            key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-            try:
-                winreg.QueryValueEx(key, "ClusterCreated")[0]
+            cluster_created = get_registry_value(REGISTRY_PATH, "ClusterCreated", None)
+            if cluster_created:
                 logger.info(f"Cluster already configured ({'Master' if self.is_master else 'Node'})")
-            except:
-                pass
-            winreg.CloseKey(key)
-        except:
+        except (FileNotFoundError, OSError):
             if self.is_master:
                 self.create_cluster()
             else:
@@ -92,9 +74,7 @@ class SimpleClusterManager:
                     logger.warning("Failed to create cluster in database, using registry fallback")
             
             # Also store in registry for backward compatibility
-            key = winreg.CreateKeyEx(REGISTRY_ROOT, REGISTRY_PATH)
-            winreg.SetValueEx(key, "ClusterCreated", 0, winreg.REG_SZ, datetime.now().isoformat())
-            winreg.CloseKey(key)
+            set_registry_value(REGISTRY_PATH, "ClusterCreated", datetime.now().isoformat())
             
             logger.info("New cluster created successfully")
             return True
@@ -115,7 +95,7 @@ class SimpleClusterManager:
             hostname = socket.gethostname()
             try:
                 local_ip = socket.gethostbyname(hostname)
-            except:
+            except socket.gaierror:
                 local_ip = "127.0.0.1"
             
             machine_info = {
@@ -144,9 +124,7 @@ class SimpleClusterManager:
                         # Store the join token for later approval checking
                         join_token = result.get("join_token")
                         if join_token:
-                            key = winreg.CreateKeyEx(REGISTRY_ROOT, REGISTRY_PATH)
-                            winreg.SetValueEx(key, "JoinToken", 0, winreg.REG_SZ, join_token)
-                            winreg.CloseKey(key)
+                            set_registry_value(REGISTRY_PATH, "JoinToken", join_token)
                         
                         # Store in database if available
                         if self.cluster_db:
@@ -159,10 +137,8 @@ class SimpleClusterManager:
                                 logger.info(f"Cluster config stored in database")
                         
                         # Store in registry for backward compatibility
-                        key = winreg.CreateKeyEx(REGISTRY_ROOT, REGISTRY_PATH)
-                        winreg.SetValueEx(key, "HostAddress", 0, winreg.REG_SZ, master_ip)
-                        winreg.SetValueEx(key, "JoinedCluster", 0, winreg.REG_SZ, datetime.now().isoformat())
-                        winreg.CloseKey(key)
+                        set_registry_value(REGISTRY_PATH, "HostAddress", master_ip)
+                        set_registry_value(REGISTRY_PATH, "JoinedCluster", datetime.now().isoformat())
                         
                         return True
                     else:
@@ -254,31 +230,17 @@ class SimpleClusterManager:
     
     def get_join_token(self):
         # Get the join token from registry
-        try:
-            key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-            token, _ = winreg.QueryValueEx(key, "JoinToken")
-            winreg.CloseKey(key)
-            return token
-        except:
-            return None
+        return get_registry_value(REGISTRY_PATH, "JoinToken", None)
     
     def set_cluster_status(self, status):
         # Set cluster status in registry
-        try:
-            key = winreg.CreateKeyEx(REGISTRY_ROOT, REGISTRY_PATH)
-            winreg.SetValueEx(key, "ClusterStatus", 0, winreg.REG_SZ, status)
-            winreg.CloseKey(key)
-        except Exception as e:
-            logger.error(f"Error setting cluster status: {e}")
+        if not set_registry_value(REGISTRY_PATH, "ClusterStatus", status):
+            logger.error(f"Error setting cluster status")
     
     def set_master_ip(self, ip):
         # Set master IP in registry
-        try:
-            key = winreg.CreateKeyEx(REGISTRY_ROOT, REGISTRY_PATH)
-            winreg.SetValueEx(key, "HostAddress", 0, winreg.REG_SZ, ip)
-            winreg.CloseKey(key)
-        except Exception as e:
-            logger.error(f"Error setting master IP: {e}")
+        if not set_registry_value(REGISTRY_PATH, "HostAddress", ip):
+            logger.error(f"Error setting master IP")
     
     def get_cluster_status(self):
         # Get current cluster status

@@ -1,15 +1,10 @@
-# Mail server module
-# - SMTP with Gmail, Outlook, custom providers
-# - OAuth 2.0 for MS Exchange with 2FA
+# Mail server module - SMTP with Gmail, Outlook, custom providers, OAuth 2.0 for MS Exchange with 2FA
 import os
-import sys
 import smtplib
-import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-import logging
 import json
 import time
 import webbrowser
@@ -18,14 +13,11 @@ import socketserver
 from urllib.parse import parse_qs, urlparse
 import threading
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from Modules.common import setup_module_path, get_base_url
+setup_module_path()
 
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("MailServer")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("MailServer")
+from Modules.server_logging import get_component_logger
+logger = get_component_logger("MailServer")
 
 # OAuth libs
 try:
@@ -76,15 +68,18 @@ class MailServer:
         }
     }
 
-    # Microsoft OAuth configuration
-    MICROSOFT_OAUTH_CONFIG = {
-        'client_id': 'your-client-id-here',  # Will be configured by user
-        'client_secret': 'your-client-secret-here',  # Will be configured by user
-        'authority': 'https://login.microsoftonline.com/common',
-        'scope': ['https://graph.microsoft.com/Mail.Send', 'https://graph.microsoft.com/Mail.ReadWrite'],
-        'redirect_uri': 'http://localhost:8080/callback',
-        'graph_endpoint': 'https://graph.microsoft.com/v1.0'
-    }
+    @property
+    def MICROSOFT_OAUTH_CONFIG(self):
+        # Microsoft OAuth configuration with dynamic redirect URI
+        web_port = self.config.get('web_port', 8080)
+        return {
+            'client_id': 'your-client-id-here',  # Will be configured by user
+            'client_secret': 'your-client-secret-here',  # Will be configured by user
+            'authority': 'https://login.microsoftonline.com/common',
+            'scope': ['https://graph.microsoft.com/Mail.Send', 'https://graph.microsoft.com/Mail.ReadWrite'],
+            'redirect_uri': f"{get_base_url(port=web_port)}/callback",
+            'graph_endpoint': 'https://graph.microsoft.com/v1.0'
+        }
 
     def __init__(self, config=None):
         # Initialise mail server with configuration
@@ -324,7 +319,7 @@ class MailServer:
 
         try:
             with socketserver.TCPServer(("", port), OAuthCallbackHandler) as httpd:
-                print(f"Waiting for authentication callback on http://localhost:{port}/callback...")
+                print(f"Waiting for authentication callback on {get_base_url(port=port)}/callback...")
                 httpd.timeout = 300  # 5 minute timeout
                 httpd.serve_forever()
         except Exception as e:
@@ -451,7 +446,7 @@ class MailServer:
 
             # Send email via Microsoft Graph API
             graph_endpoint = f"{self.MICROSOFT_OAUTH_CONFIG['graph_endpoint']}/me/sendMail"
-            response = requests.post(graph_endpoint, headers=headers, json=email_data)
+            response = requests.post(graph_endpoint, headers=headers, json=email_data, timeout=30)
 
             if response.status_code == 202:
                 logger.info(f"Email sent successfully to: {to_email} via OAuth")
@@ -605,7 +600,7 @@ Microsoft OAuth Setup Instructions for Server Manager:
 3. Click 'New registration'
 4. Enter a name (e.g., 'Server Manager Mail')
 5. Select 'Accounts in this organizational directory only' or 'Accounts in any organizational directory'
-6. For redirect URI, add: http://localhost:8080/callback
+6. For redirect URI, add: {get_base_url()}/callback
 7. Click 'Register'
 
 8. In the app registration:

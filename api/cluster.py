@@ -9,17 +9,18 @@ import time
 from datetime import datetime
 from functools import wraps
 from flask import Blueprint, jsonify, request
+import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+from Modules.common import setup_module_path, REGISTRY_ROOT, REGISTRY_PATH, get_registry_value, get_registry_values
+setup_module_path()
 from Modules.network_security import NetworkSecurityManager, require_cluster_network_security
 from Modules.Database.cluster_database import ClusterDatabase
 from Modules.server_manager import ServerManager
 from Modules.Database.user_database import initialise_user_manager
 
 from Modules.server_logging import get_component_logger
-logger = get_component_logger("ClusterAPI")
+logger: logging.Logger = get_component_logger("ClusterAPI")
 
 cluster_api = Blueprint("cluster_api", __name__)
 
@@ -66,13 +67,9 @@ def require_cluster_auth(f):
 def get_cluster_role():
     # Get the cluster role and host address from registry
     try:
-        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-        role = winreg.QueryValueEx(key, "HostType")[0]
-        try:
-            host_address = winreg.QueryValueEx(key, "HostAddress")[0]
-        except Exception:
-            host_address = None
-        winreg.CloseKey(key)
+        values = get_registry_values(REGISTRY_PATH, ["HostType", "HostAddress"], defaults={"HostType": "Unknown", "HostAddress": None})
+        role = values["HostType"] or "Unknown"
+        host_address = values["HostAddress"]
         logger.debug(f"Retrieved cluster role: {role}, host_address: {host_address}")
         return role, host_address
     except Exception as e:
@@ -123,7 +120,7 @@ def _forward_request_to_subhost(url, method='GET', json_data=None, headers=None,
             
     except requests.RequestException as e:
         logger.error(f"Failed to connect to subhost: {str(e)}")
-        return jsonify({"error": f"Failed to connect to subhost: {str(e)}"}), 503
+        return jsonify({"error": "Failed to connect to subhost"}), 503
 
 def _create_server_manager():
     # Create and initialise server manager instance
@@ -148,7 +145,7 @@ def _calculate_subhost_status(last_ping, current_time):
                 
             last_seen_ago = f"{seconds_ago} seconds ago"
             return status, last_seen_ago, seconds_ago
-        except:
+        except (ValueError, TypeError, AttributeError):
             return "unknown", "unknown", 999999
     else:
         return "unknown", "never", 999999
@@ -167,7 +164,7 @@ def _cleanup_old_subhosts(active_subhosts, current_time):
                     time_diff = current_time - last_ping_time
                     if time_diff.total_seconds() > 3600:  # 1 hour
                         nodes_to_remove.append(subhost_id)
-                except:
+                except (ValueError, TypeError, AttributeError):
                     pass
     
     # Remove old nodes
@@ -264,7 +261,7 @@ def api_register_subhost():
         
     except Exception as e:
         logger.error(f"Error registering subhost: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/request-join", methods=["POST"])
 def api_request_join():
@@ -344,7 +341,7 @@ def api_request_join():
         logger.error(f"Error processing join request: {str(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/requests", methods=["GET"])
 @require_cluster_auth
@@ -385,7 +382,7 @@ def api_get_requests():
                         last_ping = datetime.fromisoformat(node['last_ping'])
                         time_diff = datetime.now() - last_ping
                         is_online = time_diff.total_seconds() < 300  # 5 minutes
-                    except:
+                    except (ValueError, TypeError, AttributeError):
                         pass
                 
                 # Use hostname from node data, fallback to name
@@ -409,7 +406,7 @@ def api_get_requests():
         
     except Exception as e:
         logger.error(f"Error getting cluster requests: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/requests/<node_id>/approve", methods=["POST"])
 @require_cluster_auth
@@ -432,7 +429,6 @@ def api_approve_request(node_id):
             return jsonify({"error": f"No pending request found for node {node_id}"}), 404
         
         # Generate approval token for secure communication
-        import uuid
         import secrets
         # Use cryptographically secure token for cluster communication
         approval_token = secrets.token_urlsafe(32)
@@ -467,7 +463,7 @@ def api_approve_request(node_id):
         
     except Exception as e:
         logger.error(f"Error approving request: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/requests/<node_id>/reject", methods=["POST"])
 @require_cluster_auth
@@ -508,7 +504,7 @@ def api_reject_request(node_id):
         
     except Exception as e:
         logger.error(f"Error rejecting request: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/pending", methods=["GET"])
 @require_cluster_auth
@@ -557,7 +553,7 @@ def api_get_pending():
         logger.error(f"Error getting pending requests: {str(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/approve/<subhost_id>", methods=["POST"])
 @require_cluster_auth
@@ -614,7 +610,7 @@ def api_approve_subhost(subhost_id):
         
     except Exception as e:
         logger.error(f"Error approving subhost: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/reject/<subhost_id>", methods=["POST"])
 @require_cluster_auth
@@ -655,7 +651,7 @@ def api_reject_subhost(subhost_id):
         
     except Exception as e:
         logger.error(f"Error rejecting subhost: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/check-approval/<subhost_id>", methods=["GET"])
 def api_check_approval(subhost_id):
@@ -703,7 +699,7 @@ def api_check_approval(subhost_id):
             
     except Exception as e:
         logger.error(f"Error checking approval status: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/heartbeat", methods=["POST"])
 @require_cluster_auth
@@ -757,7 +753,7 @@ def api_subhost_heartbeat():
         
     except Exception as e:
         logger.error(f"Error processing heartbeat: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/subhosts", methods=["GET"])
 @require_cluster_auth
@@ -806,7 +802,7 @@ def api_list_subhosts():
         
     except Exception as e:
         logger.error(f"Error listing subhosts: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/status", methods=["GET"])
 def api_cluster_status():
@@ -820,7 +816,7 @@ def api_cluster_status():
             "timestamp": datetime.now().isoformat()
         }
         
-        subhost_count = 0  # Initialize before conditional block
+        subhost_count = 0  # Initialise before conditional block
         if role == "Host":
             # Include subhost information for hosts
             all_nodes = cluster_db.get_all_cluster_nodes()
@@ -860,7 +856,7 @@ def api_cluster_status():
         
     except Exception as e:
         logger.error(f"Error getting cluster status: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/host-status", methods=["GET"])
 def api_get_host_status():
@@ -895,7 +891,7 @@ def api_get_host_status():
             "host_status": "error",
             "dashboard_active": False,
             "maintenance_mode": True,
-            "status_message": f"Error retrieving status: {str(e)}",
+            "status_message": "Error retrieving status",
             "last_heartbeat": None,
             "timestamp": datetime.now().isoformat()
         }), 500
@@ -919,7 +915,7 @@ def api_get_subhost_servers(subhost_id):
             
     except Exception as e:
         logger.error(f"Error getting subhost servers: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/subhost/<subhost_id>/servers/<server_name>/start", methods=["POST"])
 def api_start_subhost_server(subhost_id, server_name):
@@ -933,7 +929,7 @@ def api_start_subhost_server(subhost_id, server_name):
         
     except Exception as e:
         logger.error(f"Error starting subhost server: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/subhost/<subhost_id>/servers/<server_name>/stop", methods=["POST"])
 def api_stop_subhost_server(subhost_id, server_name):
@@ -947,7 +943,7 @@ def api_stop_subhost_server(subhost_id, server_name):
         
     except Exception as e:
         logger.error(f"Error stopping subhost server: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/subhost/<subhost_id>/servers/<server_name>/restart", methods=["POST"])
 def api_restart_subhost_server(subhost_id, server_name):
@@ -961,7 +957,7 @@ def api_restart_subhost_server(subhost_id, server_name):
         
     except Exception as e:
         logger.error(f"Error restarting subhost server: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/subhost/<subhost_id>/servers", methods=["POST"])
 def api_install_subhost_server(subhost_id):
@@ -991,7 +987,7 @@ def api_install_subhost_server(subhost_id):
             
     except Exception as e:
         logger.error(f"Error installing server on subhost: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/subhost/<subhost_id>/servers/<server_name>", methods=["DELETE"])
 def api_remove_subhost_server(subhost_id, server_name):
@@ -1014,7 +1010,7 @@ def api_remove_subhost_server(subhost_id, server_name):
             
     except Exception as e:
         logger.error(f"Error removing server from subhost: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 def _execute_subhost_server_command(subhost_id, server_name, action):
     # Helper function to execute server commands on subhost
@@ -1059,7 +1055,7 @@ def api_cluster_nodes():
         
     except Exception as e:
         logger.error(f"Error getting cluster nodes: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @cluster_api.route("/api/cluster/nodes/<node_id>", methods=["DELETE"])
 @require_cluster_auth
@@ -1090,7 +1086,7 @@ def api_revoke_node(node_id):
         
     except Exception as e:
         logger.error(f"Error revoking node: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An internal error occurred"}), 500
 
 
 # ====== REMOTE HOST API ENDPOINTS (Separate from Cluster) ======
@@ -1108,7 +1104,7 @@ def api_server_status():
         })
     except Exception as e:
         logger.error(f"Error getting server status: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal error occurred"}), 500
 
 
 @cluster_api.route("/api/cluster/auth/login", methods=["POST"])
@@ -1146,7 +1142,7 @@ def api_remote_login():
             
     except Exception as e:
         logger.error(f"Error in remote login: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal error occurred"}), 500
 
 
 @cluster_api.route("/api/cluster/auth/logout", methods=["POST"])
@@ -1158,7 +1154,7 @@ def api_remote_logout():
         return jsonify({"success": True, "message": "Logged out successfully"})
     except Exception as e:
         logger.error(f"Error in remote logout: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal error occurred"}), 500
 
 
 @cluster_api.route("/api/servers", methods=["GET"])
@@ -1193,7 +1189,7 @@ def api_get_servers():
         
     except Exception as e:
         logger.error(f"Error getting servers: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal error occurred"}), 500
 
 
 @cluster_api.route("/api/servers/<server_name>/status", methods=["GET"])
@@ -1220,7 +1216,7 @@ def api_get_server_status(server_name):
                     "memory_mb": process.memory_info().rss / 1024 / 1024,
                     "create_time": process.create_time()
                 }
-            except:
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
         
         result = {
@@ -1235,7 +1231,7 @@ def api_get_server_status(server_name):
         
     except Exception as e:
         logger.error(f"Error getting server status for {server_name}: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal error occurred"}), 500
 
 
 @cluster_api.route("/api/servers/<server_name>/start", methods=["POST"])
@@ -1266,7 +1262,7 @@ def api_start_server(server_name):
             
     except Exception as e:
         logger.error(f"Error starting server {server_name}: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal error occurred"}), 500
 
 
 @cluster_api.route("/api/servers/<server_name>/stop", methods=["POST"])
@@ -1297,7 +1293,7 @@ def api_stop_server(server_name):
             
     except Exception as e:
         logger.error(f"Error stopping server {server_name}: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal error occurred"}), 500
 
 
 @cluster_api.route("/api/servers/<server_name>/restart", methods=["POST"])
@@ -1337,4 +1333,4 @@ def api_restart_server(server_name):
             
     except Exception as e:
         logger.error(f"Error restarting server {server_name}: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "An internal error occurred"}), 500
