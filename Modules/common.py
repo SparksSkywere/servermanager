@@ -1,32 +1,36 @@
 # Common utilities for Server Manager
 import os
 import sys
-import json
 import logging
 import winreg
-import time
 import datetime
 import psutil
+import json
+import traceback
+
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Modules.server_logging import get_component_logger
 
 # Centralised registry constants-use these, not hardcoded strings
 REGISTRY_ROOT = winreg.HKEY_LOCAL_MACHINE
 REGISTRY_PATH = r"Software\SkywereIndustries\Servermanager"
 
-# Logging setup-falls back to basic config if server_logging unavailable
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("Common")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("Common")
+# Global flags to prevent duplicate logging
+_registry_values_initialized = False
+_paths_initialized = False
 
-if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
-    logger.setLevel(logging.DEBUG)
-    logger.debug("Debug mode on via environment")
+# Logging setup - centralised in server_logging.py
+logger: logging.Logger = get_component_logger("Common")
+
+# =============================================================================
+# REGISTRY UTILITIES
+# =============================================================================
 
 # Registry utility functions
 def initialise_paths_from_registry(registry_path):
-    # Grab paths from registry-returns (success, dir, paths dict)
+    # Grab paths from registry - returns (success, dir, paths dict)
     try:
         key = winreg.OpenKey(REGISTRY_ROOT, registry_path)
         server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
@@ -36,11 +40,11 @@ def initialise_paths_from_registry(registry_path):
         server_manager_dir = server_manager_dir.strip('"').strip()
         
         # Define paths structure (excluding config and data folders since we use database now)
+        # Note: 'servers' folder is no longer used - all server configs stored in database
         paths = {
             "root": server_manager_dir,
             "logs": os.path.join(server_manager_dir, "logs"),
             "temp": os.path.join(server_manager_dir, "temp"),
-            "servers": os.path.join(server_manager_dir, "servers"),
             "modules": os.path.join(server_manager_dir, "modules")
         }
         
@@ -58,7 +62,8 @@ def initialise_paths_from_registry(registry_path):
 
 
 def initialise_registry_values(registry_path):
-    # Pull config values from registry-SteamCmd path, web port, etc.
+    # Pull config values from registry - SteamCmd path, web port, etc.
+    global _registry_values_initialized
     try:
         # Read registry for all installation-managed values
         key = winreg.OpenKey(REGISTRY_ROOT, registry_path)
@@ -70,14 +75,14 @@ def initialise_registry_values(registry_path):
         # Try to get SteamCmd path
         try:
             steam_cmd_path = winreg.QueryValueEx(key, "SteamCmdPath")[0]
-        except:
+        except (FileNotFoundError, OSError):
             steam_cmd_path = os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), "SteamCMD")
             logger.warning(f"SteamCmd path not found in registry, using default: {steam_cmd_path}")
             
         # Try to get WebPort from registry
         try:
             webserver_port = int(winreg.QueryValueEx(key, "WebPort")[0])
-        except:
+        except (FileNotFoundError, OSError, ValueError):
             webserver_port = 8080
             logger.warning(f"WebPort not found in registry, using default: 8080")
         
@@ -96,13 +101,13 @@ def initialise_registry_values(registry_path):
             # Try to get HostAddress if it exists (for subhost installations)
             try:
                 registry_values["HostAddress"] = winreg.QueryValueEx(key, "HostAddress")[0]
-            except:
+            except (FileNotFoundError, OSError):
                 pass  # HostAddress only exists for subhost installations
                 
             # Try to get cluster configuration
             try:
                 registry_values["ClusterCreated"] = winreg.QueryValueEx(key, "ClusterCreated")[0]
-            except:
+            except (FileNotFoundError, OSError):
                 pass  # ClusterCreated only exists for configured clusters
                 
         except Exception as e:
@@ -110,16 +115,21 @@ def initialise_registry_values(registry_path):
         
         winreg.CloseKey(key)
         
-        logger.info("Registry values initialised successfully")
+        if not _registry_values_initialized:
+            logger.debug("Registry values initialised successfully")
+            _registry_values_initialized = True
         return True, steam_cmd_path, webserver_port, registry_values
         
     except Exception as e:
         logger.error(f"Failed to initialise registry values: {str(e)}")
         return False, None, 8080, {}
 
+# =============================================================================
+# PATH MANAGEMENT
+# =============================================================================
+
 class ServerManagerPaths:
-    # - Path resolver for all server manager directories
-    # - Falls back to script dir if registry fails
+    # Path resolver for all server manager directories - Falls back to script dir if registry fails
     def __init__(self):
         self.registry_path = REGISTRY_PATH
         self.server_manager_dir = None
@@ -130,6 +140,7 @@ class ServerManagerPaths:
         
     def initialise_from_registry(self):
         # Try registry first-fallback kicks in if this fails
+        global _paths_initialized
         try:
             # Read registry for paths
             key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
@@ -141,12 +152,9 @@ class ServerManagerPaths:
                 "root": self.server_manager_dir,
                 "project_root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
-                "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
                 "scripts": os.path.join(self.server_manager_dir, "Modules"),
                 "modules": os.path.join(self.server_manager_dir, "Modules"),
-                "static": os.path.join(self.server_manager_dir, "static"),
-                "templates": os.path.join(self.server_manager_dir, "templates"),
                 "icons": os.path.join(self.server_manager_dir, "icons")
             }
             
@@ -155,16 +163,16 @@ class ServerManagerPaths:
                 "launcher": os.path.join(self.paths["temp"], "launcher.pid"),
                 "webserver": os.path.join(self.paths["temp"], "webserver.pid"),
                 "trayicon": os.path.join(self.paths["temp"], "trayicon.pid"),
-                "dashboard": os.path.join(self.paths["temp"], "dashboard.pid")
+                "dashboard": os.path.join(self.paths["temp"], "dashboard.pid"),
+                "server_automation": os.path.join(self.paths["temp"], "server_automation.pid")
             }
             
-            # Create dirs if missing (skip config/data-database handles those)
-            for path_key, path in self.paths.items():
-                if path_key not in ["config", "data"]:
-                    os.makedirs(path, exist_ok=True)
-                
+            # Directories are now created in Start-ServerManager.pyw
+            
             self.initialised = True
-            logger.info(f"Paths ready: {self.server_manager_dir}")
+            if not _paths_initialized:
+                logger.debug(f"Paths ready: {self.server_manager_dir}")
+                _paths_initialized = True
             return True
             
         except Exception as e:
@@ -186,12 +194,9 @@ class ServerManagerPaths:
                 "root": self.server_manager_dir,
                 "project_root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
-                "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
                 "scripts": os.path.join(self.server_manager_dir, "Modules"),
                 "modules": os.path.join(self.server_manager_dir, "Modules"),
-                "static": os.path.join(self.server_manager_dir, "static"),
-                "templates": os.path.join(self.server_manager_dir, "templates"),
                 "icons": os.path.join(self.server_manager_dir, "icons")
             }
             
@@ -200,14 +205,12 @@ class ServerManagerPaths:
                 "launcher": os.path.join(self.paths["temp"], "launcher.pid"),
                 "webserver": os.path.join(self.paths["temp"], "webserver.pid"),
                 "trayicon": os.path.join(self.paths["temp"], "trayicon.pid"),
-                "dashboard": os.path.join(self.paths["temp"], "dashboard.pid")
+                "dashboard": os.path.join(self.paths["temp"], "dashboard.pid"),
+                "server_automation": os.path.join(self.paths["temp"], "server_automation.pid")
             }
             
-            # Create dirs if missing
-            for path_key, path in self.paths.items():
-                if path_key not in ["config", "data"]:
-                    os.makedirs(path, exist_ok=True)
-                
+            # Directories are now created in Start-ServerManager.pyw for verification purposes
+            
             self.initialised = True
             logger.warning(f"Fallback paths in use: {self.server_manager_dir}")
             return True
@@ -236,10 +239,13 @@ class ServerManagerPaths:
         else:
             raise KeyError(f"PID file for process type not found: {process_type}")
 
+# =============================================================================
+# PROCESS MANAGEMENT
+# =============================================================================
+
 # Process and PID file handling
 class ProcessManager:
-    # - Manages PID files and process lifecycle
-    # - Nothing fancy, just gets the job done
+    # Manages PID files and process lifecycle
     def __init__(self, paths_manager):
         self.paths_manager = paths_manager
         
@@ -335,15 +341,16 @@ class ProcessManager:
             logger.error(f"Failed to kill process {pid}: {str(e)}")
             return False
 
+# =============================================================================
+# CONFIGURATION MANAGEMENT
+# =============================================================================
+
 # Config management
 class ConfigManager:
-    # - Handles app config via database
-    # - Falls back to JSON migration if db empty
+    # Handles app config via database - Falls back to JSON migration if db empty
     def __init__(self, paths_manager):
         self.paths_manager = paths_manager
         self.config = {}
-        
-        self.load_config()
         
     def load_config(self):
         try:
@@ -452,6 +459,8 @@ class ConfigManager:
             
     def get(self, key, default=None):
         # Get a configuration value
+        if not self.config:
+            self.load_config()
         return self.config.get(key, default)
         
     def set(self, key, value):
@@ -469,7 +478,7 @@ except ImportError:
 
 # System utils
 class SystemUtils:
-    # Quick system info helpers-CPU, memory, disk, process stats
+    # Quick system info helpers - CPU, memory, disk, process stats
     @staticmethod
     def get_system_info():
         # Returns dict of system metrics
@@ -533,17 +542,19 @@ class SystemUtils:
             log_exception(e, f"Failed to get process information for PID {pid}")
             return None
 
-# Global instances-use these, don't create your own
+# Global instances
 paths = ServerManagerPaths()
 process_manager = ProcessManager(paths)
 config_manager = ConfigManager(paths)
 system_utils = SystemUtils()
 
+# =============================================================================
+# BASE MODULE CLASS
+# =============================================================================
+
 # Base class for all modules
 class ServerManagerModule:
-    # - Inherit from this for common functionality
-    # - Paths, config, PID management baked in
-    
+    # Inherit from this for common functionality - Paths, config, PID management baked in
     def __init__(self, module_name=None):
         self.module_name = module_name or self.__class__.__name__
         self.logger = logging.getLogger(self.module_name)
@@ -624,22 +635,12 @@ class ServerManagerModule:
         return self._paths_manager.get_path(path_key)
 
 # Utility functions
-def setup_module_logging(module_name):
-    # Logging setup for modules-use this, not raw basicConfig
-    try:
-        from Modules.server_logging import get_component_logger
-        logger = get_component_logger(module_name)
-    except Exception:
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        logger = logging.getLogger(module_name)
+def setup_module_logging(module_name) -> logging.Logger:
+    # Logging setup for modules - centralized in server_logging.py
+    from Modules.server_logging import get_component_logger
+    logger = get_component_logger(module_name)
 
-    if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
-        logger.setLevel(logging.DEBUG)
-
+    # Debug mode is handled by server_logging.py
     return logger
 
 def setup_module_path():
@@ -648,17 +649,101 @@ def setup_module_path():
     project_root = os.path.dirname(script_dir)
     sys.path.insert(0, project_root)
 
+# =============================================================================
+# DATABASE UTILITIES
+# =============================================================================
+
+def get_database_connection(db_path=None):
+    # Centralized database connection utility
+    import sqlite3
+    if db_path is None:
+        # Default database path
+        server_manager_dir = get_server_manager_dir()
+        db_path = os.path.join(server_manager_dir, "data", "servermanager.db")
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        return conn
+    except Exception as e:
+        logger.error(f"Failed to connect to database at {db_path}: {e}")
+        raise
+
+def execute_database_query(conn, query, params=None, fetch=False):
+    # Centralized database query execution with error handling
+    try:
+        cursor = conn.cursor()
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+        
+        if fetch:
+            return cursor.fetchall()
+        else:
+            conn.commit()
+            return cursor.rowcount
+    except Exception as e:
+        logger.error(f"Database query failed: {query} - {e}")
+        raise
+
+# =============================================================================
+# ERROR HANDLING UTILITIES
+# =============================================================================
+
+def handle_database_error(operation, error, logger):
+    # Centralized database error handling
+    logger.error(f"Database {operation} failed: {error}")
+    logger.error(f"Traceback: {traceback.format_exc()}")
+    return False
+
+def handle_generic_error(operation, error, logger):
+    # Centralized generic error handling
+    logger.error(f"{operation} failed: {error}")
+    logger.error(f"Traceback: {traceback.format_exc()}")
+    return False
+
+# =============================================================================
+# WEB UTILITIES
+# =============================================================================
+
+def get_base_url(host='localhost', port=8080):
+    # Get base URL with appropriate protocol based on SSL settings
+    ssl_enabled = os.getenv("SSL_ENABLED", "false").lower() == "true"
+    protocol = "https" if ssl_enabled else "http"
+    return f"{protocol}://{host}:{port}"
+
+def get_allowed_origins(host='localhost', port=8080):
+    # Get allowed CORS origins for both HTTP and HTTPS
+    return [
+        f"http://{host}:{port}",
+        f"https://{host}:{port}",
+        f"http://127.0.0.1:{port}",
+        f"https://127.0.0.1:{port}",
+    ]
+
+def get_node_url(ip, port=8080):
+    # Get node URL with appropriate protocol
+    if not isinstance(port, int) or port < 1 or port > 65535:
+        raise ValueError(f"Invalid port number: {port}")
+    ssl_enabled = os.getenv("SSL_ENABLED", "false").lower() == "true"
+    protocol = "https" if ssl_enabled else "http"
+    return f"{protocol}://{ip}:{port}"
+
+def validate_port(port):
+    # Validate port number
+    try:
+        port = int(port)
+        if 1 <= port <= 65535:
+            return port
+        else:
+            raise ValueError(f"Port {port} is out of valid range (1-65535)")
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid port: {port}")
+
 def get_server_manager_dir():
     # Get SM dir from registry-falls back to script parent
-    try:
-        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-        server_manager_dir = winreg.QueryValueEx(key, "ServerManagerPath")[0]
-        winreg.CloseKey(key)
-        return server_manager_dir.strip('"').strip()
-    except Exception as e:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        server_manager_dir = os.path.dirname(script_dir)
-        return server_manager_dir
+    from Modules.server_logging import get_server_manager_dir as _get_server_manager_dir
+    return _get_server_manager_dir()
 
 def get_registry_value(key_path, value_name, default=None):
     # Generic registry value getter
@@ -669,6 +754,46 @@ def get_registry_value(key_path, value_name, default=None):
         return value
     except Exception:
         return default
+
+def set_registry_value(key_path, value_name, value, value_type=winreg.REG_SZ):
+    # Generic registry value setter
+    try:
+        key = winreg.CreateKey(REGISTRY_ROOT, key_path)
+        winreg.SetValueEx(key, value_name, 0, value_type, value)
+        winreg.CloseKey(key)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to set registry value {value_name}: {e}")
+        return False
+
+def get_registry_values(key_path, value_names, defaults=None):
+    # Batch registry value getter - reads multiple values in one key open
+    defaults = defaults or {}
+    result = {}
+    try:
+        key = winreg.OpenKey(REGISTRY_ROOT, key_path)
+        for name in value_names:
+            try:
+                result[name] = winreg.QueryValueEx(key, name)[0]
+            except Exception:
+                result[name] = defaults.get(name)
+        winreg.CloseKey(key)
+    except Exception:
+        for name in value_names:
+            result[name] = defaults.get(name)
+    return result
+
+def get_host_type():
+    # Get host type from registry (Host, SubHost, standalone)
+    return get_registry_value(REGISTRY_PATH, "HostType", "standalone")
+
+def get_host_address():
+    # Get host address from registry
+    return get_registry_value(REGISTRY_PATH, "HostAddress", "")
+
+def is_cluster_enabled():
+    # Check if clustering is enabled
+    return get_registry_value(REGISTRY_PATH, "ClusterEnabled", "false") == "true"
 
 def ensure_directory_exists(directory_path):
     # Create dir if missing
@@ -681,6 +806,14 @@ def get_absolute_path(relative_path):
     if not os.path.isabs(relative_path):
         return os.path.abspath(relative_path)
     return relative_path
+
+def is_admin():
+    # Check if current process has administrator privileges
+    try:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
 
 # Subprocess flags for Windows console hiding
 def get_subprocess_creation_flags(hide_window=True, new_process_group=False):
@@ -700,28 +833,6 @@ def should_hide_server_consoles(config=None):
     if config and 'configuration' in config:
         return config['configuration'].get('hideServerConsoles', True)
     return True
-
-# JSON file I/O
-def save_json_config(filepath, data, indent=4):
-    # Write JSON with error handling
-    try:
-        with open(filepath, 'w') as f:
-            json.dump(data, f, indent=indent)
-        return True
-    except Exception as e:
-        logger.error(f"JSON save failed: {filepath} - {e}")
-        return False
-
-def load_json_config(filepath, default=None):
-    # Load JSON with fallback
-    try:
-        if os.path.exists(filepath):
-            with open(filepath, 'r') as f:
-                return json.load(f)
-        return default if default is not None else {}
-    except Exception as e:
-        logger.error(f"JSON load failed: {filepath} - {e}")
-        return default if default is not None else {}
 
 # Tkinter window positioning
 def centre_window(window, width=None, height=None, parent=None):
@@ -751,11 +862,74 @@ def centre_window(window, width=None, height=None, parent=None):
 # Alias for backwards compat
 center_window = centre_window
 
+# Automation settings utilities
+def get_automation_settings_fields():
+    # Return the standard automation settings field names
+    return {
+        'motd_command': 'MotdCommand',
+        'motd_message': 'MotdMessage', 
+        'motd_interval': 'MotdInterval',
+        'start_command': 'StartCommand',
+        'stop_command': 'StopCommand',
+        'save_command': 'SaveCommand',
+        'scheduled_restart_enabled': 'ScheduledRestartEnabled',
+        'warning_command': 'WarningCommand',
+        'warning_intervals': 'WarningIntervals',
+        'warning_message_template': 'WarningMessageTemplate'
+    }
+
+def get_default_automation_settings():
+    # Return default values for automation settings
+    return {
+        'MotdCommand': '',
+        'MotdMessage': '',
+        'MotdInterval': 0,
+        'StartCommand': '',
+        'StopCommand': '',
+        'SaveCommand': '',
+        'ScheduledRestartEnabled': False,
+        'WarningCommand': '',
+        'WarningIntervals': '30,15,10,5,1',
+        'WarningMessageTemplate': 'Server restarting in {message}'
+    }
+
+def load_automation_settings(server_config):
+    # Load automation settings from server config with defaults
+    defaults = get_default_automation_settings()
+    settings = {}
+    
+    for key, field_name in get_automation_settings_fields().items():
+        settings[key] = server_config.get(field_name, defaults.get(field_name, ''))
+    
+    return settings
+
+def save_automation_settings(server_config, automation_data):
+    # Save automation settings to server config
+    fields = get_automation_settings_fields()
+    
+    for key, value in automation_data.items():
+        if key in fields:
+            field_name = fields[key]
+            # Convert interval to int if it's motd_interval
+            if key == 'motd_interval':
+                try:
+                    server_config[field_name] = int(value) if value else 0
+                except (ValueError, TypeError):
+                    server_config[field_name] = 0
+            else:
+                server_config[field_name] = value
+    
+    return server_config
+
 # Exports
 __all__ = [
     'paths', 'process_manager', 'config_manager', 'system_utils', 'ServerManagerModule',
     'initialise_paths_from_registry', 'initialise_registry_values', 'REGISTRY_ROOT', 'REGISTRY_PATH',
     'setup_module_logging', 'setup_module_path', 'get_server_manager_dir', 'get_registry_value',
-    'ensure_directory_exists', 'get_absolute_path', 'get_subprocess_creation_flags',
-    'should_hide_server_consoles', 'save_json_config', 'load_json_config', 'centre_window', 'center_window'
+    'ensure_directory_exists', 'get_absolute_path', 'is_admin', 'get_subprocess_creation_flags',
+    'should_hide_server_consoles', 'centre_window', 'center_window',
+    'get_automation_settings_fields', 'get_default_automation_settings', 'load_automation_settings', 'save_automation_settings',
+    'get_database_connection', 'execute_database_query', 'handle_database_error', 'handle_generic_error',
+    'get_base_url', 'get_allowed_origins', 'get_node_url', 'validate_port',
+    'set_registry_value', 'get_registry_values', 'get_host_type', 'get_host_address', 'is_cluster_enabled'
 ]

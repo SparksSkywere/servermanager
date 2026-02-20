@@ -1,7 +1,6 @@
 # Cluster API
 import os
 import sys
-import winreg
 import json
 import requests
 import psutil
@@ -12,7 +11,7 @@ from flask import Blueprint, jsonify, request
 import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path, REGISTRY_ROOT, REGISTRY_PATH, get_registry_value, get_registry_values
+from Modules.common import setup_module_path, REGISTRY_PATH, get_registry_values
 setup_module_path()
 from Modules.network_security import NetworkSecurityManager, require_cluster_network_security
 from Modules.Database.cluster_database import ClusterDatabase

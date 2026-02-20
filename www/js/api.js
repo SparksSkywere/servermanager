@@ -115,6 +115,17 @@ class API {
     }
 
     /**
+     * Remove a server
+     * @param {string} serverId - Server ID
+     * @returns {Promise<Object>} Operation result
+     */
+    static async removeServer(serverId) {
+        return this.request(`/servers/${serverId}`, {
+            method: 'DELETE'
+        });
+    }
+
+    /**
      * Get all users (admin only)
      * @returns {Promise<Array>} List of users
      */
@@ -248,6 +259,41 @@ class API {
         return this.request('/profile/avatar', {
             method: 'POST',
             body: JSON.stringify({ avatar: avatarBase64 })
+        });
+    }
+
+    /**
+     * Test MOTD command
+     * @param {string} serverId - Server ID
+     * @returns {Promise<Object>} Operation result
+     */
+    static async testMOTD(serverId) {
+        return this.request(`/servers/${encodeURIComponent(serverId)}/test-motd`, {
+            method: 'POST'
+        });
+    }
+
+    /**
+     * Test save command
+     * @param {string} serverId - Server ID
+     * @returns {Promise<Object>} Operation result
+     */
+    static async testSave(serverId) {
+        return this.request(`/servers/${encodeURIComponent(serverId)}/test-save`, {
+            method: 'POST'
+        });
+    }
+
+    /**
+     * Test warning command
+     * @param {string} serverId - Server ID
+     * @param {number} minutes - Warning time in minutes
+     * @returns {Promise<Object>} Operation result
+     */
+    static async testWarning(serverId, minutes = 5) {
+        return this.request(`/servers/${encodeURIComponent(serverId)}/test-warning`, {
+            method: 'POST',
+            body: JSON.stringify({ minutes: minutes })
         });
     }
 }

@@ -2,15 +2,17 @@
 import os
 import sys
 import requests
-import threading
 from datetime import datetime
 from typing import Dict, List, Optional
 import tkinter as tk
 from tkinter import ttk, messagebox
+import logging
 
+# Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Modules.common import setup_module_logging
+from Modules.common import setup_module_path, setup_module_logging, get_node_url
+setup_module_path()
 from Modules.Database.cluster_database import get_cluster_database
 
 try:
@@ -18,13 +20,14 @@ try:
 except ImportError:
     SimpleClusterManager = None
 
-logger = setup_module_logging("Agents")
+logger: logging.Logger = setup_module_logging("Agents")
 
 
 class ClusterNode:
-    def __init__(self, name: str, ip: str, status: str = "unknown"):
+    def __init__(self, name: str, ip: str, port: int = 5000, status: str = "unknown"):
         self.name = name
         self.ip = ip
+        self.port = port
         self.status = status
         self.last_ping: Optional[datetime] = None
         self.server_count = 0
@@ -194,7 +197,7 @@ class AgentManager:
         
         node = self.nodes[name]
         try:
-            response = requests.get(f"http://{node.ip}:8080/api/status", timeout=5)
+            response = requests.get(f"{get_node_url(node.ip, node.port)}/api/status", timeout=5)
             if response.status_code == 200:
                 node.status = "online"
                 node.is_online = True
@@ -205,7 +208,7 @@ class AgentManager:
                 if self.cluster_db:
                     self.cluster_db.update_node_status(name, "online", node.last_ping)
                 return True
-        except:
+        except (requests.RequestException, ConnectionError, ValueError):
             pass
         
         node.status = "offline"
@@ -226,7 +229,7 @@ class AgentManager:
         
         node = self.nodes[node_name]
         try:
-            response = requests.get(f"http://{node.ip}:8080/api/servers", timeout=10)
+            response = requests.get(f"{get_node_url(node.ip, node.port)}/api/servers", timeout=10)
             if response.status_code == 200:
                 return response.json().get('servers', [])
         except Exception as e:
@@ -250,14 +253,15 @@ class AgentManager:
             for node_data in db_nodes:
                 name = node_data['name']
                 ip = node_data['ip_address']
+                port = node_data.get('port', 5000)
                 
-                node = ClusterNode(name, ip)
+                node = ClusterNode(name, ip, port)
                 node.status = node_data.get('status', 'unknown')
                 if node_data.get('last_ping'):
                     try:
                         node.last_ping = datetime.fromisoformat(node_data['last_ping'])
                         node.is_online = node.status == 'online'
-                    except:
+                    except (ValueError, TypeError):
                         node.last_ping = None
                         node.is_online = False
                 
@@ -339,14 +343,14 @@ class ClusterManagementDialog:
         cluster_status = self.agent_manager.get_cluster_status()
         
         if 'error' in cluster_status:
-            status_text = f"❌ Cluster not configured: {cluster_status['error']}"
+            status_text = f"Error: Cluster not configured: {cluster_status['error']}"
         else:
             if cluster_status.get('is_master'):
-                status_text = "🏠 Master Host - Managing cluster nodes"
+                status_text = "Master Host - Managing cluster nodes"
             elif cluster_status.get('cluster_ready'):
-                status_text = f"🔗 Cluster Node - Connected to master at {cluster_status.get('master_ip')}"
+                status_text = f"Cluster Node - Connected to master at {cluster_status.get('master_ip')}"
             else:
-                status_text = "❓ Cluster Node - Not connected to master"
+                status_text = "Cluster Node - Not connected to master"
         
         status_label = ttk.Label(cluster_frame, text=status_text, font=('Segoe UI', 10))
         status_label.pack(anchor=tk.W)
@@ -564,7 +568,7 @@ class ClusterManagementDialog:
                         import datetime
                         dt = datetime.datetime.fromisoformat(request_time.replace('Z', '+00:00'))
                         request_time = dt.strftime('%Y-%m-%d %H:%M:%S')
-                    except:
+                    except (ValueError, TypeError):
                         pass
                 
                 self.pending_tree.insert('', 'end', values=(

@@ -4,17 +4,20 @@ import os
 import sys
 import json
 import time
-import threading
 import subprocess
 import datetime
-from typing import Dict, List, Tuple, Optional, Callable, Any
+from typing import Dict, Tuple, Optional, Callable
+import logging
 
+# Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Modules.common import ServerManagerModule, setup_module_logging, get_subprocess_creation_flags
+from Modules.common import setup_module_path, ServerManagerModule, setup_module_logging, get_subprocess_creation_flags
+setup_module_path()
+
 from Modules.Database.cluster_database import get_cluster_database
 
-logger = setup_module_logging("ServerUpdateManager")
+logger: logging.Logger = setup_module_logging("ServerUpdateManager")
 
 
 class ServerUpdateManager(ServerManagerModule):
@@ -280,7 +283,7 @@ class ServerUpdateManager(ServerManagerModule):
                     # Update last update time
                     server_config['LastUpdate'] = datetime.datetime.now().isoformat()
                     if self.server_manager:
-                        self.server_manager.save_server_config(server_name, server_config)
+                        self.server_manager.update_server(server_name, server_config)
                     
                     if progress_callback:
                         progress_callback(f"[INFO] Update completed for {server_name}")
@@ -534,7 +537,7 @@ class ServerUpdateManager(ServerManagerModule):
             if scattered:
                 # Use server name hash to get consistent offset for this server
                 import hashlib
-                server_hash = int(hashlib.md5(server_name.encode()).hexdigest()[:8], 16)
+                server_hash = int(hashlib.sha256(server_name.encode()).hexdigest()[:8], 16)
                 offset_minutes = server_hash % scatter_window
                 schedule_datetime += datetime.timedelta(minutes=offset_minutes)
             
@@ -558,9 +561,155 @@ class ServerUpdateManager(ServerManagerModule):
             logger.error(f"Error checking restart schedule: {str(e)}")
             return False
     
+    def _send_restart_warnings(self, server_name: str, server_config: Dict, 
+                               progress_callback: Optional[Callable] = None):
+        # Send pre-restart warning messages to players
+        try:
+            warning_command = server_config.get('WarningCommand', '')
+            warning_message_template = server_config.get('WarningMessageTemplate', 'Server restarting in {message}')
+            if not warning_command:
+                logger.debug(f"No warning command configured for {server_name}, skipping warnings")
+                return
+            
+            warning_intervals_str = server_config.get('WarningIntervals', '30,15,10,5,1')
+            try:
+                warning_intervals = [int(x.strip()) for x in warning_intervals_str.split(',') if x.strip()]
+            except ValueError:
+                warning_intervals = [30, 15, 10, 5, 1]
+            
+            if not warning_intervals:
+                warning_intervals = [1]  # At least 1 minute warning
+            
+            # Sort intervals in descending order
+            warning_intervals.sort(reverse=True)
+            
+            if progress_callback:
+                progress_callback(f"[INFO] Sending restart warnings to {server_name} at intervals: {warning_intervals} minutes")
+            
+            # Send warnings at each interval
+            for minutes in warning_intervals:
+                try:
+                    # Format the warning message
+                    if minutes == 1:
+                        time_message = "1 minute"
+                    else:
+                        time_message = f"{minutes} minutes"
+                    
+                    # Replace {message} in template with time
+                    full_message = warning_message_template.replace('{message}', time_message)
+                    
+                    # Replace {message} placeholder in command with the full message
+                    command = warning_command.replace('{message}', full_message)
+                    
+                    # Send the command to the server
+                    if self._send_command_to_server(server_name, command):
+                        if progress_callback:
+                            progress_callback(f"[INFO] Sent warning: {full_message}")
+                        logger.info(f"Sent restart warning to {server_name}: {full_message}")
+                    else:
+                        if progress_callback:
+                            progress_callback(f"[WARN] Failed to send warning to {server_name}")
+                    
+                    # Wait until the next warning interval
+                    if warning_intervals.index(minutes) < len(warning_intervals) - 1:
+                        next_interval = warning_intervals[warning_intervals.index(minutes) + 1]
+                        wait_seconds = (minutes - next_interval) * 60
+                        if wait_seconds > 0:
+                            if progress_callback:
+                                progress_callback(f"[INFO] Waiting {wait_seconds} seconds until next warning...")
+                            time.sleep(wait_seconds)
+                    else:
+                        # Wait for the final interval before restart
+                        if progress_callback:
+                            progress_callback(f"[INFO] Final warning sent, waiting {minutes * 60} seconds before restart...")
+                        time.sleep(minutes * 60)
+                        
+                except Exception as e:
+                    logger.error(f"Error sending warning at {minutes} minutes: {str(e)}")
+                    continue
+            
+            # Send save command before restart if configured
+            save_command = server_config.get('SaveCommand', '')
+            if save_command:
+                if progress_callback:
+                    progress_callback(f"[INFO] Sending save command before restart...")
+                if self._send_command_to_server(server_name, save_command):
+                    logger.info(f"Sent save command to {server_name} before restart")
+                    time.sleep(5)  # Give the server time to save
+                    
+        except Exception as e:
+            logger.error(f"Error sending restart warnings for {server_name}: {str(e)}")
+    
+    def _send_command_to_server(self, server_name: str, command: str) -> bool:
+        # Send a command to a running server
+        try:
+            # Try using persistent stdin pipe
+            try:
+                from services.persistent_stdin import send_command_to_stdin_pipe, is_stdin_pipe_available
+                if is_stdin_pipe_available(server_name):
+                    result = send_command_to_stdin_pipe(server_name, command)
+                    # Handle both bool and tuple return types
+                    if isinstance(result, tuple):
+                        return result[0]
+                    return result
+            except ImportError:
+                pass
+            
+            # Try using command queue
+            try:
+                from services.command_queue import queue_command, is_relay_active
+                if is_relay_active(server_name):
+                    result = queue_command(server_name, command)
+                    # Handle both bool and tuple return types
+                    if isinstance(result, tuple):
+                        return result[0]
+                    return result
+            except ImportError:
+                pass
+            
+            logger.warning(f"No command input method available for {server_name}")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error sending command to {server_name}: {str(e)}")
+            return False
+    
+    def send_motd(self, server_name: str, message: str, progress_callback: Optional[Callable] = None) -> bool:
+        # Send a MOTD/broadcast message to a server
+        try:
+            if not self.server_manager:
+                return False
+            
+            server_config = self.server_manager.get_server_config(server_name)
+            if not server_config:
+                logger.error(f"Server config not found for {server_name}")
+                return False
+            
+            motd_command = server_config.get('MotdCommand', '')
+            if not motd_command:
+                logger.warning(f"No MOTD command configured for {server_name}")
+                return False
+            
+            # Replace {message} placeholder
+            command = motd_command.replace('{message}', message)
+            
+            if self._send_command_to_server(server_name, command):
+                if progress_callback:
+                    progress_callback(f"[INFO] MOTD sent to {server_name}: {message}")
+                logger.info(f"MOTD sent to {server_name}: {message}")
+                return True
+            else:
+                if progress_callback:
+                    progress_callback(f"[ERROR] Failed to send MOTD to {server_name}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error sending MOTD to {server_name}: {str(e)}")
+            return False
+    
     def restart_server(self, server_name: str, server_config: Dict, 
                       progress_callback: Optional[Callable] = None, scheduled: bool = False) -> Tuple[bool, str]:
-        # Restart a server
+        # Restart a server with optional pre-restart warnings
         try:
             if not self.server_manager:
                 return False, "Server manager not available"
@@ -568,6 +717,10 @@ class ServerUpdateManager(ServerManagerModule):
             if progress_callback:
                 action = "Scheduled restart" if scheduled else "Manual restart"
                 progress_callback(f"[INFO] {action} starting for {server_name}")
+            
+            # Send pre-restart warnings if scheduled and warning command is configured
+            if scheduled:
+                self._send_restart_warnings(server_name, server_config, progress_callback)
             
             # Use the server manager to restart the server
             success, message = self.server_manager.restart_server_advanced(

@@ -101,6 +101,11 @@ export class Dashboard {
         const serverList = document.getElementById('serverList');
         if (!serverList) return;
         
+        // Don't update if there's a table inside (used by inline HTML implementation)
+        if (serverList.querySelector('table')) {
+            return;
+        }
+        
         // Clear existing list
         serverList.innerHTML = '';
         
@@ -461,4 +466,69 @@ export class Dashboard {
             showNotification(`Failed to ${action} server: ${error.message}`, 'error');
         }
     }
+
+    async testCommand(serverId, commandType, minutes = 5) {
+        try {
+            let result;
+            
+            switch (commandType) {
+                case 'motd':
+                    result = await API.testMOTD(serverId);
+                    break;
+                case 'save':
+                    result = await API.testSave(serverId);
+                    break;
+                case 'warning':
+                    result = await API.testWarning(serverId, minutes);
+                    break;
+                default:
+                    throw new Error(`Unknown test command: ${commandType}`);
+            }
+            
+            showNotification(result.message, 'success');
+            
+        } catch (error) {
+            console.error(`Test command error (${commandType}):`, error);
+            showNotification(`Failed to test ${commandType}: ${error.message}`, 'error');
+        }
+    }
 }
+
+// Global functions for HTML onclick handlers
+function controlServer(serverId, action) {
+    if (window.dashboard) {
+        window.dashboard.controlServer(serverId, action);
+    }
+}
+
+function testCommand(serverId, commandType, minutes = 5) {
+    if (window.dashboard) {
+        window.dashboard.testCommand(serverId, commandType, minutes);
+    }
+}
+
+function toggleTestDropdown(serverId) {
+    const dropdownId = `test-dropdown-${serverId.replace(/[^a-zA-Z0-9]/g, '-')}`;
+    const dropdown = document.getElementById(dropdownId);
+    
+    if (dropdown) {
+        // Close all other dropdowns first
+        document.querySelectorAll('.dropdown-menu').forEach(menu => {
+            if (menu.id !== dropdownId) {
+                menu.style.display = 'none';
+            }
+        });
+        
+        // Toggle this dropdown
+        dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+    }
+}
+
+// Close dropdowns when clicking outside
+document.addEventListener('click', function(event) {
+    if (!event.target.closest('.dropdown')) {
+        document.querySelectorAll('.dropdown-menu').forEach(menu => {
+            menu.style.display = 'none';
+        });
+    }
+});

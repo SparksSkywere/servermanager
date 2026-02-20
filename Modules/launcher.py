@@ -6,10 +6,12 @@ import subprocess
 import signal
 import json
 import argparse
-import winreg
 import logging
 import ctypes
 import socket
+
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from Modules.common import setup_module_path, ServerManagerModule, setup_module_logging, is_admin, get_registry_value, get_registry_values, REGISTRY_PATH
 setup_module_path()

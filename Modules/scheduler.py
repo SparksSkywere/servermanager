@@ -2,21 +2,23 @@
 # -*- coding: utf-8 -*-
 import os
 import sys
-import json
 import datetime
 import psutil
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
-from typing import Dict, List, Optional, Callable
+from typing import Optional
 import requests
+import logging
 
+# Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Modules.common import setup_module_logging
+from Modules.common import setup_module_path, setup_module_logging, save_automation_settings, get_node_url
+setup_module_path()
 from Modules.server_logging import log_process_monitoring
 
-logger = setup_module_logging("Scheduler")
+logger: logging.Logger = setup_module_logging("Scheduler")
 
 
 class SchedulerManager:
@@ -63,48 +65,55 @@ class SchedulerManager:
     
     def system_info_timer(self):
         try:
-            logger.debug("[SUBPROCESS_TRACE] system_info_timer fired")
             if self.dashboard and hasattr(self.dashboard, 'update_system_info'):
                 self.dashboard.update_system_info()
-            
-            system_interval = self.dashboard.variables["systemInfoUpdateInterval"] * 1000
-            self.dashboard.root.after(system_interval, self.system_info_timer)
         except Exception as e:
             logger.error(f"System info timer error: {str(e)}")
+        finally:
+            # Always reschedule, even on error
+            try:
+                system_interval = self.dashboard.variables.get("systemInfoUpdateInterval", 10) * 1000
+                self.dashboard.root.after(system_interval, self.system_info_timer)
+            except Exception:
+                pass  # Dashboard may be closing
     
     def server_list_timer(self):
         try:
-            logger.debug("[SUBPROCESS_TRACE] server_list_timer fired")
             if self.dashboard and hasattr(self.dashboard, 'periodic_server_list_refresh'):
                 self.dashboard.periodic_server_list_refresh()
             elif self.dashboard and hasattr(self.dashboard, 'refresh_server_list'):
                 self.dashboard.refresh_server_list()
-            
-            server_interval = self.dashboard.variables["serverListUpdateInterval"] * 1000
-            self.dashboard.root.after(server_interval, self.server_list_timer)
         except Exception as e:
             logger.error(f"Server list timer error: {str(e)}")
+        finally:
+            # Always reschedule, even on error
+            try:
+                server_interval = self.dashboard.variables.get("serverListUpdateInterval", 30) * 1000
+                self.dashboard.root.after(server_interval, self.server_list_timer)
+            except Exception:
+                pass  # Dashboard may be closing
     
     def update_check_timer(self):
         # Timer function for scheduled update checks
         try:
-            logger.debug("[SUBPROCESS_TRACE] update_check_timer fired")
             current_time = datetime.datetime.now()
             
             # Check if enough time has passed since last check
             time_diff = (current_time - self.last_update_check).total_seconds()
             if time_diff >= self.update_check_interval:
-                # Run scheduled updates
-                logger.debug("[SUBPROCESS_TRACE] Running scheduled updates...")
+                # Run scheduled updates in background thread
                 if self.update_manager:
                     threading.Thread(target=self.update_manager.run_scheduled_updates, daemon=True).start()
                 self.last_update_check = current_time
-            
-            # Schedule next check
-            update_interval = self.dashboard.variables["updateCheckInterval"] * 1000
-            self.dashboard.root.after(update_interval, self.update_check_timer)
         except Exception as e:
             logger.error(f"Update check timer error: {str(e)}")
+        finally:
+            # Always reschedule, even on error
+            try:
+                update_interval = self.dashboard.variables.get("updateCheckInterval", 300) * 1000
+                self.dashboard.root.after(update_interval, self.update_check_timer)
+            except Exception:
+                pass  # Dashboard may be closing
     
     def database_sync_timer(self):
         # Timer function for scheduled database syncing across cluster nodes
@@ -120,11 +129,15 @@ class SchedulerManager:
                 # Run database sync in background thread
                 threading.Thread(target=self.sync_cluster_databases, daemon=True).start()
                 self.last_database_sync = current_time
-            
-            # Schedule next sync
-            self.dashboard.root.after(self.database_sync_interval * 1000, self.database_sync_timer)
         except Exception as e:
             logger.error(f"Database sync timer error: {str(e)}")
+        finally:
+            # Always reschedule if sync is enabled
+            try:
+                if self.database_sync_enabled:
+                    self.dashboard.root.after(self.database_sync_interval * 1000, self.database_sync_timer)
+            except Exception:
+                pass  # Dashboard may be closing
     
     def enable_database_sync(self, interval_seconds: int = 600):
         # Enable database syncing across cluster nodes
@@ -184,7 +197,8 @@ class SchedulerManager:
             for node in nodes:
                 try:
                     # Get server's configurations via API
-                    response = requests.get(f"http://{node.ip}:8080/api/servers", timeout=10)
+                    node_url = get_node_url(node.ip, node.port)
+                    response = requests.get(f"{node_url}/api/servers", timeout=10)
                     if response.status_code == 200:
                         remote_servers = response.json().get('servers', [])
                         
@@ -232,7 +246,7 @@ class SchedulerManager:
                         'timestamp': datetime.datetime.now().isoformat()
                     }
                     
-                    response = requests.post(f"http://{node.ip}:8080/api/cluster/sync",
+                    response = requests.post(f"{get_node_url(node.ip, node.port)}/api/cluster/sync",
                                            json=config_data, timeout=10)
                     
                     if response.status_code == 200:
@@ -256,7 +270,7 @@ class SchedulerManager:
                 'timestamp': datetime.datetime.now().isoformat()
             }
             
-            response = requests.post(f"http://{node.ip}:8080/api/servers/sync",
+            response = requests.post(f"{get_node_url(node.ip, node.port)}/api/servers/sync",
                                    json=config_data, timeout=15)
             
             if response.status_code == 200:
@@ -315,12 +329,11 @@ class SchedulerManager:
             messagebox.showerror("Error", "Update manager not available")
             return
         
-        # Create main window
+        # Create main window (non-modal for multi-window support)
         manager = tk.Toplevel(self.dashboard.root)
         manager.title("Schedule Manager")
         manager.geometry("1200x800")
-        manager.transient(self.dashboard.root)
-        manager.grab_set()
+        # Removed transient() and grab_set() to allow multiple windows
         
         # Create main frame with consistent padding
         main_frame = ttk.Frame(manager, padding=(15, 15, 15, 10))
@@ -420,21 +433,51 @@ class SchedulerManager:
         # Bottom buttons with consistent styling
         bottom_frame = ttk.Frame(main_frame)
         bottom_frame.pack(fill=tk.X, pady=(15, 0))
-        
+
         # Separator line for visual clarity
         separator = ttk.Separator(bottom_frame, orient=tk.HORIZONTAL)
         separator.pack(fill=tk.X, pady=(0, 10))
-        
+
+        # Save All button
+        def save_all_schedules():
+            try:
+                # All schedules are saved immediately when configured,
+                # but this provides a confirmation that everything is saved
+                messagebox.showinfo("Success", "All schedules are already saved. No pending changes.")
+            except Exception as e:
+                messagebox.showerror("Error", f"Error: {str(e)}")
+
+        save_all_btn = ttk.Button(bottom_frame, text="Save All", command=save_all_schedules, width=12)
+        save_all_btn.pack(side=tk.RIGHT, padx=(0, 10))
+
         close_btn = ttk.Button(bottom_frame, text="Close", command=manager.destroy, width=12)
         close_btn.pack(side=tk.RIGHT)
         
         # Populate targets list
         self.populate_targets_list()
         
-        # Centre window
+        # Centre window with multi-screen support
         manager.update_idletasks()
-        x = self.dashboard.root.winfo_rootx() + (self.dashboard.root.winfo_width() - manager.winfo_width()) // 2
-        y = self.dashboard.root.winfo_rooty() + (self.dashboard.root.winfo_height() - manager.winfo_height()) // 2
+        window_width = manager.winfo_width()
+        window_height = manager.winfo_height()
+
+        # Calculate center position relative to dashboard
+        dashboard_x = self.dashboard.root.winfo_rootx()
+        dashboard_y = self.dashboard.root.winfo_rooty()
+        dashboard_width = self.dashboard.root.winfo_width()
+        dashboard_height = self.dashboard.root.winfo_height()
+
+        x = dashboard_x + (dashboard_width // 2) - (window_width // 2)
+        y = dashboard_y + (dashboard_height // 2) - (window_height // 2)
+
+        # Get screen dimensions
+        screen_width = self.dashboard.root.winfo_screenwidth()
+        screen_height = self.dashboard.root.winfo_screenheight()
+
+        # Ensure window stays within screen bounds
+        x = max(0, min(x, screen_width - window_width))
+        y = max(0, min(y, screen_height - window_height))
+
         manager.geometry(f"+{x}+{y}")
     
     def populate_targets_list(self):
@@ -542,6 +585,205 @@ class SchedulerManager:
         notebook.add(restart_frame, text="Restart Schedule")
         
         self.create_schedule_form(restart_frame, "restart", target_type, server_name, restart_schedule)
+        
+        # Commands Tab (only for individual servers, not global)
+        if target_type == "server" and server_name:
+            commands_frame = ttk.Frame(notebook, padding=(15, 15))
+            notebook.add(commands_frame, text="Server Commands")
+            
+            self.create_commands_form(commands_frame, server_name)
+            
+    def create_commands_form(self, parent_frame, server_name):
+        # Create form for configuring server commands (MOTD, warnings, save, etc.)
+        # Get current server config
+        server_config = {}
+        if hasattr(self.dashboard, 'server_manager') and self.dashboard.server_manager:
+            server_config = self.dashboard.server_manager.get_server_config(server_name) or {}
+        
+        # Create scrollable frame for content
+        canvas = tk.Canvas(parent_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Instructions
+        info_label = ttk.Label(scrollable_frame, text="Configure commands for this server. Use {message} as a placeholder for dynamic text.",
+                              font=("Segoe UI", 9), foreground="gray", wraplength=600)
+        info_label.pack(anchor=tk.W, pady=(0, 15))
+        
+        # Stop Command
+        stop_frame = ttk.LabelFrame(scrollable_frame, text="Stop Command", padding=(10, 8))
+        stop_frame.pack(fill=tk.X, pady=(0, 12))
+        
+        stop_help = ttk.Label(stop_frame, text="Command to gracefully stop the server (e.g., 'stop', 'quit', '/stop')", 
+                             font=("Segoe UI", 9), foreground="gray")
+        stop_help.pack(anchor=tk.W, pady=(0, 5))
+        
+        stop_var = tk.StringVar(value=server_config.get('StopCommand', ''))
+        stop_entry = ttk.Entry(stop_frame, textvariable=stop_var, width=60)
+        stop_entry.pack(fill=tk.X)
+        
+        # Save Command
+        save_frame = ttk.LabelFrame(scrollable_frame, text="Save Command", padding=(10, 8))
+        save_frame.pack(fill=tk.X, pady=(0, 12))
+        
+        save_help = ttk.Label(save_frame, text="Command to save world/data before shutdown (e.g., 'save-all', '/save-all')", 
+                             font=("Segoe UI", 9), foreground="gray")
+        save_help.pack(anchor=tk.W, pady=(0, 5))
+        
+        save_var = tk.StringVar(value=server_config.get('SaveCommand', ''))
+        save_entry = ttk.Entry(save_frame, textvariable=save_var, width=60)
+        save_entry.pack(fill=tk.X)
+        
+        # MOTD Settings
+        motd_frame = ttk.LabelFrame(scrollable_frame, text="MOTD (Message of the Day)", padding=(10, 8))
+        motd_frame.pack(fill=tk.X, pady=(0, 12))
+
+        # MOTD Command
+        ttk.Label(motd_frame, text="MOTD Command:", font=("Segoe UI", 9)).grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        motd_var = tk.StringVar(value=server_config.get('MotdCommand', ''))
+        motd_entry = ttk.Entry(motd_frame, textvariable=motd_var, width=50)
+        motd_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
+
+        # MOTD Message
+        ttk.Label(motd_frame, text="MOTD Message:", font=("Segoe UI", 9)).grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+        motd_msg_var = tk.StringVar(value=server_config.get('MotdMessage', ''))
+        motd_msg_entry = ttk.Entry(motd_frame, textvariable=motd_msg_var, width=50)
+        motd_msg_entry.grid(row=1, column=1, padx=5, pady=5, sticky=tk.EW)
+
+        # Broadcast Interval
+        ttk.Label(motd_frame, text="Broadcast Interval (minutes):", font=("Segoe UI", 9)).grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
+        motd_interval_var = tk.StringVar(value=str(server_config.get('MotdInterval', 0)))
+        motd_interval_entry = ttk.Entry(motd_frame, textvariable=motd_interval_var, width=10)
+        motd_interval_entry.grid(row=2, column=1, padx=5, pady=5, sticky=tk.W)
+        ttk.Label(motd_frame, text="0 = disabled", font=("Segoe UI", 8), foreground="gray").grid(row=2, column=2, padx=5, pady=5, sticky=tk.W)
+
+        # Configure grid weights
+        motd_frame.columnconfigure(1, weight=1)
+
+        # Warning Command (for shutdown/restart warnings)
+        warning_frame = ttk.LabelFrame(scrollable_frame, text="Warning Command", padding=(10, 8))
+        warning_frame.pack(fill=tk.X, pady=(0, 12))
+
+        warning_help = ttk.Label(warning_frame, text="Command for shutdown/restart warnings (e.g., 'say Server restarting in {message}')",
+                                font=("Segoe UI", 9), foreground="gray")
+        warning_help.pack(anchor=tk.W, pady=(0, 5))
+
+        warning_var = tk.StringVar(value=server_config.get('WarningCommand', ''))
+        warning_entry = ttk.Entry(warning_frame, textvariable=warning_var, width=60)
+        warning_entry.pack(fill=tk.X)
+
+        # Warning Intervals
+        intervals_frame = ttk.LabelFrame(scrollable_frame, text="Warning Intervals (minutes)", padding=(10, 8))
+        intervals_frame.pack(fill=tk.X, pady=(0, 12))
+
+        intervals_help = ttk.Label(intervals_frame, text="Comma-separated minutes before shutdown to send warnings (e.g., '30,15,10,5,1')",
+                                  font=("Segoe UI", 9), foreground="gray")
+        intervals_help.pack(anchor=tk.W, pady=(0, 5))
+
+        intervals_var = tk.StringVar(value=server_config.get('WarningIntervals', '30,15,10,5,1'))
+        intervals_entry = ttk.Entry(intervals_frame, textvariable=intervals_var, width=60)
+        intervals_entry.pack(fill=tk.X)
+        start_frame = ttk.LabelFrame(scrollable_frame, text="Start Command", padding=(10, 8))
+        start_frame.pack(fill=tk.X, pady=(0, 12))
+        
+        start_help = ttk.Label(start_frame, text="Command to run after server starts (e.g., welcome message)", 
+                              font=("Segoe UI", 9), foreground="gray")
+        start_help.pack(anchor=tk.W, pady=(0, 5))
+        
+        start_var = tk.StringVar(value=server_config.get('StartCommand', ''))
+        start_entry = ttk.Entry(start_frame, textvariable=start_var, width=60)
+        start_entry.pack(fill=tk.X)
+        
+        # Scheduled Restart
+        restart_frame = ttk.LabelFrame(scrollable_frame, text="Scheduled Restart", padding=(10, 8))
+        restart_frame.pack(fill=tk.X, pady=(0, 12))
+        
+        scheduled_restart_var = tk.BooleanVar(value=server_config.get('ScheduledRestartEnabled', False))
+        restart_check = ttk.Checkbutton(restart_frame, text="Enable scheduled restart with warnings", 
+                                       variable=scheduled_restart_var)
+        restart_check.pack(anchor=tk.W)
+        
+        # Warning Message Template
+        template_frame = ttk.LabelFrame(scrollable_frame, text="Warning Message Template", padding=(10, 8))
+        template_frame.pack(fill=tk.X, pady=(0, 12))
+        
+        template_help = ttk.Label(template_frame, text="Template for warning messages (use {message} for time)", 
+                                 font=("Segoe UI", 9), foreground="gray")
+        template_help.pack(anchor=tk.W, pady=(0, 5))
+        
+        template_var = tk.StringVar(value=server_config.get('WarningMessageTemplate', 'Server restarting in {message}'))
+        template_entry = ttk.Entry(template_frame, textvariable=template_var, width=60)
+        template_entry.pack(fill=tk.X)
+        
+        # Example commands section
+        examples_frame = ttk.LabelFrame(scrollable_frame, text="Common Command Examples", padding=(10, 8))
+        examples_frame.pack(fill=tk.X, pady=(0, 12))
+        
+        examples_text = """Minecraft: stop, save-all, say {message}
+Vintage Story: /stop, /announce {message}
+ARK: saveworld, broadcast {message}
+Rust: quit, say {message}
+Valheim: No console commands available (use CTRL+C)"""
+        
+        examples_label = ttk.Label(examples_frame, text=examples_text, font=("Consolas", 9), justify=tk.LEFT)
+        examples_label.pack(anchor=tk.W)
+        
+        # Save Button
+        button_frame = ttk.Frame(scrollable_frame)
+        button_frame.pack(fill=tk.X, pady=(15, 0))
+        
+        separator = ttk.Separator(button_frame, orient=tk.HORIZONTAL)
+        separator.pack(fill=tk.X, pady=(0, 12))
+        
+        def save_commands():
+            try:
+                if not hasattr(self.dashboard, 'server_manager') or not self.dashboard.server_manager:
+                    messagebox.showerror("Error", "Server manager not available")
+                    return
+                
+                # Get current config
+                current_config = self.dashboard.server_manager.get_server_config(server_name) or {}
+                
+                # Prepare automation data
+                automation_data = {
+                    'motd_command': motd_var.get().strip(),
+                    'motd_message': motd_msg_var.get().strip(),
+                    'motd_interval': motd_interval_var.get().strip(),
+                    'start_command': start_var.get().strip(),
+                    'scheduled_restart_enabled': scheduled_restart_var.get(),
+                    'warning_command': warning_var.get().strip(),
+                    'warning_intervals': intervals_var.get().strip(),
+                    'warning_message_template': template_var.get().strip(),
+                    'stop_command': stop_var.get().strip(),
+                    'save_command': save_var.get().strip()
+                }
+                
+                # Save using common function
+                current_config = save_automation_settings(current_config, automation_data)
+                
+                # Save to database
+                if self.dashboard.server_manager.update_server(server_name, current_config):
+                    messagebox.showinfo("Success", "Server commands saved successfully")
+                else:
+                    messagebox.showerror("Error", "Failed to save server commands")
+                    
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save commands: {str(e)}")
+        
+        save_btn = ttk.Button(button_frame, text="Save Commands", command=save_commands, width=16)
+        save_btn.pack(side=tk.LEFT)
+        
     def create_schedule_form(self, parent_frame, schedule_type, target_type, server_name, existing_schedule):
         # Create a form for configuring a schedule
         # Default values if no existing schedule

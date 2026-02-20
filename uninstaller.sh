@@ -5,7 +5,7 @@
 set -e
 
 # Configuration
-CURRENT_VERSION="1.0"
+CURRENT_VERSION="1.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/Uninstall-Log.txt"
 STEAMCMD_DIR="$HOME/SteamCMD"
@@ -149,6 +149,10 @@ remove_firewall_rules() {
         sudo ufw delete allow 8080/tcp 2>/dev/null || true
         sudo ufw delete allow 80/tcp 2>/dev/null || true
         sudo ufw delete allow 443/tcp 2>/dev/null || true
+        sudo ufw delete allow 8081/tcp 2>/dev/null || true
+        sudo ufw delete allow 5001/tcp 2>/dev/null || true
+        sudo ufw delete allow 27015:27050/tcp 2>/dev/null || true
+        sudo ufw delete allow 27015:27050/udp 2>/dev/null || true
         log_info "Removed UFW rules"
     fi
     
@@ -157,6 +161,10 @@ remove_firewall_rules() {
         sudo firewall-cmd --permanent --remove-port=8080/tcp 2>/dev/null || true
         sudo firewall-cmd --permanent --remove-port=80/tcp 2>/dev/null || true
         sudo firewall-cmd --permanent --remove-port=443/tcp 2>/dev/null || true
+        sudo firewall-cmd --permanent --remove-port=8081/tcp 2>/dev/null || true
+        sudo firewall-cmd --permanent --remove-port=5001/tcp 2>/dev/null || true
+        sudo firewall-cmd --permanent --remove-port=27015-27050/tcp 2>/dev/null || true
+        sudo firewall-cmd --permanent --remove-port=27015-27050/udp 2>/dev/null || true
         sudo firewall-cmd --reload 2>/dev/null || true
         log_info "Removed firewalld rules"
     fi
@@ -184,6 +192,18 @@ remove_server_manager_files() {
     if [[ -d "$SERVER_MANAGER_DIR/temp" ]]; then
         rm -rf "$SERVER_MANAGER_DIR/temp"
         log_info "Removed temp directory"
+    fi
+    
+    # Remove SSL directory and certificates
+    if [[ -d "$SERVER_MANAGER_DIR/ssl" ]]; then
+        rm -rf "$SERVER_MANAGER_DIR/ssl"
+        log_info "Removed SSL directory and certificates"
+    fi
+    
+    # Remove cluster security token file
+    if [[ -f "$SERVER_MANAGER_DIR/cluster-security-token.txt" ]]; then
+        rm -f "$SERVER_MANAGER_DIR/cluster-security-token.txt"
+        log_info "Removed cluster security token file"
     fi
     
     # Remove __pycache__ directories

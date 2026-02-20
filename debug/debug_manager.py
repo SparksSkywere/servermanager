@@ -1,25 +1,18 @@
 # Debug manager - diagnostics GUI
 import os
 import sys
-import json
 import subprocess
-import logging
-import winreg
 import time
 import platform
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
-import datetime
 import traceback
 import ctypes
 import psutil
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(script_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
-
-from Modules.common import setup_module_logging
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from Modules.common import setup_module_path, setup_module_logging, is_admin
+setup_module_path()
 
 try:
     from debug.debug import DebugManager as CoreDebugManager
@@ -31,19 +24,10 @@ except Exception:
     debug_manager = None
 
 
-def is_admin():
-    # Admin check
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except:
-        return False
-
-
 def run_as_admin():
     # Elevate to admin
     ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
     sys.exit()
-
 
 class DebugManagerGUI:
     # - Debug centre UI
@@ -67,10 +51,8 @@ class DebugManagerGUI:
     def initialise(self):
         # Init paths/config from registry
         try:
-            from Modules.common import REGISTRY_ROOT
-            key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
-            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-            winreg.CloseKey(key)
+            from Modules.common import get_server_manager_dir
+            self.server_manager_dir = get_server_manager_dir()
             
             self.paths = {
                 "root": self.server_manager_dir,
@@ -448,28 +430,29 @@ Usage: {disk_usage.percent}%
                 
                 results_text.insert(tk.END, "--- Server Status ---\n", "heading")
                 
-                if self.server_manager_dir:
-                    servers_dir = self.paths.get("servers", os.path.join(self.server_manager_dir, "servers"))
-                else:
-                    servers_dir = self.paths.get("servers", "")
-                
-                if servers_dir and os.path.exists(servers_dir):
-                    server_files = [f for f in os.listdir(servers_dir) if f.endswith('.json')]
-                    if server_files:
-                        results_text.insert(tk.END, f"Found {len(server_files)} server configuration(s).\n")
+                # Get servers from database
+                try:
+                    from Modules.Database.server_configs_database import ServerConfigManager
+                    manager = ServerConfigManager()
+                    all_servers = manager.get_all_servers()
+                    
+                    if all_servers:
+                        results_text.insert(tk.END, f"Found {len(all_servers)} server configuration(s) in database.\n")
                         
                         # Check a few servers
-                        for i, server_file in enumerate(server_files[:3]):  # Check up to 3 servers
+                        for i, server_config in enumerate(all_servers[:3]):  # Check up to 3 servers
                             try:
-                                with open(os.path.join(servers_dir, server_file), 'r') as f:
-                                    server_config = json.load(f)
-                                
-                                server_name = server_config.get("Name", server_file.replace(".json", ""))
+                                # Ensure server_config is a dictionary
+                                if not isinstance(server_config, dict):
+                                    results_text.insert(tk.END, f"  - Server {i+1}: Invalid config format\n", "error")
+                                    continue
+                                    
+                                server_name = server_config.get("Name", "Unknown")
                                 results_text.insert(tk.END, f"  - {server_name}: ")
                                 
                                 if debug_manager and hasattr(debug_manager, "get_server_status"):
                                     server_status = debug_manager.get_server_status(server_name)
-                                    if server_status.get("IsRunning", False):
+                                    if isinstance(server_status, dict) and server_status.get("IsRunning", False):
                                         results_text.insert(tk.END, "Running\n", "ok")
                                     else:
                                         results_text.insert(tk.END, "Stopped\n", "warning")
@@ -482,16 +465,16 @@ Usage: {disk_usage.percent}%
                                                 results_text.insert(tk.END, "Running\n", "ok")
                                             else:
                                                 results_text.insert(tk.END, "Stopped\n", "warning")
-                                        except:
+                                        except (ValueError, psutil.Error, OSError):
                                             results_text.insert(tk.END, "Unknown\n", "warning")
                                     else:
                                         results_text.insert(tk.END, "Not started\n", "warning")
                             except Exception as e:
-                                results_text.insert(tk.END, f"Error reading server config {server_file}: {str(e)}\n", "error")
+                                results_text.insert(tk.END, f"Error reading server config: {str(e)}\n", "error")
                     else:
-                        results_text.insert(tk.END, "No server configurations found.\n", "warning")
-                else:
-                    results_text.insert(tk.END, f"Servers directory not found: {servers_dir}\n", "error")
+                        results_text.insert(tk.END, "No server configurations found in database.\n", "warning")
+                except Exception as e:
+                    results_text.insert(tk.END, f"Error accessing database: {str(e)}\n", "error")
                 
                 results_text.insert(tk.END, "\n")
                 

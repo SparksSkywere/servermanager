@@ -5,19 +5,16 @@ import traceback
 import tkinter as tk
 from tkinter import scrolledtext, messagebox
 import threading
+import logging
 from datetime import datetime
 
-# Ensure project root is in sys.path
+# Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 
-# Import standardized logging
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("DatabaseUpdate")
-except Exception:
-    import logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("DatabaseUpdate")
+# Setup module path and logging
+from Modules.common import setup_module_path, setup_module_logging, handle_generic_error
+setup_module_path()
+logger: logging.Logger = setup_module_logging("DatabaseUpdate")
 
 class DatabaseUpdateGUI:
     def __init__(self):
@@ -92,8 +89,8 @@ class DatabaseUpdateGUI:
             from sqlalchemy import inspect, text
             self.log_message("Successfully imported required modules")
         except ImportError as e:
+            handle_generic_error("importing database modules", e, logger)
             self.log_message(f"FAILED to import modules: {e}")
-            self.log_message(traceback.format_exc())
             raise
         
         # Define required columns

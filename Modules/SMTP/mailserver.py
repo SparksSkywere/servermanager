@@ -1,5 +1,6 @@
 # Mail server module - SMTP with Gmail, Outlook, custom providers, OAuth 2.0 for MS Exchange with 2FA
 import os
+import sys
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -12,6 +13,9 @@ import http.server
 import socketserver
 from urllib.parse import parse_qs, urlparse
 import threading
+
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from Modules.common import setup_module_path, get_base_url
 setup_module_path()

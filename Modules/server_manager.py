@@ -1,7 +1,6 @@
 # Server management core
 import os
 import sys
-import json
 import logging
 import subprocess
 import time
@@ -9,15 +8,18 @@ import psutil
 import urllib.request
 from datetime import datetime
 
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from Modules.common import (
-    get_subprocess_creation_flags, should_hide_server_consoles, 
-    setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH
+    setup_module_path, get_subprocess_creation_flags, should_hide_server_consoles, 
+    setup_module_logging
 )
-from Modules.server_logging import get_component_logger, log_server_action, log_exception
+setup_module_path()
 
 # Import stdin relay for persistent command input
 try:
-    from services.stdin_relay import start_relay_for_server, send_command_via_relay
+    from services.stdin_relay import send_command_via_relay
     _STDIN_RELAY_AVAILABLE = True
 except ImportError:
     _STDIN_RELAY_AVAILABLE = False
@@ -25,7 +27,6 @@ except ImportError:
 # Import persistent stdin pipe (allows commands after dashboard restart)
 try:
     from services.persistent_stdin import (
-        PersistentStdinPipe, 
         send_command_to_stdin_pipe, 
         is_stdin_pipe_available
     )
@@ -36,8 +37,6 @@ except ImportError:
 # Import command queue relay (file-based command queuing)
 try:
     from services.command_queue import (
-        start_command_relay,
-        stop_command_relay,
         queue_command,
         is_relay_active
     )
@@ -45,7 +44,7 @@ try:
 except ImportError:
     _COMMAND_QUEUE_AVAILABLE = False
 
-logger = setup_module_logging("ServerManager")
+logger: logging.Logger = setup_module_logging("ServerManager")
 
 # Import Minecraft-specific functions (NO FALLBACKS)
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Modules'))
@@ -63,9 +62,8 @@ except ImportError as e:
 
 from Modules.common import ServerManagerModule
 
+
 class ServerManager(ServerManagerModule):
-    # - Handles all server operations
-    # - Start, stop, restart, status, config
     def __init__(self):
         super().__init__("ServerManager")
         self.servers = {}
@@ -77,16 +75,13 @@ class ServerManager(ServerManagerModule):
         # Get active process-None if dead
         if hasattr(self, 'active_processes') and server_name in self.active_processes:
             process = self.active_processes[server_name]
-            # Check if process is still running
             if process.poll() is None:
                 return process
             else:
-                # Clean up dead process
                 del self.active_processes[server_name]
         return None
         
     def get_servers(self):
-        # All servers dict
         return self.servers
         
     def load_config(self):
@@ -95,30 +90,24 @@ class ServerManager(ServerManagerModule):
             from Modules.Database.cluster_database import ClusterDatabase
             db = ClusterDatabase()
             
-            # Get main config from database
             config_data = db.get_main_config()
             
             # Migrate from JSON if database is empty
             if not config_data and self.server_manager_dir:
-                # Try to find config.json in the server manager directory
                 config_file = os.path.join(self.server_manager_dir, "config", "config.json")
                 if os.path.exists(config_file):
                     logger.debug("Migrating main config from JSON to database")
                     db.migrate_main_config_from_json(config_file)
-                    # Reload after migration
                     config_data = db.get_main_config()
             
-            # Update the inherited config
             self._config_manager.config.update(config_data)
             logger.debug("Configuration loaded from database")
             
         except Exception as e:
             logger.error(f"Error loading configuration from database: {str(e)}")
-            # Create default configuration in database
             self.create_default_config()
             
     def create_default_config(self):
-        # Create default configuration in database
         try:
             from Modules.Database.cluster_database import ClusterDatabase
             db = ClusterDatabase()
@@ -133,7 +122,6 @@ class ServerManager(ServerManagerModule):
                 "max_log_size": 10 * 1024 * 1024  # 10 MB
             }
             
-            # Set each config value individually
             for key, value in default_config.items():
                 config_type = 'integer' if isinstance(value, int) else 'string'
                 db.set_main_config(key, value, config_type)
@@ -144,114 +132,91 @@ class ServerManager(ServerManagerModule):
             logger.error(f"Error creating default configuration: {str(e)}")
             
     def load_servers(self):
-        # Load list of servers from config directory
         try:
-            servers_dir = self.paths["servers"]
+            from Modules.Database.server_configs_database import get_server_config_manager
+            manager = get_server_config_manager()
+            servers = manager.get_all_servers()
             
-            if not os.path.exists(servers_dir):
-                os.makedirs(servers_dir, exist_ok=True)
-                logger.debug(f"Created servers directory: {servers_dir}")
-                return
-                
-            for file in os.listdir(servers_dir):
-                if file.endswith(".json"):
-                    self._load_server_config_with_retry(os.path.join(servers_dir, file))
+            # Convert to dict keyed by name for backward compatibility
+            self.servers = {server['Name']: server for server in servers}
                         
-            logger.debug(f"Loaded {len(self.servers)} server configurations")
+            logger.debug(f"Loaded {len(self.servers)} server configurations from database")
         except Exception as e:
-            logger.error(f"Error loading servers: {str(e)}")
+            logger.error(f"Error loading servers from database: {str(e)}")
+            self.servers = {}
     
-    def _load_server_config_with_retry(self, file_path, max_retries=3, delay=0.1):
-        # Load server config with retry on file access errors
-        import time
-        for attempt in range(max_retries):
-            try:
-                with open(file_path, 'r') as f:
-                    server_config = json.load(f)
-                    
-                server_name = server_config.get("Name")
-                if server_name:
-                    self.servers[server_name] = server_config
-                return
-            except IOError as e:
-                if attempt < max_retries - 1:
-                    logger.debug(f"Retrying load of {file_path} after IOError: {str(e)}")
-                    time.sleep(delay)
-                else:
-                    logger.error(f"Failed to load server config {file_path} after {max_retries} attempts: {str(e)}")
-            except Exception as e:
-                logger.error(f"Error loading server config {file_path}: {str(e)}")
-                return
+
             
     def get_server_config(self, server_name):
-        # Get configuration for a specific server
         if server_name in self.servers:
             return self.servers[server_name]
             
-        # Try to load from file if not in memory
-        config_path = os.path.join(self.paths["servers"], f"{server_name}.json")
-        if os.path.exists(config_path):
-            self._load_server_config_with_retry(config_path)
-            return self.servers.get(server_name)
+        # Try to load from database if not in memory
+        try:
+            from Modules.Database.server_configs_database import get_server_config_manager
+            manager = get_server_config_manager()
+            server_config = manager.get_server(server_name)
+            
+            if server_config:
+                self.servers[server_name] = server_config
+                return server_config
+                
+        except Exception as e:
+            logger.error(f"Error loading server config {server_name} from database: {e}")
                 
         return None
         
-    def save_server_config(self, server_name, config):
-        # Save configuration for a specific server
-        import time
-        max_retries = 3
-        delay = 0.1
-        for attempt in range(max_retries):
-            try:
-                config_path = os.path.join(self.paths["servers"], f"{server_name}.json")
-                
-                with open(config_path, 'w') as f:
-                    json.dump(config, f, indent=4)
-                    
-                # Update cache
+    def update_server(self, server_name, config):
+        try:
+            from Modules.Database.server_configs_database import get_server_config_manager
+            manager = get_server_config_manager()
+            
+            # Update existing server or create new one
+            if manager.get_server(server_name):
+                success = manager.update_server(server_name, config)
+            else:
+                success = manager.create_server(config)
+            
+            if success:
                 self.servers[server_name] = config
-                
                 logger.debug(f"Server configuration saved for {server_name}")
                 return True
-            except IOError as e:
-                if attempt < max_retries - 1:
-                    logger.debug(f"Retrying save of {server_name} after IOError: {str(e)}")
-                    time.sleep(delay)
-                else:
-                    logger.error(f"Failed to save server config {server_name} after {max_retries} attempts: {str(e)}")
-                    return False
-            except Exception as e:
-                logger.error(f"Error saving server config {server_name}: {str(e)}")
+            else:
+                logger.error(f"Failed to save server config {server_name} to database")
                 return False
+                
+        except Exception as e:
+            logger.error(f"Error saving server config {server_name}: {str(e)}")
+            return False
             
     def get_server_list(self):
-        # Get list of all configured servers
         return list(self.servers.values())
     
     def get_all_servers(self):
         return self.servers.copy()
     
     def reload_servers(self):
-        # Reload all server configurations from disk
         self.servers.clear()
         self.load_servers()
     
     def reload_server(self, server_name):
-        # Reload a specific server configuration from disk
         try:
-            servers_dir = self.paths["servers"]
-            config_file = os.path.join(servers_dir, f"{server_name}.json")
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    server_config = json.load(f)
+            from Modules.Database.server_configs_database import get_server_config_manager
+            manager = get_server_config_manager()
+            server_config = manager.get_server(server_name)
+            
+            if server_config:
                 self.servers[server_name] = server_config
                 return True
+            else:
+                logger.warning(f"Server {server_name} not found in database")
+                return False
+                
         except Exception as e:
             logger.error(f"Error reloading server config for {server_name}: {e}")
-        return False
+            return False
             
     def is_process_running(self, pid):
-        # Check if a process with the given ID is running
         try:
             if pid is None:
                 return False
@@ -261,7 +226,7 @@ class ServerManager(ServerManagerModule):
     
     def is_server_process_valid(self, server_name, process_id, server_config=None):
         # Validate that a PID actually belongs to the server it's claimed to be
-        # This prevents issues with Windows PID reuse where an old PID might now
+        # Prevents issues with Windows PID reuse
         # belong to a completely different process
         # PRIMARY validation: ProcessCreateTime matching (most secure)
         # Returns: (is_valid, process_or_none)
@@ -280,7 +245,6 @@ class ServerManager(ServerManagerModule):
             if not process.is_running():
                 return False, None
 
-            # Get server config if not provided
             if server_config is None:
                 server_config = self.get_server_config(server_name)
 
@@ -289,7 +253,7 @@ class ServerManager(ServerManagerModule):
                 return True, process
 
             # PRIMARY CHECK: Stored process creation time (most secure validation)
-            # This is the definitive way to verify PID ownership since creation time
+            # Definitive way to verify PID ownership since creation time
             # is unique and won't match if Windows reuses the PID for another process
             stored_create_time = server_config.get('ProcessCreateTime')
             if stored_create_time:
@@ -307,7 +271,7 @@ class ServerManager(ServerManagerModule):
                     pass
 
             # FALLBACK: If no ProcessCreateTime stored, use heuristic checks
-            # This is less secure but necessary for backwards compatibility
+            # Less secure but necessary for backwards compatibility
             install_dir = server_config.get('InstallDir', '')
             executable_path = server_config.get('ExecutablePath', '')
             server_type = server_config.get('Type', '').lower()
@@ -317,7 +281,6 @@ class ServerManager(ServerManagerModule):
                 proc_cwd = process.cwd().lower() if process.cwd() else ''
                 proc_name = process.name().lower() if process.name() else ''
 
-                # Try to get command line
                 try:
                     cmdline = process.cmdline()
                     cmdline_str = ' '.join(cmdline).lower() if cmdline else ''
@@ -329,7 +292,6 @@ class ServerManager(ServerManagerModule):
                 logger.debug(f"Cannot access process {process_id} info for validation")
                 return False, None
 
-            # Validation checks (fallback when no ProcessCreateTime)
             install_dir_lower = install_dir.lower() if install_dir else ''
             executable_lower = executable_path.lower() if executable_path else ''
             
@@ -353,7 +315,6 @@ class ServerManager(ServerManagerModule):
                 if exe_basename == proc_exe_basename:
                     logger.debug(f"PID {process_id} validated: executable name matches")
                     return True, process
-                # Check if proc_exe is within install directory
                 if install_dir_lower and proc_exe.startswith(os.path.normpath(install_dir_lower)):
                     logger.debug(f"PID {process_id} validated: process exe in install dir")
                     return True, process
@@ -385,7 +346,6 @@ class ServerManager(ServerManagerModule):
             return False, None
     
     def clear_stale_pid(self, server_name, server_config=None):
-        # Clear stale PID from server config if it's no longer valid
         try:
             if server_config is None:
                 server_config = self.get_server_config(server_name)
@@ -405,7 +365,7 @@ class ServerManager(ServerManagerModule):
                 server_config.pop('StartTime', None)
                 server_config.pop('ProcessCreateTime', None)
                 server_config['LastUpdate'] = datetime.now().isoformat()
-                self.save_server_config(server_name, server_config)
+                self.update_server(server_name, server_config)
                 return True
             
             return False
@@ -415,7 +375,7 @@ class ServerManager(ServerManagerModule):
 
     def detect_and_recover_system_corruption(self, server_name, server_config=None, callback=None):
         # Detect and recover from system corruption after BSODs, power failures, or bad starts
-        # Performs comprehensive system state validation and automatic recovery
+        # Performs system state validation and automatic recovery
         # Returns: (recovery_needed, recovery_actions_taken, errors)
         recovery_needed = False
         recovery_actions = []
@@ -431,46 +391,19 @@ class ServerManager(ServerManagerModule):
 
             logger.debug(f"Running corruption detection for {server_name}")
 
-            # 1. Check for config file corruption
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-            if os.path.exists(config_file):
-                try:
-                    with open(config_file, 'r', encoding='utf-8') as f:
-                        config_data = json.load(f)
-
-                    # Validate required fields
-                    required_fields = ['InstallDir', 'ExecutablePath', 'Type']
-                    missing_fields = [field for field in required_fields if field not in config_data]
-                    if missing_fields:
-                        errors.append(f"Config file missing required fields: {missing_fields}")
-                        recovery_needed = True
-                        recovery_actions.append("Config file validation failed")
-
-                except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                    errors.append(f"Config file corrupted: {e}")
+            # 1. Check for config data corruption in database
+            config_data = self.servers.get(server_name)
+            if config_data:
+                required_fields = ['InstallDir', 'ExecutablePath', 'Type']
+                missing_fields = [field for field in required_fields if field not in config_data]
+                if missing_fields:
+                    errors.append(f"Config missing required fields: {missing_fields}")
                     recovery_needed = True
-                    recovery_actions.append("Config file corruption detected")
-
-                    # Attempt to backup and recreate config
-                    try:
-                        backup_file = f"{config_file}.corrupted.{int(time.time())}"
-                        os.rename(config_file, backup_file)
-                        recovery_actions.append(f"Backed up corrupted config to {backup_file}")
-
-                        # Create minimal recovery config
-                        recovery_config = {
-                            'Type': 'Other',
-                            'InstallDir': '',
-                            'ExecutablePath': '',
-                            'LastUpdate': datetime.now().isoformat(),
-                            'CorruptionRecovery': True
-                        }
-                        with open(config_file, 'w', encoding='utf-8') as f:
-                            json.dump(recovery_config, f, indent=2)
-                        recovery_actions.append("Created recovery config file")
-
-                    except Exception as backup_error:
-                        errors.append(f"Failed to backup corrupted config: {backup_error}")
+                    recovery_actions.append("Config validation failed")
+            else:
+                errors.append("Server configuration not found in database")
+                recovery_needed = True
+                recovery_actions.append("Server config missing from database")
 
             # 2. Check install directory integrity
             install_dir = server_config.get('InstallDir', '')
@@ -480,7 +413,6 @@ class ServerManager(ServerManagerModule):
                     recovery_needed = True
                     recovery_actions.append("Install directory missing")
                 else:
-                    # Check if directory is accessible
                     try:
                         os.listdir(install_dir)
                     except PermissionError:
@@ -496,7 +428,6 @@ class ServerManager(ServerManagerModule):
                     recovery_needed = True
                     recovery_actions.append("Executable file missing")
                 else:
-                    # Check if executable is accessible
                     try:
                         with open(executable_path, 'rb') as f:
                             f.read(1)  # Just check if we can read
@@ -514,46 +445,47 @@ class ServerManager(ServerManagerModule):
                     recovery_needed = True
                     recovery_actions.append(f"Cleaned up stale PID {pid}")
 
-                    # Clean up stale entries
                     server_config.pop('ProcessId', None)
                     server_config.pop('PID', None)
                     server_config.pop('StartTime', None)
                     server_config.pop('ProcessCreateTime', None)
                     server_config['LastUpdate'] = datetime.now().isoformat()
-                    self.save_server_config(server_name, server_config)
+                    self.update_server(server_name, server_config)
 
-            # 5. Check log file integrity
+            # 5. Check log file integrity - batch file operations for efficiency
             try:
                 logs_dir = os.path.join(self.paths.get("logs", "logs"))
                 if os.path.exists(logs_dir):
-                    # Check for corrupted log files
+                    corrupted_files = []
                     for root, dirs, files in os.walk(logs_dir):
                         for file in files:
                             if file.endswith('.log'):
                                 log_path = os.path.join(root, file)
                                 try:
                                     # Quick corruption check - try to read last few lines
-                                    with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                        f.seek(0, 2)  # Seek to end
-                                        size = f.tell()
-                                        if size > 1000:  # If file is large, check last 1000 bytes
-                                            f.seek(max(0, size - 1000), 0)
+                                    file_size = os.path.getsize(log_path)
+                                    if file_size > 1000:  # If file is large, check last 1000 bytes
+                                        with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                            f.seek(max(0, file_size - 1000), 0)
                                             content = f.read()
                                             if '\x00' in content:  # Null bytes indicate corruption
-                                                errors.append(f"Log file corrupted: {log_path}")
-                                                recovery_needed = True
-                                                recovery_actions.append(f"Corrupted log file detected: {file}")
+                                                corrupted_files.append(log_path)
                                 except Exception as e:
                                     errors.append(f"Error checking log file {log_path}: {e}")
+
+                    for corrupted_file in corrupted_files:
+                        errors.append(f"Log file corrupted: {corrupted_file}")
+                        recovery_needed = True
+                        recovery_actions.append(f"Corrupted log file detected: {os.path.basename(corrupted_file)}")
             except Exception as e:
                 logger.debug(f"Error during log integrity check: {e}")
 
             # 6. Check for system crash indicators (Windows event logs, etc.)
-            # NOTE: This should check for actual crash events, not just registry key existence
+            # Should check for actual crash events, not just registry key existence
             # The CrashControl key always exists on Windows, so we need to check for actual crash dumps
             try:
                 if sys.platform == 'win32':
-                    import winreg
+                    pass
                     # Check for recent crash dumps instead of just key existence
                     crash_dump_folder = os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Minidump')
                     if os.path.exists(crash_dump_folder):
@@ -566,7 +498,7 @@ class ServerManager(ServerManagerModule):
                                 file_mtime = os.path.getmtime(crash_file)
                                 if time.time() - file_mtime < 86400:  # 24 hours
                                     recent_crashes.append(crash_file)
-                            except:
+                            except OSError:
                                 pass
                         if recent_crashes:
                             recovery_needed = True
@@ -578,10 +510,9 @@ class ServerManager(ServerManagerModule):
             if recovery_needed:
                 logger.debug(f"Recovery needed for {server_name}. Actions: {recovery_actions}")
 
-                # Update config with recovery timestamp
                 server_config['LastCorruptionCheck'] = datetime.now().isoformat()
                 server_config['CorruptionRecoveryActions'] = recovery_actions
-                self.save_server_config(server_name, server_config)
+                self.update_server(server_name, server_config)
 
                 if callback:
                     callback(f"Corruption recovery completed for {server_name}")
@@ -595,7 +526,6 @@ class ServerManager(ServerManagerModule):
             return True, recovery_actions, errors
 
     def start_server(self, server_name):
-        # Start a server using the appropriate script
         try:
             script_path = os.path.join(self.paths["scripts"], "start_server.py")
             
@@ -620,7 +550,6 @@ class ServerManager(ServerManagerModule):
             return False
             
     def stop_server(self, server_name, force=False):
-        # Stop a server using the appropriate script
         try:
             script_path = os.path.join(self.paths["scripts"], "stop_server.py")
             
@@ -648,18 +577,15 @@ class ServerManager(ServerManagerModule):
             return False
 
     def start_server_advanced(self, server_name, callback=None):
-        # Start the selected game server (Steam/Minecraft/Other) - Advanced version with proper process management
-        # Enhanced with corruption detection and automatic recovery
+        # Start the selected game server (Steam/Minecraft/Other) with proper process management
+        # Includes corruption detection and automatic recovery
         try:
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-            if not os.path.exists(config_file):
-                logger.error(f"Server configuration file not found: {config_file}")
-                return False, f"Server configuration file not found: {config_file}"
+            server_config = self.get_server_config(server_name)
+            if not server_config:
+                logger.error(f"Server configuration not found in database: {server_name}")
+                return False, f"Server configuration not found in database: {server_name}"
 
-            with open(config_file, 'r') as f:
-                server_config = json.load(f)
-
-            # Enhanced: Perform corruption detection and recovery before starting
+            # Perform corruption detection and recovery before starting
             logger.debug(f"Performing pre-startup corruption check for {server_name}")
             recovery_needed, recovery_actions, recovery_errors = self.detect_and_recover_system_corruption(
                 server_name, server_config, callback
@@ -671,12 +597,15 @@ class ServerManager(ServerManagerModule):
 
             if recovery_needed:
                 logger.debug(f"System corruption detected and recovered for {server_name}: {recovery_actions}")
-                # Reload config after recovery
+                # Reload config after recovery from database
                 try:
-                    with open(config_file, 'r') as f:
-                        server_config = json.load(f)
+                    server_config = self.get_server_config(server_name)
+                    if not server_config:
+                        logger.error(f"Failed to reload config after recovery: config not found in database")
+                        return False, f"Failed to reload server configuration after recovery"
                 except Exception as reload_error:
                     logger.error(f"Failed to reload config after recovery: {reload_error}")
+                    return False, f"Failed to reload server configuration after recovery: {reload_error}"
 
             # Clean up orphaned process ID first - use proper validation
             if 'ProcessId' in server_config:
@@ -696,7 +625,7 @@ class ServerManager(ServerManagerModule):
                     server_config.pop('StartTime', None)
                     server_config.pop('ProcessCreateTime', None)
                     server_config['LastUpdate'] = datetime.now().isoformat()
-                    self.save_server_config(server_name, server_config)
+                    self.update_server(server_name, server_config)
                 
             server_type = server_config.get("Type", "Other")
             install_dir = server_config.get('InstallDir', '')
@@ -711,127 +640,53 @@ class ServerManager(ServerManagerModule):
                 logger.error("No executable specified. Please configure the server startup settings.")
                 return False, "No executable specified. Please configure the server startup settings in the server configuration dialog."
                 
-            # Resolve executable path
             exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
-            # Normalise path separators for Windows compatibility
             exe_full = os.path.normpath(exe_full)
             if not os.path.exists(exe_full):
                 logger.error(f"Executable not found: {exe_full}")
                 return False, f"Executable not found: {exe_full}"
             
-            # Build command with config file support
-            cmd_parts = [f'"{exe_full}"']
-            
-            # Resolve config file path if needed
+            # Resolve config file path
             config_full = None
             if use_config_file and config_file_path:
                 config_full = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
-                # Normalise config file path separators
                 config_full = os.path.normpath(config_full)
             
-            if use_config_file:
-                # Config file mode
-                # Add additional arguments first (if any)
-                if additional_args:
-                    cmd_parts.append(additional_args)
-                
-                # Add config file argument
-                if config_file_path and config_argument and config_full:
-                    if os.path.exists(config_full):
-                        cmd_parts.append(f'{config_argument} "{config_full}"')
+            def _build_extra_args(additional_args, startup_args, use_config_file, config_file_path, config_argument, config_full):
+                # Build extra arguments list for subprocess (shell=False safe)
+                args = []
+                if use_config_file:
+                    if additional_args:
+                        args.extend(arg.strip('"\'' ) for arg in additional_args.split())
+                    if config_file_path and config_argument and config_full and os.path.exists(config_full):
+                        args.extend([config_argument, config_full])
                         logger.debug(f"Using config file: {config_full}")
-                    else:
-                        logger.warning(f"Config file not found: {config_full}, starting without config file")
-            else:
-                # Manual arguments mode
-                if startup_args:
-                    cmd_parts.append(startup_args)
+                elif startup_args:
+                    args.extend(arg.strip('"\'' ) for arg in startup_args.split())
+                return args
             
-            # Build final command based on executable type (unified for all server types)
+            extra_args = _build_extra_args(additional_args, startup_args, use_config_file, config_file_path, config_argument, config_full)
+            
+            # Build command as list (shell=False) to prevent shell injection
             if exe_full.lower().endswith(('.bat', '.cmd')):
-                # For batch files, run them directly without using 'start' command
-                # This allows proper process tracking and prevents the "error" issue
-                cmd = ' '.join(cmd_parts)
-                shell = True
+                # Batch files need cmd.exe to interpret them
+                cmd = ['cmd.exe', '/c', exe_full] + extra_args
             elif exe_full.lower().endswith('.ps1'):
-                # For PowerShell scripts, use PowerShell to execute them
-                ps_cmd_parts = ['powershell.exe', '-ExecutionPolicy', 'Bypass', '-File', f'"{exe_full}"']
-                if use_config_file:
-                    if additional_args:
-                        ps_cmd_parts.extend(additional_args.split())
-                    if config_file_path and config_argument and config_full and os.path.exists(config_full):
-                        ps_cmd_parts.extend([config_argument, f'"{config_full}"'])
-                else:
-                    if startup_args:
-                        ps_cmd_parts.extend(startup_args.split())
-                cmd = ' '.join(ps_cmd_parts)
-                shell = True
+                cmd = ['powershell.exe', '-ExecutionPolicy', 'Bypass', '-File', exe_full] + extra_args
             elif exe_full.lower().endswith('.sh'):
-                # For shell scripts, handle both Windows (via WSL/Git Bash) and Unix systems
                 if sys.platform == 'win32':
-                    # On Windows, try to use bash (Git Bash, WSL, etc.)
-                    bash_cmd_parts = ['bash', f'"{exe_full}"']
-                    if use_config_file:
-                        if additional_args:
-                            bash_cmd_parts.extend(additional_args.split())
-                        if config_file_path and config_argument and config_full and os.path.exists(config_full):
-                            bash_cmd_parts.extend([config_argument, f'"{config_full}"'])
-                    else:
-                        if startup_args:
-                            bash_cmd_parts.extend(startup_args.split())
-                    cmd = ' '.join(bash_cmd_parts)
-                    shell = True
+                    cmd = ['bash', exe_full] + extra_args
                 else:
-                    # On Unix systems, use the shell directly
-                    cmd = ['/bin/sh', exe_full]
-                    if use_config_file:
-                        if additional_args:
-                            cmd.extend(additional_args.split())
-                        if config_file_path and config_argument and config_full and os.path.exists(config_full):
-                            cmd.extend([config_argument, config_full])
-                    else:
-                        if startup_args:
-                            cmd.extend(startup_args.split())
-                    shell = False
+                    cmd = ['/bin/sh', exe_full] + extra_args
             elif exe_full.lower().endswith('.jar'):
-                # For JAR files, use Java command (special handling for Minecraft)
+                # JAR files via Java (Minecraft gets default JVM args)
                 if server_type == "Minecraft":
-                    cmd = f'java -Xmx1024M -Xms1024M -jar "{exe_full}" nogui'
+                    cmd = ['java', '-Xmx1024M', '-Xms1024M', '-jar', exe_full, 'nogui'] + extra_args
                 else:
-                    cmd = f'java -jar "{exe_full}"'
-                
-                if use_config_file:
-                    if additional_args:
-                        cmd += f' {additional_args}'
-                    if config_file_path and config_argument and config_full and os.path.exists(config_full):
-                        cmd += f' {config_argument} "{config_full}"'
-                else:
-                    if startup_args:
-                        cmd += f' {startup_args}'
-                shell = True
+                    cmd = ['java', '-jar', exe_full] + extra_args
             else:
-                # For regular executables (.exe, etc.) - Default handling for most servers like Factorio
-                # Use shell=False with proper argument list to avoid shell parsing issues
-                cmd = [exe_full]
-                if use_config_file:
-                    # Config file mode
-                    if additional_args:
-                        # Parse arguments and remove quotes since shell=False handles escaping
-                        args = []
-                        for arg in additional_args.split():
-                            args.append(arg.strip('"\''))
-                        cmd.extend(args)
-                    if config_file_path and config_argument and config_full and os.path.exists(config_full):
-                        cmd.extend([config_argument, config_full])
-                else:
-                    # Manual arguments mode
-                    if startup_args:
-                        # Parse arguments and remove quotes since shell=False handles escaping
-                        args = []
-                        for arg in startup_args.split():
-                            args.append(arg.strip('"\''))
-                        cmd.extend(args)
-                shell = False
+                # Regular executables (.exe, etc.)
+                cmd = [exe_full] + extra_args
             
             server_logs_dir = os.path.join(install_dir, "logs")
             os.makedirs(server_logs_dir, exist_ok=True)
@@ -844,84 +699,47 @@ class ServerManager(ServerManagerModule):
             if callback:
                 callback(f"Starting server '{server_name}'...")
             
-            # Initialise log files (console will handle the actual logging)
+            # Initialise log files
             with open(stdout_log, 'w') as stdout_file, open(stderr_log, 'w') as stderr_file:
                 start_time = datetime.now()
                 time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
-                cmd_str = cmd if isinstance(cmd, str) else ' '.join(f'"{arg}"' if ' ' in str(arg) else str(arg) for arg in cmd)
+                cmd_str = ' '.join(f'"{arg}"' if ' ' in str(arg) else str(arg) for arg in cmd)
                 stdout_file.write(f"--- Server started at {time_str} ---\n")
                 stdout_file.write(f"Command: {cmd_str}\n\n")
                 stderr_file.write(f"--- Server started at {time_str} ---\n")
                 stderr_file.write(f"Command: {cmd_str}\n\n")
                 
-            # Create process with pipes for real-time console interaction
             hide_consoles = should_hide_server_consoles(self.config)
 
-            # For Steam/Source servers, try to force console output to stdout
-            cmd_str_check = cmd if isinstance(cmd, str) else ' '.join(cmd)
+            # Add console output flags for Steam/Source servers
+            cmd_str_check = ' '.join(cmd)
             if "srcds" in cmd_str_check.lower() or "steamcmd" in cmd_str_check.lower():
-                # Add console output flags for Source servers
-                if isinstance(cmd, str):
-                    if "-console" not in cmd:
-                        cmd += " -console"
-                    if "-condebug" not in cmd:
-                        cmd += " -condebug"
-                else:
-                    if "-console" not in cmd:
-                        cmd.append("-console")
-                    if "-condebug" not in cmd:
-                        cmd.append("-condebug")
+                if "-console" not in cmd:
+                    cmd.append("-console")
+                if "-condebug" not in cmd:
+                    cmd.append("-condebug")
 
-            # Create process with pipes for real-time console interaction
-            hide_consoles = should_hide_server_consoles(self.config)
-
-            # For Steam/Source servers, try to force console output to stdout
-            cmd_str_check = cmd if isinstance(cmd, str) else ' '.join(cmd)
-            if "srcds" in cmd_str_check.lower() or "steamcmd" in cmd_str_check.lower():
-                # Add console output flags for Source servers
-                if isinstance(cmd, str):
-                    if "-condebug" not in cmd:
-                        cmd += " -condebug"
-                else:
-                    if "-condebug" not in cmd:
-                        cmd.append("-condebug")
-
-            # Standard process creation
-            if shell:
-                process = subprocess.Popen(
-                    cmd,
-                    shell=True,
-                    cwd=install_dir,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=0,
-                    universal_newlines=True,
-                    creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
-                )
-            else:
-                process = subprocess.Popen(
-                    cmd,
-                    cwd=install_dir,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=0,
-                    universal_newlines=True,
-                    creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
-                )
+            process = subprocess.Popen(
+                cmd,
+                cwd=install_dir,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=0,
+                universal_newlines=True,
+                creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
+            )
             time.sleep(1)
 
-            # Enhanced: Automatic retry logic for failed startups
+            # Automatic retry logic for failed startups
             max_retries = 3
             retry_delay = 2  # seconds
             startup_success = False
 
             for attempt in range(max_retries):
                 if psutil.pid_exists(process.pid):
-                    # Additional validation: check if process is actually running and not stuck
+                    # Check if process is running and not stuck
                     try:
                         ps_process = psutil.Process(process.pid)
                         if ps_process.is_running() and ps_process.status() != psutil.STATUS_ZOMBIE:
@@ -942,42 +760,27 @@ class ServerManager(ServerManagerModule):
                     try:
                         process.terminate()
                         process.wait(timeout=5)
-                    except:
+                    except (OSError, subprocess.TimeoutExpired):
                         try:
                             process.kill()
-                        except:
+                        except OSError:
                             pass
 
                     time.sleep(retry_delay)
 
-                    # Retry process creation
                     try:
-                        if shell:
-                            process = subprocess.Popen(
-                                cmd,
-                                shell=True,
-                                cwd=install_dir,
-                                stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                text=True,
-                                bufsize=0,
-                                universal_newlines=True,
-                                creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
-                            )
-                        else:
-                            process = subprocess.Popen(
-                                cmd,
-                                cwd=install_dir,
-                                stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                text=True,
-                                bufsize=0,
-                                universal_newlines=True,
-                                creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
-                            )
-                        time.sleep(1)  # Wait for process to initialise
+                        process = subprocess.Popen(
+                            cmd,
+                            cwd=install_dir,
+                            stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            bufsize=0,
+                            universal_newlines=True,
+                            creationflags=get_subprocess_creation_flags(hide_window=hide_consoles, new_process_group=True)
+                        )
+                        time.sleep(1)
                     except Exception as retry_error:
                         logger.error(f"Failed to retry process creation: {retry_error}")
                         break
@@ -998,7 +801,6 @@ class ServerManager(ServerManagerModule):
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
             
-            # Update server configuration
             server_config['ProcessId'] = process.pid
             server_config['PID'] = process.pid  # For console manager compatibility
             server_config['StartTime'] = start_time.isoformat()
@@ -1010,8 +812,7 @@ class ServerManager(ServerManagerModule):
             if process_create_time:
                 server_config['ProcessCreateTime'] = process_create_time
             
-            # Save updated configuration
-            self.save_server_config(server_name, server_config)
+            self.update_server(server_name, server_config)
             
             # Store the process object for console access
             if not hasattr(self, 'active_processes'):
@@ -1030,6 +831,7 @@ class ServerManager(ServerManagerModule):
                     logger.warning(f"Failed to start command queue relay for {server_name}: {e}")
             
             # Also start the named pipe stdin relay as a backup method
+            # Temporarily disabled due to pipe busy errors causing dashboard instability
             if _STDIN_RELAY_AVAILABLE:
                 try:
                     from services.stdin_relay import start_relay_for_server
@@ -1051,20 +853,12 @@ class ServerManager(ServerManagerModule):
             return False, f"Error starting server '{server_name}': {str(e)}"
 
     def stop_server_advanced(self, server_name, callback=None):
-        # Stop the selected game server - Advanced version with proper process management
         try:
-            # Get server config file path
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-            
-            if not os.path.exists(config_file):
-                logger.error(f"Server configuration file not found: {config_file}")
-                return False, f"Server configuration file not found: {config_file}"
+            server_config = self.get_server_config(server_name)
+            if not server_config:
+                logger.error(f"Server configuration not found in database: {server_name}")
+                return False, f"Server configuration not found in database: {server_name}"
                 
-            # Read server configuration
-            with open(config_file, 'r') as f:
-                server_config = json.load(f)
-                
-            # Check if server has a process ID registered
             if 'ProcessId' not in server_config:
                 logger.info(f"Server '{server_name}' is not running.")
                 if callback:
@@ -1074,21 +868,19 @@ class ServerManager(ServerManagerModule):
             process_id = server_config['ProcessId']
             
             # Validate that the PID actually belongs to this server
-            # This prevents stopping the wrong process if Windows reused the PID
+            # Prevents stopping the wrong process if Windows reused the PID
             is_valid, validated_process = self.is_server_process_valid(server_name, process_id, server_config)
             
             if not is_valid:
                 logger.warning(f"PID {process_id} is no longer valid for server '{server_name}' (stale or reused PID)")
                 
-                # Clean up the stale process ID in the config
                 server_config.pop('ProcessId', None)
                 server_config.pop('PID', None)
                 server_config.pop('StartTime', None)
                 server_config.pop('ProcessCreateTime', None)
                 server_config['LastUpdate'] = datetime.now().isoformat()
                 
-                # Save updated configuration
-                self.save_server_config(server_name, server_config)
+                self.update_server(server_name, server_config)
                 
                 if callback:
                     callback(f"Server '{server_name}' was not running (stale PID cleared)")
@@ -1097,62 +889,141 @@ class ServerManager(ServerManagerModule):
             if callback:
                 callback(f"Stopping server '{server_name}'...")
                 
-            # Try to use custom stop command if available
+            stop_command_used = False
             if 'StopCommand' in server_config and server_config['StopCommand']:
                 try:
                     stop_cmd = server_config['StopCommand']
-                    install_dir = server_config.get('InstallDir', '')
                     
-                    logger.debug(f"Executing custom stop command: {stop_cmd}")
+                    logger.debug(f"Sending custom stop command to server: {stop_cmd}")
+                    command_sent = False
                     
-                    # Execute stop command with timeout
-                    stop_process = subprocess.Popen(
-                        stop_cmd, 
-                        shell=True, 
-                        cwd=install_dir,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        creationflags=get_subprocess_creation_flags(hide_window=True)  # Always hide for stop commands
-                    )
+                    # Try multiple methods to ensure the stop command is delivered
+                    # Method 1: Try persistent stdin pipe first (most reliable if available)
+                    if _PERSISTENT_STDIN_AVAILABLE and not command_sent:
+                        try:
+                            if is_stdin_pipe_available(server_name):  # type: ignore
+                                success, message = send_command_to_stdin_pipe(server_name, stop_cmd)  # type: ignore
+                                if success:
+                                    logger.info(f"Stop command sent via persistent stdin pipe: {stop_cmd}")
+                                    command_sent = True
+                        except Exception as e:
+                            logger.debug(f"Persistent stdin pipe failed: {e}")
                     
-                    try:
-                        stdout, stderr = stop_process.communicate(timeout=30)
-                        if stderr:
-                            logger.warning(f"Stop command produced error output: {stderr.decode('utf-8', errors='replace')}")
-                    except subprocess.TimeoutExpired:
-                        stop_process.kill()
-                        logger.warning("Stop command timed out after 30 seconds")
+                    # Method 2: Try command queue relay (file-based)
+                    if _COMMAND_QUEUE_AVAILABLE and not command_sent:
+                        try:
+                            if is_relay_active(server_name):  # type: ignore
+                                success, message = queue_command(server_name, stop_cmd)  # type: ignore
+                                if success:
+                                    logger.info(f"Stop command queued successfully: {stop_cmd}")
+                                    command_sent = True
+                                else:
+                                    logger.debug(f"Failed to queue stop command: {message}")
+                        except Exception as e:
+                            logger.debug(f"Command queue failed: {e}")
                     
-                    # Wait a bit to see if the process stops
-                    for _ in range(5):  # Try for 5 seconds
+                    # Method 3: Try stdin relay (named pipe)
+                    if _STDIN_RELAY_AVAILABLE and not command_sent:
+                        try:
+                            success, message = send_command_via_relay(server_name, stop_cmd)  # type: ignore
+                            if success:
+                                logger.info(f"Stop command sent via stdin relay: {stop_cmd}")
+                                command_sent = True
+                        except Exception as e:
+                            logger.debug(f"Stdin relay failed: {e}")
+                    
+                    # Method 4: Try direct stdin write if we have the process
+                    if not command_sent:
+                        if hasattr(self, 'active_processes') and server_name in self.active_processes:
+                            proc = self.active_processes[server_name]
+                            if proc and hasattr(proc, 'stdin') and proc.stdin and not proc.stdin.closed:
+                                try:
+                                    proc.stdin.write(stop_cmd + '\n')
+                                    proc.stdin.flush()
+                                    logger.info(f"Stop command sent via direct stdin: {stop_cmd}")
+                                    command_sent = True
+                                except Exception as e:
+                                    logger.debug(f"Direct stdin write failed: {e}")
+                    
+                    if command_sent:
+                        stop_command_used = True
+                        # Wait longer for graceful shutdown with save - game servers may need time to save
+                        if callback:
+                            callback(f"Waiting for '{server_name}' to save and shutdown gracefully...")
+                        
+                        for i in range(15):  # Try for 15 seconds (increased from 10)
+                            if not self.is_process_running(process_id):
+                                server_config.pop('ProcessId', None)
+                                server_config.pop('PID', None)
+                                server_config.pop('StartTime', None)
+                                server_config.pop('ProcessCreateTime', None)
+                                server_config['LastUpdate'] = datetime.now().isoformat()
+                                
+                                self.update_server(server_name, server_config)
+                                
+                                logger.info(f"Server '{server_name}' stopped successfully via stop command after {i+1} seconds.")
+                                if callback:
+                                    callback(f"Server '{server_name}' stopped successfully.")
+                                return True, f"Server '{server_name}' stopped successfully."
+                            time.sleep(1)
+                            
+                        logger.warning(f"Custom stop command did not stop the server within 15 seconds")
+                    else:
+                        logger.warning(f"Could not send stop command to {server_name} via any method")
+                        
+                except Exception as e:
+                    logger.error(f"Error sending custom stop command: {str(e)}")
+            
+            # If no custom stop command was available or it failed, send CTRL+C and wait up to 5 minutes
+            if not stop_command_used:
+                logger.info(f"No custom stop command available for '{server_name}', sending CTRL+C and waiting up to 5 minutes")
+                if callback:
+                    callback(f"Sending CTRL+C to '{server_name}' and waiting up to 5 minutes for graceful shutdown...")
+                
+                try:
+                    # Send CTRL+C event to the process
+                    if sys.platform == 'win32':
+                        import signal
+                        os.kill(process_id, signal.CTRL_C_EVENT)
+                        logger.debug(f"Sent CTRL_C_EVENT to process {process_id}")
+                    
+                    # Wait up to 5 minutes (300 seconds) for graceful shutdown
+                    for i in range(300):  # 300 seconds = 5 minutes
                         if not self.is_process_running(process_id):
-                            # Process stopped successfully - clear all process-related fields
                             server_config.pop('ProcessId', None)
                             server_config.pop('PID', None)
                             server_config.pop('StartTime', None)
                             server_config.pop('ProcessCreateTime', None)
                             server_config['LastUpdate'] = datetime.now().isoformat()
                             
-                            # Save updated configuration
-                            self.save_server_config(server_name, server_config)
+                            self.update_server(server_name, server_config)
                             
-                            logger.info(f"Server '{server_name}' stopped successfully.")
+                            logger.info(f"Server '{server_name}' stopped successfully via CTRL+C after {i+1} seconds.")
+                            if callback:
+                                callback(f"Server '{server_name}' stopped successfully.")
                             return True, f"Server '{server_name}' stopped successfully."
+                        
+                        # Update progress every 30 seconds
+                        if i > 0 and i % 30 == 0:
+                            remaining_minutes = (300 - i) // 60
+                            if callback:
+                                callback(f"Still waiting for '{server_name}' to shutdown... ({remaining_minutes} minutes remaining)")
+                        
                         time.sleep(1)
                         
-                    logger.warning(f"Custom stop command did not stop the server, using force termination")
+                    logger.warning(f"Server did not stop after 5 minutes of waiting for CTRL+C")
+                    
                 except Exception as e:
-                    logger.error(f"Error executing custom stop command: {str(e)}")
+                    logger.error(f"Error sending CTRL+C to process {process_id}: {str(e)}")
             
-            # If we got here, either the custom stop command failed or wasn't available
-            # Try to terminate the process gracefully
+            logger.warning(f"Custom stop command and CTRL+C failed or timed out, using force termination")
             try:
                 process = psutil.Process(process_id)
                 
                 # Store the process creation time to verify children belong to this server's process tree
                 try:
                     server_process_create_time = process.create_time()
-                except:
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     server_process_create_time = None
                 
                 # Get all child processes BEFORE terminating parent
@@ -1241,7 +1112,7 @@ class ServerManager(ServerManagerModule):
                                 # First try graceful termination
                                 try:
                                     child.terminate()
-                                except:
+                                except (psutil.NoSuchProcess, psutil.AccessDenied):
                                     pass
                         except (psutil.NoSuchProcess, psutil.AccessDenied):
                             continue
@@ -1249,7 +1120,6 @@ class ServerManager(ServerManagerModule):
                     # Wait briefly for children to terminate gracefully
                     time.sleep(1)
                     
-                    # Force kill any remaining children
                     for child in children:
                         try:
                             if child.is_running():
@@ -1281,15 +1151,13 @@ class ServerManager(ServerManagerModule):
                 
                 logger.debug(f"Terminated process PID {process_id}")
                 
-                # Update server configuration - clear all process-related fields
                 server_config.pop('ProcessId', None)
                 server_config.pop('PID', None)
                 server_config.pop('StartTime', None)
                 server_config.pop('ProcessCreateTime', None)
                 server_config['LastUpdate'] = datetime.now().isoformat()
                 
-                # Save updated configuration
-                self.save_server_config(server_name, server_config)
+                self.update_server(server_name, server_config)
                 
                 if callback:
                     callback(f"Server '{server_name}' stopped successfully")
@@ -1310,20 +1178,13 @@ class ServerManager(ServerManagerModule):
             return False, f"Failed to stop server: {str(e)}"
 
     def restart_server_advanced(self, server_name, callback=None):
-        # Restart the selected game server - Advanced version with proper process management
         try:
-            # Get server config file path
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            server_config = self.servers.get(server_name)
             
-            if not os.path.exists(config_file):
-                logger.error(f"Server configuration file not found: {config_file}")
-                return False, f"Server configuration file not found: {config_file}"
-                
-            # Read server configuration
-            with open(config_file, 'r') as f:
-                server_config = json.load(f)
+            if not server_config:
+                logger.error(f"Server configuration not found for: {server_name}")
+                return False, f"Server configuration not found for: {server_name}"
             
-            # Check if server is running
             is_running = False
             process_id = server_config.get('ProcessId')
             if process_id:
@@ -1332,73 +1193,55 @@ class ServerManager(ServerManagerModule):
             if callback:
                 callback(f"Restarting server '{server_name}'...")
             
-            # If running, stop first (without confirmation dialog)
             if is_running:
                 try:
-                    # Try to use custom stop command if available
                     if 'StopCommand' in server_config and server_config['StopCommand']:
                         try:
                             stop_cmd = server_config['StopCommand']
-                            install_dir = server_config.get('InstallDir', '')
                             
-                            logger.debug(f"Executing custom stop command for restart: {stop_cmd}")
+                            logger.debug(f"Sending custom stop command for restart: {stop_cmd}")
                             
-                            # Execute stop command with timeout
-                            stop_process = subprocess.Popen(
-                                stop_cmd, 
-                                shell=True, 
-                                cwd=install_dir,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE,
-                                creationflags=get_subprocess_creation_flags(hide_window=True)  # Always hide for stop commands
-                            )
-                            
-                            try:
-                                stdout, stderr = stop_process.communicate(timeout=30)
-                                if stderr:
-                                    logger.warning(f"Stop command produced error output: {stderr.decode('utf-8', errors='replace')}")
-                            except subprocess.TimeoutExpired:
-                                stop_process.kill()
-                                logger.warning("Stop command timed out after 30 seconds")
+                            if _COMMAND_QUEUE_AVAILABLE:
+                                from services.command_queue import queue_command as queue_cmd_func
+                                success, message = queue_cmd_func(server_name, stop_cmd)
+                                if not success:
+                                    logger.warning(f"Failed to queue stop command: {message}")
+                                else:
+                                    logger.debug(f"Stop command queued successfully: {stop_cmd}")
+                            else:
+                                logger.warning("Command queue not available, cannot send stop command")
                         
-                            # Wait a bit to see if the process stops
-                            for _ in range(5):  # Try for 5 seconds
+                            for _ in range(10):  # Try for 10 seconds
                                 if not self.is_process_running(process_id):
-                                    # Process stopped successfully
                                     break
                                 time.sleep(1)
                             else:
-                                logger.warning(f"Custom stop command did not stop the server, using force termination")
+                                logger.warning(f"Custom stop command did not stop the server within 10 seconds, using force termination")
                                 raise Exception("Custom stop command failed")
                         
                         except Exception as e:
-                            logger.error(f"Error executing custom stop command: {str(e)}")
+                            logger.error(f"Error sending custom stop command: {str(e)}")
                             # Fall through to force termination
                     
-                    # If we got here, either the custom stop command failed or wasn't available
-                    # Try to terminate the process
                     if self.is_process_running(process_id):
                         process = psutil.Process(process_id)
                         
-                        # Get all child processes
                         children = []
                         try:
                             children = process.children(recursive=True)
-                        except:
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
                             logger.warning(f"Could not get child processes for PID {process_id}")
                         
-                        # First try graceful termination
                         try:
                             process.terminate()
                             logger.debug(f"Sent termination signal to process {process_id} for restart")
-                        except:
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
                             logger.warning(f"Failed to terminate process {process_id}")
                         
                         # Wait up to 5 seconds for the process to terminate
                         gone, alive = psutil.wait_procs([process], timeout=5)
                         
                         if process in alive:
-                            # If it doesn't terminate, kill it forcefully
                             logger.warning(f"Process {process_id} did not terminate gracefully, using force kill")
                             process.kill()
                             
@@ -1411,13 +1254,11 @@ class ServerManager(ServerManagerModule):
                                 except Exception:
                                     pass
                         
-                        # Terminate any remaining child processes
                         if children:
                             for child in children:
                                 try:
                                     if child.is_running():
                                         child.kill()
-                                        # Backup with taskkill on Windows
                                         if sys.platform == 'win32':
                                             try:
                                                 subprocess.call(['taskkill', '/F', '/PID', str(child.pid)],
@@ -1426,7 +1267,7 @@ class ServerManager(ServerManagerModule):
                                             except Exception:
                                                 pass
                                         logger.debug(f"Killed child process with PID {child.pid}")
-                                except:
+                                except (psutil.NoSuchProcess, psutil.AccessDenied):
                                     pass
                         
                         # Verify process is dead before restarting
@@ -1447,7 +1288,6 @@ class ServerManager(ServerManagerModule):
                 # Wait a moment for process to fully terminate
                 time.sleep(2)
             
-            # Start the server
             success, message = self.start_server_advanced(server_name, callback)
             if success:
                 if callback:
@@ -1466,32 +1306,29 @@ class ServerManager(ServerManagerModule):
             return False, f"Failed to restart server: {str(e)}"
 
     def remove_server_config(self, server_name):
-        # Remove a server configuration
         try:
-            # Get server config file path
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-            
-            if not os.path.exists(config_file):
-                logger.error(f"Server configuration file not found: {config_file}")
-                return False, f"Server configuration file not found: {config_file}"
-                
-            # Check if server is running
-            with open(config_file, 'r') as f:
-                server_config = json.load(f)
+            server_config = self.get_server_config(server_name)
+            if not server_config:
+                logger.error(f"Server configuration not found in database: {server_name}")
+                return False, f"Server configuration not found in database: {server_name}"
                 
             if 'ProcessId' in server_config and self.is_process_running(server_config['ProcessId']):
                 logger.error(f"Cannot remove server '{server_name}' while it is running.")
                 return False, f"Cannot remove server '{server_name}' while it is running. Please stop the server first."
                 
-            # Remove the configuration file
-            os.remove(config_file)
-            logger.info(f"Removed server configuration: {server_name}")
+            from Modules.Database.server_configs_database import get_server_config_manager
+            manager = get_server_config_manager()
+            success = manager.delete_server(server_name)
             
-            # Remove from cache
-            if server_name in self.servers:
-                del self.servers[server_name]
-            
-            return True, f"Server '{server_name}' configuration removed successfully."
+            if success:
+                logger.info(f"Removed server configuration from database: {server_name}")
+                
+                if server_name in self.servers:
+                    del self.servers[server_name]
+                
+                return True, f"Server '{server_name}' configuration removed successfully."
+            else:
+                return False, f"Failed to remove server configuration from database"
             
         except Exception as e:
             logger.error(f"Error removing server: {str(e)}")
@@ -1500,20 +1337,12 @@ class ServerManager(ServerManagerModule):
     def update_server_config(self, server_name, executable_path, startup_args="", stop_command="", 
                            use_config_file=False, config_file_path="", config_argument="--config", 
                            additional_args=""):
-        # Update server configuration with new settings
         try:
-            # Get server config file path
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-            
-            if not os.path.exists(config_file):
-                logger.error(f"Server configuration file not found: {config_file}")
-                return False, f"Server configuration file not found: {config_file}"
+            server_config = self.get_server_config(server_name)
+            if not server_config:
+                logger.error(f"Server configuration not found in database: {server_name}")
+                return False, f"Server configuration not found in database: {server_name}"
                 
-            # Read current configuration
-            with open(config_file, 'r') as f:
-                server_config = json.load(f)
-            
-            # Update configuration
             server_config.update({
                 'ExecutablePath': executable_path,
                 'StartupArgs': startup_args,
@@ -1525,8 +1354,7 @@ class ServerManager(ServerManagerModule):
                 'LastUpdate': datetime.now().isoformat()
             })
             
-            # Save updated configuration
-            self.save_server_config(server_name, server_config)
+            self.update_server(server_name, server_config)
             
             logger.info(f"Updated configuration for server: {server_name}")
             return True, f"Configuration for '{server_name}' updated successfully."
@@ -1538,9 +1366,8 @@ class ServerManager(ServerManagerModule):
     def import_server_config(self, server_name, server_type, install_dir, executable_path, startup_args="", app_id=""):
         # Import an existing server from a directory
         try:
-            # Check if server name already exists
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-            if os.path.exists(config_file):
+            # Check if server name already exists in database
+            if server_name in self.servers:
                 logger.error(f"A server with name '{server_name}' already exists")
                 return False, f"A server with name '{server_name}' already exists."
             
@@ -1578,7 +1405,6 @@ class ServerManager(ServerManagerModule):
             else:
                 logger.warning(f"No executable found for server '{server_name}' in {install_dir}")
             
-            # Create server configuration
             server_config = {
                 "Name": server_name,
                 "Type": server_type,
@@ -1591,8 +1417,7 @@ class ServerManager(ServerManagerModule):
                 "Imported": True
             }
             
-            # Save configuration
-            self.save_server_config(server_name, server_config)
+            self.update_server(server_name, server_config)
             
             logger.info(f"Imported server: {server_name} from {install_dir}")
             return True, f"Server '{server_name}' imported successfully!"
@@ -1602,7 +1427,6 @@ class ServerManager(ServerManagerModule):
             return False, f"Failed to import server: {str(e)}"
 
     def auto_detect_server_executable(self, install_dir):
-        # Auto-detect server executable in a directory
         try:
             if not os.path.exists(install_dir):
                 return []
@@ -1658,8 +1482,7 @@ class ServerManager(ServerManagerModule):
             return []
 
     def get_server_status(self, server_name):
-        # Get the current status of a server
-        # Uses comprehensive process validation to ensure PID belongs to correct server
+        # Uses process validation to ensure PID belongs to correct server
         try:
             server_config = self.get_server_config(server_name)
             if not server_config:
@@ -1667,8 +1490,8 @@ class ServerManager(ServerManagerModule):
             
             if 'ProcessId' in server_config:
                 pid = server_config['ProcessId']
-                # Use comprehensive validation - not just pid_exists
-                # This handles Windows PID reuse where old PID might be a different process
+                # Use process validation - not just pid_exists
+                # Handles Windows PID reuse where old PID might be a different process
                 is_valid, process = self.is_server_process_valid(server_name, pid, server_config)
                 if is_valid and process:
                     return "Running", pid
@@ -1686,7 +1509,6 @@ class ServerManager(ServerManagerModule):
             return "Error", None
             
     def get_running_servers(self):
-        # Get list of currently running servers
         try:
             running_servers = []
             for server_name in self.servers.keys():
@@ -1698,26 +1520,22 @@ class ServerManager(ServerManagerModule):
             logger.error(f"Error getting running servers: {str(e)}")
             return []
 
+    def is_server_running(self, server_name):
+        try:
+            status, pid = self.get_server_status(server_name)
+            return status == "Running" and pid is not None
+        except Exception as e:
+            logger.error(f"Error checking if server {server_name} is running: {str(e)}")
+            return False
+
     def validate_server_config(self, server_config, install_dir):
-        # Validate a server configuration
         errors = []
         warnings = []
         
         try:
-            # Check executable path - REMOVED: Executable path is no longer required during initial setup
-            # executable_path = server_config.get('ExecutablePath', '')
-            # if not executable_path:
-            #     errors.append("Executable path is required")
-            # else:
-            #     exe_full = executable_path if os.path.isabs(executable_path) else os.path.join(install_dir, executable_path)
-            #     if not os.path.exists(exe_full):
-            #         warnings.append(f"Executable not found: {exe_full}")
-            
-            # Check install directory
             if not install_dir or not os.path.exists(install_dir):
                 errors.append(f"Installation directory not found: {install_dir}")
             
-            # Check config file settings if enabled
             if server_config.get('UseConfigFile', False):
                 config_file_path = server_config.get('ConfigFilePath', '')
                 config_arg = server_config.get('ConfigArgument', '')
@@ -1739,7 +1557,6 @@ class ServerManager(ServerManagerModule):
             return [f"Validation error: {str(e)}"], []
 
     def get_steamcmd_error_description(self, exit_code):
-        # Get human-readable description for SteamCMD exit codes
         error_codes = {
             0: "Success - No error occurred",
             1: "Unknown error - General failure",
@@ -1787,9 +1604,7 @@ class ServerManager(ServerManagerModule):
         return error_codes.get(exit_code, f"Unknown error code {exit_code} - Check SteamCMD documentation for details")
 
     def install_steam_server(self, server_name, app_id, install_dir, steam_cmd_path, credentials, progress_callback=None, cancel_flag=None):
-        # Install a Steam server using SteamCMD
         try:
-            # Check for cancellation before starting
             if cancel_flag and cancel_flag.get():
                 if progress_callback:
                     progress_callback("[INFO] Installation cancelled before starting")
@@ -1811,31 +1626,33 @@ class ServerManager(ServerManagerModule):
                 if progress_callback:
                     progress_callback(f"[INFO] Using SteamCMD default installation location")
             
-            # Build SteamCMD command
-            login_cmd = "+login anonymous" if credentials.get("anonymous", True) else f"+login \"{credentials['username']}\" \"{credentials['password']}\""
-            steam_cmd_args = [
-                steam_cmd_exe,
-                login_cmd,
-            ]
+            # Build SteamCMD command as list to avoid shell injection
+            steam_cmd_args = [steam_cmd_exe]
             
-            # Only add force_install_dir if install_dir is specified
+            if credentials.get("anonymous", True):
+                steam_cmd_args.extend(["+login", "anonymous"])
+            else:
+                steam_cmd_args.extend(["+login", credentials['username'], credentials['password']])
+            
             if install_dir:
-                steam_cmd_args.append(f"+force_install_dir \"{install_dir}\"")
+                steam_cmd_args.extend(["+force_install_dir", install_dir])
             
             steam_cmd_args.extend([
-                f"+app_update {app_id} validate",
+                "+app_update", str(app_id), "validate",
                 "+quit"
             ])
             
             if progress_callback:
-                progress_callback(f"[INFO] Running SteamCMD: {' '.join(steam_cmd_args)}")
+                # Log sanitised command (hide password)
+                safe_args = [a if a != credentials.get('password', '') else '***' for a in steam_cmd_args]
+                progress_callback(f"[INFO] Running SteamCMD: {' '.join(safe_args)}")
             
-            # Execute SteamCMD (always hide console for installation processes)
+            # Execute SteamCMD with list args (shell=False for security)
             process = subprocess.Popen(
-                " ".join(steam_cmd_args),
+                steam_cmd_args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                shell=True,
+                shell=False,
                 text=True,
                 encoding='utf-8',
                 errors='replace',
@@ -1843,22 +1660,17 @@ class ServerManager(ServerManagerModule):
             )
             
             installation_success = False
-            # Read output in real-time
             while True:
-                # Check for cancellation
                 if cancel_flag and cancel_flag.get():
                     if progress_callback:
                         progress_callback("[INFO] Installation cancelled by user, terminating SteamCMD...")
                     
-                    # Terminate the SteamCMD process
                     try:
                         if progress_callback:
                             progress_callback("[INFO] Attempting to terminate SteamCMD gracefully...")
                         
-                        # First try to terminate gracefully
                         process.terminate()
                         try:
-                            # Wait for process to terminate gracefully
                             process.wait(timeout=5)
                             if progress_callback:
                                 progress_callback("[INFO] SteamCMD terminated gracefully")
@@ -1867,7 +1679,6 @@ class ServerManager(ServerManagerModule):
                             if progress_callback:
                                 progress_callback("[WARN] SteamCMD did not terminate gracefully, killing forcefully...")
                             
-                            # Kill the main process
                             process.kill()
                             
                             # Also kill any child processes on Windows
@@ -1887,7 +1698,7 @@ class ServerManager(ServerManagerModule):
                                 try:
                                     subprocess.call(['taskkill', '/F', '/T', '/PID', str(process.pid)], 
                                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                                except:
+                                except (OSError, subprocess.SubprocessError):
                                     pass
                             
                             process.wait()
@@ -1919,7 +1730,6 @@ class ServerManager(ServerManagerModule):
                     # Small delay when no stdout available
                     time.sleep(0.1)
             
-            # Check for errors
             if process.stderr is not None:
                 error_output = process.stderr.read()
                 if error_output and progress_callback:
@@ -1932,7 +1742,6 @@ class ServerManager(ServerManagerModule):
             if exit_code != 0 and not installation_success:
                 error_description = self.get_steamcmd_error_description(exit_code)
                 
-                # Log detailed error information
                 logger.error(f"SteamCMD installation failed with exit code {exit_code}: {error_description}")
                 
                 raise Exception(f"SteamCMD failed with exit code {exit_code}: {error_description}")
@@ -1944,9 +1753,7 @@ class ServerManager(ServerManagerModule):
             return False, f"Installation failed: {str(e)}"
 
     def install_minecraft_server(self, server_name, install_dir, version, modloader="Vanilla", progress_callback=None, cancel_flag=None):
-        # Install a Minecraft server
         try:
-            # Check for cancellation before starting
             if cancel_flag and cancel_flag.get():
                 if progress_callback:
                     progress_callback("[INFO] Installation cancelled before starting")
@@ -1955,14 +1762,12 @@ class ServerManager(ServerManagerModule):
             if progress_callback:
                 progress_callback(f"[INFO] Starting Minecraft server installation for {server_name}")
             
-            # Create install directory
             os.makedirs(install_dir, exist_ok=True)
             if progress_callback:
                 progress_callback(f"[INFO] Created installation directory: {install_dir}")
             
             executable_path = None
             
-            # Get Minecraft versions if needed
             mc_versions = fetch_minecraft_versions()
             if not mc_versions:
                 raise Exception("Could not fetch Minecraft versions from Mojang")
@@ -2078,7 +1883,6 @@ class ServerManager(ServerManagerModule):
             else:
                 raise Exception(f"Unknown mod loader: {modloader}")
             
-            # Accept EULA
             eula_path = os.path.join(install_dir, "eula.txt")
             with open(eula_path, "w") as f:
                 f.write("eula=true\n")
@@ -2094,14 +1898,10 @@ class ServerManager(ServerManagerModule):
 
     def create_server_config(self, server_name, server_type, install_dir, executable_path, startup_args="", 
                            app_id="", version="", modloader="", additional_config=None):
-        # Create and save a server configuration
         try:
-            # Check if server name already exists
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
-            if os.path.exists(config_file):
+            if server_name in self.servers:
                 return False, "A server with this name already exists"
             
-            # Create server configuration
             server_config = {
                 "Name": server_name,
                 "Type": server_type,
@@ -2109,23 +1909,21 @@ class ServerManager(ServerManagerModule):
                 "InstallDir": install_dir,
                 "ExecutablePath": executable_path,
                 "StartupArgs": startup_args,
+                "Category": "Uncategorized",  # Default category for new servers
                 "Created": datetime.now().isoformat(),
                 "LastUpdate": datetime.now().isoformat()
             }
             
-            # Add type-specific configuration
             if server_type == "Minecraft":
                 server_config["Version"] = version
                 server_config["ModLoader"] = modloader
             
-            # Add any additional configuration
             if additional_config:
                 server_config.update(additional_config)
             
-            # Save configuration
-            os.makedirs(self.paths["servers"], exist_ok=True)
-            with open(config_file, 'w') as f:
-                json.dump(server_config, f, indent=4)
+            success = self.update_server(server_name, server_config)
+            if not success:
+                return False, "Failed to save server configuration to database"
             
             # Add to in-memory server list immediately
             self.servers[server_name] = server_config
@@ -2140,7 +1938,6 @@ class ServerManager(ServerManagerModule):
     def install_server_complete(self, server_name, server_type, install_dir, executable_path="", 
                                startup_args="", app_id="", version="", modloader="", steam_cmd_path="", 
                                credentials=None, progress_callback=None, cancel_flag=None):
-        # Complete server installation process
         try:
             installation_success = False
             actual_executable = executable_path
@@ -2172,7 +1969,6 @@ class ServerManager(ServerManagerModule):
                                     directories.append((d, os.path.getmtime(dir_path)))
                             
                             if directories:
-                                # Sort by modification time (most recent first)
                                 directories.sort(key=lambda x: x[1], reverse=True)
                                 most_recent_dir = directories[0][0]
                                 install_dir = os.path.join(steamapps_common, most_recent_dir)
@@ -2231,7 +2027,6 @@ class ServerManager(ServerManagerModule):
             else:
                 return False, f"Unsupported server type: {server_type}"
             
-            # Create server configuration
             if installation_success:
                 success, message = self.create_server_config(
                     server_name, server_type, install_dir, actual_executable, 
@@ -2254,7 +2049,7 @@ class ServerManager(ServerManagerModule):
     def get_minecraft_versions(self):
         # Get available Minecraft versions from database (NO FALLBACKS)
         try:
-            from Modules.Database.MinecraftIDScanner import MinecraftIDScanner
+            from Modules.Database.scanners.MinecraftIDScanner import MinecraftIDScanner
             scanner = MinecraftIDScanner(use_database=True, debug_mode=False)
             servers = scanner.get_servers_from_database(modloader=None, dedicated_only=True)
             scanner.close()
@@ -2262,7 +2057,6 @@ class ServerManager(ServerManagerModule):
             if not servers:
                 servers = []
 
-            # Convert to expected format
             versions = []
             for server in servers:
                 versions.append({
@@ -2273,7 +2067,6 @@ class ServerManager(ServerManagerModule):
                     "java_requirement": server["java_requirement"]
                 })
 
-            # Sort by version (newest first)
             versions.sort(key=lambda x: x["id"], reverse=True)
             return versions
 
@@ -2288,28 +2081,16 @@ class ServerManager(ServerManagerModule):
             raise Exception(error_msg)
 
     def get_supported_server_types(self):
-        # Get list of supported server types
         return ["Steam", "Minecraft", "Other"]
 
     def uninstall_server(self, server_name, remove_files=False, progress_callback=None):
-        # Uninstall a server (remove config and optionally files)
         try:
-            config_file = os.path.join(self.paths["servers"], f"{server_name}.json")
+            server_config = self.get_server_config(server_name)
+            if not server_config:
+                return False, "Server configuration not found in database"
             
-            if not os.path.exists(config_file):
-                return False, "Server configuration not found"
+            install_dir = server_config.get('InstallDir') if remove_files else None
             
-            # Load server config to get install directory
-            install_dir = None
-            if remove_files:
-                try:
-                    with open(config_file, 'r') as f:
-                        server_config = json.load(f)
-                    install_dir = server_config.get('InstallDir')
-                except Exception as e:
-                    logger.warning(f"Could not read server config for file removal: {str(e)}")
-            
-            # Stop server if running
             if progress_callback:
                 progress_callback(f"[INFO] Stopping server {server_name} if running...")
             
@@ -2317,13 +2098,16 @@ class ServerManager(ServerManagerModule):
             if not success and "not running" not in message.lower():
                 logger.warning(f"Could not stop server before removal: {message}")
             
-            # Remove configuration file
             if progress_callback:
                 progress_callback(f"[INFO] Removing server configuration...")
             
-            os.remove(config_file)
+            from Modules.Database.server_configs_database import get_server_config_manager
+            manager = get_server_config_manager()
+            success = manager.delete_server(server_name)
             
-            # Remove files if requested
+            if not success:
+                return False, "Failed to remove server configuration from database"
+            
             if remove_files and install_dir and os.path.exists(install_dir):
                 if progress_callback:
                     progress_callback(f"[INFO] Removing server files from {install_dir}...")

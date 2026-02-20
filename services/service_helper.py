@@ -5,30 +5,15 @@ import os
 import sys
 import subprocess
 import argparse
-import winreg
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
-
-from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-
-def get_server_manager_dir():
-    # SM directory from registry
-    try:
-        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-        server_manager_dir = winreg.QueryValueEx(key, "ServerManagerPath")[0]
-        winreg.CloseKey(key)
-        return server_manager_dir
-    except Exception as e:
-        print(f"Registry read error: {e}")
-        return None
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from Modules.common import setup_module_path, get_server_manager_dir, is_admin
+setup_module_path()
 
 def check_admin():
-    # Admin privileges check
-    try:
-        import ctypes
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except:
-        return False
+    # Admin privileges check - use centralized function
+    return is_admin()
 
 def run_as_admin():
     # Elevate to admin
@@ -36,7 +21,7 @@ def run_as_admin():
         import ctypes
         ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
         return True
-    except:
+    except Exception:
         return False
 
 def install_service():

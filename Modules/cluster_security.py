@@ -1,10 +1,14 @@
 # Cluster management
-import winreg
+import os
+import sys
 from datetime import datetime
 import requests
 import logging
 
-from Modules.common import setup_module_path, REGISTRY_ROOT, REGISTRY_PATH, setup_module_logging, get_registry_value, set_registry_value
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Modules.common import setup_module_path, REGISTRY_PATH, setup_module_logging, get_registry_value, set_registry_value
 setup_module_path()
 from Modules.Database.cluster_database import get_cluster_database
 

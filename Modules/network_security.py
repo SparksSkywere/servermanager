@@ -1,11 +1,17 @@
 # Network security
+import os
+import sys
 import ipaddress
-import logging
 from datetime import datetime
 from functools import wraps
 from flask import request, jsonify
 
-logger = logging.getLogger("NetworkSecurity")
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Modules.common import setup_module_logging
+
+logger = setup_module_logging("NetworkSecurity")
 
 # Default allowed networks for cluster communication
 DEFAULT_ALLOWED_NETWORKS = [
@@ -106,7 +112,7 @@ def require_allowed_network(security_manager):
     return decorator
 
 def require_cluster_network_security(security_manager):
-    # Enhanced decorator specifically for cluster API endpoints with additional security
+    # Decorator for cluster API endpoints with additional security
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):

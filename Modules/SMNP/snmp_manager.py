@@ -1,17 +1,20 @@
 # SNMP management module
+import os
+import sys
 import logging
 from datetime import datetime
+from typing import Optional, TYPE_CHECKING
 
-try:
-    from Modules.common import ServerManagerModule
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("SNMP")
-    _HAS_SERVER_MANAGER_MODULE = True
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("SNMP")
-    _HAS_SERVER_MANAGER_MODULE = False
-    ServerManagerModule = object  # type: ignore[misc, assignment]
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+if TYPE_CHECKING:
+    from Modules.analytics import AnalyticsCollector
+
+from Modules.common import ServerManagerModule
+from Modules.server_logging import get_component_logger
+logger = get_component_logger("SNMP")
+_HAS_SERVER_MANAGER_MODULE = True
 
 class SNMPManager(ServerManagerModule):  # type: ignore[valid-type, misc]
     # - SNMP monitoring integration
@@ -25,7 +28,7 @@ class SNMPManager(ServerManagerModule):  # type: ignore[valid-type, misc]
             self.module_name = "SNMP"
             self.logger = logging.getLogger("SNMP")
         
-        self.analytics = analytics_instance
+        self.analytics: Optional['AnalyticsCollector'] = analytics_instance
         
         # Enterprise OID base
         self.enterprise_base = "1.3.6.1.4.1.12345"
@@ -54,7 +57,7 @@ class SNMPManager(ServerManagerModule):  # type: ignore[valid-type, misc]
 
     def set_analytics_instance(self, analytics_instance):
         # Set analytics for metric collection
-        self.analytics = analytics_instance
+        self.analytics: Optional['AnalyticsCollector'] = analytics_instance
         logger.info("Analytics instance configured")
 
     def get_snmp_metrics(self):
@@ -63,6 +66,8 @@ class SNMPManager(ServerManagerModule):  # type: ignore[valid-type, misc]
         if not self.analytics:
             logger.warning("Analytics instance not configured")
             return {}
+            
+        assert self.analytics is not None  # For type checker
             
         try:
             current_metrics = self.analytics.get_current_metrics()

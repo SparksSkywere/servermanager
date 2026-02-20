@@ -1332,6 +1332,8 @@
         let servers = [];
         let currentConsoleServer = null;
         let consoleInterval = null;
+        let consoleTotalEntries = 0;  // Track total entries for incremental updates
+        let consoleAutoScroll = true;  // Auto-scroll to bottom of console
         let userProfile = {};
         let currentTheme = localStorage.getItem('theme_preference') || 'dark';
         
@@ -1859,6 +1861,13 @@
         }
 
         function renderServerList() {
+            console.log('Rendering server list with', servers.length, 'servers');
+            servers.forEach((server, index) => {
+                if (server.name === 'Hytale') {
+                    console.log('Hytale found at index', index, server);
+                }
+            });
+            
             const tbody = document.getElementById('serverTableBody');
             
             if (servers.length === 0) {
@@ -1879,6 +1888,10 @@
                 const cpu = server.cpu || server.CPU || '0%';
                 const memory = server.memory || server.Memory || '0 MB';
                 const uptime = server.uptime || server.Uptime || '-';
+                
+                if (name === 'Hytale') {
+                    console.log('Rendering Hytale row with status:', status);
+                }
                 
                 const statusClass = status === 'running' ? 'running' : 
                                    status === 'starting' ? 'starting' : 'stopped';
@@ -1907,7 +1920,23 @@
                                         ${status !== 'running' ? 'disabled' : ''}>Stop</button>
                                 <button class="btn btn-sm btn-warning" onclick="controlServer('${escapeHtml(name)}', 'restart')"
                                         ${status !== 'running' ? 'disabled' : ''}>Restart</button>
+                                <div class="dropdown">
+                                    <button class="btn btn-sm btn-secondary dropdown-toggle" type="button" 
+                                            onclick="toggleTestDropdown('${escapeHtml(name)}')" ${status !== 'running' ? 'disabled' : ''}>
+                                        Test ▼
+                                    </button>
+                                    <div id="test-dropdown-${escapeHtml(name).replace(/[^a-zA-Z0-9]/g, '-')}" 
+                                         class="dropdown-menu" style="display: none;">
+                                        <button class="dropdown-item" onclick="testCommand('${escapeHtml(name)}', 'motd')">Test MOTD</button>
+                                        <button class="dropdown-item" onclick="testCommand('${escapeHtml(name)}', 'save')">Test Save</button>
+                                        <button class="dropdown-item" onclick="testCommand('${escapeHtml(name)}', 'warning', 5)">Test Warning (5min)</button>
+                                        <button class="dropdown-item" onclick="testCommand('${escapeHtml(name)}', 'warning', 10)">Test Warning (10min)</button>
+                                        <button class="dropdown-item" onclick="testCommand('${escapeHtml(name)}', 'warning', 15)">Test Warning (15min)</button>
+                                    </div>
+                                </div>
                                 <button class="btn btn-sm btn-primary" onclick="openConsole('${escapeHtml(name)}')">Console</button>
+                                <button class="btn btn-sm btn-danger" onclick="removeServer('${escapeHtml(name)}')" 
+                                        ${status === 'running' ? 'disabled' : ''}>Remove</button>
                             </div>
                         </td>
                     </tr>`;
@@ -1961,6 +1990,33 @@
             }
         }
 
+        async function removeServer(serverId) {
+            if (!confirm(`Are you sure you want to remove the server "${serverId}"?\n\nThis will remove the server configuration but keep the server files.`)) {
+                return;
+            }
+            
+            try {
+                const token = sessionStorage.getItem('auth_token');
+                const response = await fetch(`/api/servers/${encodeURIComponent(serverId)}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showNotification(result.message || `Server ${serverId} removed successfully`, 'success');
+                    addActivityLog(`Server "${serverId}" removed`, '🗑️');
+                    setTimeout(refreshServers, 1500);
+                } else {
+                    showNotification(result.error || `Failed to remove server`, 'error');
+                    addActivityLog(`Failed to remove server "${serverId}"`, '❌');
+                }
+            } catch {
+                showNotification(`Failed to remove server`, 'error');
+            }
+        }
+
         // Console functions
         function openConsole(serverId) {
             document.getElementById('consoleServerSelect').value = serverId;
@@ -1977,6 +2033,10 @@
                 consoleInterval = null;
             }
             
+            // Reset incremental tracking
+            consoleTotalEntries = 0;
+            consoleAutoScroll = true;
+            
             if (!serverId) {
                 currentConsoleServer = null;
                 document.getElementById('consoleOutput').textContent = 'Select a server to view console output...';
@@ -1989,6 +2049,9 @@
             input.disabled = false;
             sendBtn.disabled = false;
             
+            // Clear console and do initial load
+            document.getElementById('consoleOutput').innerHTML = '<div style="color: #4ecdc4;">Loading console output...</div>';
+            
             loadConsoleOutput();
             consoleInterval = setInterval(loadConsoleOutput, 2000);
         }
@@ -1998,10 +2061,12 @@
             
             try {
                 const token = sessionStorage.getItem('auth_token');
-                const response = await fetch(
-                    `/api/servers/${encodeURIComponent(currentConsoleServer)}/console?lines=200`,
-                    { headers: { 'Authorization': `Bearer ${token}` } }
-                );
+                // Use incremental updates - request only entries after what we already have
+                const url = consoleTotalEntries > 0 
+                    ? `/api/servers/${encodeURIComponent(currentConsoleServer)}/console?lines=200&since=${consoleTotalEntries}`
+                    : `/api/servers/${encodeURIComponent(currentConsoleServer)}/console?lines=200`;
+                
+                const response = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
 
                 if (!response.ok) return;
 
@@ -2009,20 +2074,77 @@
                 const output = document.getElementById('consoleOutput');
                 
                 if (data.output && data.output.length > 0) {
-                    output.innerHTML = data.output.map(line => {
-                        const escaped = escapeHtml(line);
-                        if (line.match(/error|exception|failed/i)) return `<div style="color: #f87171;">${escaped}</div>`;
-                        if (line.match(/warn|warning/i)) return `<div style="color: #fbbf24;">${escaped}</div>`;
-                        if (line.match(/info|started|loaded/i)) return `<div style="color: #58a6ff;">${escaped}</div>`;
-                        return `<div>${escaped}</div>`;
-                    }).join('');
-                    output.scrollTop = output.scrollHeight;
-                } else {
+                    // Check if user has scrolled up (not auto-scrolling)
+                    const wasAtBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 50;
+                    
+                    if (consoleTotalEntries === 0) {
+                        // Initial load - replace all content
+                        output.innerHTML = data.output.map(entry => formatConsoleEntry(entry)).join('');
+                    } else {
+                        // Incremental update - append new entries only
+                        const newHtml = data.output.map(entry => formatConsoleEntry(entry)).join('');
+                        output.innerHTML += newHtml;
+                        
+                        // Limit displayed lines to prevent memory issues
+                        const maxLines = 500;
+                        const children = output.children;
+                        while (children.length > maxLines) {
+                            children[0].remove();
+                        }
+                    }
+                    
+                    // Update tracking
+                    if (data.total_entries !== undefined) {
+                        consoleTotalEntries = data.total_entries;
+                    }
+                    
+                    // Auto-scroll to bottom if user was already at bottom
+                    if (wasAtBottom || consoleAutoScroll) {
+                        output.scrollTop = output.scrollHeight;
+                    }
+                } else if (consoleTotalEntries === 0) {
                     output.textContent = 'No console output available.';
                 }
+                // If no new entries on incremental update, do nothing (keep existing output)
             } catch (e) {
                 console.error('Console error:', e);
             }
+        }
+        
+        function formatConsoleEntry(entry) {
+            // Handle both dict format {text, type, timestamp} and plain string format
+            let text = '';
+            let entryType = 'stdout';
+            
+            if (typeof entry === 'object' && entry !== null) {
+                text = entry.text || '';
+                entryType = entry.type || 'stdout';
+            } else {
+                text = String(entry);
+            }
+            
+            const escaped = escapeHtml(text);
+            
+            // Color based on entry type from the server
+            if (entryType === 'error' || entryType === 'stderr') {
+                return `<div style="color: #f87171;">${escaped}</div>`;
+            }
+            if (entryType === 'command') {
+                return `<div style="color: #6bcf7f;">${escaped}</div>`;
+            }
+            if (entryType === 'system') {
+                return `<div style="color: #4ecdc4;">${escaped}</div>`;
+            }
+            if (entryType === 'warning') {
+                return `<div style="color: #fbbf24;">${escaped}</div>`;
+            }
+            
+            // Fallback: check text content for color hints
+            if (text.match(/error|exception|failed/i)) return `<div style="color: #f87171;">${escaped}</div>`;
+            if (text.match(/warn|warning/i)) return `<div style="color: #fbbf24;">${escaped}</div>`;
+            if (text.match(/info|started|loaded/i)) return `<div style="color: #58a6ff;">${escaped}</div>`;
+            
+            return `<div>${escaped}</div>`;
         }
 
         async function sendCommand() {
@@ -2049,8 +2171,11 @@
                 if (response.ok) {
                     input.value = '';
                     const output = document.getElementById('consoleOutput');
-                    output.innerHTML += `<div style="color: #667eea;">&gt; ${escapeHtml(command)}</div>`;
+                    output.innerHTML += `<div style="color: #6bcf7f;">&gt; ${escapeHtml(command)}</div>`;
                     output.scrollTop = output.scrollHeight;
+                    
+                    // Force a quick refresh to pick up any immediate response
+                    setTimeout(loadConsoleOutput, 500);
                 } else {
                     showNotification('Failed to send command', 'error');
                 }

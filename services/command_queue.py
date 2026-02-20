@@ -5,21 +5,14 @@ import sys
 import time
 import json
 import threading
-import logging
 from pathlib import Path
-from datetime import datetime
 from typing import Optional, Tuple, List, Callable
 import subprocess
 
-LOG_DIR = Path(__file__).parent.parent / "logs" / "services"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from Modules.common import setup_module_logging
 
-logger = logging.getLogger("CommandQueue")
-if not logger.handlers:
-    handler = logging.FileHandler(LOG_DIR / "command_queue.log")
-    handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+logger = setup_module_logging("CommandQueue")
 
 def _get_queue_dir() -> Path:
     # Queue directory path
@@ -65,7 +58,7 @@ class CommandQueueRelay:
         # Clear queue on start
         try:
             self.queue_file.write_text("")
-        except:
+        except OSError:
             pass
         
         self.stop_event.clear()
@@ -99,7 +92,7 @@ class CommandQueueRelay:
         # Clean up info file
         try:
             get_relay_info_file(self.server_name).unlink()
-        except:
+        except OSError:
             pass
         
         logger.info(f"Stopped command queue relay for {self.server_name}")

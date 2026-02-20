@@ -1,26 +1,23 @@
 # Steam server auto-updater
 import os
 import sys
-import json
 import time
 import logging
 import argparse
 import subprocess
 import datetime
 import winreg
-from pathlib import Path
+
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 try:
     import psutil
 except ImportError:
     psutil = None
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(script_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
-
-from Modules.common import setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH
+from Modules.common import setup_module_path, setup_module_logging, get_server_manager_dir
+setup_module_path()
 
 try:
     from debug.debug import enable_debug, log_exception
@@ -34,7 +31,7 @@ except ImportError:
         import traceback
         logging.error(traceback.format_exc())
 
-logger = setup_module_logging("AutoAppUpdate")
+logger: logging.Logger = setup_module_logging("AutoAppUpdate")
 
 
 class AutoUpdater:
@@ -70,8 +67,8 @@ class AutoUpdater:
         # Init paths/config from registry
         # - Validates SteamCMD, creates dirs
         try:
+            self.server_manager_dir = get_server_manager_dir()
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
-            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
             steam_cmd_dir = winreg.QueryValueEx(key, "SteamCMDPath")[0]
             self.steam_cmd_path = os.path.join(steam_cmd_dir, "steamcmd.exe")
             winreg.CloseKey(key)
@@ -79,14 +76,12 @@ class AutoUpdater:
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs"),
-                "servers": os.path.join(self.server_manager_dir, "servers"),
                 "temp": os.path.join(self.server_manager_dir, "temp"),
                 "scripts": os.path.join(self.server_manager_dir, "Modules")
             }
             
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
-                
+            # Directories are now created in Start-ServerManager.pyw
+            
             logger.info(f"Init complete. SM dir: {self.server_manager_dir}")
             logger.info(f"SteamCMD: {self.steam_cmd_path}")
             
@@ -105,37 +100,27 @@ class AutoUpdater:
         # Get list of servers to check for updates
         # Supports both specific server targeting and AutoUpdate flag filtering
         try:
-            servers_dir = self.paths["servers"]
+            from Modules.Database.server_configs_database import ServerConfigManager
+            manager = ServerConfigManager()
             servers = []
             
             # If specific server was requested, only check that one
             if self.specific_server:
-                server_path = os.path.join(servers_dir, f"{self.specific_server}.json")
-                if os.path.exists(server_path):
-                    try:
-                        with open(server_path, 'r') as f:
-                            server_config = json.load(f)
-                            if server_config.get("AppId") and server_config.get("InstallPath"):
-                                servers.append(server_config)
-                            else:
-                                logger.warning(f"Server {self.specific_server} has invalid configuration")
-                    except Exception as e:
-                        logger.error(f"Error loading server configuration: {str(e)}")
+                server_config = manager.get_server(self.specific_server)
+                if server_config:
+                    if server_config.get("AppId") and server_config.get("InstallPath"):
+                        servers.append(server_config)
+                    else:
+                        logger.warning(f"Server {self.specific_server} has invalid configuration")
                 else:
                     logger.error(f"Server configuration not found: {self.specific_server}")
             else:
-                # Look for all server configurations
-                if os.path.exists(servers_dir):
-                    for filename in os.listdir(servers_dir):
-                        if filename.endswith(".json"):
-                            try:
-                                with open(os.path.join(servers_dir, filename), 'r') as f:
-                                    server_config = json.load(f)
-                                    if server_config.get("AppId") and server_config.get("InstallPath"):
-                                        if server_config.get("AutoUpdate", True):  # Only include servers with auto-update enabled
-                                            servers.append(server_config)
-                            except Exception as e:
-                                logger.error(f"Error loading server configuration {filename}: {str(e)}")
+                # Get all server configurations from database
+                all_servers = manager.get_all_servers()
+                for server_config in all_servers:
+                    if server_config.get("AppId") and server_config.get("InstallPath"):
+                        if server_config.get("AutoUpdate", True):  # Only include servers with auto-update enabled
+                            servers.append(server_config)
                 
             logger.info(f"Found {len(servers)} servers to check for updates")
             return servers
@@ -375,13 +360,18 @@ class AutoUpdater:
         # Save updated server configuration with LastUpdateTime timestamp
         try:
             server_name = server.get("Name", "Unknown")
-            server_path = os.path.join(self.paths["servers"], f"{server_name}.json")
             
-            with open(server_path, 'w') as f:
-                json.dump(server, f, indent=4)
-                
-            logger.info(f"Server configuration updated: {server_name}")
-            return True
+            # Save to database
+            from Modules.Database.server_configs_database import ServerConfigManager
+            manager = ServerConfigManager()
+            result = manager.update_server(server_name, server)
+            
+            if result:
+                logger.info(f"Server configuration updated: {server_name}")
+                return True
+            else:
+                logger.error(f"Failed to save server configuration: {server_name}")
+                return False
         except Exception as e:
             logger.error(f"Error saving server configuration: {str(e)}")
             return False

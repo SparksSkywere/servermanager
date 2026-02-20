@@ -2,12 +2,14 @@
 import os
 import sys
 import socket
-import winreg
 from datetime import datetime, timedelta
 from typing import Any
 import logging
 
-from Modules.common import setup_module_path, setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH, get_server_manager_dir, get_registry_value, set_registry_value
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Modules.common import setup_module_path, setup_module_logging, REGISTRY_PATH, get_server_manager_dir, get_registry_value, set_registry_value
 setup_module_path()
 
 logger: logging.Logger = setup_module_logging("SSLUtils")

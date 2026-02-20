@@ -7,27 +7,26 @@ import json
 import time
 import re
 import sqlite3
-import shutil
 from datetime import datetime, timezone
 import argparse
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
+from Modules.common import setup_module_path
+setup_module_path()
+
 
 try:
-    from Modules.Database.steam_database import get_steam_engine, initialise_steam_database
-    from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text
+    from Modules.Database.steam_database import get_steam_engine
+    from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
     from sqlalchemy.orm import declarative_base, sessionmaker
     SQLALCHEMY_AVAILABLE = True
 except ImportError:
     SQLALCHEMY_AVAILABLE = False
     print("Warning: SQLAlchemy not available, SQLite fallback")
 
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("AppIDScanner")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("AppIDScanner")
+from Modules.server_logging import get_component_logger
+logger = get_component_logger("AppIDScanner")
 
 if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.setLevel(logging.DEBUG)
@@ -669,13 +668,13 @@ class AppIDScanner:
                     values.append(app_data['appid'])
                     
                     self.sqlite_conn.execute(
-                        f"UPDATE steam_apps SET {set_clause}, last_updated = CURRENT_TIMESTAMP WHERE appid = ?",
+                        "UPDATE steam_apps SET " + set_clause + ", last_updated = CURRENT_TIMESTAMP WHERE appid = ?",
                         values
                     )
                 else:
                     # Insert new record
                     self.sqlite_conn.execute(
-                        f"INSERT INTO steam_apps ({columns}) VALUES ({placeholders})",
+                        "INSERT INTO steam_apps (" + columns + ") VALUES (" + placeholders + ")",
                         list(app_data.values())
                     )
                 

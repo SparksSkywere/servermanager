@@ -1,18 +1,18 @@
 # Security operations
 import os
 import sys
-import json
 import logging
-import ctypes
-import winreg
 import hashlib
 import secrets
 import base64
-from datetime import datetime
 
-from Modules.common import setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-logger = setup_module_logging("Security")
+from Modules.common import setup_module_path, setup_module_logging, get_server_manager_dir, is_admin as common_is_admin
+setup_module_path()
+
+logger: logging.Logger = setup_module_logging("Security")
 
 
 class SecurityManager:
@@ -28,29 +28,20 @@ class SecurityManager:
     def initialise_from_registry(self):
         # Pull paths from registry
         try:
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
-            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-            winreg.CloseKey(key)
+            self.server_manager_dir = get_server_manager_dir()
             
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs")
             }
             
-            os.makedirs(self.paths["logs"], exist_ok=True)
+            # Directories are now created in Start-ServerManager.pyw
                 
             logger.info("Security manager ready")
             return True
             
         except Exception as e:
             logger.error(f"Security init failed: {str(e)}")
-            return False
-            
-    def is_admin(self):
-        # Check admin privileges
-        try:
-            return ctypes.windll.shell32.IsUserAnAdmin() != 0
-        except:
             return False
             
     def generate_token(self, length=32):
@@ -94,7 +85,7 @@ class SecurityManager:
                 # Ensure the key is proper Fernet key format
                 try:
                     Fernet(key.encode('utf-8'))
-                except:
+                except (ValueError, Exception):
                     key = Fernet.generate_key()
             
             if isinstance(data, str):
@@ -146,7 +137,7 @@ security_manager = SecurityManager()
 # Export functions for easy module access
 def is_admin():
     # Check if current process has admin privileges
-    return security_manager.is_admin()
+    return common_is_admin()
 
 def generate_token(length=32):
     # Generate a secure random token

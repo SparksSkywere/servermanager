@@ -3,9 +3,11 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from Modules.common import setup_module_path
+setup_module_path()
 
-from user_database import initialise_user_manager
+from Modules.Database.user_database import initialise_user_manager
 
 def reset_admin_2fa():
     # Reset admin 2FA

@@ -40,6 +40,28 @@ export async function controlServer(serverId, action) {
 }
 
 /**
+ * Remove a server
+ * @param {string} serverId - Server ID
+ */
+export async function removeServer(serverId) {
+    if (!confirm(`Are you sure you want to remove the server "${serverId}"?\n\nThis will remove the server configuration but keep the server files.`)) {
+        return;
+    }
+    
+    try {
+        const result = await API.removeServer(serverId);
+        showNotification(result.message || `Server ${serverId} removed successfully`, 'success');
+        
+        // Refresh the page after a short delay
+        setTimeout(() => window.location.reload(), 1500);
+        
+    } catch (error) {
+        console.error(`Server remove error:`, error);
+        showNotification(`Failed to remove server: ${error.message}`, 'error');
+    }
+}
+
+/**
  * Execute bulk action on selected servers
  */
 export async function executeBulkAction() {
@@ -84,3 +106,7 @@ export async function executeBulkAction() {
         showNotification(`Failed to execute bulk action: ${error.message}`, 'error');
     }
 }
+
+// Make functions available globally for HTML onclick handlers
+window.controlServer = controlServer;
+window.removeServer = removeServer;

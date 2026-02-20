@@ -1,12 +1,15 @@
 # Timer management
 import os
-import json
+import sys
 import datetime
 import psutil
 import threading
 import tkinter as tk
-from Modules.server_logging import log_process_monitoring
 
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Modules.server_logging import log_process_monitoring
 
 class TimerManager:
     # - Schedules periodic UI updates
@@ -43,7 +46,7 @@ class TimerManager:
                         break
                         
                     psutil.cpu_percent(interval=1)
-                    threading.Event().wait(2)
+                    threading.Event().wait(5)
             except Exception as e:
                 log_process_monitoring(f"CPU monitor error: {str(e)}", "ERROR")
         
@@ -94,62 +97,60 @@ class TimerManager:
         # Monitor running server processes
         try:
             # Skip if it's been less than processMonitoringInterval seconds since the last update
-            if (self.dashboard.variables["lastProcessUpdate"] != datetime.datetime.min) and \
-               (datetime.datetime.now() - self.dashboard.variables["lastProcessUpdate"]).total_seconds() < self.dashboard.variables["processMonitoringInterval"]:
-                return
+            last_update = self.dashboard.variables.get("lastProcessUpdate", datetime.datetime.min)
+            if isinstance(last_update, datetime.datetime) and last_update != datetime.datetime.min:
+                if (datetime.datetime.now() - last_update).total_seconds() < self.dashboard.variables["processMonitoringInterval"]:
+                    return
                 
-            # Check each server's process
-            servers_path = self.dashboard.paths["servers"]
-            if os.path.exists(servers_path):
-                for file in os.listdir(servers_path):
-                    if file.endswith(".json"):
-                        try:
-                            with open(os.path.join(servers_path, file), 'r') as f:
-                                server_config = json.load(f)
-                                
-                            server_name = server_config.get("Name", "Unknown")
+            # Check each server's process from database
+            from Modules.Database.server_configs_database import ServerConfigManager
+            manager = ServerConfigManager()
+            all_servers = manager.get_all_servers()
+            
+            for server_config in all_servers:
+                server_name = server_config.get("Name", "Unknown")
+                try:
+                    
+                    # Check if server has a process ID registered
+                    if "ProcessId" in server_config:
+                        process_id = server_config["ProcessId"]
+                        
+                        # Check if process is still running
+                        if not self.dashboard.is_process_running(process_id):
+                            log_process_monitoring(f"Server '{server_name}' process (PID {process_id}) is no longer running", "WARNING")
                             
-                            # Check if server has a process ID registered
-                            if "ProcessId" in server_config:
-                                process_id = server_config["ProcessId"]
-                                
-                                # Check if process is still running
-                                if not self.dashboard.is_process_running(process_id):
-                                    log_process_monitoring(f"Server '{server_name}' process (PID {process_id}) is no longer running", "WARNING")
-                                    
-                                    # Clean up the process ID in the config
-                                    server_config.pop('ProcessId', None)
-                                    server_config.pop('PID', None)
-                                    server_config.pop('StartTime', None)
-                                    server_config.pop('ProcessCreateTime', None)
-                                    server_config['LastUpdate'] = datetime.datetime.now().isoformat()
-                                    
-                                    # Clean up process history
-                                    if process_id in self.dashboard.variables["processStatHistory"]:
-                                        del self.dashboard.variables["processStatHistory"][process_id]
-                                    
-                                    # Save updated configuration
-                                    with open(os.path.join(servers_path, file), 'w') as f:
-                                        json.dump(server_config, f, indent=4)
-                                    
-                                    # Update the server list using thread-safe UI update
-                                    def update_ui():
-                                        try:
-                                            self.dashboard.update_server_list(force_refresh=True)
-                                        except Exception as e:
-                                            log_process_monitoring(f"Error updating UI from process monitor: {str(e)}", "ERROR")
-                                    
-                                    # Schedule UI update on main thread
-                                    self.dashboard.root.after(0, update_ui)
-                                else:
-                                    # Process is running, update statistics
-                                    try:
-                                        process = psutil.Process(process_id)
-                                        # Update process statistics here if needed
-                                    except Exception as e:
-                                        log_process_monitoring(f"Error updating process statistics for {server_name}: {str(e)}", "ERROR")
-                        except Exception as e:
-                            log_process_monitoring(f"Error monitoring server process in {file}: {str(e)}", "ERROR")
+                            # Clean up the process ID in the config
+                            server_config.pop('ProcessId', None)
+                            server_config.pop('PID', None)
+                            server_config.pop('StartTime', None)
+                            server_config.pop('ProcessCreateTime', None)
+                            server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                            
+                            # Clean up process history
+                            if process_id in self.dashboard.variables["processStatHistory"]:
+                                del self.dashboard.variables["processStatHistory"][process_id]
+                            
+                            # Save updated configuration to database
+                            manager.update_server(server_name, server_config)
+                            
+                            # Update the server list using thread-safe UI update
+                            def update_ui():
+                                try:
+                                    self.dashboard.update_server_list(force_refresh=True)
+                                except Exception as e:
+                                    log_process_monitoring(f"Error updating UI from process monitor: {str(e)}", "ERROR")
+                            
+                            # Schedule UI update on main thread
+                            self.dashboard.root.after(0, update_ui)
+                        else:
+                            # Process is running, update statistics
+                            try:
+                                process = psutil.Process(process_id)
+                                # Update process statistics here if needed
+                            except Exception as e:
+                                log_process_monitoring(f"Error updating process statistics for {server_name}: {str(e)}", "ERROR")
+                except Exception as e:
+                    log_process_monitoring(f"Error monitoring server process for {server_name}: {str(e)}", "ERROR")
                             
             # Update the last process update time
             self.dashboard.variables["lastProcessUpdate"] = datetime.datetime.now()

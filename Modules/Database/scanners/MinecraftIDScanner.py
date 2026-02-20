@@ -9,7 +9,11 @@ import re
 from datetime import datetime, timezone
 import argparse
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
+from Modules.common import setup_module_path
+setup_module_path()
+
 
 try:
     from Modules.Database.minecraft_database import get_minecraft_engine
@@ -20,12 +24,8 @@ except ImportError:
     SQLALCHEMY_AVAILABLE = False
     print("Warning: SQLAlchemy not available, SQLite fallback")
 
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("MinecraftIDScanner")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(message)s')
-    logger = logging.getLogger("MinecraftIDScanner")
+from Modules.server_logging import get_component_logger
+logger = get_component_logger("MinecraftIDScanner")
 
 if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
     logger.setLevel(logging.DEBUG)
@@ -374,7 +374,7 @@ class MinecraftIDScanner:
                 return 21
 
             return 17  # Default
-        except:
+        except (ValueError, TypeError, AttributeError):
             return 17
 
     def _clear_modloader_entries(self, modloader):

@@ -1,19 +1,18 @@
 # Notifications module
 # - Email notifications with templates
 import os
-import re
 import sys
+import re
 from datetime import datetime
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("Notifications")
-except Exception:
-    import logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("Notifications")
+from Modules.common import setup_module_path
+setup_module_path()
+
+from Modules.server_logging import get_component_logger
+logger = get_component_logger("Notifications")
 
 from .mailserver import mail_server
 

@@ -1,4 +1,5 @@
 # Server automation module - Handles automated server operations like MOTD broadcasting, restart warnings, and start commands. Can run independently of the dashboard for scheduled operations.
+import os
 import sys
 import time
 import datetime
@@ -6,6 +7,9 @@ import threading
 import psutil
 from typing import Dict, Optional, Callable
 import logging
+
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from Modules.common import setup_module_path, setup_module_logging
 setup_module_path()

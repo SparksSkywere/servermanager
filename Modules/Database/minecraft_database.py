@@ -1,10 +1,17 @@
 # Minecraft servers database
+import os
+import sys
 from sqlalchemy import text
-from .database_utils import get_sql_config_from_registry as db_get_sql_config, build_db_url, get_engine_by_type
-from Modules.common import setup_module_logging, setup_module_path
+import logging
 
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from Modules.common import setup_module_path, setup_module_logging
 setup_module_path()
-logger = setup_module_logging("MinecraftDatabase")
+
+from .database_utils import get_sql_config_from_registry as db_get_sql_config, build_db_url, get_engine_by_type
+
+logger: logging.Logger = setup_module_logging("MinecraftDatabase")
 
 def get_minecraft_sql_config_from_registry():
     # MC DB config from registry

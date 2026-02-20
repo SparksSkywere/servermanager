@@ -8,9 +8,12 @@ import threading
 import psutil
 import logging
 from pathlib import Path
+
+# Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_logging
-logger = setup_module_logging("DashboardTracker")
+from Modules.common import setup_module_path, setup_module_logging
+setup_module_path()
+logger: logging.Logger = setup_module_logging("DashboardTracker")
 
 class DashboardTracker:
     # - Scans for running dashboard/server processes
@@ -33,10 +36,11 @@ class DashboardTracker:
     def scan_dashboards(self):
         # Check temp dir for dashboard PID files
         dashboards = {}
-        if os.path.exists(self.temp_dir):
-            for fname in os.listdir(self.temp_dir):
-                if fname.startswith("dashboard") and fname.endswith(".pid"):
-                    pid_file = os.path.join(self.temp_dir, fname)
+        temp_path = Path(self.temp_dir)
+        if temp_path.exists():
+            for fname in temp_path.iterdir():
+                if fname.name.startswith("dashboard") and fname.name.endswith(".pid"):
+                    pid_file = str(fname)
                     try:
                         with open(pid_file, 'r') as f:
                             pid_info = json.load(f)
@@ -56,31 +60,33 @@ class DashboardTracker:
                                 "status": "not running"
                             }
                     except Exception as e:
-                        logger.debug(f"PID file read error {fname}: {e}")
+                        logger.debug(f"PID file read error {fname.name}: {e}")
         self.dashboards = dashboards
 
     def scan_servers(self):
-        # Check servers dir for running server processes
+        # Check servers from database for running server processes
         servers = {}
-        if os.path.exists(self.servers_dir):
-            for fname in os.listdir(self.servers_dir):
-                if fname.endswith(".json"):
-                    config_file = os.path.join(self.servers_dir, fname)
-                    try:
-                        with open(config_file, 'r') as f:
-                            config = json.load(f)
-                        name = config.get("Name", fname[:-5])
-                        pid = config.get("ProcessId")
-                        status = "offline"
-                        if pid and psutil.pid_exists(pid):
-                            status = "running"
-                        servers[name] = {
-                            "pid": pid,
-                            "status": status,
-                            "config": config
-                        }
-                    except Exception as e:
-                        logger.debug(f"Error reading server config {fname}: {e}")
+        try:
+            from Modules.Database.server_configs_database import ServerConfigManager
+            manager = ServerConfigManager()
+            all_servers = manager.get_all_servers()
+            
+            for config in all_servers:
+                name = config.get("Name", "Unknown")
+                try:
+                    pid = config.get("ProcessId")
+                    status = "offline"
+                    if pid and psutil.pid_exists(pid):
+                        status = "running"
+                    servers[name] = {
+                        "pid": pid,
+                        "status": status,
+                        "config": config
+                    }
+                except Exception as e:
+                    logger.debug(f"Error processing server config {name}: {e}")
+        except Exception as e:
+            logger.error(f"Error loading servers from database: {e}")
         self.servers = servers
 
     def refresh(self):
@@ -112,6 +118,8 @@ class DashboardTracker:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=2)
+            self._thread = None  # Clear thread reference to prevent memory leak
+        self._stop_event = threading.Event()  # Reset stop event
 
     def _auto_refresh_loop(self):
         while not self._stop_event.is_set():

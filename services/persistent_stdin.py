@@ -6,9 +6,11 @@ import sys
 import time
 import json
 import threading
-import logging
 from pathlib import Path
 from typing import Optional, Tuple, Any
+
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Windows named pipe support - declare module-level placeholders for type checking
 win32pipe: Any = None
@@ -34,17 +36,8 @@ if sys.platform == 'win32':
     except ImportError:
         pass
 
-LOG_DIR = Path(__file__).parent.parent / "logs" / "services"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_DIR / "persistent_stdin.log"),
-    ]
-)
-logger = logging.getLogger("PersistentStdin")
+from Modules.server_logging import get_component_logger
+logger = get_component_logger("PersistentStdin")
 
 
 def get_stdin_pipe_name(server_name: str) -> str:
@@ -135,19 +128,38 @@ class PersistentStdinPipe:
             return None
     
     def cleanup(self):
-        # Clean up pipe handles
+        # Clean up pipe handles and threading objects
         try:
             if self.pipe_handle:
                 win32file.CloseHandle(self.pipe_handle)
                 self.pipe_handle = None
-        except:
+        except (pywintypes.error, OSError):
+            pass
+        
+        try:
+            if self.read_handle:
+                win32file.CloseHandle(self.read_handle)
+                self.read_handle = None
+        except (pywintypes.error, OSError):
+            pass
+        
+        # Stop and clean up threading objects
+        try:
+            if self.stop_event:
+                self.stop_event.set()
+            if self.listener_thread and self.listener_thread.is_alive():
+                self.listener_thread.join(timeout=1.0)
+            self.listener_thread = None
+            self.stop_event = None
+            self._lock = None
+        except Exception:
             pass
         
         try:
             info_file = get_stdin_info_file(self.server_name)
             if info_file.exists():
                 info_file.unlink()
-        except:
+        except OSError:
             pass
 
 
@@ -217,5 +229,5 @@ def is_stdin_pipe_available(server_name: str) -> bool:
         )
         win32file.CloseHandle(handle)
         return True
-    except:
+    except (pywintypes.error, OSError):
         return False

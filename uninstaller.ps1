@@ -89,6 +89,12 @@ Write-Host "Stopping related processes..." -ForegroundColor Yellow
 Get-Process | Where-Object { $_.ProcessName -like "*steam*" -or $_.ProcessName -like "*servermanager*" } | 
     Stop-Process -Force -ErrorAction SilentlyContinue
 
+# Determine Server Manager directory
+$serverManagerDir = Join-Path $steamCMDPath "ServerManager"
+if (-not (Test-Path $serverManagerDir)) {
+    $serverManagerDir = $steamCMDPath
+}
+
 # Remove services
 Write-Host "Removing services..." -ForegroundColor Yellow
 try {
@@ -125,6 +131,9 @@ try {
         # New rule names with direction suffixes
         "ServerManager_WebInterface_In",
         "ServerManager_WebInterface_Out",
+        "ServerManager_HTTPS_In",
+        "ServerManager_HTTPS_Out",
+        "ServerManager_HTTPRedirect_In",
         "ServerManager_ClusterAPI_In",
         "ServerManager_ClusterAPI_Out",
         "ServerManager_GameServers_In",
@@ -185,6 +194,23 @@ $programDataPaths = @(
 
 foreach ($path in $programDataPaths) {
     Remove-DirectoryForcefully -Path $path
+}
+
+# Remove SSL certificates and cluster token
+Write-Host "Removing SSL certificates and cluster files..." -ForegroundColor Yellow
+try {
+    $sslDir = Join-Path $serverManagerDir "ssl"
+    if (Test-Path $sslDir) {
+        Remove-Item -Path $sslDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "  ✓ Removed SSL directory" -ForegroundColor Green
+    }
+    $clusterTokenFile = Join-Path $serverManagerDir "cluster-security-token.txt"
+    if (Test-Path $clusterTokenFile) {
+        Remove-Item -Path $clusterTokenFile -Force -ErrorAction SilentlyContinue
+        Write-Host "  ✓ Removed cluster security token" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "  Warning: Error removing SSL/cluster files: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
 # Remove registry keys

@@ -7,31 +7,24 @@ import time
 import threading
 import json
 import subprocess
-import signal
-import logging
 from pathlib import Path
 from typing import Any
 
+# Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from Modules.common import setup_module_path
+setup_module_path()
 
-LOG_DIR = Path(__file__).parent.parent / "logs" / "services"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_DIR / "stdin_relay.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger("StdinRelay")
+from Modules.server_logging import get_component_logger
+logger = get_component_logger("StdinRelay")
 
 # Windows named pipe support - declare module-level placeholders for type checking
 win32pipe: Any = None
 win32file: Any = None
 pywintypes: Any = None
 win32security: Any = None
+win32api: Any = None
 con: Any = None
 
 _NAMED_PIPES_AVAILABLE = False
@@ -41,11 +34,13 @@ if sys.platform == 'win32':
         import win32file as _win32file
         import pywintypes as _pywintypes
         import win32security as _win32security
+        import win32api as _win32api
         import ntsecuritycon as _con
         win32pipe = _win32pipe
         win32file = _win32file
         pywintypes = _pywintypes
         win32security = _win32security
+        win32api = _win32api
         con = _con
         _NAMED_PIPES_AVAILABLE = True
     except ImportError:
@@ -66,6 +61,70 @@ def get_relay_pid_file(server_name: str) -> Path:
     return temp_dir / f"relay_{safe_name}.pid"
 
 
+def cleanup_existing_relays(server_name: str):
+    # Clean up any existing relay processes and pipes for a server
+    try:
+        import psutil
+        
+        pipe_name = sanitise_pipe_name(server_name)
+        logger.info(f"Starting cleanup for {server_name}, pipe: {pipe_name}")
+        
+        # Try to find and kill any existing relay processes for this server
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                if proc.pid == os.getpid():  # Skip self
+                    continue
+                    
+                cmdline = " ".join(proc.info['cmdline'] or [])
+                if "stdin_relay.py" in cmdline and server_name in cmdline:
+                    logger.info(f"Found existing relay process {proc.pid} for {server_name}, terminating")
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                        logger.debug(f"Terminated relay process {proc.pid}")
+                    except psutil.TimeoutExpired:
+                        proc.kill()
+                        logger.warning(f"Force killed relay process {proc.pid}")
+                        
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+                
+        # Try to connect to and close any existing pipe
+        try:
+            # Try to connect to the pipe and send a close command
+            result, data = win32pipe.CallNamedPipe(pipe_name, b"close", 1024, 0)
+            logger.debug(f"Sent close command to existing pipe for {server_name}")
+        except Exception as e:
+            logger.debug(f"No existing pipe to close for {server_name}: {e}")
+            
+        # Try to create a pipe with the same name to clear any stale state
+        try:
+            # Create pipe, immediately close it to clear any stale state
+            pipe_handle = win32pipe.CreateNamedPipe(
+                pipe_name,
+                win32pipe.PIPE_ACCESS_DUPLEX,
+                win32pipe.PIPE_TYPE_MESSAGE | win32pipe.PIPE_READMODE_MESSAGE | win32pipe.PIPE_WAIT,
+                win32pipe.PIPE_UNLIMITED_INSTANCES,  # Allow unlimited instances
+                1024,  # Out buffer size
+                1024,  # In buffer size
+                0,  # Default timeout
+                None  # Security attributes
+            )
+            if pipe_handle and pipe_handle != win32file.INVALID_HANDLE_VALUE:
+                win32file.CloseHandle(pipe_handle)
+                logger.debug(f"Created and closed dummy pipe to clear stale state for {server_name}")
+        except Exception as e:
+            logger.debug(f"Could not create dummy pipe for cleanup: {e}")
+            
+        # Wait a bit for cleanup to take effect
+        time.sleep(0.5)
+            
+        logger.info(f"Completed cleanup for {server_name}")
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up existing relays for {server_name}: {e}")
+
+
 def is_relay_running(server_name: str) -> bool:
     # Check relay availability via pipe test
     info_file = get_relay_pid_file(server_name).with_suffix('.json')
@@ -83,7 +142,7 @@ def is_relay_running(server_name: str) -> bool:
             # Server gone, clean up
             try:
                 info_file.unlink()
-            except:
+            except OSError:
                 pass
             return False
         
@@ -112,6 +171,21 @@ def start_relay_for_server(server_name: str, server_process: subprocess.Popen, s
     if is_relay_running(server_name):
         logger.info(f"Relay already running for {server_name}")
         return True
+    
+    # Clean up any existing relay processes for this server
+    cleanup_existing_relays(server_name)
+    
+    # Give cleanup time to work
+    time.sleep(1)
+    
+    # Clean up any stale relay files before starting
+    relay_info_file = get_relay_pid_file(server_name).with_suffix('.json')
+    if relay_info_file.exists():
+        try:
+            relay_info_file.unlink()
+            logger.debug(f"Removed stale relay info file for {server_name}")
+        except OSError:
+            pass
     
     # Start a separate relay process that will survive dashboard restarts
     # We use pythonw.exe to run without a console window
@@ -193,19 +267,36 @@ def _run_relay_thread(server_name: str, server_process: subprocess.Popen, server
             
             # Create/recreate the named pipe
             logger.debug(f"Creating named pipe {pipe_name}")
-            pipe = win32pipe.CreateNamedPipe(
-                pipe_name,
-                win32pipe.PIPE_ACCESS_DUPLEX,
-                win32pipe.PIPE_TYPE_MESSAGE | win32pipe.PIPE_READMODE_MESSAGE | win32pipe.PIPE_WAIT,
-                1,  # Max instances
-                65536,  # Out buffer size
-                65536,  # In buffer size
-                0,  # Default timeout
-                sa  # Security attributes
-            )
+            try:
+                pipe = win32pipe.CreateNamedPipe(
+                    pipe_name,
+                    win32pipe.PIPE_ACCESS_DUPLEX,
+                    win32pipe.PIPE_TYPE_MESSAGE | win32pipe.PIPE_READMODE_MESSAGE | win32pipe.PIPE_WAIT,
+                    win32pipe.PIPE_UNLIMITED_INSTANCES,  # Allow unlimited instances
+                    65536,  # Out buffer size
+                    65536,  # In buffer size
+                    0,  # Default timeout
+                    sa  # Security attributes
+                )
+            except pywintypes.error as e:
+                if e.args[0] == 231:  # ERROR_PIPE_BUSY - All pipe instances are busy
+                    logger.warning(f"Pipe {pipe_name} is busy, waiting for it to become available")
+                    # Wait for the pipe to become available
+                    if win32pipe.WaitNamedPipe(pipe_name, 5000):  # Wait up to 5 seconds
+                        logger.info(f"Pipe {pipe_name} became available, retrying creation")
+                        continue  # Retry the loop
+                    else:
+                        logger.error(f"Pipe {pipe_name} remained busy after waiting")
+                        time.sleep(1)
+                        continue
+                else:
+                    logger.error(f"Failed to create named pipe for {server_name}, error: {e}")
+                    time.sleep(1)
+                    continue
             
             if pipe == win32file.INVALID_HANDLE_VALUE:
-                logger.error(f"Failed to create named pipe for {server_name}")
+                error_code = win32api.GetLastError()
+                logger.error(f"Failed to create named pipe for {server_name}, error code: {error_code}")
                 time.sleep(1)
                 continue
             
@@ -280,7 +371,7 @@ def _run_relay_thread(server_name: str, server_process: subprocess.Popen, server
             # Disconnect and close pipe
             try:
                 win32pipe.DisconnectNamedPipe(pipe)
-            except:
+            except (pywintypes.error, OSError):
                 pass
             win32file.CloseHandle(pipe)
             

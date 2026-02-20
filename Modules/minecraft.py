@@ -1,16 +1,19 @@
 # Minecraft server management
-import json
 import os
 import sys
+import json
 import urllib.request
 import subprocess
 import re
+import logging
 
+# Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Modules.common import setup_module_logging
+from Modules.common import setup_module_path, setup_module_logging
+setup_module_path()
 
-logger = setup_module_logging("Minecraft")
+logger: logging.Logger = setup_module_logging("Minecraft")
 
 
 def get_java_version(java_path="java"):
@@ -448,3 +451,65 @@ class MinecraftServerManager:
                 return False, f"Java compatibility error: {message}"
         
         return True, "Server should start successfully"
+    
+    def launch_jconsole(self, server_name, process_id=None):
+        # Launch Java Console (jconsole) for monitoring a Minecraft server JVM
+        # Args: server_name (str): Name of the Minecraft server
+        #       process_id (int): Optional process ID, will auto-detect if not provided
+        # Returns: tuple: (success, message)
+        try:
+            import psutil
+            
+            # Find the process ID if not provided
+            if process_id is None:
+                # Get server config from database
+                try:
+                    from Modules.Database.server_configs_database import ServerConfigManager
+                    manager = ServerConfigManager()
+                    server_config = manager.get_server(server_name)
+                    if server_config:
+                        process_id = server_config.get("ProcessId")
+                except Exception as e:
+                    logger.error(f"Failed to get server config from database: {e}")
+            
+            if process_id is None:
+                return False, f"Could not find process ID for server '{server_name}'"
+            
+            # Verify the process is running and is a Java process
+            try:
+                process = psutil.Process(process_id)
+                cmdline = process.cmdline()
+                
+                # Check if this is a Java process (Minecraft server)
+                is_java_process = any('java' in arg.lower() for arg in cmdline) or \
+                                any('minecraft' in arg.lower() for arg in cmdline)
+                
+                if not is_java_process:
+                    return False, f"Process {process_id} does not appear to be a Java/Minecraft process"
+                
+            except psutil.NoSuchProcess:
+                return False, f"Process {process_id} is not running"
+            
+            # Launch jconsole with the process ID
+            logger.info(f"Launching jconsole for Minecraft server '{server_name}' (PID: {process_id})")
+            
+            startupinfo = None
+            creationflags = 0
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 1  # Show window for jconsole
+                creationflags = 0  # Don't hide jconsole window
+            
+            # Launch jconsole in a separate process
+            subprocess.Popen(['jconsole', str(process_id)], 
+                           startupinfo=startupinfo, 
+                           creationflags=creationflags)
+            
+            return True, f"jconsole launched for server '{server_name}' (PID: {process_id})"
+            
+        except FileNotFoundError:
+            return False, "jconsole not found. Please ensure JDK is installed and jconsole is in PATH"
+        except Exception as e:
+            logger.error(f"Error launching jconsole for server '{server_name}': {str(e)}")
+            return False, f"Failed to launch jconsole: {str(e)}"

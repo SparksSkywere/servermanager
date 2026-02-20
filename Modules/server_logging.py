@@ -11,19 +11,33 @@ import time
 import threading
 import winreg
 import json
-import hashlib
-from pathlib import Path
+
+# Registry constants
+REGISTRY_ROOT = winreg.HKEY_LOCAL_MACHINE
+REGISTRY_PATH = r"Software\SkywereIndustries\Servermanager"
 
 DEFAULT_LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 DEFAULT_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 DEFAULT_MAX_SIZE = 10 * 1024 * 1024
 DEFAULT_BACKUP_COUNT = 3
 
+def get_server_manager_dir():
+    # Get SM dir from registry-falls back to script parent
+    try:
+        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
+        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
+        winreg.CloseKey(key)
+        return server_manager_dir.strip('"').strip()
+    except Exception as e:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        server_manager_dir = os.path.dirname(script_dir)
+        return server_manager_dir
+
 def early_crash_log(component_name, message):
     # Emergency logging before LogManager exists
     try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        logs_dir = os.path.join(os.path.dirname(script_dir), "logs", "components")
+        server_manager_dir = get_server_manager_dir()
+        logs_dir = os.path.join(server_manager_dir, "logs", "components")
         os.makedirs(logs_dir, exist_ok=True)
         log_path = os.path.join(logs_dir, f"{component_name}.log")
         timestamp = datetime.datetime.now().strftime(DEFAULT_DATE_FORMAT)
@@ -32,24 +46,22 @@ def early_crash_log(component_name, message):
     except Exception:
         pass
 
-# Registry constants-duplicated to avoid circular import
-_REGISTRY_ROOT = winreg.HKEY_LOCAL_MACHINE
-_REGISTRY_PATH = r"Software\SkywereIndustries\Servermanager"
-
 class LogManager:
     # - Manages all logging
     # - Rotation, compression, stats tracking
+    _main_logger_initialized = False
+    
     def __init__(self):
-        self.registry_path = _REGISTRY_PATH
         self.server_manager_dir = None
         self.paths = {}
         self.log_level = logging.INFO
         self.formatters = {}
         self.handlers = {}
         self.loggers = {}
-        self._dashboard_logger = None
+        self._dashboard_logger: logging.Logger = logging.getLogger("temp")  # will be replaced in initialise
         self._setup_formatters()
         self._maintenance_thread = None
+        self._maintenance_stop_event = threading.Event()
         self._log_stats = {
             'errors': 0,
             'warnings': 0,
@@ -73,40 +85,30 @@ class LogManager:
 
     def initialise(self):
         # Pull paths from registry
-        try:
-            key = winreg.OpenKey(_REGISTRY_ROOT, self.registry_path)
-            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-            winreg.CloseKey(key)
+        self.server_manager_dir = get_server_manager_dir()
+        
+        self.paths = {
+            "root": self.server_manager_dir,
+            "logs": os.path.join(self.server_manager_dir, "logs")
+        }
             
-            self.paths = {
-                "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs")
-            }
+        # Directories are now created in Start-ServerManager.pyw
             
-            os.makedirs(self.paths["logs"], exist_ok=True)
-            
-            # Setup main application logger
-            self._setup_main_logger()
-            
-        except Exception as e:
-            # Use a fallback path
-            self.server_manager_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            self.paths = {
-                "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs")
-            }
-            
-            # Ensure log directory exists
-            os.makedirs(self.paths["logs"], exist_ok=True)
-            
-            # Log the fallback initialisation
-            print(f"Registry initialisation failed, using fallback path: {self.server_manager_dir}")
-            self._setup_main_logger()
+        # Setup main application logger
+        self._setup_main_logger()
+        
+        # Initialize dashboard logger eagerly
+        dashboard_log_file = os.path.join(self.paths["logs"], "components", "Dashboard.log")
+        self._dashboard_logger = self.get_logger("dashboard", dashboard_log_file, formatter_name="detailed")
 
     def _setup_main_logger(self):
+        if LogManager._main_logger_initialized:
+            return
+            
         main_log_file = os.path.join(self.paths["logs"], "components", "Main.log")
         self.main_logger = self.get_logger("servermanager.main", main_log_file, formatter_name="detailed")
         self.main_logger.info("LogManager initialised successfully")
+        LogManager._main_logger_initialized = True
 
     def set_log_level(self, level_name):
         # Set the log level based on a string name
@@ -282,9 +284,6 @@ class LogManager:
         return self.loggers["errors"]
 
     def get_dashboard_logger(self):
-        if self._dashboard_logger is None:
-            log_file = os.path.join(self.paths["logs"], "components", "Dashboard.log")
-            self._dashboard_logger = self.get_logger("dashboard", log_file, formatter_name="detailed")
         return self._dashboard_logger
 
     def configure_dashboard_logging(self, debug_mode=False, config=None):
@@ -525,11 +524,13 @@ class LogManager:
 
     def start_log_maintenance(self, compress_interval=86400, delete_interval=604800):
         # Start a background thread for log maintenance
+        self._maintenance_stop_event.clear()
+        
         def maintenance_thread():
             if hasattr(self, 'main_logger'):
                 self.main_logger.info("Log maintenance thread started")
             
-            while True:
+            while not self._maintenance_stop_event.is_set():
                 try:
                     # Compress logs
                     self.compress_old_logs()
@@ -542,13 +543,13 @@ class LogManager:
                     if hasattr(self, 'main_logger'):
                         self.main_logger.info(f"Maintenance completed. Stats: {stats}")
                     
-                    # Sleep until next maintenance
-                    time.sleep(compress_interval)
+                    # Wait until next maintenance (interruptible)
+                    self._maintenance_stop_event.wait(compress_interval)
                     
                 except Exception as e:
                     if hasattr(self, 'main_logger'):
                         self.log_exception(self.main_logger, "Error in log maintenance thread")
-                    time.sleep(3600)  # Sleep for an hour on error
+                    self._maintenance_stop_event.wait(3600)  # Wait an hour on error (interruptible)
         
         # Stop existing maintenance thread if running
         if self._maintenance_thread and self._maintenance_thread.is_alive():
@@ -576,40 +577,43 @@ class LogManager:
         self.loggers.clear()
         self.handlers.clear()
 
-# Create global instance
-log_manager = LogManager()
+# Create global instance - eager initialization
+_log_manager = LogManager()
+
+def _get_log_manager():
+    return _log_manager
 
 # Export functions for easy access
 def get_logger(name, log_file=None, level=None, formatter_name="default", 
                max_size=DEFAULT_MAX_SIZE, backup_count=DEFAULT_BACKUP_COUNT):
-    return log_manager.get_logger(name, log_file, level, formatter_name, max_size, backup_count)
+    return _get_log_manager().get_logger(name, log_file, level, formatter_name, max_size, backup_count)
 def get_server_logger(server_name):
-    return log_manager.get_server_logger(server_name)
-def get_component_logger(component_name):
-    return log_manager.get_component_logger(component_name)
+    return _get_log_manager().get_server_logger(server_name)
+def get_component_logger(component_name) -> logging.Logger:
+    return _get_log_manager().get_component_logger(component_name)
 def get_debug_logger(debug_module_name="debug"):
-    return log_manager.get_debug_logger(debug_module_name)
+    return _get_log_manager().get_debug_logger(debug_module_name)
 def get_error_logger():
-    return log_manager.get_error_logger()
-def get_dashboard_logger():
-    return log_manager.get_dashboard_logger()
+    return _get_log_manager().get_error_logger()
+def get_dashboard_logger() -> logging.Logger:
+    return _get_log_manager().get_dashboard_logger()
 def log_exception(logger, message="An exception occurred", exc_info=None):
-    log_manager.log_exception(logger, message, exc_info)
+    _get_log_manager().log_exception(logger, message, exc_info)
 def log_system_state(component, state, details=None):
-    log_manager.log_system_state(component, state, details)
+    _get_log_manager().log_system_state(component, state, details)
 def start_log_maintenance():
-    return log_manager.start_log_maintenance()
+    return _get_log_manager().start_log_maintenance()
 def get_log_statistics():
-    return log_manager.get_log_statistics()
+    return _get_log_manager().get_log_statistics()
 def configure_dashboard_logging(debug_mode=False, config=None):
-    return log_manager.configure_dashboard_logging(debug_mode, config)
+    return _get_log_manager().configure_dashboard_logging(debug_mode, config)
 def write_pid_file(process_type, pid, temp_path):
-    return log_manager.write_pid_file(process_type, pid, temp_path)
+    return _get_log_manager().write_pid_file(process_type, pid, temp_path)
 def log_server_action(server_name, action, result="SUCCESS", details=None):
-    log_manager.log_server_action(server_name, action, result, details)
+    _get_log_manager().log_server_action(server_name, action, result, details)
 def log_installation_progress(server_name, stage, message):
-    log_manager.log_installation_progress(server_name, stage, message)
+    _get_log_manager().log_installation_progress(server_name, stage, message)
 def log_process_monitoring(message, level="INFO"):
-    log_manager.log_process_monitoring(message, level)
+    _get_log_manager().log_process_monitoring(message, level)
 def log_dashboard_event(event_type, message, level="INFO"):
-    log_manager.log_dashboard_event(event_type, message, level)
+    _get_log_manager().log_dashboard_event(event_type, message, level)

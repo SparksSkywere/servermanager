@@ -14,25 +14,7 @@ os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 
 # Import centralized registry constants
-from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-
-def is_admin():
-    # Check if the script is running with administrator privileges
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except:
-        return False
-
-def get_server_manager_dir_from_registry():
-    # Get the server manager directory from registry
-    try:
-        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-        winreg.CloseKey(key)
-        return server_manager_dir.strip('"').strip()
-    except Exception as e:
-        print(f"Error reading registry: {e}")
-        return None
+from Modules.common import REGISTRY_ROOT, REGISTRY_PATH, is_admin, get_server_manager_dir
 
 def check_process_running(pid):
     # Check if a process with given PID is still running
@@ -83,7 +65,7 @@ def cleanup_orphaned_pid_files(temp_dir):
                 try:
                     os.remove(pid_file)
                     print(f"Cleaned up corrupted PID file: {pid_file_name}")
-                except:
+                except OSError:
                     pass
 
 def prompt_user_restart():
@@ -106,7 +88,7 @@ def is_already_running():
     # Check if an instance of Server Manager is already running
     try:
         # Get server manager directory from registry or use script directory
-        server_manager_dir = get_server_manager_dir_from_registry()
+        server_manager_dir = get_server_manager_dir()
         if not server_manager_dir or not os.path.exists(server_manager_dir):
             server_manager_dir = os.path.dirname(os.path.abspath(__file__))
             
@@ -130,14 +112,14 @@ def is_already_running():
                         # Process not running, remove stale PID file
                         try:
                             os.remove(pid_file)
-                        except:
+                        except OSError:
                             pass
                             
             except (json.JSONDecodeError, IOError):
                 # Invalid PID file, remove it
                 try:
                     os.remove(pid_file)
-                except:
+                except OSError:
                     pass
                 
         return False
@@ -149,7 +131,7 @@ def check_for_improper_shutdown():
     # Check if there are orphaned PID files indicating improper shutdown
     try:
         # Get server manager directory from registry or use script directory
-        server_manager_dir = get_server_manager_dir_from_registry()
+        server_manager_dir = get_server_manager_dir()
         if not server_manager_dir or not os.path.exists(server_manager_dir):
             server_manager_dir = os.path.dirname(os.path.abspath(__file__))
             
@@ -178,6 +160,30 @@ def check_for_improper_shutdown():
     except Exception:
         return False
 
+def ensure_directories_exist(server_manager_dir):
+    # Ensure all necessary directories exist for Server Manager
+    directories = [
+        "logs",
+        "temp", 
+        "icons",
+        "ssl",
+        "db",
+        "debug",
+        "www",
+        "api",
+        "services",
+        "Modules",
+        "Host"
+    ]
+    
+    for dir_name in directories:
+        dir_path = os.path.join(server_manager_dir, dir_name)
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)
+            print(f"Created directory: {dir_path}")
+        else:
+            print(f"Directory already exists: {dir_path}")
+
 # Check for administrator privileges first
 if not is_admin():
     if sys.platform == "win32":
@@ -189,7 +195,7 @@ if not is_admin():
     sys.exit(0)
 
 # Try to get the server manager directory from registry first
-server_manager_dir = get_server_manager_dir_from_registry()
+server_manager_dir = get_server_manager_dir()
 
 if server_manager_dir and os.path.exists(server_manager_dir):
     # Use the registry path as the script directory
@@ -200,9 +206,11 @@ else:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     print(f"Registry path not found, using script directory: {script_dir}")
 
-# Make sure temp directory exists
+# Ensure all necessary directories exist
+ensure_directories_exist(script_dir)
+
+# Temp directory is already ensured above
 temp_dir = os.path.join(script_dir, "temp")
-os.makedirs(temp_dir, exist_ok=True)
 
 # Check for improper shutdown first
 if check_for_improper_shutdown():

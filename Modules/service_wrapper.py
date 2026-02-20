@@ -3,24 +3,18 @@
 import os
 import sys
 import time
-import logging
 import servicemanager
-import socket
-import json
 import traceback
-from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-try:
-    import win32serviceutil
-    import win32service
-    import win32event
-    import win32api
-except ImportError:
-    print("Error: pywin32 required for Windows service")
-    print("Install: pip install pywin32")
-    sys.exit(1)
+from Modules.common import setup_module_path
+setup_module_path()
+
+import win32serviceutil
+import win32service
+import win32event
 
 from Modules.launcher import ServerManagerLauncher
 
@@ -45,43 +39,9 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
         
     def setup_service_logging(self):
         # Service logging setup
-        try:
-            from Modules.server_logging import get_component_logger
-            self.logger = get_component_logger("ServerManagerService")
-            self.logger.info("Service logging initialised")
-            
-        except Exception as e:
-            # Fallback logging
-            try:
-                import winreg
-                from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-                key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-                server_manager_dir = winreg.QueryValueEx(key, "ServerManagerPath")[0]
-                winreg.CloseKey(key)
-                
-                # Create logs directory if it doesn't exist
-                logs_dir = os.path.join(server_manager_dir, "logs")
-                os.makedirs(logs_dir, exist_ok=True)
-                
-                # Configure logging
-                log_file = os.path.join(logs_dir, "service.log")
-                logging.basicConfig(
-                    level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    handlers=[
-                        logging.FileHandler(log_file),
-                        logging.StreamHandler()
-                    ]
-                )
-                
-                self.logger = logging.getLogger("ServerManagerService")
-                self.logger.info("Service logging initialised with fallback logger")
-                
-            except Exception as e2:
-                # Final fallback logging if registry read fails
-                logging.basicConfig(level=logging.INFO)
-                self.logger = logging.getLogger("ServerManagerService")
-                self.logger.error(f"Failed to setup service logging: {e2}")
+        from Modules.server_logging import get_component_logger
+        self.logger = get_component_logger("ServerManagerService")
+        self.logger.info("Service logging initialised")
     
     def SvcStop(self):
         # Called when the service is asked to stop

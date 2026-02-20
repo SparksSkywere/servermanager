@@ -8,13 +8,11 @@ import datetime
 import traceback
 import psutil
 import winreg
-import subprocess
 import socket
-from pathlib import Path
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from Modules.common import setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH
+from Modules.common import setup_module_path, setup_module_logging, REGISTRY_PATH, get_server_manager_dir
+setup_module_path()
 
 try:
     from Modules.server_logging import get_debug_logger
@@ -35,40 +33,20 @@ class DebugManager:
     
     def initialise_from_registry(self):
         # Pull paths from registry
-        try:
-            key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
-            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-            winreg.CloseKey(key)
+        self.server_manager_dir = get_server_manager_dir()
+        
+        self.paths = {
+            "root": self.server_manager_dir,
+            "logs": os.path.join(self.server_manager_dir, "logs"),
+            "temp": os.path.join(self.server_manager_dir, "temp"),
+            "debug": os.path.join(self.server_manager_dir, "logs", "debug")
+        }
             
-            self.paths = {
-                "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs"),
-                "temp": os.path.join(self.server_manager_dir, "temp"),
-                "debug": os.path.join(self.server_manager_dir, "logs", "debug")
-            }
-            
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
-            
-            logger.info(f"Debug manager initialised")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Debug manager init failed: {str(e)}")
-            
-            # Fallback path
-            self.server_manager_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            self.paths = {
-                "root": self.server_manager_dir,
-                "logs": os.path.join(self.server_manager_dir, "logs"),
-                "debug": os.path.join(self.server_manager_dir, "logs", "debug")
-            }
-            
-            # Ensure directories exist
-            for path in self.paths.values():
-                os.makedirs(path, exist_ok=True)
-                
-            return False
+        for path in self.paths.values():
+            os.makedirs(path, exist_ok=True)
+        
+        logger.info(f"Debug manager initialised")
+        return True
     
     def set_debug_mode(self, enabled=True):
         # Enable or disable debug mode
@@ -199,20 +177,19 @@ class DebugManager:
         try:
             if not self.server_manager_dir:
                 return {"error": "Server manager directory not initialised"}
-                
-            servers_dir = os.path.join(self.server_manager_dir, "servers")
             
-            if not os.path.exists(servers_dir):
-                return {"error": "Servers directory not found"}
+            # Get server config from database
+            try:
+                from Modules.Database.server_configs_database import ServerConfigManager
+                manager = ServerConfigManager()
+            except Exception as e:
+                return {"error": f"Failed to access database: {str(e)}"}
             
             if server_name:
                 # Get status for specific server
-                server_file = os.path.join(servers_dir, f"{server_name}.json")
-                if not os.path.exists(server_file):
+                server_config = manager.get_server(server_name)
+                if not server_config:
                     return {"error": f"Server configuration not found: {server_name}"}
-                
-                with open(server_file, 'r') as f:
-                    server_config = json.load(f)
                 
                 # Check if process is running
                 if "PID" in server_config and server_config["PID"]:
@@ -225,7 +202,7 @@ class DebugManager:
                             server_config["Memory"] = process.memory_info().rss
                         else:
                             server_config["IsRunning"] = False
-                    except:
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, ValueError):
                         server_config["IsRunning"] = False
                 else:
                     server_config["IsRunning"] = False
@@ -233,12 +210,12 @@ class DebugManager:
                 return server_config
             else:
                 # Get status for all servers
+                all_servers = manager.get_all_servers()
                 servers = []
-                for filename in os.listdir(servers_dir):
-                    if filename.endswith(".json"):
-                        server_name = filename[:-5]  # Remove .json extension
-                        server_status = self.get_server_status(server_name)
-                        servers.append(server_status)
+                for server in all_servers:
+                    sname = server.get("Name", "Unknown")
+                    server_status = self.get_server_status(sname)
+                    servers.append(server_status)
                 
                 return servers
         except Exception as e:
@@ -523,7 +500,7 @@ class DebugManager:
                         break
                 winreg.CloseKey(key)
                 report["registry"] = registry_info
-            except:
+            except (FileNotFoundError, OSError):
                 report["registry"] = {"error": "Failed to read registry"}
             
             # Add file system check
@@ -537,7 +514,7 @@ class DebugManager:
                         "writable": os.access(path, os.W_OK) if os.path.exists(path) else False
                     }
                 report["file_system_check"] = fs_check
-            except:
+            except OSError:
                 report["file_system_check"] = {"error": "Failed to check file system"}
             
             # Add running processes summary
@@ -553,7 +530,7 @@ class DebugManager:
                 # Sort by CPU usage and take top 10
                 running_processes.sort(key=lambda x: x['cpu_percent'], reverse=True)
                 report["top_processes"] = running_processes[:10]
-            except:
+            except (psutil.Error, OSError):
                 report["top_processes"] = {"error": "Failed to get process list"}
             
             # Add port checks for common server ports
@@ -563,7 +540,7 @@ class DebugManager:
                 for port in common_ports:
                     port_checks[port] = self.check_port_status("localhost", port)
                 report["port_status"] = port_checks
-            except:
+            except OSError:
                 report["port_status"] = {"error": "Failed to check ports"}
             
             # Save report to file
@@ -592,15 +569,16 @@ class DebugManager:
             if not self.server_manager_dir:
                 return {"error": "Server manager directory not initialised"}
                 
-            # Get server config file path
-            config_file = os.path.join(self.server_manager_dir, "servers", f"{server_name}.json")
+            # Get server config from database
+            try:
+                from Modules.Database.server_configs_database import ServerConfigManager
+                manager = ServerConfigManager()
+                server_config = manager.get_server(server_name)
+            except Exception as e:
+                return {"error": f"Failed to access database: {str(e)}"}
             
-            if not os.path.exists(config_file):
-                return {"error": f"Server configuration file not found: {config_file}"}
-                
-            # Read server configuration
-            with open(config_file, 'r') as f:
-                server_config = json.load(f)
+            if not server_config:
+                return {"error": f"Server configuration not found: {server_name}"}
                 
             # Check if server has a process ID registered
             if 'ProcessId' not in server_config:
@@ -636,7 +614,7 @@ class DebugManager:
                         uptime_str = f"{hours}h {minutes}m {seconds}s"
                     
                     process_details["server_uptime"] = uptime_str
-                except:
+                except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError, TypeError):
                     process_details["server_uptime"] = "Unknown"
             else:
                 process_details["server_uptime"] = "Unknown"

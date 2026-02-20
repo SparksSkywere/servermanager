@@ -1,12 +1,13 @@
 # Server operations
 import os
 import sys
-import json
 import logging
 import subprocess
 import winreg
 import time
-from datetime import datetime
+
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 try:
     import psutil
@@ -14,12 +15,12 @@ except ImportError:
     psutil = None
 
 from Modules.common import (
-    get_subprocess_creation_flags, setup_module_logging,
-    REGISTRY_ROOT, REGISTRY_PATH
+    setup_module_path, get_subprocess_creation_flags, setup_module_logging,
+    get_server_manager_dir
 )
-from Modules.server_logging import get_component_logger, log_server_action
+setup_module_path()
 
-logger = setup_module_logging("ServerOperations")
+logger: logging.Logger = setup_module_logging("ServerOperations")
 
 class ServerOperations:
     # - Server start/stop/restart
@@ -34,9 +35,7 @@ class ServerOperations:
     def initialise_from_registry(self):
         # Pull paths from registry
         try:
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
-            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-            winreg.CloseKey(key)
+            self.server_manager_dir = get_server_manager_dir()
             
             if not self.server_manager_dir:
                 logger.error("SM dir not in registry")
@@ -75,44 +74,26 @@ server_ops = ServerOperations()
 
 # Export functions for module usage
 def get_all_servers():
-    # Get a list of all configured servers
-    servers = []
-    servers_dir = server_ops.paths.get("servers")
-    
-    if not servers_dir or not os.path.exists(servers_dir):
-        logger.error(f"Servers directory not found: {servers_dir}")
-        return servers
-    
+    # Get a list of all configured servers from database
     try:
-        for file in os.listdir(servers_dir):
-            if file.endswith(".json"):
-                try:
-                    with open(os.path.join(servers_dir, file), 'r') as f:
-                        server_config = json.load(f)
-                    servers.append(server_config)
-                except Exception as e:
-                    logger.error(f"Error loading server config {file}: {str(e)}")
+        from Modules.Database.server_configs_database import ServerConfigManager
+        manager = ServerConfigManager()
+        return manager.get_all_servers()
     except Exception as e:
-        logger.error(f"Error accessing servers directory: {str(e)}")
-    
-    return servers
+        logger.error(f"Error getting servers from database: {str(e)}")
+        return []
 
 def get_server_status(server_name):
     # Get status of a specific server
     try:
-        servers_dir = server_ops.paths.get("servers")
-        if not servers_dir:
-            logger.error("Servers directory path not configured")
-            return None
-            
-        config_path = os.path.join(servers_dir, f"{server_name}.json")
+        # Get server config from database
+        from Modules.Database.server_configs_database import ServerConfigManager
+        manager = ServerConfigManager()
+        config = manager.get_server(server_name)
         
-        if not os.path.exists(config_path):
-            logger.error(f"Server configuration not found: {config_path}")
+        if not config:
+            logger.error(f"Server configuration not found: {server_name}")
             return None
-        
-        with open(config_path, 'r') as f:
-            config = json.load(f)
         
         # Check if server process is running
         status = "Unknown"

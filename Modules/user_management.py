@@ -1,10 +1,15 @@
 # User management
 import os
 import sys
-import logging
 import time
 from datetime import datetime
 import hashlib
+
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Modules.common import setup_module_path
+setup_module_path()
 
 try:
     import pyotp as _pyotp
@@ -34,7 +39,6 @@ def create_provisioning_uri(secret: str, username: str, issuer: str):
         issuer_name=issuer
     )
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from sqlalchemy.ext.declarative import declarative_base
@@ -44,14 +48,14 @@ from sqlalchemy.orm import sessionmaker
 from Modules.Database.user_database import get_user_engine
 
 # Import standardized logging
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("UserManagement")
-except Exception:
-    import logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("UserManagement")
+from Modules.server_logging import get_component_logger
+logger = get_component_logger("UserManagement")
 Base = declarative_base()
+
+
+# =============================================================================
+# USER MODEL
+# =============================================================================
 
 class User(Base):
     __tablename__ = 'users'
@@ -77,6 +81,11 @@ class User(Base):
     bio = Column(String(500), nullable=True)
     timezone = Column(String(50), nullable=True)
     theme_preference = Column(String(20), default='dark')
+
+
+# =============================================================================
+# USER MANAGER
+# =============================================================================
 
 class UserManager:
     def __init__(self, engine=None):

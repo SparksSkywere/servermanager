@@ -1,24 +1,28 @@
 # Analytics and metrics collection
 import os
 import sys
-import json
 import logging
 import psutil
 import threading
-import time
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
-import socket
+from typing import Optional, TYPE_CHECKING
 
+# Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Modules.common import ServerManagerModule, setup_module_logging
+if TYPE_CHECKING:
+    from Modules.SMNP.snmp_manager import SNMPManager
+    from Modules.SMNP.graphana import GrafanaManager
 
-logger = setup_module_logging("Analytics")
+from Modules.common import setup_module_path, ServerManagerModule, setup_module_logging
+setup_module_path()
+
+logger: logging.Logger = setup_module_logging("Analytics")
 
 # Lazy-loaded integrations
-_snmp_manager = None
-_grafana_manager = None
+_snmp_manager: Optional['SNMPManager'] = None
+_grafana_manager: Optional['GrafanaManager'] = None
 
 
 class AnalyticsCollector(ServerManagerModule):
@@ -45,11 +49,15 @@ class AnalyticsCollector(ServerManagerModule):
         self.server_restart_counts = defaultdict(int)
         self.server_error_counts = defaultdict(int)
         self.boot_time = datetime.fromtimestamp(psutil.boot_time())
+        self._integrations_initialized = False
         
         self.initialise_integrations()
 
     def initialise_integrations(self):
-        # Hook up server manager and tracker
+        # Hook up server manager and tracker - only once
+        if self._integrations_initialized:
+            return
+            
         try:
             from Modules.server_manager import ServerManager
             self.server_manager = ServerManager()
@@ -63,6 +71,8 @@ class AnalyticsCollector(ServerManagerModule):
             logger.info("Dashboard tracker hooked")
         except Exception as e:
             logger.warning(f"Dashboard tracker hook failed: {e}")
+            
+        self._integrations_initialized = True
 
     def start_collection(self):
         # Kick off background metrics thread
@@ -528,14 +538,10 @@ def stop_analytics():
 def get_prometheus_metrics(analytics_instance=None, enabled=True):
     # Get Prometheus metrics for Grafana integration
     # Can be called conditionally based on user configuration
-    if not enabled:
+    if not enabled or _grafana_manager is None:
         return ""
         
     try:
-        global _grafana_manager
-        if _grafana_manager is None:
-            from Modules.SMNP.graphana import get_grafana_manager
-            _grafana_manager = get_grafana_manager(analytics_instance or analytics)
         return _grafana_manager.get_prometheus_metrics()
     except Exception as e:
         logger.error(f"Error getting Prometheus metrics: {e}")
@@ -544,14 +550,10 @@ def get_prometheus_metrics(analytics_instance=None, enabled=True):
 def get_snmp_metrics(analytics_instance=None, enabled=True):
     # Get SNMP metrics with OID structure
     # Can be called conditionally based on user configuration
-    if not enabled:
+    if not enabled or _snmp_manager is None:
         return {}
         
     try:
-        global _snmp_manager
-        if _snmp_manager is None:
-            from Modules.SMNP.snmp_manager import get_snmp_manager
-            _snmp_manager = get_snmp_manager(analytics_instance or analytics)
         return _snmp_manager.get_snmp_metrics()
     except Exception as e:
         logger.error(f"Error getting SNMP metrics: {e}")
@@ -596,3 +598,7 @@ def is_snmp_enabled():
 def is_grafana_enabled():
     # Check if Grafana module is initialised and available
     return _grafana_manager is not None
+
+# Initialize integrations eagerly
+_snmp_manager = initialize_snmp_module(None)
+_grafana_manager = initialize_grafana_module(None)

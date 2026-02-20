@@ -3,18 +3,16 @@ import os
 import sys
 import logging
 import hashlib
-import subprocess
-import winreg
 from datetime import datetime
 
+# Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from Modules.common import setup_module_path
+setup_module_path()
 
-try:
-    from Modules.server_logging import get_component_logger, log_exception
-    logger = get_component_logger("Authentication")
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("Authentication")
+
+from Modules.server_logging import get_component_logger
+logger = get_component_logger("Authentication")
 
 # Debug mode via env
 if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
@@ -23,8 +21,6 @@ if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
 
 # SQL auth support
 try:
-    from Modules.Database.SQL_Connection import get_engine, initialise_user_manager
-    from Modules.user_management import UserManager
     SQL_AVAILABLE = True
     logger.info("SQL auth available")
 except ImportError as e:
@@ -33,27 +29,11 @@ except ImportError as e:
 
 # Windows auth support
 try:
-    import win32api
-    import win32security
-    import win32net
-    import win32netcon
     WINDOWS_AUTH_AVAILABLE = True
     logger.info("Windows auth available")
 except ImportError as e:
     WINDOWS_AUTH_AVAILABLE = False
     logger.warning(f"Windows auth not available: {e}")
-
-def get_server_manager_dir():
-    # SM dir from registry
-    try:
-        from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-        key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-        server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-        winreg.CloseKey(key)
-        return server_manager_dir
-    except Exception as e:
-        logger.error(f"Registry read failed: {e}")
-        return None
 
 _user_manager = None
 def get_user_manager():

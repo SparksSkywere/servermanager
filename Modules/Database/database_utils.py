@@ -1,7 +1,6 @@
 # Database utilities
 import os
 import sys
-import winreg
 from sqlalchemy import create_engine
 import logging
 

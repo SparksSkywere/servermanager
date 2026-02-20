@@ -4,7 +4,6 @@ import sys
 import subprocess
 import threading
 import logging
-import winreg
 import json
 import time
 import psutil
@@ -14,7 +13,12 @@ import webbrowser
 import traceback
 import signal
 import argparse
-import ctypes
+
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from Modules.common import setup_module_path, ServerManagerModule, setup_module_logging
+setup_module_path()
 
 try:
     import pystray
@@ -25,11 +29,7 @@ except ImportError:
     import pystray
     from PIL import Image, ImageDraw
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from Modules.common import ServerManagerModule, setup_module_logging
-from Modules.server_logging import log_dashboard_event
-
-logger = setup_module_logging("TrayIcon")
+logger: logging.Logger = setup_module_logging("TrayIcon")
 
 
 def is_another_trayicon_running():
@@ -51,6 +51,10 @@ def is_another_trayicon_running():
         logger.error(f"Trayicon check failed: {e}")
         return False, None
 
+
+# =============================================================================
+# TRAY ICON CLASS
+# =============================================================================
 
 class ServerManagerTrayIcon(ServerManagerModule):
     # - Lives in system tray
@@ -155,13 +159,13 @@ class ServerManagerTrayIcon(ServerManagerModule):
         # - Fall back to simple icon
         width = 64
         height = 64
-        color = (0, 128, 255)  # Blue colour
+        colour = (0, 128, 255)  # Blue colour
         
         image = Image.new('RGB', (width, height), color=(0, 0, 0))
         dc = ImageDraw.Draw(image)
         
         # - Draw a simple server icon
-        dc.rectangle((10, 10, width-10, height-10), fill=color)
+        dc.rectangle((10, 10, width-10, height-10), fill=colour)
         dc.rectangle((20, 20, width-20, 30), fill=(255, 255, 255))
         dc.rectangle((20, 40, width-20, 50), fill=(255, 255, 255))
         
@@ -203,6 +207,10 @@ class ServerManagerTrayIcon(ServerManagerModule):
             pystray.MenuItem(
                 "Open Web Dashboard",
                 self.open_web_interface
+            ),
+            pystray.MenuItem(
+                "Automation Settings",
+                self.open_automation_settings
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
@@ -391,7 +399,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
         # Check if a process with the given PID is running
         try:
             return psutil.pid_exists(pid)
-        except:
+        except (psutil.Error, OSError):
             return False
 
     def open_web_interface(self):
@@ -508,7 +516,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
     
         # Open the web interface in a browser
         try:
-            url = f"http://localhost:{self.web_port}"
+            url = f"https://localhost:{self.web_port}"
             logger.info(f"Opening web interface: {url}")
             webbrowser.open(url)
             
@@ -521,6 +529,37 @@ class ServerManagerTrayIcon(ServerManagerModule):
             logger.error(f"Traceback: {traceback.format_exc()}")
             if self.icon and self.notifications_enabled:
                 self.icon.notify(f"Failed to open web interface: {str(e)}", "Server Manager Error")
+
+    def open_automation_settings(self):
+        # Open the automation settings window
+        logger.info("Opening automation settings...")
+
+        try:
+            # Import required modules
+            from Modules.Database.user_database import initialize_user_manager
+            from Host.admin_dashboard import admin_login
+            from Modules.automation_ui import open_automation_settings
+
+            # Initialize user manager and require authentication
+            user_manager = initialize_user_manager()
+            if not admin_login(user_manager):
+                logger.info("Authentication failed for automation settings")
+                return
+
+            # Run in a separate thread to avoid blocking the tray icon
+            def open_window():
+                try:
+                    open_automation_settings()
+                except Exception as e:
+                    logger.error(f"Error in automation settings window: {str(e)}")
+
+            thread = threading.Thread(target=open_window, daemon=True)
+            thread.start()
+
+        except Exception as e:
+            logger.error(f"Failed to open automation settings: {str(e)}")
+            if self.icon and self.notifications_enabled:
+                self.icon.notify(f"Failed to open automation settings: {str(e)}", "Server Manager Error")
 
     def open_dashboard(self):
         # Open the Python dashboard - runs in background thread to avoid blocking trayicon

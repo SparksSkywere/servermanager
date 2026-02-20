@@ -4,18 +4,16 @@ import sys
 import socket
 import logging
 import subprocess
-import ipaddress
 import requests
-import json
 import time
-import winreg
-from datetime import datetime
 import psutil
 
-from Modules.common import setup_module_logging, REGISTRY_ROOT, REGISTRY_PATH
-from Modules.server_logging import log_process_monitoring
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-logger = setup_module_logging("Network")
+from Modules.common import setup_module_logging, get_server_manager_dir, get_subprocess_creation_flags
+
+logger: logging.Logger = setup_module_logging("Network")
 
 
 class NetworkManager:
@@ -31,9 +29,7 @@ class NetworkManager:
     def initialise_from_registry(self):
         # Pull paths from registry
         try:
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.registry_path)
-            self.server_manager_dir = winreg.QueryValueEx(key, "Servermanagerdir")[0]
-            winreg.CloseKey(key)
+            self.server_manager_dir = get_server_manager_dir()
             
             self.paths = {
                 "root": self.server_manager_dir,
@@ -62,7 +58,7 @@ class NetworkManager:
             try:
                 host_ip = socket.gethostbyname(hostname)
                 ip_list.append({"interface": "hostname", "ip": host_ip})
-            except:
+            except socket.gaierror:
                 pass
             
             for iface, addrs in psutil.net_if_addrs().items():
@@ -103,7 +99,7 @@ class NetworkManager:
                             return data["ip"]
                         
                         return None
-                except:
+                except (requests.RequestException, ValueError, KeyError):
                     continue
             
             return None
@@ -147,8 +143,8 @@ class NetworkManager:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 0
-                creationflags = subprocess.CREATE_NO_WINDOW
-                logger.debug(f"[SUBPROCESS_TRACE] ping using CREATE_NO_WINDOW flag: {creationflags}")
+                creationflags = get_subprocess_creation_flags(hide_window=True)
+                logger.debug(f"[SUBPROCESS_TRACE] ping using creationflags: {creationflags}")
             
             logger.debug(f"[SUBPROCESS_TRACE] Executing ping command: {command}")
             result = subprocess.run(command, capture_output=True, text=True,
@@ -177,15 +173,15 @@ class NetworkManager:
             else:
                 command = ['traceroute', '-m', str(max_hops), host]
             
-            # Use CREATE_NO_WINDOW to prevent console popup on Windows
+            # Use centralized subprocess creation flags
             startupinfo = None
             creationflags = 0
             if os.name == 'nt':
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = 0
-                creationflags = subprocess.CREATE_NO_WINDOW
-                logger.debug(f"[SUBPROCESS_TRACE] traceroute using CREATE_NO_WINDOW flag: {creationflags}")
+                creationflags = get_subprocess_creation_flags(hide_window=True)
+                logger.debug(f"[SUBPROCESS_TRACE] traceroute using creationflags: {creationflags}")
             
             logger.debug(f"[SUBPROCESS_TRACE] Executing traceroute command: {command}")
             result = subprocess.run(command, capture_output=True, text=True,
@@ -212,7 +208,7 @@ class NetworkManager:
                 result = self.ping_host(host, count=1, timeout=1000)
                 if result["success"]:
                     return True
-            except:
+            except Exception:
                 continue
         
         return False
@@ -271,13 +267,13 @@ class NetworkManager:
             # Check Windows firewall status using netsh
             command = ['netsh', 'advfirewall', 'show', 'allprofiles']
             
-            # Use CREATE_NO_WINDOW to prevent console popup
+            # Use centralized subprocess creation flags
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = 0
             
             result = subprocess.run(command, capture_output=True, text=True,
-                                   startupinfo=startupinfo, creationflags=subprocess.CREATE_NO_WINDOW)
+                                   startupinfo=startupinfo, creationflags=get_subprocess_creation_flags(hide_window=True))
             
             # Parse the output
             output = result.stdout
@@ -429,7 +425,7 @@ class NetworkManager:
                         interface_info["speed"] = stats.speed
                         interface_info["mtu"] = stats.mtu
                         interface_info["up"] = stats.isup
-                except:
+                except (psutil.Error, OSError, KeyError):
                     pass
                 
                 interfaces.append(interface_info)

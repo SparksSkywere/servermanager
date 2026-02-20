@@ -37,7 +37,7 @@ $env:PYTHONDONTWRITEBYTECODE = "1"
 # Define global variables
 $global:logMemory = @()
 $global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Install-Log.txt"
-$CurrentVersion = "1.0"
+$CurrentVersion = "1.1"
 $steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
 $gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"
@@ -203,7 +203,11 @@ function Invoke-ServiceManagement {
     # Additional information based on action
     switch ($Action.ToLower()) {
         "install" {
-            [System.Windows.Forms.MessageBox]::Show("If installation was successful:`n- The service is now installed and running`n- Server Manager will start automatically with Windows`n- You can access the web interface at http://localhost:8080", "Service Installation Complete", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+            # Detect SSL setting from registry
+            $sslFlag = $false
+            try { $sslFlag = (Get-ItemProperty -Path "HKLM:\Software\SkywereIndustries\Servermanager" -Name "SSLEnabled" -ErrorAction SilentlyContinue).SSLEnabled -eq "True" } catch {}
+            $webUrl = if ($sslFlag) { "https://localhost:443" } else { "http://localhost:8080" }
+            [System.Windows.Forms.MessageBox]::Show("If installation was successful:`n- The service is now installed and running`n- Server Manager will start automatically with Windows`n- You can access the web interface at $webUrl", "Service Installation Complete", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
         }
         "uninstall" {
             [System.Windows.Forms.MessageBox]::Show("If uninstallation was successful:`n- The service has been removed`n- Server Manager will no longer start automatically`n- You can still start it manually using Start-ServerManager.pyw", "Service Uninstallation Complete", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
@@ -242,7 +246,8 @@ $global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path
 function Add-ServerManagerFirewallRules {
     param(
         [string]$HostType = "Host",
-        [bool]$ClusterEnabled = $false
+        [bool]$ClusterEnabled = $false,
+        [bool]$SSLEnabled = $false
     )
     
     Write-Log "Configuring Windows Firewall rules for Server Manager..."
@@ -250,6 +255,8 @@ function Add-ServerManagerFirewallRules {
     try {
         # Remove any existing rules first (cleanup from previous installations)
         Remove-ServerManagerFirewallRules -Quiet
+        
+        $pythonPath = (Get-Command python -ErrorAction SilentlyContinue).Source
         
         # Rule 1: Main web interface (port 8080) - Inbound and Outbound
         $webRuleInbound = @{
@@ -270,7 +277,6 @@ function Add-ServerManagerFirewallRules {
             Description = "Allow outbound access from Server Manager web interface on port 8080"
         }
         
-        $pythonPath = (Get-Command python -ErrorAction SilentlyContinue).Source
         if ($pythonPath) {
             $webRuleInbound.Program = $pythonPath
             $webRuleOutbound.Program = $pythonPath
@@ -280,24 +286,64 @@ function Add-ServerManagerFirewallRules {
         New-NetFirewallRule @webRuleOutbound -ErrorAction Stop | Out-Null
         Write-Log "Added firewall rules for web interface (port 8080) - inbound and outbound"
         
-        # Rule 2: Cluster API (port 8080) - Additional rules for cluster-enabled hosts
+        # Rule 2: HTTPS port (443) - Inbound and Outbound
+        if ($SSLEnabled) {
+            $httpsRuleInbound = @{
+                DisplayName = "ServerManager_HTTPS_In"
+                Direction = "Inbound"
+                Protocol = "TCP"
+                LocalPort = "443"
+                Action = "Allow"
+                Description = "Allow inbound HTTPS access to Server Manager on port 443"
+            }
+            $httpsRuleOutbound = @{
+                DisplayName = "ServerManager_HTTPS_Out"
+                Direction = "Outbound"
+                Protocol = "TCP"
+                LocalPort = "443"
+                Action = "Allow"
+                Description = "Allow outbound HTTPS access from Server Manager on port 443"
+            }
+            if ($pythonPath) {
+                $httpsRuleInbound.Program = $pythonPath
+                $httpsRuleOutbound.Program = $pythonPath
+            }
+            New-NetFirewallRule @httpsRuleInbound -ErrorAction Stop | Out-Null
+            New-NetFirewallRule @httpsRuleOutbound -ErrorAction Stop | Out-Null
+            Write-Log "Added firewall rules for HTTPS (port 443) - inbound and outbound"
+            
+            # Rule 2b: HTTP redirect port (8081) when SSL enabled
+            $redirectRuleInbound = @{
+                DisplayName = "ServerManager_HTTPRedirect_In"
+                Direction = "Inbound"
+                Protocol = "TCP"
+                LocalPort = "8081"
+                Action = "Allow"
+                Description = "Allow inbound HTTP-to-HTTPS redirect on port 8081"
+            }
+            if ($pythonPath) { $redirectRuleInbound.Program = $pythonPath }
+            New-NetFirewallRule @redirectRuleInbound -ErrorAction Stop | Out-Null
+            Write-Log "Added firewall rule for HTTP redirect (port 8081) - inbound"
+        }
+        
+        # Rule 3: Cluster API (port 5001) - for cluster-enabled hosts
         if ($HostType -eq "Host" -or $ClusterEnabled) {
             $clusterRuleInbound = @{
                 DisplayName = "ServerManager_ClusterAPI_In"
                 Direction = "Inbound" 
                 Protocol = "TCP"
-                LocalPort = "8080"
+                LocalPort = "5001"
                 Action = "Allow"
-                Description = "Allow inbound access to Server Manager cluster API on port 8080"
+                Description = "Allow inbound access to Server Manager cluster API on port 5001"
             }
             
             $clusterRuleOutbound = @{
                 DisplayName = "ServerManager_ClusterAPI_Out"
                 Direction = "Outbound"
                 Protocol = "TCP" 
-                LocalPort = "8080"
+                LocalPort = "5001"
                 Action = "Allow"
-                Description = "Allow outbound access from Server Manager cluster API on port 8080"
+                Description = "Allow outbound access from Server Manager cluster API on port 5001"
             }
             
             if ($pythonPath) {
@@ -307,8 +353,10 @@ function Add-ServerManagerFirewallRules {
             
             New-NetFirewallRule @clusterRuleInbound -ErrorAction Stop | Out-Null
             New-NetFirewallRule @clusterRuleOutbound -ErrorAction Stop | Out-Null
-            Write-Log "Added additional firewall rules for cluster API (port 8080) - inbound and outbound"
-        }        # Rule 3: Game server ports range (7777-7800) - TCP Inbound and Outbound
+            Write-Log "Added firewall rules for cluster API (port 5001) - inbound and outbound"
+        }
+        
+        # Rule 4: Game server ports range (7777-7800) - TCP Inbound and Outbound
         $gamePortsRuleInbound = @{
             DisplayName = "ServerManager_GameServers_In"
             Direction = "Inbound"
@@ -383,8 +431,12 @@ function Add-ServerManagerFirewallRules {
         Write-Log "Warning: Failed to configure firewall rules: $($_.Exception.Message)"
         Write-Log "You may need to manually configure Windows Firewall to allow:"
         Write-Log "  - Port 8080 (TCP) for web interface (inbound and outbound)"
+        if ($SSLEnabled) {
+            Write-Log "  - Port 443 (TCP) for HTTPS (inbound and outbound)"
+            Write-Log "  - Port 8081 (TCP) for HTTP redirect (inbound)"
+        }
         if ($HostType -eq "Host" -or $ClusterEnabled) {
-            Write-Log "  - Port 8080 (TCP) for cluster API (inbound and outbound)"
+            Write-Log "  - Port 5001 (TCP) for cluster API (inbound and outbound)"
         }
         Write-Log "  - Ports 7777-7800 (TCP/UDP) for game servers (inbound and outbound)"
         Write-Log "  - Ports 27015-27030 (UDP) for Steam query protocol (inbound and outbound)"
@@ -402,6 +454,9 @@ function Remove-ServerManagerFirewallRules {
         $rulesToRemove = @(
             "ServerManager_WebInterface_In",
             "ServerManager_WebInterface_Out",
+            "ServerManager_HTTPS_In",
+            "ServerManager_HTTPS_Out",
+            "ServerManager_HTTPRedirect_In",
             "ServerManager_ClusterAPI_In",
             "ServerManager_ClusterAPI_Out",
             "ServerManager_GameServers_In",
@@ -723,6 +778,41 @@ CREATE TABLE IF NOT EXISTS cluster_communication_log (
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 )
 ''')
+
+# Pending cluster requests table
+c.execute('''
+CREATE TABLE IF NOT EXISTS pending_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_name TEXT NOT NULL,
+    ip_address TEXT NOT NULL,
+    port INTEGER DEFAULT 8080,
+    machine_name TEXT,
+    os_info TEXT,
+    request_data TEXT,
+    status TEXT DEFAULT 'pending',
+    requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    approved_at DATETIME,
+    approved_by TEXT,
+    approval_token TEXT,
+    rejected_at DATETIME,
+    rejected_by TEXT
+)
+''')
+
+# Host status table
+c.execute('''
+CREATE TABLE IF NOT EXISTS host_status (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT DEFAULT 'online',
+    dashboard_active INTEGER DEFAULT 1,
+    maintenance_mode INTEGER DEFAULT 0,
+    status_message TEXT,
+    last_heartbeat DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+''')
+
+# Insert default host status
+c.execute('INSERT OR IGNORE INTO host_status (id, status, dashboard_active) VALUES (1, "online", 1)')
 
 conn.commit()
 conn.close()
@@ -1655,7 +1745,89 @@ Click Next to continue, or Cancel to exit Setup.
 
     $pages += $dbPage
 
-    # Page 4: Installation Progress
+    # Page 4: SSL/HTTPS Configuration
+    $sslPage = New-Object System.Windows.Forms.Panel
+    $sslPage.Location = New-Object System.Drawing.Point(10, 10)
+    $sslPage.Size = New-Object System.Drawing.Size(305, 295)
+    $sslPage.Visible = $false
+    $sslPage.BackColor = $script:ThemeColors.PanelBackground
+    $contentPanel.Controls.Add($sslPage)
+
+    $sslTitle = New-Object System.Windows.Forms.Label
+    $sslTitle.Text = "Web Server Security (HTTPS)"
+    $sslTitle.Font = New-Object System.Drawing.Font("Tahoma", 10, [System.Drawing.FontStyle]::Bold)
+    $sslTitle.Location = New-Object System.Drawing.Point(0, 5)
+    $sslTitle.Size = New-Object System.Drawing.Size(295, 25)
+    $sslTitle.ForeColor = $script:ThemeColors.TextBlack
+    $sslPage.Controls.Add($sslTitle)
+
+    $sslDesc = New-Object System.Windows.Forms.Label
+    $sslDesc.Text = "Choose whether to enable HTTPS for secure communication. HTTPS encrypts all traffic between the browser and Server Manager."
+    $sslDesc.Location = New-Object System.Drawing.Point(0, 35)
+    $sslDesc.Size = New-Object System.Drawing.Size(295, 40)
+    $sslDesc.ForeColor = $script:ThemeColors.TextBlack
+    $sslDesc.Font = New-Object System.Drawing.Font("Tahoma", 8)
+    $sslPage.Controls.Add($sslDesc)
+
+    $sslGroupBox = New-Object System.Windows.Forms.GroupBox
+    $sslGroupBox.Text = "Protocol"
+    $sslGroupBox.Location = New-Object System.Drawing.Point(0, 80)
+    $sslGroupBox.Size = New-Object System.Drawing.Size(295, 70)
+    $sslGroupBox.ForeColor = $script:ThemeColors.TextBlack
+    $sslGroupBox.Font = New-Object System.Drawing.Font("Tahoma", 8)
+    $sslPage.Controls.Add($sslGroupBox)
+
+    $httpsRadio = New-Object System.Windows.Forms.RadioButton
+    $httpsRadio.Text = "HTTPS (Recommended - Secure)"
+    $httpsRadio.Location = New-Object System.Drawing.Point(10, 18)
+    $httpsRadio.Size = New-Object System.Drawing.Size(270, 18)
+    $httpsRadio.Checked = $true
+    $httpsRadio.ForeColor = $script:ThemeColors.TextBlack
+    $httpsRadio.Font = New-Object System.Drawing.Font("Tahoma", 8)
+    $sslGroupBox.Controls.Add($httpsRadio)
+
+    $httpRadio = New-Object System.Windows.Forms.RadioButton
+    $httpRadio.Text = "HTTP (Not secure - for local/testing only)"
+    $httpRadio.Location = New-Object System.Drawing.Point(10, 42)
+    $httpRadio.Size = New-Object System.Drawing.Size(270, 18)
+    $httpRadio.ForeColor = $script:ThemeColors.TextBlack
+    $httpRadio.Font = New-Object System.Drawing.Font("Tahoma", 8)
+    $sslGroupBox.Controls.Add($httpRadio)
+
+    $sslWarningLabel = New-Object System.Windows.Forms.Label
+    $sslWarningLabel.Text = ""
+    $sslWarningLabel.Location = New-Object System.Drawing.Point(0, 155)
+    $sslWarningLabel.Size = New-Object System.Drawing.Size(295, 60)
+    $sslWarningLabel.ForeColor = $script:ThemeColors.Danger
+    $sslWarningLabel.Font = New-Object System.Drawing.Font("Tahoma", 8)
+    $sslPage.Controls.Add($sslWarningLabel)
+
+    $sslInfoLabel = New-Object System.Windows.Forms.Label
+    $sslInfoLabel.Text = "A self-signed SSL certificate will be generated automatically. You can replace it with your own certificate later in the ssl/ directory."
+    $sslInfoLabel.Location = New-Object System.Drawing.Point(0, 220)
+    $sslInfoLabel.Size = New-Object System.Drawing.Size(295, 60)
+    $sslInfoLabel.ForeColor = $script:ThemeColors.TextGray
+    $sslInfoLabel.Font = New-Object System.Drawing.Font("Tahoma", 8, [System.Drawing.FontStyle]::Italic)
+    $sslPage.Controls.Add($sslInfoLabel)
+
+    # SSL radio button events
+    $httpRadio.Add_CheckedChanged({
+        if ($httpRadio.Checked) {
+            $sslWarningLabel.Text = "WARNING: HTTP sends all data including passwords in plain text. This is only acceptable for local/isolated network use and poses a significant security risk on public networks."
+            $sslInfoLabel.Visible = $false
+        }
+    })
+
+    $httpsRadio.Add_CheckedChanged({
+        if ($httpsRadio.Checked) {
+            $sslWarningLabel.Text = ""
+            $sslInfoLabel.Visible = $true
+        }
+    })
+
+    $pages += $sslPage
+
+    # Page 5: Installation Progress
     $installPage = New-Object System.Windows.Forms.Panel
     $installPage.Location = New-Object System.Drawing.Point(10, 10)
     $installPage.Size = New-Object System.Drawing.Size(305, 295)
@@ -1717,7 +1889,7 @@ Server Manager has been installed successfully.
 
 You can now:
 - Access the web interface at:
-  http://localhost:8080
+  https://localhost:8080
 - Log in with the credentials you created
 - Start managing your game servers
 
@@ -1790,15 +1962,15 @@ Click Finish to close this wizard.
             $pages[$i].Visible = ($i -eq $index)
         }
         
-        # Update button states
-        $backButton.Enabled = ($index -gt 0 -and $index -ne 3 -and $index -ne 4)
-        $nextButton.Enabled = ($index -ne 3)
-        $cancelButton.Enabled = ($index -ne 3 -and $index -ne 4)
+        # Update button states (pages 4=install progress, 5=complete are non-navigable back)
+        $backButton.Enabled = ($index -gt 0 -and $index -ne 4 -and $index -ne 5)
+        $nextButton.Enabled = ($index -ne 4)
+        $cancelButton.Enabled = ($index -ne 4 -and $index -ne 5)
         
-        if ($index -eq 2) {
+        if ($index -eq 3) {
             $nextButton.Text = "Install"
             $nextButton.Enabled = $true
-        } elseif ($index -eq 4) {
+        } elseif ($index -eq 5) {
             $nextButton.Text = "Finish"
             $nextButton.Enabled = $true
         } else {
@@ -1838,15 +2010,16 @@ Click Finish to close this wizard.
                 
                 Show-Page 2 
             }
-            2 { 
-                # Simple validation for cluster nodes
+            2 { Show-Page 3 }
+            3 { 
+                # Validate cluster node settings on the SSL page (which triggers install)
                 if ($subhostRadio.Checked) {
                     $hostAddress = $hostAddrBox.Text.Trim()
                     
                     # Validate Master Host IP Address is required
                     if ([string]::IsNullOrWhiteSpace($hostAddress)) {
                         [System.Windows.Forms.MessageBox]::Show(
-                            "Master Host IP Address is required for cluster nodes.", 
+                            "Master Host IP Address is required for cluster nodes. Go back to Installation Options to set it.", 
                             "Validation Error", 
                             [System.Windows.Forms.MessageBoxButtons]::OK, 
                             [System.Windows.Forms.MessageBoxIcon]::Warning
@@ -1857,7 +2030,7 @@ Click Finish to close this wizard.
                     # Basic IP format validation
                     if (-not ($hostAddress -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')) {
                         [System.Windows.Forms.MessageBox]::Show(
-                            "Please enter a valid IP address format (e.g., 192.168.1.50).", 
+                            "Please enter a valid IP address format (e.g., 192.168.1.50). Go back to Installation Options to fix it.", 
                             "Validation Error", 
                             [System.Windows.Forms.MessageBoxButtons]::OK, 
                             [System.Windows.Forms.MessageBoxIcon]::Warning
@@ -1867,7 +2040,7 @@ Click Finish to close this wizard.
                 }
                 
                 # Start installation
-                Show-Page 3
+                Show-Page 4
                 $cancelButton.Enabled = $false
                 $backButton.Enabled = $false
                 $nextButton.Enabled = $false
@@ -1880,6 +2053,8 @@ Click Finish to close this wizard.
                     $null 
                 }
                 
+                $sslEnabled = $httpsRadio.Checked
+                
                 $settings = @{
                     SteamCMDPath = $steamCmdBox.Text
                     UserWorkspacePath = $workspaceBox.Text
@@ -1890,20 +2065,36 @@ Click Finish to close this wizard.
                     SQLLocation = if ($sqlTypeCombo.SelectedIndex -ge 0 -and $detected[$sqlTypeCombo.SelectedIndex].Type -eq "SQLite") { "" } else { $sqlLocationBox.Text }
                     SQLVersion = if ($sqlTypeCombo.SelectedIndex -ge 0) { $detected[$sqlTypeCombo.SelectedIndex].Version } else { "3" }
                     SubhostID = if ($subhostRadio.Checked) { "$env:COMPUTERNAME-$(Get-Random -Minimum 1000 -Maximum 9999)" } else { $null }
+                    SSLEnabled = $sslEnabled
                 }
                 
                 Start-Installation -Settings $settings -ProgressBar $installProgressBar -StatusLabel $installStatusLabel -Form $form -OnComplete {
+                    # Update completion page text based on SSL choice
+                    $protocol = if ($settings.SSLEnabled) { "https" } else { "http" }
+                    $sslNote = if ($settings.SSLEnabled) { "`n- HTTPS is enabled with a self-signed certificate`n- Your browser may show a security warning for the self-signed certificate - this is normal" } else { "`n- WARNING: HTTP mode is active - traffic is not encrypted" }
+                    $completeText.Text = @"
+Server Manager has been installed successfully.
+
+You can now:
+- Access the web interface at:
+  ${protocol}://localhost:8080
+- Log in with the credentials you created
+- Start managing your game servers$sslNote
+
+Click Finish to close this wizard.
+"@
+                    
                     # Handle cluster approval workflow for subhosts
                     if ($settings.HostType -eq "Subhost" -and $settings.HostAddress) {
                         Show-ClusterApprovalDialog -Settings $settings -Form $form -OnApproved {
-                            Show-Page 4
+                            Show-Page 5
                         }
                     } else {
-                        Show-Page 4
+                        Show-Page 5
                     }
                 }
             }
-            4 { 
+            5 { 
                 $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
                 $form.Close()
             }
@@ -1948,7 +2139,7 @@ function Start-Installation {
         # Also hide the console window completely during GUI operations
         Show-Console -Hide
         
-        $totalSteps = 12
+        $totalSteps = 14
         $currentStep = 0
 
         function Update-Progress([string]$Message) {
@@ -2038,6 +2229,9 @@ function Start-Installation {
                 'LogPath' = "$ServerManagerDir\logs"
                 'HostType' = $Settings.HostType
                 'SQLType' = $Settings.SQLType
+                'SSLEnabled' = if ($Settings.SSLEnabled) { "true" } else { "false" }
+                'SSLAutoGenerate' = if ($Settings.SSLEnabled) { "true" } else { "false" }
+                'ClusterEnabled' = if ($Settings.HostType -ne "standalone") { "true" } else { "false" }
             }
             
             # Add database paths (always set these for SQLite compatibility) - using db directory
@@ -2065,37 +2259,9 @@ function Start-Installation {
                 # Use the SubhostID generated during settings creation
                 $registryValues['SubhostID'] = $Settings.SubhostID
                 Write-Log "Master Host IP and SubhostID configured for cluster node: $($Settings.SubhostID)"
-            } elseif ($Settings.HostType -eq "Host") {
-                # Generate a new cluster secret for Master Host
-                $ClusterSecret = -join ((1..32) | ForEach-Object {Get-Random -Input ([char[]]([char]'A'..[char]'Z' + [char]'a'..[char]'z' + [char]'0'..[char]'9'))})
-                $registryValues['ClusterSecret'] = $ClusterSecret
-                Write-Log "Generated new cluster secret for Master Host"
-                
-                # Also save to a secure file for reference
-                $tokenFile = Join-Path $ServerManagerDir "cluster-security-token.txt"
-                try {
-                    $tokenContent = @"
-Server Manager Cluster Security Token
-Generated: $(Get-Date -Format 'o')
-Master Host: $ServerManagerDir
-
-SECURITY TOKEN:
-$ClusterSecret
-
-IMPORTANT NOTES:
-- This token provides full access to your Server Manager cluster
-- Store it securely and share only with trusted subhost administrators  
-- This token cannot be recovered if lost - you'll need to generate a new one
-- All existing subhosts will need to update their tokens if regenerated
-
-Provide this token to subhost administrators during their installation process.
-"@
-                    Set-Content -Path $tokenFile -Value $tokenContent -Encoding UTF8
-                    Write-Log "Cluster security token saved to: $tokenFile"
-                } catch {
-                    Write-Log "Warning: Could not save token to file: $($_.Exception.Message)"
-                }
             }
+            # Note: Cluster secret generation and token file creation for Master Hosts
+            # is handled in the "Configuring cluster database..." step below
 
             New-Item -Path "HKLM:\Software\SkywereIndustries" -Force | Out-Null
             New-Item -Path $registryPath -Force | Out-Null
@@ -2107,7 +2273,7 @@ Provide this token to subhost administrators during their installation process.
             Write-Log "Configuring Windows Firewall rules..."
             try {
                 $clusterEnabled = ($Settings.HostType -eq "Host" -or ($Settings.HostType -eq "Subhost" -and $Settings.HostAddress))
-                Add-ServerManagerFirewallRules -HostType $Settings.HostType -ClusterEnabled $clusterEnabled
+                Add-ServerManagerFirewallRules -HostType $Settings.HostType -ClusterEnabled $clusterEnabled -SSLEnabled $Settings.SSLEnabled
             } catch {
                 Write-Log "Warning: Firewall configuration failed: $($_.Exception.Message)"
                 # Don't fail installation if firewall rules fail
@@ -2194,6 +2360,149 @@ Provide this token to subhost administrators during their installation process.
             }
         }
 
+        Update-Progress "Configuring SSL/HTTPS..."
+        try {
+            # Create ssl directory
+            $sslDir = Join-Path $ServerManagerDir "ssl"
+            if (-not (Test-Path $sslDir)) {
+                New-Item -ItemType Directory -Force -Path $sslDir | Out-Null
+                Write-Log "Created SSL directory: $sslDir"
+            }
+            
+            if ($Settings.SSLEnabled) {
+                Write-Log "SSL/HTTPS is enabled - generating self-signed certificate..."
+                
+                # Generate self-signed certificate using Python ssl_utils module
+                $sslGenScript = @"
+import sys
+import os
+sys.path.insert(0, r'$ServerManagerDir')
+os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
+
+try:
+    from Modules.ssl_utils import generate_self_signed_certificate, verify_certificate
+    
+    ssl_dir = r'$sslDir'
+    cert_path = os.path.join(ssl_dir, 'server.crt')
+    key_path = os.path.join(ssl_dir, 'server.key')
+    
+    # Generate the certificate
+    result = generate_self_signed_certificate(ssl_dir)
+    if result:
+        print('SUCCESS: Self-signed SSL certificate generated')
+        print(f'Certificate: {cert_path}')
+        print(f'Private key: {key_path}')
+        
+        # Verify the generated certificate
+        verify_result = verify_certificate(cert_path, key_path)
+        if verify_result and verify_result.get('valid'):
+            print(f'Certificate verified - expires: {verify_result.get("not_after", "unknown")}')
+            print('SSL_VERIFIED: true')
+        else:
+            print('WARNING: Certificate generated but verification returned unexpected result')
+            print('SSL_VERIFIED: partial')
+    else:
+        print('ERROR: Certificate generation returned no result')
+        print('SSL_VERIFIED: false')
+except ImportError as e:
+    # Fallback: generate certificate using cryptography library directly
+    print(f'ssl_utils import failed ({e}), using direct generation...')
+    try:
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.backends import default_backend
+        import datetime
+        import socket
+        
+        ssl_dir = r'$sslDir'
+        cert_path = os.path.join(ssl_dir, 'server.crt')
+        key_path = os.path.join(ssl_dir, 'server.key')
+        
+        # Generate key
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
+        
+        # Build certificate
+        hostname = socket.gethostname()
+        subject = issuer = x509.Name([
+            x509.NameAttribute(NameOID.COMMON_NAME, hostname),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, 'Server Manager'),
+        ])
+        
+        san_list = [x509.DNSName('localhost'), x509.DNSName(hostname), x509.IPAddress(ipaddress.IPv4Address('127.0.0.1'))]
+        try:
+            import ipaddress
+            local_ips = socket.getaddrinfo(hostname, None, socket.AF_INET)
+            for _, _, _, _, sockaddr in local_ips:
+                try:
+                    san_list.append(x509.IPAddress(ipaddress.IPv4Address(sockaddr[0])))
+                except: pass
+        except: pass
+        
+        cert = (x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.utcnow())
+            .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=365))
+            .add_extension(x509.SubjectAlternativeName(san_list), critical=False)
+            .sign(key, hashes.SHA256(), default_backend()))
+        
+        # Write files
+        with open(key_path, 'wb') as f:
+            f.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()))
+        with open(cert_path, 'wb') as f:
+            f.write(cert.public_bytes(serialization.Encoding.PEM))
+        
+        print('SUCCESS: Self-signed SSL certificate generated (direct method)')
+        print('SSL_VERIFIED: true')
+    except Exception as e2:
+        print(f'ERROR: Failed to generate certificate: {e2}')
+        print('SSL_VERIFIED: false')
+except Exception as e:
+    print(f'ERROR: {e}')
+    print('SSL_VERIFIED: false')
+"@
+                $tempSslPy = [System.IO.Path]::GetTempFileName() + ".py"
+                Set-Content -Path $tempSslPy -Value $sslGenScript
+                $env:PYTHONDONTWRITEBYTECODE = "1"
+                $sslResult = python $tempSslPy 2>&1
+                Remove-Item $tempSslPy -Force -Confirm:$false
+                Write-Log "SSL setup result: $sslResult"
+                
+                # Update registry with SSL paths
+                $certPath = Join-Path $sslDir "server.crt"
+                $keyPath = Join-Path $sslDir "server.key"
+                if (Test-Path $certPath) {
+                    Set-ItemProperty -Path $registryPath -Name 'SSLCertPath' -Value $certPath -Force
+                    Set-ItemProperty -Path $registryPath -Name 'SSLKeyPath' -Value $keyPath -Force
+                    Write-Log "SSL certificate paths saved to registry"
+                    
+                    if ($sslResult -match "SSL_VERIFIED: true") {
+                        Write-Log "SSL certificate generated and verified successfully"
+                    } elseif ($sslResult -match "SSL_VERIFIED: partial") {
+                        Write-Log "SSL certificate generated but needs manual verification"
+                    } else {
+                        Write-Log "Warning: SSL certificate generation may have failed - check logs"
+                    }
+                } else {
+                    Write-Log "Warning: SSL certificate file not found after generation attempt"
+                    # Disable SSL if cert generation failed
+                    Set-ItemProperty -Path $registryPath -Name 'SSLEnabled' -Value "false" -Force
+                    Write-Log "SSL has been disabled due to certificate generation failure"
+                }
+            } else {
+                Write-Log "SSL/HTTPS is disabled - skipping certificate generation"
+                Write-Log "You can enable HTTPS later via the dashboard settings or by running: python Modules/ssl_utils.py --enable"
+            }
+        } catch {
+            Write-Log "Warning: SSL configuration failed: $($_.Exception.Message)"
+            Write-Log "HTTPS may not be available. You can configure it later."
+            # Don't fail installation if SSL setup fails
+        }
+
         Update-Progress "Installing SteamCMD..."
         try {
             $steamCmdExe = Join-Path $Settings.SteamCMDPath "steamcmd.exe"
@@ -2234,38 +2543,55 @@ Provide this token to subhost administrators during their installation process.
 
         Update-Progress "Configuring cluster database..."
         try {
-            # Initialise cluster configuration in database
+            # Initialise cluster configuration in database using direct SQLite
             $clusterDbPath = "$ServerManagerDir\db\servermanager.db"
             if (Test-Path $clusterDbPath) {
                 $initClusterScript = @"
+import sqlite3
+import secrets
 import sys
-sys.path.insert(0, r'$ServerManagerDir')
-from Modules.Database.cluster_database import ClusterDatabase
+from datetime import datetime
 
 try:
-    cluster_db = ClusterDatabase(r'$clusterDbPath')
-    
-    # Set initial cluster configuration based on installation type
+    db_path = r'$clusterDbPath'
     host_type = '$($Settings.HostType)'
-    master_ip = '$($Settings.HostAddress)' if '$($Settings.HostAddress)' else None
+    host_address = '$($Settings.HostAddress)' if '$($Settings.HostAddress)' else None
     cluster_name = 'ServerManager-Cluster'
     
-    # Generate cluster secret for master hosts, use approval token for subhosts
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    
+    # Generate cluster secret for master hosts
     cluster_secret = None
     if host_type == 'Host':
-        import secrets
         cluster_secret = secrets.token_urlsafe(32)
-    elif host_type == 'Subhost':
-        cluster_secret = '$($Settings.ClusterToken)' if '$($Settings.ClusterToken)' else None
     
-    success = cluster_db.set_cluster_config(host_type, cluster_name, cluster_secret, master_ip)
-    if success:
-        print(f'SUCCESS: Cluster database configured as {host_type}')
-        if cluster_secret:
-            print(f'CLUSTER_SECRET: {cluster_secret}')
+    # Check if cluster_config already has a row
+    c.execute('SELECT COUNT(*) FROM cluster_config')
+    count = c.fetchone()[0]
+    
+    if count == 0:
+        c.execute('''
+            INSERT INTO cluster_config (host_type, cluster_name, cluster_secret, master_ip, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (host_type, cluster_name, cluster_secret, host_address, datetime.utcnow().isoformat(), datetime.utcnow().isoformat()))
     else:
-        print('ERROR: Failed to configure cluster database')
-        
+        c.execute('''
+            UPDATE cluster_config SET host_type = ?, cluster_name = ?, cluster_secret = ?, master_ip = ?, updated_at = ? WHERE id = 1
+        ''', (host_type, cluster_name, cluster_secret, host_address, datetime.utcnow().isoformat()))
+    
+    # Ensure host_status has a default row
+    c.execute('SELECT COUNT(*) FROM host_status')
+    if c.fetchone()[0] == 0:
+        c.execute('INSERT INTO host_status (id, status, dashboard_active) VALUES (1, "online", 1)')
+    
+    conn.commit()
+    conn.close()
+    
+    print(f'SUCCESS: Cluster database configured as {host_type}')
+    if cluster_secret:
+        print(f'CLUSTER_SECRET: {cluster_secret}')
+
 except Exception as e:
     print(f'ERROR: {e}')
 "@
@@ -2276,15 +2602,43 @@ except Exception as e:
                 Remove-Item $tempClusterInitPy -Force -Confirm:$false
                 Write-Log "Cluster database initialisation result: $clusterInitResult"
                 
-                # Extract cluster secret if generated (for hosts) or use approval token (for subhosts)
+                # Extract and save cluster secret to registry
                 if ($clusterInitResult -match "CLUSTER_SECRET: (.+)") {
-                    $GeneratedClusterSecret = $matches[1]
-                    $registryValues['ClusterSecret'] = $GeneratedClusterSecret
-                    Write-Log "Cluster secret stored in database and registry"
-                } elseif ($Settings.HostType -eq 'Subhost' -and $Settings.ClusterToken) {
-                    $registryValues['ClusterSecret'] = $Settings.ClusterToken
-                    Write-Log "Subhost cluster token stored in registry"
+                    $GeneratedClusterSecret = $matches[1].Trim()
+                    Set-ItemProperty -Path $registryPath -Name 'ClusterSecret' -Value $GeneratedClusterSecret -Force
+                    Write-Log "Cluster secret stored in registry"
+                    
+                    # Save token file for master host
+                    if ($Settings.HostType -eq "Host") {
+                        $tokenFile = Join-Path $ServerManagerDir "cluster-security-token.txt"
+                        try {
+                            $tokenContent = @"
+Server Manager Cluster Security Token
+Generated: $(Get-Date -Format 'o')
+Master Host: $ServerManagerDir
+
+SECURITY TOKEN:
+$GeneratedClusterSecret
+
+IMPORTANT NOTES:
+- This token provides full access to your Server Manager cluster
+- Store it securely and share only with trusted subhost administrators  
+- This token cannot be recovered if lost - you'll need to generate a new one
+- All existing subhosts will need to update their tokens if regenerated
+
+Provide this token to subhost administrators during their installation process.
+"@
+                            Set-Content -Path $tokenFile -Value $tokenContent -Encoding UTF8
+                            # Protect the token file
+                            Protect-ConfigFile -FilePath $tokenFile
+                            Write-Log "Cluster security token saved to: $tokenFile"
+                        } catch {
+                            Write-Log "Warning: Could not save token to file: $($_.Exception.Message)"
+                        }
+                    }
                 }
+            } else {
+                Write-Log "Warning: Cluster database not found at $clusterDbPath - will be created on first launch"
             }
         } catch {
             Write-Log "Warning: Failed to initialise cluster database configuration: $($_.Exception.Message)"

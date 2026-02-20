@@ -3,35 +3,26 @@ import os
 import sys
 import logging
 import re
-import json
 import requests
 import time
 from datetime import datetime, timezone
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from Modules.common import setup_module_path, setup_module_logging, get_database_connection
+setup_module_path()
 
 try:
     from Modules.Database.steam_database import get_steam_engine
-    from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text
+    from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
     from sqlalchemy.orm import declarative_base, sessionmaker
     SQLALCHEMY_AVAILABLE = True
 except ImportError:
     SQLALCHEMY_AVAILABLE = False
     print("Warning: SQLAlchemy not available, SQLite fallback")
 
-import sqlite3
 
-try:
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("ServerVerifier")
-except Exception:
-    import logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    logger = logging.getLogger("ServerVerifier")
+logger: logging.Logger = setup_module_logging("ServerVerifier")
 
 # DB models
 if SQLALCHEMY_AVAILABLE:
@@ -124,7 +115,7 @@ class DedicatedServerVerifier:
             # Use centralised db directory
             db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
             db_path = os.path.join(db_dir, 'steam_ID.db')
-            self.sqlite_conn = sqlite3.connect(db_path)
+            self.sqlite_conn = get_database_connection(db_path)
             logger.info(f"Connected to SQLite database: {db_path}")
         except Exception as e:
             logger.error(f"Failed to initialise SQLite database: {e}")

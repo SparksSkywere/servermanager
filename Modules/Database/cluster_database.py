@@ -5,13 +5,16 @@ import sys
 import json
 import threading
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
+import logging
 
+# Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-
+from Modules.common import setup_module_path, get_server_manager_dir, get_database_connection
+setup_module_path()
 from Modules.server_logging import get_component_logger
 
-logger = get_component_logger("ClusterDatabase")
+logger: logging.Logger = get_component_logger("ClusterDatabase")
 
 # Singleton instance and lock
 _cluster_db_instance = None
@@ -37,57 +40,9 @@ class ClusterDatabase:
         
         if db_path is None:
             # Auto-discover DB path from registry
-            try:
-                import winreg
-                from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
-                key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH)
-                try:
-                    # Check multiple registry keys
-                    server_manager_dir = None
-                    for key_name in ["ServerManagerDirectory", "InstallPath", "Directory"]:
-                        try:
-                            server_manager_dir = winreg.QueryValueEx(key, key_name)[0]
-                            logger.debug(f"Found {key_name} in registry: {server_manager_dir}")
-                            break
-                        except:
-                            continue
-                    
-                    if server_manager_dir:
-                        db_dir = os.path.join(server_manager_dir, 'db')
-                        logger.debug(f"Using registry DB dir: {db_dir}")
-                    else:
-                        # Production path fallback
-                        production_path = r"C:\SteamCMD\Servermanager"
-                        if os.path.exists(production_path):
-                            db_dir = os.path.join(production_path, 'db')
-                            logger.debug(f"Using production path: {db_dir}")
-                        else:
-                            # Relative path fallback
-                            db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
-                            logger.debug(f"Using relative path: {db_dir}")
-                    
-                except Exception as inner_e:
-                    # Production fallback
-                    production_path = r"C:\SteamCMD\Servermanager"
-                    if os.path.exists(production_path):
-                        db_dir = os.path.join(production_path, 'db')
-                        logger.debug(f"Registry keys not found, using detected production path: {db_dir}")
-                    else:
-                        # Fallback to relative path
-                        db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
-                        logger.debug(f"Registry keys not found, using relative path: {db_dir}")
-                        
-                winreg.CloseKey(key)
-            except Exception as e:
-                # Check if production path exists as fallback
-                production_path = r"C:\SteamCMD\Servermanager"
-                if os.path.exists(production_path):
-                    db_dir = os.path.join(production_path, 'db')
-                    logger.warning(f"Registry access failed, using detected production path: {db_dir} - Error: {e}")
-                else:
-                    # Fallback to relative path
-                    db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
-                    logger.warning(f"Registry access failed, using relative path: {db_dir} - Error: {e}")
+            server_manager_dir = get_server_manager_dir()
+            db_dir = os.path.join(server_manager_dir, 'db')
+            logger.debug(f"Using registry DB dir: {db_dir}")
             
             os.makedirs(db_dir, exist_ok=True)
             self.db_path = os.path.join(db_dir, 'servermanager.db')
@@ -287,10 +242,14 @@ class ClusterDatabase:
         except Exception as e:
             logger.warning(f"Migration warning (hostname column): {e}")
     
+    def _get_connection(self):
+        # Centralized database connection for this instance
+        return get_database_connection(self.db_path)
+    
     def get_cluster_config(self) -> Optional[Dict]:
         # Get current cluster configuration
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT host_type, cluster_name, cluster_secret, master_ip, 

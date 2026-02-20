@@ -35,10 +35,15 @@ pip-log.txt
 pip-delete-this-directory.txt
 todo
 todo.txt
+todo.md
 dev-requirements.txt
 db/servermanager_users.db
+db/servermanager_servers.db
 db/servermanager.db
 data/update_config.json
+ssl/server.crt
+ssl/server.key
+__Scanner__/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

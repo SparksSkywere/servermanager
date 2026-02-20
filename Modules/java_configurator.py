@@ -2,14 +2,16 @@
 # Java config utility for Minecraft
 import os
 import sys
-import json
 import argparse
-from pathlib import Path
 
+# Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from Modules.common import setup_module_path
+setup_module_path()
+
 from Modules.minecraft import (
-    detect_java_installations, 
+    detect_java_installations,
     get_recommended_java_for_minecraft,
     check_java_compatibility,
     get_minecraft_java_requirement
@@ -35,22 +37,19 @@ def list_java_installations():
 
 
 def list_servers():
-    # List configured servers
+    # List configured servers from database
     try:
-        servers_dir = Path("D:/SteamCMD/Servermanager/servers")
-        if not servers_dir.exists():
-            print("Servers dir not found.")
-            return []
+        from Modules.Database.server_configs_database import ServerConfigManager
+        manager = ServerConfigManager()
+        all_servers = manager.get_all_servers()
         
         servers = []
-        for config_file in servers_dir.glob("*.json"):
+        for config in all_servers:
             try:
-                with open(config_file, 'r') as f:
-                    config = json.load(f)
-                    if config.get("Type") == "Minecraft":
-                        servers.append(config)
+                if config.get("Type") == "Minecraft":
+                    servers.append(config)
             except Exception as e:
-                print(f"Error reading {config_file}: {e}")
+                print(f"Error processing server config: {e}")
         
         return servers
     except Exception as e:
@@ -87,17 +86,15 @@ def check_server_java_compatibility(server_config):
 
 
 def configure_server_java(server_name, java_path=None):
-    # Configure Java for a specific server
-    servers_dir = Path("D:/SteamCMD/Servermanager/servers")
-    config_file = servers_dir / f"{server_name}.json"
-    
-    if not config_file.exists():
-        print(f"Server configuration not found: {config_file}")
-        return False
-    
+    # Configure Java for a specific server using database
     try:
-        with open(config_file, 'r') as f:
-            config = json.load(f)
+        from Modules.Database.server_configs_database import ServerConfigManager
+        manager = ServerConfigManager()
+        
+        config = manager.get_server(server_name)
+        if not config:
+            print(f"Server configuration not found: {server_name}")
+            return False
         
         if config.get("Type") != "Minecraft":
             print(f"Server '{server_name}' is not a Minecraft server.")
@@ -122,22 +119,21 @@ def configure_server_java(server_name, java_path=None):
         config["JavaPath"] = java_path
         config["LastUpdate"] = "2025-07-28T01:30:00"
         
-        # Save configuration
-        with open(config_file, 'w') as f:
-            json.dump(config, f, indent=4)
+        # Save configuration to database
+        manager.update_server(server_name, config)
         
         print(f"Updated '{server_name}' to use Java at: {java_path}")
         
         # Update launch script
         from Modules.minecraft import MinecraftServerManager
-        manager = MinecraftServerManager(str(servers_dir.parent), {})
+        mc_manager = MinecraftServerManager("", {})
         
         install_dir = config.get("InstallDir", "")
         if install_dir and os.path.exists(install_dir):
             executable_path = config.get("ExecutablePath", "")
             jar_file = os.path.basename(executable_path) if executable_path else "server.jar"
             
-            script_path = manager.create_launch_script(install_dir, jar_file, 1024, "", java_path)
+            script_path = mc_manager.create_launch_script(install_dir, jar_file, 1024, "", java_path)
             print(f"Updated launch script: {script_path}")
         
         return True

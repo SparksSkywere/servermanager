@@ -7,6 +7,9 @@ from datetime import datetime
 from typing import Any
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from Modules.common import setup_module_path, setup_module_logging
+setup_module_path()
+logger = setup_module_logging("AdminDashboard")
 from tkinter import messagebox, simpledialog
 from Modules.user_management import UserManager
 from Modules.Database.user_database import get_user_engine, ensure_root_admin
@@ -124,15 +127,19 @@ def handle_2fa_login_admin(user_manager, username, parent_window=None):
         print(f"Error in admin 2FA login: {e}")
         return False
 
-def admin_login(user_manager):
+def admin_login(user_manager, parent=None):
     max_attempts = 3
     attempts = 0
     
     while attempts < max_attempts:
-        # Create login dialog (exactly like dashboard.py)
-        login_root = tk.Tk()
-        login_root.withdraw()  # Hide the root window
-        login_dialog = tk.Toplevel(login_root)
+        # Create login dialog
+        login_root = None
+        if parent:
+            login_dialog = tk.Toplevel(parent)
+        else:
+            login_root = tk.Tk()
+            login_root.withdraw()  # Hide the root window
+            login_dialog = tk.Toplevel(login_root)
         
         login_dialog.title("Admin Dashboard - Authentication Required")
         login_dialog.geometry("400x300")
@@ -145,6 +152,12 @@ def admin_login(user_manager):
         x = (login_dialog.winfo_screenwidth() // 2) - (200)
         y = (login_dialog.winfo_screenheight() // 2) - (150)
         login_dialog.geometry(f"400x300+{x}+{y}")
+        
+        # Force dialog to front and focus
+        login_dialog.lift()
+        login_dialog.focus_force()
+        login_dialog.attributes('-topmost', True)
+        login_dialog.after(100, lambda: login_dialog.attributes('-topmost', False))
         
         # Main container frame
         container = tk.Frame(login_dialog, bg='white', padx=20, pady=20)
@@ -226,7 +239,8 @@ def admin_login(user_manager):
                     login_result[0] = True
                     login_result[1] = user
                     login_dialog.destroy()
-                    login_root.destroy()
+                    if login_root is not None:
+                        login_root.destroy()
                 else:
                     print("Authentication failed - invalid credentials")
                     status_var.set("Invalid username or password. Please try again.")
@@ -241,7 +255,8 @@ def admin_login(user_manager):
             print("Admin login cancelled")
             dialog_closed[0] = True
             login_dialog.destroy()
-            login_root.destroy()
+            if login_root is not None:
+                login_root.destroy()
         
         # Button frame at the bottom
         button_frame = tk.Frame(container, bg='white')
@@ -267,7 +282,8 @@ def admin_login(user_manager):
         def on_close():
             dialog_closed[0] = True
             login_dialog.destroy()
-            login_root.destroy()
+            if login_root is not None:
+                login_root.destroy()
         
         login_dialog.protocol("WM_DELETE_WINDOW", on_close)
         
@@ -277,7 +293,11 @@ def admin_login(user_manager):
         print("Waiting for admin dialog interaction...")  # Debug
         
         # Wait for dialog to close
-        login_root.wait_window(login_dialog)
+        if parent:
+            parent.wait_window(login_dialog)
+        else:
+            assert login_root is not None, "login_root should be set when parent is None"
+            login_root.wait_window(login_dialog)
         
         print(f"Admin dialog closed. Result: success={login_result[0]}, cancelled={dialog_closed[0]}")  # Debug
         
@@ -294,30 +314,29 @@ def admin_login(user_manager):
             messagebox.showerror("Access Denied", 
                                f"Maximum login attempts ({max_attempts}) exceeded.\n"
                                "Admin dashboard access denied.")
-            login_root.destroy()
+            if login_root is not None:
+                login_root.destroy()
             return None
     
     return None
 
 def admin_login_with_root(login_root, user_manager):
     # Admin login function that uses an existing Tkinter root window to avoid conflicts
-    import logging
-    login_logger = logging.getLogger('dashboard')
-    login_logger.debug("admin_login_with_root() called")
+    logger.debug("admin_login_with_root() called")
     
     max_attempts = 3
     attempts = 0
     
     while attempts < max_attempts:
-        login_logger.debug(f"Login attempt loop iteration {attempts + 1}")
+        logger.debug(f"Login attempt loop iteration {attempts + 1}")
         
         # Withdraw the main window during login
         login_root.withdraw()
-        login_logger.debug("Main window withdrawn")
+        logger.debug("Main window withdrawn")
         
         # Create login dialog using the existing root window
         login_dialog = tk.Toplevel(login_root)
-        login_logger.debug("Login dialog Toplevel created")
+        logger.debug("Login dialog Toplevel created")
         
         login_dialog.title("Server Manager - Authentication Required")
         login_dialog.geometry("400x300")
@@ -336,7 +355,7 @@ def admin_login_with_root(login_root, user_manager):
         login_dialog.focus_force()
         login_dialog.attributes('-topmost', True)
         login_dialog.after(100, lambda: login_dialog.attributes('-topmost', False))
-        login_logger.debug(f"Login dialog positioned at {x},{y}")
+        logger.debug(f"Login dialog positioned at {x},{y}")
         
         # Main container frame
         container = tk.Frame(login_dialog, bg='white', padx=20, pady=20)
@@ -420,7 +439,7 @@ def admin_login_with_root(login_root, user_manager):
                 password_entry.delete(0, tk.END)
         
         def on_cancel():
-            login_logger.debug("on_cancel() called - user clicked Cancel button")
+            logger.debug("on_cancel() called - user clicked Cancel button")
             dialog_closed[0] = True
             login_dialog.destroy()
         
@@ -446,7 +465,7 @@ def admin_login_with_root(login_root, user_manager):
         
         # Handle window close button (X button)
         def on_close():
-            login_logger.debug("on_close() called - window close button (X) clicked")
+            logger.debug("on_close() called - window close button (X) clicked")
             dialog_closed[0] = True
             login_dialog.destroy()
         
@@ -455,20 +474,20 @@ def admin_login_with_root(login_root, user_manager):
         # Additional logging - check if dialog gets destroyed unexpectedly
         def on_destroy(event):
             if event.widget == login_dialog:
-                login_logger.debug(f"Login dialog destroyed - success={login_result[0]}, cancelled={dialog_closed[0]}")
+                logger.debug(f"Login dialog destroyed - success={login_result[0]}, cancelled={dialog_closed[0]}")
         
         login_dialog.bind("<Destroy>", on_destroy)
         
         # Focus on username field
         login_dialog.after(100, username_entry.focus_set)
-        login_logger.debug("Login dialog setup complete, waiting for user interaction")
+        logger.debug("Login dialog setup complete, waiting for user interaction")
         
-        login_logger.debug("Starting wait_window() - blocking until dialog closes")
+        logger.debug("Starting wait_window() - blocking until dialog closes")
         
         # Wait for dialog to close
         login_root.wait_window(login_dialog)
         
-        login_logger.debug(f"wait_window() returned - success={login_result[0]}, cancelled={dialog_closed[0]}")
+        logger.debug(f"wait_window() returned - success={login_result[0]}, cancelled={dialog_closed[0]}")
         
         # Check results
         if dialog_closed[0]:
@@ -485,7 +504,7 @@ def admin_login_with_root(login_root, user_manager):
                 messagebox.showerror("Access Denied", 
                                    f"Maximum login attempts ({max_attempts}) exceeded.\n"
                                    "Admin dashboard access denied.")
-            except:
+            except tk.TclError:
                 print("Failed to show error message")
             login_root.deiconify()  # Show main window again
             return None
@@ -578,7 +597,7 @@ class AdminDashboard(tk.Tk):
                     from datetime import datetime
                     last_login_dt = datetime.fromisoformat(last_login.replace('Z', '+00:00'))
                     last_login_text = last_login_dt.strftime("%m/%d/%Y at %I:%M %p")
-                except:
+                except (ValueError, TypeError):
                     last_login_text = str(last_login)
             else:
                 last_login_text = last_login.strftime("%m/%d/%Y at %I:%M %p")
@@ -769,7 +788,7 @@ class AdminDashboard(tk.Tk):
                 try:
                     last_login_dt = datetime.fromisoformat(last_login.replace('Z', '+00:00'))
                     last_login_display = last_login_dt.strftime("%m/%d/%Y %I:%M %p")
-                except:
+                except (ValueError, TypeError):
                     last_login_display = last_login
             else:
                 last_login_display = last_login.strftime("%m/%d/%Y %I:%M %p")

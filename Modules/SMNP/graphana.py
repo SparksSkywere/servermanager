@@ -1,18 +1,20 @@
 # Grafana integration
+import os
+import sys
 import logging
 from datetime import datetime
-import json
+from typing import Optional, TYPE_CHECKING
 
-try:
-    from Modules.common import ServerManagerModule
-    from Modules.server_logging import get_component_logger
-    logger = get_component_logger("Grafana")
-    _HAS_SERVER_MANAGER_MODULE = True
-except Exception:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger("Grafana")
-    _HAS_SERVER_MANAGER_MODULE = False
-    ServerManagerModule = object  # type: ignore[misc, assignment]
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+if TYPE_CHECKING:
+    from Modules.analytics import AnalyticsCollector
+
+from Modules.common import ServerManagerModule
+from Modules.server_logging import get_component_logger
+logger = get_component_logger("Grafana")
+_HAS_SERVER_MANAGER_MODULE = True
 
 class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
     # - Prometheus format metrics
@@ -27,7 +29,7 @@ class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
             self.module_name = "Grafana"
             self.logger = logging.getLogger("Grafana")
         
-        self.analytics = analytics_instance
+        self.analytics: Optional['AnalyticsCollector'] = analytics_instance
         
         # Prometheus prefixes
         self.metric_prefix = "servermanager"
@@ -42,7 +44,7 @@ class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
 
     def set_analytics_instance(self, analytics_instance):
         # Set analytics for metric collection
-        self.analytics = analytics_instance
+        self.analytics: Optional['AnalyticsCollector'] = analytics_instance
         logger.info("Analytics instance configured")
 
     def get_prometheus_metrics(self):
@@ -50,6 +52,8 @@ class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
         if not self.analytics:
             logger.warning("Analytics not configured")
             return ""
+            
+        assert self.analytics is not None  # For type checker
             
         try:
             current_metrics = self.analytics.get_current_metrics()
@@ -129,6 +133,8 @@ class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
             logger.warning("Analytics instance not configured")
             return {}
             
+        assert self.analytics is not None  # For type checker
+            
         try:
             current_metrics = self.analytics.get_current_metrics()
             health = self.analytics.get_system_health()
@@ -174,6 +180,8 @@ class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
         if not self.analytics:
             logger.warning("Analytics instance not configured")
             return []
+            
+        assert self.analytics is not None  # For type checker
             
         try:
             history = self.analytics.get_metric_history(metric_name, hours)

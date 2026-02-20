@@ -1,10 +1,17 @@
 # Steam apps database
+import os
+import sys
 from sqlalchemy import text
-from .database_utils import get_sql_config_from_registry, build_db_url, get_engine_by_type
-from Modules.common import setup_module_logging, setup_module_path
+import logging
 
+# Setup module path first before any imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from Modules.common import setup_module_path, setup_module_logging
 setup_module_path()
-logger = setup_module_logging("SteamDatabase")
+
+from .database_utils import get_sql_config_from_registry, build_db_url, get_engine_by_type
+
+logger: logging.Logger = setup_module_logging("SteamDatabase")
 
 def get_steam_sql_config_from_registry():
     # Steam DB config from registry
@@ -41,8 +48,23 @@ def ensure_steam_tables(engine):
                     source TEXT DEFAULT 'steamdb'
                 )
             """))
+            
+            # Console states table for storing server console output
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS console_states (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    server_name TEXT NOT NULL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    process_id INTEGER,
+                    is_active BOOLEAN DEFAULT 1,
+                    output_buffer TEXT,  -- JSON array of console output entries
+                    command_history TEXT, -- JSON array of command history
+                    UNIQUE(server_name)
+                )
+            """))
+            
             conn.commit()
-            logger.info("Steam apps table ensured")
+            logger.info("Steam apps and console states tables ensured")
             
     except Exception as e:
         logger.error(f"Steam tables creation failed: {e}")
