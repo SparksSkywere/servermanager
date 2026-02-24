@@ -445,7 +445,19 @@
                     const p = await r.json();
                     const name = p.display_name || p.username || 'Admin';
                     document.getElementById('headerDisplayName').textContent = name;
-                    document.getElementById('headerAvatar').innerHTML = p.avatar ? `<img src="${p.avatar}" alt="">` : `<span>${name.charAt(0).toUpperCase()}</span>`;
+                    const avatarEl = document.getElementById('headerAvatar');
+                    if (p.avatar) {
+                        const img = document.createElement('img');
+                        img.src = p.avatar;
+                        img.alt = '';
+                        avatarEl.textContent = '';
+                        avatarEl.appendChild(img);
+                    } else {
+                        const span = document.createElement('span');
+                        span.textContent = name.charAt(0).toUpperCase();
+                        avatarEl.textContent = '';
+                        avatarEl.appendChild(span);
+                    }
                     if (p.theme_preference) applyTheme(p.theme_preference);
                 }
             } catch {}
@@ -482,53 +494,134 @@
         }
 
         function renderEmptyState() {
-            document.getElementById('pendingList').innerHTML = '<div class="empty-state"><h3>No pending requests</h3><p>Cluster join requests will appear here</p></div>';
-            document.getElementById('activeList').innerHTML = '<div class="empty-state"><h3>No active nodes</h3><p>Approved cluster nodes will appear here</p></div>';
+            const pendingList = document.getElementById('pendingList');
+            pendingList.textContent = '';
+            const pendingEmpty = document.createElement('div');
+            pendingEmpty.className = 'empty-state';
+            const pendingH3 = document.createElement('h3');
+            pendingH3.textContent = 'No pending requests';
+            const pendingP = document.createElement('p');
+            pendingP.textContent = 'Cluster join requests will appear here';
+            pendingEmpty.appendChild(pendingH3);
+            pendingEmpty.appendChild(pendingP);
+            pendingList.appendChild(pendingEmpty);
+
+            const activeList = document.getElementById('activeList');
+            activeList.textContent = '';
+            const activeEmpty = document.createElement('div');
+            activeEmpty.className = 'empty-state';
+            const activeH3 = document.createElement('h3');
+            activeH3.textContent = 'No active nodes';
+            const activeP = document.createElement('p');
+            activeP.textContent = 'Approved cluster nodes will appear here';
+            activeEmpty.appendChild(activeH3);
+            activeEmpty.appendChild(activeP);
+            activeList.appendChild(activeEmpty);
         }
 
         function renderPendingList(nodes) {
             const container = document.getElementById('pendingList');
+            container.textContent = '';
             if (!nodes.length) {
-                container.innerHTML = '<div class="empty-state"><h3>No pending requests</h3><p>Cluster join requests will appear here</p></div>';
+                const emptyDiv = document.createElement('div');
+                emptyDiv.className = 'empty-state';
+                const h3 = document.createElement('h3');
+                h3.textContent = 'No pending requests';
+                const p = document.createElement('p');
+                p.textContent = 'Cluster join requests will appear here';
+                emptyDiv.appendChild(h3);
+                emptyDiv.appendChild(p);
+                container.appendChild(emptyDiv);
                 return;
             }
 
-            container.innerHTML = nodes.map(node => `
-                <div class="node-item">
-                    <div class="node-info">
-                        <h4>${escapeHtml(node.hostname || node.name || 'Unknown')}</h4>
-                        <p>IP: <strong>${escapeHtml(node.ip || node.address || 'N/A')}</strong></p>
-                        <p>Requested: ${node.requested_at || 'Unknown'}</p>
-                        <span class="node-status pending"><span class="status-dot"></span> Pending</span>
-                    </div>
-                    <div class="node-actions">
-                        <button class="btn btn-sm btn-success" onclick="handleRequest('${escapeHtml(node.id)}', 'approve')">Approve</button>
-                        <button class="btn btn-sm btn-danger" onclick="handleRequest('${escapeHtml(node.id)}', 'reject')">Reject</button>
-                    </div>
-                </div>
-            `).join('');
+            nodes.forEach(node => {
+                const nodeItem = document.createElement('div');
+                nodeItem.className = 'node-item';
+                
+                const nodeInfo = document.createElement('div');
+                nodeInfo.className = 'node-info';
+                const h4 = document.createElement('h4');
+                h4.textContent = node.hostname || node.name || 'Unknown';
+                const pIp = document.createElement('p');
+                pIp.innerHTML = 'IP: <strong>' + escapeHtml(node.ip || node.address || 'N/A') + '</strong>';
+                const pReq = document.createElement('p');
+                pReq.textContent = 'Requested: ' + (node.requested_at || 'Unknown');
+                const statusSpan = document.createElement('span');
+                statusSpan.className = 'node-status pending';
+                statusSpan.innerHTML = '<span class="status-dot"></span> Pending';
+                nodeInfo.appendChild(h4);
+                nodeInfo.appendChild(pIp);
+                nodeInfo.appendChild(pReq);
+                nodeInfo.appendChild(statusSpan);
+                
+                const nodeActions = document.createElement('div');
+                nodeActions.className = 'node-actions';
+                const approveBtn = document.createElement('button');
+                approveBtn.className = 'btn btn-sm btn-success';
+                approveBtn.textContent = 'Approve';
+                approveBtn.addEventListener('click', () => handleRequest(node.id, 'approve'));
+                const rejectBtn = document.createElement('button');
+                rejectBtn.className = 'btn btn-sm btn-danger';
+                rejectBtn.textContent = 'Reject';
+                rejectBtn.addEventListener('click', () => handleRequest(node.id, 'reject'));
+                nodeActions.appendChild(approveBtn);
+                nodeActions.appendChild(rejectBtn);
+                
+                nodeItem.appendChild(nodeInfo);
+                nodeItem.appendChild(nodeActions);
+                container.appendChild(nodeItem);
+            });
         }
 
         function renderActiveList(nodes) {
             const container = document.getElementById('activeList');
+            container.textContent = '';
             if (!nodes.length) {
-                container.innerHTML = '<div class="empty-state"><h3>No active nodes</h3><p>Approved cluster nodes will appear here</p></div>';
+                const emptyDiv = document.createElement('div');
+                emptyDiv.className = 'empty-state';
+                const h3 = document.createElement('h3');
+                h3.textContent = 'No active nodes';
+                const p = document.createElement('p');
+                p.textContent = 'Approved cluster nodes will appear here';
+                emptyDiv.appendChild(h3);
+                emptyDiv.appendChild(p);
+                container.appendChild(emptyDiv);
                 return;
             }
 
-            container.innerHTML = nodes.map(node => `
-                <div class="node-item">
-                    <div class="node-info">
-                        <h4>${escapeHtml(node.hostname || node.name || 'Unknown')}</h4>
-                        <p>IP: <strong>${escapeHtml(node.ip || node.address || 'N/A')}</strong></p>
-                        <p>Last seen: ${node.last_seen || 'Unknown'}</p>
-                        <span class="node-status ${node.online ? 'online' : 'offline'}"><span class="status-dot"></span> ${node.online ? 'Online' : 'Offline'}</span>
-                    </div>
-                    <div class="node-actions">
-                        <button class="btn btn-sm btn-danger" onclick="revokeNode('${escapeHtml(node.id)}')">Revoke</button>
-                    </div>
-                </div>
-            `).join('');
+            nodes.forEach(node => {
+                const nodeItem = document.createElement('div');
+                nodeItem.className = 'node-item';
+                
+                const nodeInfo = document.createElement('div');
+                nodeInfo.className = 'node-info';
+                const h4 = document.createElement('h4');
+                h4.textContent = node.hostname || node.name || 'Unknown';
+                const pIp = document.createElement('p');
+                pIp.innerHTML = 'IP: <strong>' + escapeHtml(node.ip || node.address || 'N/A') + '</strong>';
+                const pSeen = document.createElement('p');
+                pSeen.textContent = 'Last seen: ' + (node.last_seen || 'Unknown');
+                const statusSpan = document.createElement('span');
+                statusSpan.className = 'node-status ' + (node.online ? 'online' : 'offline');
+                statusSpan.innerHTML = '<span class="status-dot"></span> ' + (node.online ? 'Online' : 'Offline');
+                nodeInfo.appendChild(h4);
+                nodeInfo.appendChild(pIp);
+                nodeInfo.appendChild(pSeen);
+                nodeInfo.appendChild(statusSpan);
+                
+                const nodeActions = document.createElement('div');
+                nodeActions.className = 'node-actions';
+                const revokeBtn = document.createElement('button');
+                revokeBtn.className = 'btn btn-sm btn-danger';
+                revokeBtn.textContent = 'Revoke';
+                revokeBtn.addEventListener('click', () => revokeNode(node.id));
+                nodeActions.appendChild(revokeBtn);
+                
+                nodeItem.appendChild(nodeInfo);
+                nodeItem.appendChild(nodeActions);
+                container.appendChild(nodeItem);
+            });
         }
 
         async function handleRequest(nodeId, action) {

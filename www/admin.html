@@ -556,7 +556,19 @@
                     const p = await r.json();
                     const name = p.display_name || p.username || 'Admin';
                     document.getElementById('headerDisplayName').textContent = name;
-                    document.getElementById('headerAvatar').innerHTML = p.avatar ? `<img src="${p.avatar}" alt="">` : `<span>${name.charAt(0).toUpperCase()}</span>`;
+                    const avatarEl = document.getElementById('headerAvatar');
+                    if (p.avatar) {
+                        const img = document.createElement('img');
+                        img.src = p.avatar;
+                        img.alt = '';
+                        avatarEl.textContent = '';
+                        avatarEl.appendChild(img);
+                    } else {
+                        const span = document.createElement('span');
+                        span.textContent = name.charAt(0).toUpperCase();
+                        avatarEl.textContent = '';
+                        avatarEl.appendChild(span);
+                    }
                     if (p.theme_preference) applyTheme(p.theme_preference);
                 }
             } catch {}
@@ -571,28 +583,85 @@
                 const tbody = document.getElementById('userTableBody');
 
                 if (!users || users.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4" class="text-muted" style="text-align:center;">No users found</td></tr>';
+                    tbody.textContent = '';
+                    const emptyRow = document.createElement('tr');
+                    const emptyCell = document.createElement('td');
+                    emptyCell.colSpan = 4;
+                    emptyCell.className = 'text-muted';
+                    emptyCell.style.textAlign = 'center';
+                    emptyCell.textContent = 'No users found';
+                    emptyRow.appendChild(emptyCell);
+                    tbody.appendChild(emptyRow);
                     return;
                 }
 
-                tbody.innerHTML = users.map(u => `
-                    <tr>
-                        <td>
-                            <strong>${escapeHtml(u.username)}</strong>
-                            ${u.email ? `<br><span class="text-muted" style="font-size:0.8rem;">${escapeHtml(u.email)}</span>` : ''}
-                        </td>
-                        <td>${u.is_admin ? '<span class="admin-badge">Admin</span>' : 'User'}</td>
-                        <td><span class="badge ${u.is_active !== false ? 'badge-success' : 'badge-danger'}">${u.is_active !== false ? 'Active' : 'Inactive'}</span></td>
-                        <td>
-                            <div class="user-actions">
-                                <button class="btn btn-sm btn-secondary" onclick="showResetPasswordModal('${escapeHtml(u.username)}')">Reset</button>
-                                ${u.username !== 'admin' ? `<button class="btn btn-sm btn-danger" onclick="deleteUser('${escapeHtml(u.username)}')">Delete</button>` : ''}
-                            </div>
-                        </td>
-                    </tr>
-                `).join('');
+                tbody.textContent = '';
+                users.forEach(u => {
+                    const tr = document.createElement('tr');
+                    
+                    const tdName = document.createElement('td');
+                    const strong = document.createElement('strong');
+                    strong.textContent = u.username;
+                    tdName.appendChild(strong);
+                    if (u.email) {
+                        tdName.appendChild(document.createElement('br'));
+                        const emailSpan = document.createElement('span');
+                        emailSpan.className = 'text-muted';
+                        emailSpan.style.fontSize = '0.8rem';
+                        emailSpan.textContent = u.email;
+                        tdName.appendChild(emailSpan);
+                    }
+                    tr.appendChild(tdName);
+                    
+                    const tdRole = document.createElement('td');
+                    if (u.is_admin) {
+                        const badge = document.createElement('span');
+                        badge.className = 'admin-badge';
+                        badge.textContent = 'Admin';
+                        tdRole.appendChild(badge);
+                    } else {
+                        tdRole.textContent = 'User';
+                    }
+                    tr.appendChild(tdRole);
+                    
+                    const tdStatus = document.createElement('td');
+                    const statusBadge = document.createElement('span');
+                    statusBadge.className = 'badge ' + (u.is_active !== false ? 'badge-success' : 'badge-danger');
+                    statusBadge.textContent = u.is_active !== false ? 'Active' : 'Inactive';
+                    tdStatus.appendChild(statusBadge);
+                    tr.appendChild(tdStatus);
+                    
+                    const tdActions = document.createElement('td');
+                    const actionsDiv = document.createElement('div');
+                    actionsDiv.className = 'user-actions';
+                    const resetBtn = document.createElement('button');
+                    resetBtn.className = 'btn btn-sm btn-secondary';
+                    resetBtn.textContent = 'Reset';
+                    resetBtn.addEventListener('click', () => showResetPasswordModal(u.username));
+                    actionsDiv.appendChild(resetBtn);
+                    if (u.username !== 'admin') {
+                        const deleteBtn = document.createElement('button');
+                        deleteBtn.className = 'btn btn-sm btn-danger';
+                        deleteBtn.textContent = 'Delete';
+                        deleteBtn.addEventListener('click', () => deleteUser(u.username));
+                        actionsDiv.appendChild(deleteBtn);
+                    }
+                    tdActions.appendChild(actionsDiv);
+                    tr.appendChild(tdActions);
+                    
+                    tbody.appendChild(tr);
+                });
             } catch {
-                document.getElementById('userTableBody').innerHTML = '<tr><td colspan="4" class="text-muted" style="text-align:center;">Failed to load</td></tr>';
+                const failTbody = document.getElementById('userTableBody');
+                failTbody.textContent = '';
+                const failRow = document.createElement('tr');
+                const failCell = document.createElement('td');
+                failCell.colSpan = 4;
+                failCell.className = 'text-muted';
+                failCell.style.textAlign = 'center';
+                failCell.textContent = 'Failed to load';
+                failRow.appendChild(failCell);
+                failTbody.appendChild(failRow);
             }
         }
 

@@ -1,15 +1,15 @@
-# Server Manager — Comprehensive Technical Wiki
+# Server Manager — Technical Wiki
 
 **Version:** 1.1  
 **Platform:** Windows 10/11, Windows Server 2016+ (Linux support in early development)  
-**Developer:** Skywere Industries  
+**Developer:** Sparks Skywere 
 **Repository:** [https://github.com/SparksSkywere/servermanager](https://github.com/SparksSkywere/servermanager)
 
 ---
 
 ## Table of Contents
 
-- [Server Manager — Comprehensive Technical Wiki](#server-manager--comprehensive-technical-wiki)
+- [Server Manager — Technical Wiki](#server-manager--technical-wiki)
   - [Table of Contents](#table-of-contents)
   - [1. Introduction and Overview](#1-introduction-and-overview)
   - [2. System Requirements](#2-system-requirements)
@@ -130,7 +130,7 @@
 
 ## 1. Introduction and Overview
 
-Server Manager is a comprehensive server management platform developed by Skywere Industries for managing Steam dedicated servers, Minecraft servers, and other game/application servers. It provides both a desktop GUI (built with Tkinter) and a web-based dashboard (built with Flask) for administering servers from a local machine or across a network.
+Server Manager is a server management platform developed by Skywere Industries for managing Steam dedicated servers, Minecraft servers, and other game/application servers. It provides both a desktop GUI (built with Tkinter) and a web-based dashboard (built with Flask) for administering servers from a local machine or across a network.
 
 The application is designed to run on Windows with administrator privileges and offers the following core capabilities:
 
@@ -225,11 +225,12 @@ The Windows installer is a PowerShell script (`install.ps1`) that provides a Win
      - `steam_ID.db` — Steam applications catalogue.
      - `servermanager.db` — Cluster configuration, nodes, tokens, and communication logs.
    - **Admin Account Creation** — A root administrator account is created with customisable credentials (default: `admin` / `admin`).
+   - **HTTPS/HTTP Selection** — You choose whether to use HTTPS (recommended) or HTTP. If HTTPS is selected, a self-signed SSL/TLS certificate is generated automatically using the Python `cryptography` library. Security warnings are displayed if HTTP is chosen.
    - **Cluster Configuration** — You are asked to select the node role:
      - **Host** — This machine will act as the central management server.
      - **Subhost** — This machine will connect to an existing Host. You will need to provide the Host's IP address.
-   - **Registry Keys** — Installation paths, version, and configuration values are written to `HKLM\Software\SkywereIndustries\Servermanager`.
-   - **Firewall Rules** — Windows Firewall rules are automatically created (see [Section 22: Firewall Configuration](#22-firewall-configuration)).
+   - **Registry Keys** — Installation paths, version, SSL settings, and configuration values are written to `HKLM\Software\SkywereIndustries\Servermanager`.
+   - **Firewall Rules** — Windows Firewall rules are automatically created for the web interface, HTTPS (if enabled), cluster API (port 5001), game servers, and Steam query protocol. See [Section 22: Firewall Configuration](#22-firewall-configuration).
 
 **Reinstallation:** If an existing installation is detected in the registry, the installer will prompt you to confirm whether you want to reinstall. Reinstalling will overwrite previous settings.
 
@@ -257,11 +258,13 @@ The Linux installer:
 3. Installs Git if not present.
 4. Clones the repository from GitHub.
 5. Installs Python dependencies from `requirements.txt`.
-6. Creates the directory structure under `$HOME/SteamCMD`.
-7. Initialises SQLite databases (users, steam apps, cluster).
-8. Configures firewall rules using UFW or firewalld.
-9. Creates a `.desktop` file for desktop shortcut integration.
-10. Configures cluster role (Host or Subhost).
+6. Creates the directory structure under `$HOME/SteamCMD` (including `ssl/` for certificates).
+7. Initialises SQLite databases (users, steam apps, cluster including `pending_requests` and `host_status` tables).
+8. Configures cluster role (Host or Subhost) with secure token generation.
+9. Generates SSL/TLS certificates if HTTPS is selected (using Python `cryptography` or `openssl` fallback).
+10. Configures firewall rules using UFW or firewalld (ports 8080, 443, 8081, 5001, 27015-27050).
+11. Creates a `.desktop` file for desktop shortcut integration.
+12. Sets up a systemd user service with SSL environment variables.
 
 ### 3.3 Manual Installation
 
@@ -285,7 +288,7 @@ After installation is complete:
 1. **Start the application.** Run `Start-ServerManager.pyw` to launch Server Manager in desktop mode. The application requires Administrator privileges and will prompt for elevation if not already running as admin.
 2. **Access the system tray icon.** A tray icon will appear in the Windows taskbar notification area. Right-click it to access the menu.
 3. **Open the desktop dashboard.** Right-click the tray icon and select "Open Server Dashboard" to open the Tkinter-based local management GUI.
-4. **Access the web interface.** Open a browser and navigate to `http://localhost:8080` (or `http://<your-IP>:8080` from another machine). Log in with the admin credentials configured during installation (default: `admin` / `admin`).
+4. **Access the web interface.** Open a browser and navigate to `https://localhost:443` (if HTTPS was enabled during installation) or `http://localhost:8080` (HTTP). From another machine, replace `localhost` with your server's IP address. Log in with the admin credentials configured during installation (default: `admin` / `admin`). If using a self-signed certificate, your browser will show a security warning — this is expected and safe to proceed through.
 5. **Populate the Steam database.** Run `update-database.pyw` to download the Steam and Minecraft application ID databases from GitHub. This provides the searchable list of Steam dedicated servers and Minecraft versions when creating new servers.
 
 ---
@@ -336,7 +339,7 @@ Servermanager/                      # Project root
 │   ├── analytics.py                # Real-time analytics and metrics collection
 │   ├── documentation.py            # Help and About dialog boxes
 │   ├── service_wrapper.py          # Windows service wrapper (pywin32)
-│   ├── stop_servermanager.py       # Comprehensive shutdown utility
+│   ├── stop_servermanager.py       # shutdown utility
 │   │
 │   ├── Database/                   # Database modules
 │   │   ├── database_utils.py       # Shared DB connection utilities
@@ -597,7 +600,7 @@ The launcher (`Modules/launcher.py`) is the central process orchestrator. It ext
 
 ### 7.1 Main Dashboard
 
-The main desktop dashboard (`Host/dashboard.py`) is a comprehensive Tkinter-based GUI that provides full server management capabilities. It is approximately 5,200 lines of code and is the primary local management interface.
+The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that provides full server management capabilities. It is approximately 5,200 lines of code and is the primary local management interface.
 
 **Launch:** Right-click the system tray icon and select "Open Server Dashboard", or run `Host/dashboard.py` directly.
 
@@ -618,7 +621,7 @@ The main desktop dashboard (`Host/dashboard.py`) is a comprehensive Tkinter-base
 
 - **Action Buttons Bar** — Quick access buttons for common operations: Start All Servers, Stop All Servers, Restart All Servers, Add Server, Import/Export Configurations, Refresh.
 
-- **Server Configuration Dialog** — A comprehensive editor for each server's settings. Fields include server name, App ID, installation directory, executable path, launch arguments, stop command, MOTD configuration, update schedule, and automation settings.
+- **Server Configuration Dialog** — A editor for each server's settings. Fields include server name, App ID, installation directory, executable path, launch arguments, stop command, MOTD configuration, update schedule, and automation settings.
 
 - **Process Details View** — For a running server, shows detailed process information including PID, CPU usage percentage, memory consumption (RSS/VMS), uptime, number of child processes, open file handles, and network connections.
 
@@ -1391,7 +1394,7 @@ This script:
 
 ### 14.1 Web Security
 
-The `WebSecurityManager` (`Modules/web_security.py`) provides comprehensive web application security through multiple integrated components:
+The `WebSecurityManager` (`Modules/web_security.py`) provides web application security through multiple integrated components:
 
 **Rate Limiting:**
 - The `RateLimiter` class implements sliding window rate limiting.
@@ -1868,7 +1871,7 @@ Each notification type can be individually enabled or disabled through the admin
 
 ### 20.1 Debug Manager
 
-The debug module (`debug/debug.py`, `DebugManager`) provides comprehensive system diagnostics:
+The debug module (`debug/debug.py`, `DebugManager`) provides system diagnostics:
 
 **System Information Collection:**
 - Platform details (OS, version, architecture)
@@ -1891,7 +1894,7 @@ The debug module (`debug/debug.py`, `DebugManager`) provides comprehensive syste
 
 ### 20.2 Diagnostic Reports
 
-The `create_diagnostic_report()` method generates a comprehensive JSON report containing:
+The `create_diagnostic_report()` method generates a JSON report containing:
 
 1. **System Information** — Full hardware and OS details.
 2. **Registry Check** — All Server Manager registry values and their current state.
@@ -1913,7 +1916,7 @@ The Debug Center (`debug/debug_manager.py`, `DebugManagerGUI`) provides a Tkinte
 | System Info | Collects and displays system information | Shows CPU, memory, disk, network, and SM-specific details |
 | Update Info | Shows update status | Displays version information and available updates |
 | View Logs | Opens log directory | Opens the `logs/` directory in Windows Explorer |
-| Full Diagnostics | Runs comprehensive diagnostics | 4-step process with progress bar: system info → installation verification → server check → diagnostic report |
+| Full Diagnostics | Runs diagnostics | 4-step process with progress bar: system info → installation verification → server check → diagnostic report |
 | Debug Mode | Toggles debug logging | Enables or disables DEBUG-level logging across all modules |
 | Close | Closes the Debug Center | Exits the diagnostic GUI |
 
@@ -1963,12 +1966,25 @@ The installer automatically creates the following Windows Firewall rules:
 | `ServerManager_WebInterface_In` | Inbound | TCP | 8080 | Allow access to the web interface |
 | `ServerManager_WebInterface_Out` | Outbound | TCP | 8080 | Allow outbound from web interface |
 
-**Cluster API (Port 8080, Host nodes only):**
+**HTTPS (Port 443, when SSL enabled):**
 
 | Rule Name | Direction | Protocol | Port | Description |
 |---|---|---|---|---|
-| `ServerManager_ClusterAPI_In` | Inbound | TCP | 8080 | Allow cluster API communication |
-| `ServerManager_ClusterAPI_Out` | Outbound | TCP | 8080 | Allow outbound cluster communication |
+| `ServerManager_HTTPS_In` | Inbound | TCP | 443 | Allow HTTPS web interface access |
+| `ServerManager_HTTPS_Out` | Outbound | TCP | 443 | Allow HTTPS outbound |
+
+**HTTP to HTTPS Redirect (Port 8081, when SSL enabled):**
+
+| Rule Name | Direction | Protocol | Port | Description |
+|---|---|---|---|---|
+| `ServerManager_HTTPRedirect_In` | Inbound | TCP | 8081 | Allow HTTP redirect to HTTPS |
+
+**Cluster API (Port 5001):**
+
+| Rule Name | Direction | Protocol | Port | Description |
+|---|---|---|---|---|
+| `ServerManager_ClusterAPI_In` | Inbound | TCP | 5001 | Allow cluster API communication |
+| `ServerManager_ClusterAPI_Out` | Outbound | TCP | 5001 | Allow outbound cluster communication |
 
 **Game Server Ports (TCP, 7777-7800):**
 
@@ -1991,7 +2007,7 @@ The installer automatically creates the following Windows Firewall rules:
 | `ServerManager_SteamQuery_In` | Inbound | UDP | 27015-27030 | Allow Steam server browser queries |
 | `ServerManager_SteamQuery_Out` | Outbound | UDP | 27015-27030 | Allow Steam query outbound |
 
-**Note:** If your game servers use ports outside the 7777-7800 range, you will need to add additional firewall rules manually. Many games use custom port ranges, and the default rules cover only the most common range.
+**Note:** HTTPS and HTTP redirect rules are only created if SSL/HTTPS is enabled during installation. Cluster API rules are created for both Host and Subhost nodes. If your game servers use ports outside the 7777-7800 range, you will need to add additional firewall rules manually.
 
 **Removing Firewall Rules:**
 The uninstaller removes all Server Manager firewall rules. You can also remove them manually:

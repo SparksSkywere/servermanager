@@ -402,7 +402,19 @@
                     const p = await r.json();
                     const name = p.display_name || p.username || 'User';
                     document.getElementById('headerDisplayName').textContent = name;
-                    document.getElementById('headerAvatar').innerHTML = p.avatar ? `<img src="${p.avatar}" alt="">` : `<span>${name.charAt(0).toUpperCase()}</span>`;
+                    const avatarEl = document.getElementById('headerAvatar');
+                    if (p.avatar) {
+                        const img = document.createElement('img');
+                        img.src = p.avatar;
+                        img.alt = '';
+                        avatarEl.textContent = '';
+                        avatarEl.appendChild(img);
+                    } else {
+                        const span = document.createElement('span');
+                        span.textContent = name.charAt(0).toUpperCase();
+                        avatarEl.textContent = '';
+                        avatarEl.appendChild(span);
+                    }
                     if (p.theme_preference) applyTheme(p.theme_preference);
                 }
             } catch {}

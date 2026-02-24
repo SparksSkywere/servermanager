@@ -227,19 +227,25 @@
     </div>
 
     <script>
+        function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+        function setResultHtml(el, html) {
+            el.innerHTML = html;
+        }
+
         async function testServerConnection() {
             const result = document.getElementById('serverResult');
-            result.innerHTML = '<span class="info">Testing...</span>';
+            setResultHtml(result, '<span class="info">Testing...</span>');
 
             try {
                 const response = await fetch('/api/auth/login', { method: 'OPTIONS' });
                 if (response.status === 200 || response.status === 404) {
-                    result.innerHTML = '<span class="success">✓ Server is responding</span>';
+                    setResultHtml(result, '<span class="success">✓ Server is responding</span>');
                 } else {
-                    result.innerHTML = `<span class="warning">⚠ Status ${response.status}</span>`;
+                    setResultHtml(result, `<span class="warning">⚠ Status ${escapeHtml(String(response.status))}</span>`);
                 }
             } catch (error) {
-                result.innerHTML = `<span class="error">✗ Cannot connect: ${error.message}</span>`;
+                setResultHtml(result, `<span class="error">✗ Cannot connect: ${escapeHtml(error.message)}</span>`);
             }
         }
 
@@ -248,7 +254,7 @@
             const username = document.getElementById('testUsername').value;
             const password = document.getElementById('testPassword').value;
 
-            result.innerHTML = '<span class="info">Testing...</span>';
+            setResultHtml(result, '<span class="info">Testing...</span>');
 
             try {
                 const response = await fetch('/api/auth/login', {
@@ -260,17 +266,17 @@
                 const data = await response.json();
 
                 if (response.ok && data.token) {
-                    result.innerHTML = `<span class="success">✓ Authentication successful</span><br><br>
-                        <strong>Username:</strong> ${data.username}<br>
-                        <strong>Admin:</strong> ${data.isAdmin}<br>
-                        <strong>Token:</strong> ${data.token.substring(0, 20)}...`;
+                    setResultHtml(result, `<span class="success">✓ Authentication successful</span><br><br>
+                        <strong>Username:</strong> ${escapeHtml(String(data.username))}<br>
+                        <strong>Admin:</strong> ${escapeHtml(String(data.isAdmin))}<br>
+                        <strong>Token:</strong> ${escapeHtml(data.token.substring(0, 20))}...`);
                 } else {
-                    result.innerHTML = `<span class="error">✗ Authentication failed</span><br><br>
-                        <strong>Status:</strong> ${response.status}<br>
-                        <strong>Error:</strong> ${data.error || 'Unknown'}`;
+                    setResultHtml(result, `<span class="error">✗ Authentication failed</span><br><br>
+                        <strong>Status:</strong> ${escapeHtml(String(response.status))}<br>
+                        <strong>Error:</strong> ${escapeHtml(String(data.error || 'Unknown'))}`);
                 }
             } catch (error) {
-                result.innerHTML = `<span class="error">✗ Error: ${error.message}</span>`;
+                setResultHtml(result, `<span class="error">✗ Error: ${escapeHtml(error.message)}</span>`);
             }
         }
 
@@ -281,12 +287,12 @@
             const isAdmin = sessionStorage.getItem('isAdmin');
 
             if (token || username) {
-                result.innerHTML = `<span class="success">✓ Session data found</span><br><br>
-                    <strong>Token:</strong> ${token ? token.substring(0, 20) + '...' : 'Not set'}<br>
-                    <strong>Username:</strong> ${username || 'Not set'}<br>
-                    <strong>Is Admin:</strong> ${isAdmin || 'Not set'}`;
+                setResultHtml(result, `<span class="success">✓ Session data found</span><br><br>
+                    <strong>Token:</strong> ${token ? escapeHtml(token.substring(0, 20)) + '...' : 'Not set'}<br>
+                    <strong>Username:</strong> ${escapeHtml(username || 'Not set')}<br>
+                    <strong>Is Admin:</strong> ${escapeHtml(isAdmin || 'Not set')}`);
             } else {
-                result.innerHTML = '<span class="warning">⚠ No session data. Please log in first.</span>';
+                setResultHtml(result, '<span class="warning">⚠ No session data. Please log in first.</span>');
             }
         }
 
@@ -295,11 +301,11 @@
             const token = sessionStorage.getItem('auth_token');
 
             if (!token) {
-                result.innerHTML = '<span class="error">✗ No token. Log in first.</span>';
+                setResultHtml(result, '<span class="error">✗ No token. Log in first.</span>');
                 return;
             }
 
-            result.innerHTML = '<span class="info">Testing...</span>';
+            setResultHtml(result, '<span class="info">Testing...</span>');
 
             try {
                 const response = await fetch('/api/auth/verify', {
@@ -309,17 +315,17 @@
                 const data = await response.json();
 
                 if (response.ok && data.authenticated) {
-                    result.innerHTML = `<span class="success">✓ API working</span><br><br>
-                        <strong>Authenticated:</strong> ${data.authenticated}<br>
-                        <strong>Username:</strong> ${data.username}<br>
-                        <strong>Admin:</strong> ${data.isAdmin}`;
+                    setResultHtml(result, `<span class="success">✓ API working</span><br><br>
+                        <strong>Authenticated:</strong> ${escapeHtml(String(data.authenticated))}<br>
+                        <strong>Username:</strong> ${escapeHtml(String(data.username))}<br>
+                        <strong>Admin:</strong> ${escapeHtml(String(data.isAdmin))}`);
                 } else {
-                    result.innerHTML = `<span class="error">✗ API failed</span><br><br>
-                        <strong>Status:</strong> ${response.status}<br>
-                        <strong>Error:</strong> ${data.error || 'Unknown'}`;
+                    setResultHtml(result, `<span class="error">✗ API failed</span><br><br>
+                        <strong>Status:</strong> ${escapeHtml(String(response.status))}<br>
+                        <strong>Error:</strong> ${escapeHtml(String(data.error || 'Unknown'))}`);
                 }
             } catch (error) {
-                result.innerHTML = `<span class="error">✗ Error: ${error.message}</span>`;
+                setResultHtml(result, `<span class="error">✗ Error: ${escapeHtml(error.message)}</span>`);
             }
         }
 

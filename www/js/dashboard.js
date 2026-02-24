@@ -396,12 +396,20 @@ export class Dashboard {
             { time: new Date(Date.now() - 30 * 60000), message: 'Server "Test Server" stopped', type: 'warning' }
         ];
         
-        activityLog.innerHTML = activities.map(activity => `
-            <div class="log-entry ${activity.type}">
-                <span class="timestamp">${activity.time.toLocaleTimeString()}</span>
-                <span class="message">${activity.message}</span>
-            </div>
-        `).join('');
+        activityLog.textContent = '';
+        activities.forEach(activity => {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry ' + activity.type;
+            const timestamp = document.createElement('span');
+            timestamp.className = 'timestamp';
+            timestamp.textContent = activity.time.toLocaleTimeString();
+            const message = document.createElement('span');
+            message.className = 'message';
+            message.textContent = activity.message;
+            entry.appendChild(timestamp);
+            entry.appendChild(message);
+            activityLog.appendChild(entry);
+        });
     }
     
     filterServers() {

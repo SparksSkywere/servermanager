@@ -122,26 +122,28 @@ class ServerUpdateManager(ServerManagerModule):
             if not credentials:
                 credentials = {"anonymous": True}
             
-            # Build SteamCMD command for update check
-            login_cmd = "+login anonymous" if credentials.get("anonymous", True) else f"+login \"{credentials['username']}\" \"{credentials['password']}\""
+            # Build SteamCMD command for update check (as a proper arg list to avoid shell injection)
+            if credentials.get("anonymous", True):
+                login_args = ["+login", "anonymous"]
+            else:
+                login_args = ["+login", credentials['username'], credentials['password']]
             
             steam_cmd_args = [
                 steam_cmd_exe,
-                login_cmd,
-                f"+app_info_update 1",
-                f"+app_info_print {app_id}",
+                *login_args,
+                "+app_info_update", "1",
+                "+app_info_print", str(app_id),
                 "+quit"
             ]
             
             if progress_callback:
-                progress_callback(f"[INFO] Running update check: {' '.join(steam_cmd_args[:2])} +app_info_update +app_info_print {app_id} +quit")
+                progress_callback(f"[INFO] Running update check: {steam_cmd_exe} +login ... +app_info_update +app_info_print {app_id} +quit")
             
-            # Execute SteamCMD
+            # Execute SteamCMD (shell=False to prevent shell injection)
             process = subprocess.Popen(
-                " ".join(steam_cmd_args),
+                steam_cmd_args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                shell=True,
                 text=True,
                 encoding='utf-8',
                 errors='replace',

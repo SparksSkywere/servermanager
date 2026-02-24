@@ -1519,15 +1519,27 @@
         // Update activity log display
         function updateActivityLog() {
             const container = document.getElementById('activityList');
-            container.innerHTML = activityLog.map(entry => `
-                <div class="activity-item">
-                    <div class="activity-icon">${entry.icon}</div>
-                    <div class="activity-content">
-                        <div class="activity-message">${entry.message}</div>
-                        <div class="activity-time">${entry.time}</div>
-                    </div>
-                </div>
-            `).join('');
+            container.textContent = '';
+            activityLog.forEach(entry => {
+                const item = document.createElement('div');
+                item.className = 'activity-item';
+                const iconDiv = document.createElement('div');
+                iconDiv.className = 'activity-icon';
+                iconDiv.textContent = entry.icon;
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'activity-content';
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'activity-message';
+                msgDiv.textContent = entry.message;
+                const timeDiv = document.createElement('div');
+                timeDiv.className = 'activity-time';
+                timeDiv.textContent = entry.time;
+                contentDiv.appendChild(msgDiv);
+                contentDiv.appendChild(timeDiv);
+                item.appendChild(iconDiv);
+                item.appendChild(contentDiv);
+                container.appendChild(item);
+            });
         }
 
         // Apply theme
@@ -1644,10 +1656,16 @@
             // Update avatars
             ['headerAvatar', 'dropdownAvatar', 'profileAvatar'].forEach(id => {
                 const el = document.getElementById(id);
+                el.textContent = '';
                 if (userProfile.avatar) {
-                    el.innerHTML = `<img src="${userProfile.avatar}" alt="Avatar">`;
+                    const img = document.createElement('img');
+                    img.src = userProfile.avatar;
+                    img.alt = 'Avatar';
+                    el.appendChild(img);
                 } else {
-                    el.innerHTML = `<span>${initial}</span>`;
+                    const span = document.createElement('span');
+                    span.textContent = initial;
+                    el.appendChild(span);
                 }
             });
         }
@@ -1842,8 +1860,13 @@
                 addActivityLog(`Refreshed server list (${servers.length} servers)`, '🔄');
             } catch (e) {
                 console.error('Error fetching servers:', e);
-                document.getElementById('serverList').innerHTML = 
-                    '<div class="empty-state"><p>Failed to load servers</p></div>';
+                document.getElementById('serverList').textContent = '';
+                const emptyState = document.createElement('div');
+                emptyState.className = 'empty-state';
+                const emptyP = document.createElement('p');
+                emptyP.textContent = 'Failed to load servers';
+                emptyState.appendChild(emptyP);
+                document.getElementById('serverList').appendChild(emptyState);
             }
         }
 
@@ -2050,7 +2073,12 @@
             sendBtn.disabled = false;
             
             // Clear console and do initial load
-            document.getElementById('consoleOutput').innerHTML = '<div style="color: #4ecdc4;">Loading console output...</div>';
+            const consoleOut = document.getElementById('consoleOutput');
+            consoleOut.textContent = '';
+            const loadingDiv = document.createElement('div');
+            loadingDiv.style.color = '#4ecdc4';
+            loadingDiv.textContent = 'Loading console output...';
+            consoleOut.appendChild(loadingDiv);
             
             loadConsoleOutput();
             consoleInterval = setInterval(loadConsoleOutput, 2000);

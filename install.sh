@@ -865,6 +865,15 @@ import sys
 host = '$HOST_ADDRESS'
 subhost_id = '$SUBHOST_ID'
 local_ip = '$local_ip'
+ssl_enabled = '$SSL_ENABLED'
+
+# Use HTTPS when SSL is enabled, HTTP as fallback
+if ssl_enabled.lower() == 'true':
+    protocol = 'https'
+    port = 443
+else:
+    protocol = 'http'
+    port = 8080
 
 request_data = {
     "subhost_id": subhost_id,
@@ -878,7 +887,7 @@ request_data = {
 
 try:
     # First check if host is available
-    status_url = f"http://{host}:8080/api/cluster/status"
+    status_url = f"{protocol}://{host}:{port}/api/cluster/status"
     try:
         status_req = urllib.request.Request(status_url, method='GET')
         status_resp = urllib.request.urlopen(status_req, timeout=10)
@@ -888,7 +897,7 @@ try:
         print(f"WARNING: Could not check host status: {e}", file=sys.stderr)
     
     # Send join request
-    url = f"http://{host}:8080/api/cluster/request-join"
+    url = f"{protocol}://{host}:{port}/api/cluster/request-join"
     data = json.dumps(request_data).encode('utf-8')
     req = urllib.request.Request(url, data=data, method='POST')
     req.add_header('Content-Type', 'application/json')
