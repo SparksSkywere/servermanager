@@ -4,7 +4,7 @@
 
 A server management platform for Steam dedicated servers, Minecraft servers, and other game/application servers. Provides a desktop GUI and web-based dashboard for managing servers locally or across a network.
 
-**Version:** 1.1 | **Developer:** Sparks Skywere
+**Version:** 1.2 | **Developer:** Sparks Skywere
 
 -> For full technical documentation, see [WIKI.md](WIKI.md).
 
@@ -104,6 +104,8 @@ Full uninstall. See [WIKI.md -> 23](WIKI.md#23-uninstallation).
 ---
 
 ## Notes
+
+VSCode Github AI has been used in the making of this product
 
 No .ENV file is used for Windows as you should be setting it all up with the registry (I will be making one for Linux at somepoint so this is just stand-in text.)
 

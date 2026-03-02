@@ -24,7 +24,6 @@ def _sanitise_name(server_name: str) -> str:
     # Filesystem-safe name
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in server_name)
 
-
 def get_queue_file(server_name: str) -> Path:
     # Queue file path for server
     return _get_queue_dir() / f"{_sanitise_name(server_name)}_commands.txt"
@@ -202,7 +201,6 @@ def queue_command(server_name: str, command: str) -> Tuple[bool, str]:
         logger.error(f"Error queueing command: {e}")
         return False, str(e)
 
-
 def is_relay_active(server_name: str) -> bool:
     # Check if a command relay is active for the server
     info_file = get_relay_info_file(server_name)
@@ -253,16 +251,3 @@ def start_command_relay(server_name: str, process: subprocess.Popen) -> Optional
         _active_relays[server_name] = relay
     
     return relay
-
-def stop_command_relay(server_name: str):
-    # Stop the command relay for a server
-    with _relays_lock:
-        relay = _active_relays.pop(server_name, None)
-    
-    if relay:
-        relay.stop()
-
-def get_active_relay(server_name: str) -> Optional[CommandQueueRelay]:
-    # Get the active relay for a server, if any
-    with _relays_lock:
-        return _active_relays.get(server_name)

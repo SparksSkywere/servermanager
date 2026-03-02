@@ -17,7 +17,6 @@ from Modules.minecraft import (
     get_minecraft_java_requirement
 )
 
-
 def list_java_installations():
     # List detected Java installs
     print("Detected Java Installations:")
@@ -34,7 +33,6 @@ def list_java_installations():
         print(f"   Path: {java['path']}")
         print(f"   Version: {java['version']}")
         print()
-
 
 def list_servers():
     # List configured servers from database
@@ -55,7 +53,6 @@ def list_servers():
     except Exception as e:
         print(f"Server list error: {e}")
         return []
-
 
 def check_server_java_compatibility(server_config):
     # Check Java compatibility for a server
@@ -83,7 +80,6 @@ def check_server_java_compatibility(server_config):
                 print("No suitable Java installation found.")
     
     print("-" * 50)
-
 
 def configure_server_java(server_name, java_path=None):
     # Configure Java for a specific server using database
@@ -141,7 +137,6 @@ def configure_server_java(server_name, java_path=None):
     except Exception as e:
         print(f"Error configuring server: {e}")
         return False
-
 
 def main():
     parser = argparse.ArgumentParser(description="Java Configuration Utility for Server Manager")
@@ -208,16 +203,6 @@ def main():
     
     else:
         parser.print_help()
-
-
-class JavaConfigurator:
-    # Java Configuration class for server management dashboard
-    
-    @staticmethod
-    def detect_java_installations():
-        # Detect all available Java installations on the system
-        return detect_java_installations()
-
 
 if __name__ == "__main__":
     main()

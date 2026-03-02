@@ -20,7 +20,6 @@ logger: logging.Logger = get_component_logger("ClusterDatabase")
 _cluster_db_instance = None
 _cluster_db_lock = threading.Lock()
 
-
 def get_cluster_database(db_path: Optional[str] = None) -> 'ClusterDatabase':
     # Singleton ClusterDatabase access
     global _cluster_db_instance
@@ -28,7 +27,6 @@ def get_cluster_database(db_path: Optional[str] = None) -> 'ClusterDatabase':
         if _cluster_db_instance is None:
             _cluster_db_instance = ClusterDatabase(db_path, _singleton=True)
         return _cluster_db_instance
-
 
 class ClusterDatabase:
     # DB manager for cluster info
@@ -52,6 +50,19 @@ class ClusterDatabase:
         logger.debug(f"ClusterDatabase initialised with path: {self.db_path}")
         self.init_database()
     
+    @staticmethod
+    def _flatten_config(data, prefix=''):
+        # Recursively flatten nested config dict into (key, value, type, category) tuples
+        items = []
+        for key, value in data.items():
+            full_key = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, dict):
+                items.extend(ClusterDatabase._flatten_config(value, full_key))
+            else:
+                config_type = 'boolean' if isinstance(value, bool) else 'integer' if isinstance(value, int) else 'string'
+                items.append((full_key, value, config_type, 'migrated'))
+        return items
+
     def init_database(self):
         # Initialise comprehensive cluster database schema with all required tables
         try:
@@ -419,113 +430,6 @@ class ClusterDatabase:
             logger.error(f"Failed to update node status for {name}: {e}")
             return False
     
-    def add_cluster_token(self, token_hash: str, node_name: Optional[str] = None, 
-                         node_ip: Optional[str] = None, expires_at: Optional[datetime] = None) -> bool:
-        # Add a cluster authentication token
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO cluster_tokens 
-                    (token_hash, node_name, node_ip, expires_at)
-                    VALUES (?, ?, ?, ?)
-                ''', (token_hash, node_name, node_ip, 
-                      expires_at.isoformat() if expires_at else None))
-                
-                conn.commit()
-                logger.info(f"Added cluster token for node: {node_name}")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Failed to add cluster token: {e}")
-            return False
-    
-    def revoke_cluster_token(self, token_hash: str) -> bool:
-        # Revoke a cluster token
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    UPDATE cluster_tokens 
-                    SET revoked = 1 
-                    WHERE token_hash = ?
-                ''', (token_hash,))
-                
-                if cursor.rowcount > 0:
-                    conn.commit()
-                    logger.info("Cluster token revoked")
-                    return True
-                return False
-                
-        except Exception as e:
-            logger.error(f"Failed to revoke cluster token: {e}")
-            return False
-    
-    def validate_cluster_token(self, token_hash: str) -> bool:
-        # Validate cluster token - checks if active and not expired
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT id FROM cluster_tokens 
-                    WHERE token_hash = ? AND revoked = 0 
-                    AND (expires_at IS NULL OR expires_at > ?)
-                ''', (token_hash, datetime.now().isoformat()))
-                
-                return cursor.fetchone() is not None
-                
-        except Exception as e:
-            logger.error(f"Failed to validate cluster token: {e}")
-            return False
-    
-    def log_cluster_communication(self, source_ip: str, target_ip: Optional[str] = None, 
-                                 action: str = '', status: str = 'success', 
-                                 message: Optional[str] = None) -> bool:
-        # Log cluster communication events
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO cluster_communication_log 
-                    (source_ip, target_ip, action, status, message)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (source_ip, target_ip, action, status, message))
-                
-                conn.commit()
-                return True
-                
-        except Exception as e:
-            logger.error(f"Failed to log cluster communication: {e}")
-            return False
-    
-    def get_cluster_communication_log(self, limit: int = 100) -> List[Dict]:
-        # Get recent cluster communication log entries
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT source_ip, target_ip, action, status, message, timestamp
-                    FROM cluster_communication_log 
-                    ORDER BY timestamp DESC LIMIT ?
-                ''', (limit,))
-                
-                logs = []
-                for row in cursor.fetchall():
-                    logs.append({
-                        'source_ip': row[0],
-                        'target_ip': row[1],
-                        'action': row[2],
-                        'status': row[3],
-                        'message': row[4],
-                        'timestamp': row[5]
-                    })
-                
-                return logs
-                
-        except Exception as e:
-            logger.error(f"Failed to get cluster communication log: {e}")
-            return []
-    
     def migrate_from_json(self, json_file_path: str) -> bool:
         # Migrate legacy JSON cluster data to SQLite database with backup
         try:
@@ -558,34 +462,7 @@ class ClusterDatabase:
             logger.error(f"Failed to migrate from JSON: {e}")
             return False
     
-    def cleanup_old_tokens(self, days: int = 30) -> bool:
-        # Clean up expired and old revoked tokens
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                # Calculate cutoff date for cleanup
-                cutoff_date = datetime.now()
-                cutoff_date = cutoff_date.replace(day=cutoff_date.day - days)
-                
-                cursor.execute('''
-                    DELETE FROM cluster_tokens 
-                    WHERE (revoked = 1 AND created_at < ?) 
-                    OR (expires_at IS NOT NULL AND expires_at < ?)
-                ''', (cutoff_date.isoformat(), datetime.now().isoformat()))
-                
-                deleted_count = cursor.rowcount
-                conn.commit()
-                
-                if deleted_count > 0:
-                    logger.info(f"Cleaned up {deleted_count} old cluster tokens")
-                
-                return True
-                
-        except Exception as e:
-            logger.error(f"Failed to cleanup old tokens: {e}")
-            return False
-    
-    # === Pending Request Management ===
+    # Pending Request Management
     
     def add_pending_request(self, node_name: str, ip_address: str, port: int = 8080, 
                            machine_name: Optional[str] = None, os_info: Optional[str] = None,
@@ -720,32 +597,7 @@ class ClusterDatabase:
             logger.error(f"Failed to get request {request_id}: {e}")
             return None
     
-    def cleanup_old_requests(self, days: int = 7) -> bool:
-        # Clean up old approved/rejected requests
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cutoff_date = datetime.now()
-                cutoff_date = cutoff_date.replace(day=cutoff_date.day - days)
-                
-                cursor.execute('''
-                    DELETE FROM pending_requests 
-                    WHERE status IN ('approved', 'rejected') AND approved_at < ?
-                ''', (cutoff_date.isoformat(),))
-                
-                deleted_count = cursor.rowcount
-                conn.commit()
-                
-                if deleted_count > 0:
-                    logger.info(f"Cleaned up {deleted_count} old cluster requests")
-                
-                return True
-                
-        except Exception as e:
-            logger.error(f"Failed to cleanup old requests: {e}")
-            return False
-    
-    # === Host Status Management ===
+    # Host Status Management
     
     def update_host_status(self, status: str = 'online', dashboard_active: bool = True, 
                           maintenance_mode: bool = False, status_message: Optional[str] = None) -> bool:
@@ -907,26 +759,7 @@ class ClusterDatabase:
             logger.error(f"Failed to delete category '{name}': {e}")
             return False
     
-    def reorder_categories(self, category_order: List[str]) -> bool:
-        # Update display order for all categories
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                for i, category_name in enumerate(category_order):
-                    cursor.execute('''
-                        UPDATE server_categories 
-                        SET display_order = ?, updated_at = ?
-                        WHERE name = ?
-                    ''', (i, datetime.now().isoformat(), category_name))
-                conn.commit()
-                logger.info(f"Reordered categories: {category_order}")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Failed to reorder categories: {e}")
-            return False
-    
-    # ===== CONFIGURATION MANAGEMENT METHODS =====
+    # CONFIGURATION MANAGEMENT METHODS
     
     def get_dashboard_config(self) -> Dict:
         # Get all dashboard configuration settings
@@ -1001,19 +834,7 @@ class ClusterDatabase:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
-                # Flatten nested config structure
-                def flatten_config(data, prefix=''):
-                    items = []
-                    for key, value in data.items():
-                        full_key = f"{prefix}.{key}" if prefix else key
-                        if isinstance(value, dict):
-                            items.extend(flatten_config(value, full_key))
-                        else:
-                            config_type = 'boolean' if isinstance(value, bool) else 'integer' if isinstance(value, int) else 'string'
-                            items.append((full_key, value, config_type, 'migrated'))
-                    return items
-                
-                config_items = flatten_config(config_data)
+                config_items = self._flatten_config(config_data)
                 
                 for key, value, config_type, category in config_items:
                     if config_type == 'boolean':
@@ -1187,19 +1008,7 @@ class ClusterDatabase:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
-                # Flatten nested config structure
-                def flatten_config(data, prefix=''):
-                    items = []
-                    for key, value in data.items():
-                        full_key = f"{prefix}.{key}" if prefix else key
-                        if isinstance(value, dict):
-                            items.extend(flatten_config(value, full_key))
-                        else:
-                            config_type = 'boolean' if isinstance(value, bool) else 'integer' if isinstance(value, int) else 'string'
-                            items.append((full_key, value, config_type, 'migrated'))
-                    return items
-                
-                config_items = flatten_config(config_data)
+                config_items = self._flatten_config(config_data)
                 
                 for key, value, config_type, category in config_items:
                     if config_type == 'boolean':
@@ -1224,7 +1033,6 @@ class ClusterDatabase:
     # Steam credentials management methods
     def _encrypt_password(self, password: str) -> str:
         # Simple XOR encryption with machine-specific key for password storage
-        # This provides basic obfuscation - for production, consider using keyring
         import base64
         import hashlib
         import socket
@@ -1318,7 +1126,7 @@ class ClusterDatabase:
                         'password': self._decrypt_password(row[1]) if row[1] else "",
                         'steam_guard_secret': row[2] or "",
                         'use_anonymous': bool(row[3]),
-                        'anonymous': bool(row[3]),  # Alias for compatibility
+                        'anonymous': bool(row[3]),
                         'last_used': row[4]
                     }
                 return None
@@ -1326,31 +1134,6 @@ class ClusterDatabase:
         except Exception as e:
             logger.error(f"Failed to get Steam credentials: {e}")
             return None
-    
-    def get_all_steam_profiles(self) -> List[Dict]:
-        # Get all Steam credential profiles
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT profile_name, username, use_anonymous, is_default, last_used
-                    FROM steam_credentials ORDER BY is_default DESC, last_used DESC
-                ''')
-                
-                profiles = []
-                for row in cursor.fetchall():
-                    profiles.append({
-                        'profile_name': row[0],
-                        'username': row[1] or "Anonymous",
-                        'use_anonymous': bool(row[2]),
-                        'is_default': bool(row[3]),
-                        'last_used': row[4]
-                    })
-                return profiles
-                
-        except Exception as e:
-            logger.error(f"Failed to get Steam profiles: {e}")
-            return []
     
     def delete_steam_credentials(self, profile_name: str = "default") -> bool:
         # Delete Steam credentials profile
@@ -1364,16 +1147,4 @@ class ClusterDatabase:
                 
         except Exception as e:
             logger.error(f"Failed to delete Steam credentials: {e}")
-            return False
-    
-    def has_steam_credentials(self) -> bool:
-        # Check if any Steam credentials are stored
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT COUNT(*) FROM steam_credentials')
-                count = cursor.fetchone()[0]
-                return count > 0
-        except Exception as e:
-            logger.error(f"Failed to check Steam credentials: {e}")
             return False

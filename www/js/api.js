@@ -1,5 +1,3 @@
-import CONFIG from './config.js';
-
 /**
  * API client for Server Manager
  */

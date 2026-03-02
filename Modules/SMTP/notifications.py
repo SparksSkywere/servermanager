@@ -222,110 +222,6 @@ class NotificationManager:
 
         return self.send_notification('welcome', user.email, **kwargs)
 
-    def send_password_reset_email(self, user, temp_password):
-        # Send password reset email
-        if not self.automated_notifications.get('password_reset_email', True):
-            return True
-
-        kwargs = {
-            'username': user.username,
-            'temp_password': temp_password
-        }
-
-        return self.send_notification('password_reset', user.email, **kwargs)
-
-    def send_account_locked_email(self, user):
-        # Send account locked notification
-        if not self.automated_notifications.get('account_locked_email', True):
-            return True
-
-        kwargs = {
-            'username': user.username
-        }
-
-        return self.send_notification('account_locked', user.email, **kwargs)
-
-    def send_server_alert(self, server_name, status, message, recipients=None):
-        # Send server alert to administrators or specified recipients
-        if not self.automated_notifications.get('server_alerts_email', True):
-            return True
-
-        if recipients is None:
-            # Get admin users from database
-            try:
-                from Modules.Database.user_database import get_user_engine
-                from Modules.user_management import UserManager
-
-                engine = get_user_engine()
-                user_manager = UserManager(engine)
-                users = user_manager.list_users()
-
-                recipients = []
-                for user in users:
-                    email = getattr(user, 'email', None)
-                    if email and str(email).strip():
-                        if self.automated_notifications.get('admin_only_alerts', False):
-                            if getattr(user, 'is_admin', False):
-                                recipients.append(email)
-                        else:
-                            recipients.append(email)
-
-            except Exception as e:
-                logger.error(f"Failed to get recipients for server alert: {e}")
-                return False
-
-        kwargs = {
-            'server_name': server_name,
-            'status': status,
-            'message': message,
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-
-        success = True
-        for email in recipients:
-            if not self.send_notification('server_alert', email, **kwargs):
-                success = False
-
-        return success
-
-    def send_maintenance_notification(self, start_time, end_time, duration, recipients=None):
-        # Send maintenance notification
-        if not self.automated_notifications.get('maintenance_email', True):
-            return True
-
-        if recipients is None:
-            # Get all users from database
-            try:
-                from Modules.Database.user_database import get_user_engine
-                from Modules.user_management import UserManager
-
-                engine = get_user_engine()
-                user_manager = UserManager(engine)
-                users = user_manager.list_users()
-                recipients = []
-                for user in users:
-                    email = getattr(user, 'email', None)
-                    if email and str(email).strip():
-                        recipients.append(email)
-
-            except Exception as e:
-                logger.error(f"Failed to get recipients for maintenance notification: {e}")
-                return False
-
-        success = True
-        for email in recipients:
-            kwargs = {
-                'username': email.split('@')[0],  # Use part before @ as username
-                'start_time': start_time,
-                'end_time': end_time,
-                'duration': duration
-            }
-
-            if not self.send_notification('maintenance', email, **kwargs):
-                success = False
-
-        return success
-
     def send_custom_notification(self, recipient_email, subject, message):
         # Send custom notification
         kwargs = {
@@ -338,11 +234,6 @@ class NotificationManager:
     def get_automated_settings(self):
         # Get current automated notification settings
         return self.automated_notifications.copy()
-
-    def is_notification_enabled(self, notification_type):
-        # Check if a specific notification type is enabled
-        return self.automated_notifications.get(notification_type, True)
-
 
 # Global notification manager instance
 notification_manager = NotificationManager()

@@ -8,11 +8,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 import json
 import time
-import webbrowser
 import http.server
-import socketserver
-from urllib.parse import parse_qs, urlparse
-import threading
 
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -213,123 +209,6 @@ class MailServer:
         except Exception as e:
             logger.error(f"Failed to save mail config: {e}")
             return False
-
-    def setup_oauth(self, client_id, client_secret, tenant_id=''):
-        # Setup OAuth configuration for Microsoft authentication
-        if not OAUTH_AVAILABLE:
-            return False, "OAuth libraries not available"
-
-        self.config['use_oauth'] = True
-        self.config['client_id'] = client_id
-        self.config['client_secret'] = client_secret
-        self.config['tenant_id'] = tenant_id
-
-        # Setup MSAL app - only if msal is available
-        if msal:
-            authority = f"https://login.microsoftonline.com/{tenant_id}" if tenant_id else self.MICROSOFT_OAUTH_CONFIG['authority']
-            self.msal_app = msal.ConfidentialClientApplication(
-            client_id=client_id,
-            client_credential=client_secret,
-            authority=authority
-        )
-
-        logger.info("OAuth configuration setup completed")
-        return True, "OAuth setup successful"
-
-    def perform_oauth_login(self):
-        # Perform interactive OAuth login for Microsoft authentication
-        if not OAUTH_AVAILABLE or not self.msal_app:
-            return False, "OAuth not configured"
-
-        try:
-            # Generate authorisation URL
-            auth_url = self.msal_app.get_authorization_request_url(
-                scopes=self.MICROSOFT_OAUTH_CONFIG['scope'],
-                redirect_uri=self.MICROSOFT_OAUTH_CONFIG['redirect_uri']
-            )
-
-            print(f"Please visit this URL to authenticate: {auth_url}")
-            webbrowser.open(auth_url)
-
-            # Start local server to receive callback
-            auth_code = self._start_oauth_callback_server()
-
-            if not auth_code:
-                return False, "Authentication cancelled or failed"
-
-            # Exchange code for token
-            result = self.msal_app.acquire_token_by_authorization_code(
-                code=auth_code,
-                scopes=self.MICROSOFT_OAUTH_CONFIG['scope'],
-                redirect_uri=self.MICROSOFT_OAUTH_CONFIG['redirect_uri']
-            )
-
-            if result and isinstance(result, dict) and 'access_token' in result:
-                self.oauth_token = result
-                expires_in_raw = result.get('expires_in')
-                if expires_in_raw is not None:
-                    if isinstance(expires_in_raw, str):
-                        try:
-                            expires_in = int(expires_in_raw)
-                        except (ValueError, TypeError):
-                            expires_in = 3600
-                    elif isinstance(expires_in_raw, (int, float)):
-                        expires_in = float(expires_in_raw)
-                    else:
-                        expires_in = 3600
-                else:
-                    expires_in = 3600
-                self.token_expires_at = time.time() + expires_in
-                self._save_oauth_token()
-                logger.info("OAuth authentication successful")
-                return True, "Authentication successful"
-            else:
-                if isinstance(result, dict):
-                    error = result.get('error_description', 'Unknown error')
-                else:
-                    error = 'Authentication failed'
-                logger.error(f"OAuth authentication failed: {error}")
-                return False, f"Authentication failed: {error}"
-
-        except Exception as e:
-            logger.error(f"OAuth login failed: {e}")
-            return False, str(e)
-
-    def _start_oauth_callback_server(self, port=8080):
-        # Start local server to receive OAuth callback
-        auth_code = []
-
-        class OAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(200)
-                self.send_header('Content-type', 'text/html')
-                self.end_headers()
-
-                query = urlparse(self.path).query
-                params = parse_qs(query)
-
-                if 'code' in params:
-                    auth_code.append(params['code'][0])
-                    self.wfile.write(b'<html><body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>')
-                else:
-                    self.wfile.write(b'<html><body><h1>Authentication failed!</h1><p>No authorization code received.</p></body></html>')
-
-                # Signal to stop server
-                threading.Thread(target=self.server.shutdown).start()
-
-            def log_message(self, format, *args):
-                # Suppress server logs
-                pass
-
-        try:
-            with socketserver.TCPServer(("", port), OAuthCallbackHandler) as httpd:
-                print(f"Waiting for authentication callback on {get_base_url(port=port)}/callback...")
-                httpd.timeout = 300  # 5 minute timeout
-                httpd.serve_forever()
-        except Exception as e:
-            logger.error(f"Callback server error: {e}")
-
-        return auth_code[0] if auth_code else None
 
     def _save_oauth_token(self):
         # Save OAuth token to registry
@@ -594,61 +473,6 @@ class MailServer:
         except Exception as e:
             return False, f"Connection test failed: {str(e)}"
 
-    def get_oauth_setup_instructions(self):
-        # Get instructions for setting up Microsoft OAuth
-        instructions = """
-Microsoft OAuth Setup Instructions for Server Manager:
-
-1. Go to Azure Portal: https://portal.azure.com
-2. Navigate to 'Azure Active Directory' > 'App registrations'
-3. Click 'New registration'
-4. Enter a name (e.g., 'Server Manager Mail')
-5. Select 'Accounts in this organizational directory only' or 'Accounts in any organizational directory'
-6. For redirect URI, add: {get_base_url()}/callback
-7. Click 'Register'
-
-8. In the app registration:
-   - Go to 'Certificates & secrets'
-   - Click 'New client secret'
-   - Copy the secret value (you won't see it again!)
-
-9. Go to 'API permissions'
-   - Click 'Add a permission'
-   - Select 'Microsoft Graph'
-   - Add these delegated permissions:
-     * Mail.Send
-     * Mail.ReadWrite
-
-10. Copy the following values:
-    - Application (client) ID
-    - Client secret
-    - Directory (tenant) ID (from Overview page)
-
-11. Configure in Server Manager:
-    - Provider: office365
-    - Client ID: [paste Application ID]
-    - Client Secret: [paste Client secret]
-    - Tenant ID: [paste Directory ID]
-    - From Email: [your Office 365 email address]
-
-12. Click 'Setup OAuth' and follow the authentication flow.
-
-Note: For security, the app should be configured to require admin consent for the Mail permissions.
-        """
-        return instructions
-
-    def is_oauth_configured(self):
-        # Check if OAuth is properly configured
-        if not OAUTH_AVAILABLE:
-            return False
-
-        required_fields = ['client_id', 'client_secret', 'tenant_id']
-        for field in required_fields:
-            if not self.config.get(field):
-                return False
-
-        return self.msal_app is not None
-
     def get_provider_config(self, provider):
         # Get predefined configuration for a provider
         return self.SMTP_CONFIGS.get(provider, self.SMTP_CONFIGS['custom']).copy()
@@ -660,7 +484,6 @@ Note: For security, the app should be configured to require admin consent for th
     def __del__(self):
         # Cleanup on destruction
         self.disconnect()
-
 
 # Global mail server instance
 mail_server = MailServer()

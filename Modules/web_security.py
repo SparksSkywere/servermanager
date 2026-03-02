@@ -3,7 +3,6 @@ import os
 import sys
 import re
 import time
-import hashlib
 import secrets
 import threading
 import ipaddress
@@ -19,10 +18,7 @@ setup_module_path()
 
 logger: logging.Logger = setup_module_logging("WebSecurity")
 
-
-# =============================================================================
-# RATE LIMITING
-# =============================================================================
+# Rate limiting
 
 # Thread-safe rate limiter using sliding window algorithm.
 # Prevents brute force attacks and DoS attempts.
@@ -50,13 +46,7 @@ class RateLimiter:
             self._last_cleanup = now
     
     def is_allowed(self, key: str, max_requests: int, window_seconds: int) -> Tuple[bool, int]:
-        # Check if request is allowed under rate limit.
-        # Args:
-        #     key: Unique identifier (e.g., IP address, user ID)
-        #     max_requests: Maximum requests allowed in window
-        #     window_seconds: Time window in seconds
-        # Returns:
-        #     Tuple of (allowed: bool, retry_after_seconds: int)
+        # Check if a request is allowed under the rate limit
         self._cleanup()
         now = time.time()
         cutoff = now - window_seconds
@@ -79,18 +69,6 @@ class RateLimiter:
             
             timestamps.append(now)
             return True, 0
-    
-    def get_remaining(self, key: str, max_requests: int, window_seconds: int) -> int:
-        # Get remaining requests in current window.
-        now = time.time()
-        cutoff = now - window_seconds
-        
-        with self._lock:
-            # Count valid timestamps efficiently
-            timestamps = self._requests[key]
-            valid_count = sum(1 for t in timestamps if t > cutoff)
-            return max(0, max_requests - valid_count)
-
 
 # Account lockout mechanism to prevent brute force attacks.
 # Locks accounts after multiple failed login attempts.
@@ -107,11 +85,7 @@ class AccountLockout:
         self._lock = threading.Lock()
     
     def record_failed_attempt(self, identifier: str) -> Tuple[bool, int, int]:
-        # Record a failed login attempt.
-        # Args:
-        #     identifier: Username or IP address
-        # Returns:
-        #     Tuple of (is_locked_out, remaining_attempts, lockout_seconds)
+        # Record a failed login attempt and check for lockout
         now = time.time()
         window = 300  # 5 minute window for counting attempts
         
@@ -167,10 +141,7 @@ class AccountLockout:
             self._lockouts.pop(identifier, None)
             self._failed_attempts.pop(identifier, None)
 
-
-# =============================================================================
-# CSRF PROTECTION
-# =============================================================================
+# CSRF protection
 
 # CSRF (Cross-Site Request Forgery) protection using tokens.
 class CSRFProtection:
@@ -191,36 +162,8 @@ class CSRFProtection:
             self._tokens[session_id] = (token, expiry)
         
         return token
-    
-    def validate_token(self, session_id: str, token: str) -> bool:
-        # Validate a CSRF token for a session.
-        now = time.time()
-        
-        with self._lock:
-            if session_id not in self._tokens:
-                return False
-            
-            stored_token, expiry = self._tokens[session_id]
-            
-            if now > expiry:
-                del self._tokens[session_id]
-                return False
-            
-            # Use constant-time comparison to prevent timing attacks
-            return secrets.compare_digest(stored_token, token)
-    
-    def cleanup_expired(self):
-        # Remove expired tokens.
-        now = time.time()
-        with self._lock:
-            expired = [k for k, (_, exp) in self._tokens.items() if now > exp]
-            for k in expired:
-                del self._tokens[k]
 
-
-# =============================================================================
-# INPUT VALIDATION & SANITIZATION
-# =============================================================================
+# Input validation and sanitisation
 
 # Input validation and sanitization utilities.
 # Prevents SQL injection, XSS, and other injection attacks.
@@ -397,10 +340,7 @@ class InputValidator:
         
         return True, ""
 
-
-# =============================================================================
-# PATH SECURITY
-# =============================================================================
+# Path security
 
 # Secure path handling to prevent directory traversal attacks.
 class PathSecurity:
@@ -409,21 +349,6 @@ class PathSecurity:
         # Args:
         #     allowed_roots: List of allowed root directories
         self.allowed_roots = [os.path.abspath(r) for r in (allowed_roots or [])]
-    
-    def is_safe_path(self, path: str) -> bool:
-        # Check if a path is safe (within allowed roots).
-        try:
-            # Resolve to absolute path
-            abs_path = os.path.abspath(path)
-            
-            # Check if it's under any allowed root
-            for root in self.allowed_roots:
-                if abs_path.startswith(root + os.sep) or abs_path == root:
-                    return True
-            
-            return False
-        except Exception:
-            return False
     
     @staticmethod
     def safe_join(base: str, *paths) -> Optional[str]:
@@ -448,10 +373,7 @@ class PathSecurity:
             logger.error(f"Path join error: {e}")
             return None
 
-
-# =============================================================================
-# IP SECURITY
-# =============================================================================
+# IP security
 
 # IP-based security features including allowlist/blocklist.
 class IPSecurity:
@@ -470,70 +392,14 @@ class IPSecurity:
             ipaddress.ip_network("192.168.0.0/16"),   # Private Class C
         ]
     
-    def add_to_blocklist(self, ip: str, reason: str = ""):
-        # Add an IP to the blocklist.
-        with self._lock:
-            self._blocklist.add(ip)
-            logger.warning(f"IP blocked: {ip} - {reason}")
-    
-    def remove_from_blocklist(self, ip: str):
-        # Remove an IP from the blocklist.
-        with self._lock:
-            self._blocklist.discard(ip)
-    
     def is_blocked(self, ip: str) -> bool:
         # Check if an IP is blocked.
         with self._lock:
             return ip in self._blocklist
-    
-    def is_private_ip(self, ip: str) -> bool:
-        # Check if an IP is from a private network.
-        try:
-            ip_obj = ipaddress.ip_address(ip)
-            return ip_obj.is_private
-        except ValueError:
-            return False
-    
-    def add_allowed_network(self, network: str):
-        # Add a network to the allowed list.
-        try:
-            net = ipaddress.ip_network(network, strict=False)
-            with self._lock:
-                self._allowed_networks.append(net)
-            logger.info(f"Added allowed network: {network}")
-        except ValueError as e:
-            logger.error(f"Invalid network: {network} - {e}")
-    
-    def is_in_allowed_network(self, ip: str) -> bool:
-        # Check if IP is in an allowed network.
-        try:
-            ip_obj = ipaddress.ip_address(ip)
-            
-            # Check default allowed
-            for net in self._default_allowed:
-                if ip_obj in net:
-                    return True
-            
-            # Check custom allowed
-            with self._lock:
-                for net in self._allowed_networks:
-                    if ip_obj in net:
-                        return True
-            
-            return False
-        except ValueError:
-            return False
 
-
-# =============================================================================
-# SECURITY HEADERS
-# =============================================================================
-
+# Security headers
 def get_security_headers(ssl_enabled: bool = False, allowed_origins: Optional[List[str]] = None) -> Dict[str, str]:
-    # Get recommended security headers for HTTP responses.
-    # Args:
-    #     ssl_enabled: Whether SSL/HTTPS is enabled
-    #     allowed_origins: List of allowed origins for CORS
+    # Build recommended security headers for HTTP responses
     headers = {
         # Prevent MIME type sniffing
         'X-Content-Type-Options': 'nosniff',
@@ -541,7 +407,7 @@ def get_security_headers(ssl_enabled: bool = False, allowed_origins: Optional[Li
         # Clickjacking protection
         'X-Frame-Options': 'SAMEORIGIN',
         
-        # XSS protection (legacy, but still useful)
+        # XSS protection
         'X-XSS-Protection': '1; mode=block',
         
         # Referrer policy
@@ -572,23 +438,6 @@ def get_security_headers(ssl_enabled: bool = False, allowed_origins: Optional[Li
     
     return headers
 
-
-# =============================================================================
-# REQUEST FINGERPRINTING
-# =============================================================================
-
-def get_request_fingerprint(request) -> str:
-    # Generate a fingerprint for a request to help identify clients.
-    # Uses IP + User-Agent as a basic fingerprint.
-    components = [
-        request.remote_addr or '',
-        request.headers.get('User-Agent', ''),
-    ]
-    
-    fingerprint = hashlib.sha256('|'.join(components).encode()).hexdigest()[:16]
-    return fingerprint
-
-
 def get_client_ip(request) -> str:
     # Get the real client IP, considering proxies.
     # Check for proxy headers (in order of trust)
@@ -603,10 +452,7 @@ def get_client_ip(request) -> str:
     
     return request.remote_addr or '0.0.0.0'
 
-
-# =============================================================================
-# GLOBAL SECURITY MANAGER
-# =============================================================================
+# Global security manager
 
 # Central security manager that coordinates all security features.
 class WebSecurityManager:
@@ -648,9 +494,7 @@ class WebSecurityManager:
         return self.rate_limiter.is_allowed(key, max_requests, window)
     
     def validate_login_attempt(self, username: str, ip: str) -> Tuple[bool, str]:
-        # Validate a login attempt (check lockouts and rate limits).
-        # Returns:
-        #     Tuple of (allowed, error_message)
+        # Validate a login attempt against lockouts and rate limits
         # Check IP blocklist
         if self.ip_security.is_blocked(ip):
             return False, "Access denied"
@@ -673,10 +517,7 @@ class WebSecurityManager:
         return True, ""
     
     def record_login_failure(self, username: str, ip: str) -> Tuple[bool, int]:
-        # Record a failed login attempt.
-        # Returns:
-        #     Tuple of (is_locked_out, remaining_attempts)
-        # Record for both username and IP
+        # Record a failed login attempt for username and IP
         user_locked, user_remaining, _ = self.account_lockout.record_failed_attempt(username)
         ip_locked, ip_remaining, _ = self.account_lockout.record_failed_attempt(ip)
         
@@ -689,25 +530,9 @@ class WebSecurityManager:
         # Record a successful login (clears lockouts).
         self.account_lockout.clear_lockout(username)
         self.account_lockout.clear_lockout(ip)
-    
-    def add_allowed_origin(self, origin: str):
-        # Add an allowed CORS origin.
-        if origin not in self.allowed_origins:
-            self.allowed_origins.append(origin)
-            logger.info(f"Added allowed origin: {origin}")
-
 
 # Global instance
 _security_manager: WebSecurityManager = WebSecurityManager(None)
-
-
-def get_security_manager(config: Optional[Dict[str, Any]] = None) -> WebSecurityManager:
-    # Get or create the global security manager.
-    if config is not None:
-        global _security_manager
-        _security_manager = WebSecurityManager(config)
-    return _security_manager
-
 
 def init_security_manager(config: Optional[Dict[str, Any]] = None) -> WebSecurityManager:
     # Initialise a new security manager (replaces existing).

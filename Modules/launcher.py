@@ -18,7 +18,6 @@ setup_module_path()
 
 logger: logging.Logger = setup_module_logging("Launcher")
 
-
 class ServerManagerLauncher(ServerManagerModule):
     # - Manages child processes
     # - Detects cluster role (Host/Subhost)

@@ -14,7 +14,6 @@ setup_module_path()
 
 logger: logging.Logger = setup_module_logging("Security")
 
-
 class SecurityManager:
     # - Auth, password hashing, token gen
     # - Admin privilege detection

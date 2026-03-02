@@ -17,7 +17,6 @@ from Modules.server_manager import ServerManager
 
 logger: logging.Logger = setup_module_logging("AutomationUI")
 
-
 class AutomationSettingsWindow:
     # Window for configuring server automation settings (MOTD, restart warnings, start commands)
     # Can be opened from both trayicon and dashboard
@@ -40,7 +39,6 @@ class AutomationSettingsWindow:
         self.window.title("Server Automation Settings")
         self.window.geometry("800x700")
         self.window.resizable(True, True)
-
 
         # Create main frame
         main_frame = ttk.Frame(self.window, padding="10")
@@ -262,7 +260,7 @@ class AutomationSettingsWindow:
             else:
                 self.servers = []
             
-            # Extract server names, handling both 'Name' and 'name' keys for compatibility
+            # Extract server names, handling both 'Name' and 'name' keys
             server_names = []
             for server in self.servers:
                 if isinstance(server, dict):
@@ -489,7 +487,6 @@ class AutomationSettingsWindow:
         if self.window is not None:
             self.window.mainloop()
 
-
 def open_automation_settings(parent=None, server_manager=None):
     # Function to open the automation settings window
     # Can be called from trayicon or dashboard
@@ -504,7 +501,6 @@ def open_automation_settings(parent=None, server_manager=None):
     except Exception as e:
         logger.error(f"Error opening automation settings: {str(e)}")
         messagebox.showerror("Error", f"Failed to open automation settings: {str(e)}")
-
 
 if __name__ == "__main__":
     # Test the window

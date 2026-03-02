@@ -3,11 +3,8 @@
 # Persistent stdin pipe for server processes
 import os
 import sys
-import time
-import json
-import threading
 from pathlib import Path
-from typing import Optional, Tuple, Any
+from typing import Tuple, Any
 
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -17,7 +14,6 @@ win32pipe: Any = None
 win32file: Any = None
 win32security: Any = None
 pywintypes: Any = None
-msvcrt: Any = None
 
 _AVAILABLE = False
 if sys.platform == 'win32':
@@ -26,12 +22,10 @@ if sys.platform == 'win32':
         import win32file as _win32file
         import win32security as _win32security
         import pywintypes as _pywintypes
-        import msvcrt as _msvcrt
         win32pipe = _win32pipe
         win32file = _win32file
         win32security = _win32security
         pywintypes = _pywintypes
-        msvcrt = _msvcrt
         _AVAILABLE = True
     except ImportError:
         pass
@@ -39,12 +33,10 @@ if sys.platform == 'win32':
 from Modules.server_logging import get_component_logger
 logger = get_component_logger("PersistentStdin")
 
-
 def get_stdin_pipe_name(server_name: str) -> str:
     # Named pipe path for server stdin
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in server_name)
     return f"\\\\.\\pipe\\ServerManager_stdin_{safe_name}"
-
 
 def get_stdin_info_file(server_name: str) -> Path:
     # Stdin pipe info file path
@@ -52,116 +44,6 @@ def get_stdin_info_file(server_name: str) -> Path:
     temp_dir = Path(__file__).parent.parent / "temp"
     temp_dir.mkdir(parents=True, exist_ok=True)
     return temp_dir / f"stdin_{safe_name}.json"
-
-
-class PersistentStdinPipe:
-    # Named pipe for stdin forwarding to server
-    
-    def __init__(self, server_name: str):
-        self.server_name = server_name
-        self.pipe_name = get_stdin_pipe_name(server_name)
-        self.pipe_handle = None
-        self.read_handle = None  # Handle for subprocess stdin
-        self.listener_thread = None
-        self.stop_event = threading.Event()
-        self.server_stdin = None  # Actual stdin target
-        self._lock = threading.Lock()
-    
-    def create_pipe_for_subprocess(self) -> Optional[int]:
-        # Create pipe, return fd for subprocess.Popen stdin
-        if not _AVAILABLE:
-            logger.error("Named pipes not available")
-            return None
-        
-        try:
-            # Create security attributes that allow access from any process
-            sd = win32security.SECURITY_DESCRIPTOR()
-            sd.SetSecurityDescriptorDacl(1, None, 0)  # Null DACL = everyone has access
-            sa = win32security.SECURITY_ATTRIBUTES()
-            sa.SECURITY_DESCRIPTOR = sd
-            sa.bInheritHandle = True  # Allow handle inheritance
-            
-            # Create the named pipe in duplex mode
-            self.pipe_handle = win32pipe.CreateNamedPipe(
-                self.pipe_name,
-                win32pipe.PIPE_ACCESS_DUPLEX | win32file.FILE_FLAG_OVERLAPPED,
-                win32pipe.PIPE_TYPE_BYTE | win32pipe.PIPE_READMODE_BYTE | win32pipe.PIPE_WAIT,
-                win32pipe.PIPE_UNLIMITED_INSTANCES,
-                65536,  # Out buffer
-                65536,  # In buffer
-                0,      # Default timeout
-                sa
-            )
-            
-            if self.pipe_handle == win32file.INVALID_HANDLE_VALUE:
-                logger.error(f"Failed to create named pipe for {self.server_name}")
-                return None
-            
-            logger.info(f"Created stdin pipe: {self.pipe_name}")
-            
-            # Save pipe info
-            info = {
-                'server_name': self.server_name,
-                'pipe_name': self.pipe_name,
-                'created_at': time.time()
-            }
-            get_stdin_info_file(self.server_name).write_text(json.dumps(info, indent=2))
-            
-            # Open the pipe for reading (this is what the subprocess will use)
-            self.read_handle = win32file.CreateFile(
-                self.pipe_name,
-                win32file.GENERIC_READ,
-                win32file.FILE_SHARE_WRITE,
-                sa,
-                win32file.OPEN_EXISTING,
-                0,
-                None
-            )
-            
-            # Convert to file descriptor for subprocess
-            fd = msvcrt.open_osfhandle(int(self.read_handle), os.O_RDONLY)
-            return fd
-            
-        except Exception as e:
-            logger.error(f"Error creating stdin pipe: {e}", exc_info=True)
-            self.cleanup()
-            return None
-    
-    def cleanup(self):
-        # Clean up pipe handles and threading objects
-        try:
-            if self.pipe_handle:
-                win32file.CloseHandle(self.pipe_handle)
-                self.pipe_handle = None
-        except (pywintypes.error, OSError):
-            pass
-        
-        try:
-            if self.read_handle:
-                win32file.CloseHandle(self.read_handle)
-                self.read_handle = None
-        except (pywintypes.error, OSError):
-            pass
-        
-        # Stop and clean up threading objects
-        try:
-            if self.stop_event:
-                self.stop_event.set()
-            if self.listener_thread and self.listener_thread.is_alive():
-                self.listener_thread.join(timeout=1.0)
-            self.listener_thread = None
-            self.stop_event = None
-            self._lock = None
-        except Exception:
-            pass
-        
-        try:
-            info_file = get_stdin_info_file(self.server_name)
-            if info_file.exists():
-                info_file.unlink()
-        except OSError:
-            pass
-
 
 def send_command_to_stdin_pipe(server_name: str, command: str, timeout: float = 5.0) -> Tuple[bool, str]:
     # Send a command to a server via its persistent stdin pipe
@@ -207,7 +89,6 @@ def send_command_to_stdin_pipe(server_name: str, command: str, timeout: float = 
             return False, f"Pipe error: {e}"
     except Exception as e:
         return False, str(e)
-
 
 def is_stdin_pipe_available(server_name: str) -> bool:
     # Check if a stdin pipe is available for the server

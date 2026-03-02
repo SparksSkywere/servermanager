@@ -19,7 +19,7 @@ def get_console_engine():
     return get_steam_engine()
 
 def save_console_state_db(server_name, output_buffer, command_history, process_id=None, is_active=True):
-    """Save console state to database"""
+    # Save console state to database
     try:
         from sqlalchemy import text
         engine = get_console_engine()
@@ -54,14 +54,7 @@ def save_console_state_db(server_name, output_buffer, command_history, process_i
         return False
 
 def load_console_state_db(server_name, max_age_seconds=None):
-    """Load console state from database
-    
-    Args:
-        server_name: Name of the server
-        max_age_seconds: Maximum age in seconds for the state to be considered valid.
-                        None means no age limit (return any state).
-                        Use 3600 for crash recovery to skip old states.
-    """
+    # Load console state from database
     try:
         from sqlalchemy import text
         engine = get_console_engine()
@@ -102,7 +95,7 @@ def load_console_state_db(server_name, max_age_seconds=None):
         return None, None
 
 def clear_console_state_db(server_name):
-    """Clear console state from database"""
+    # Clear console state from database
     try:
         from sqlalchemy import text
         engine = get_console_engine()
@@ -114,37 +107,3 @@ def clear_console_state_db(server_name):
     except Exception as e:
         logger.error(f"Failed to clear console state for {server_name}: {e}")
         return False
-
-def get_all_console_states_db():
-    """Get all console states from database"""
-    try:
-        from sqlalchemy import text
-        engine = get_console_engine()
-        with engine.connect() as conn:
-            results = conn.execute(text("""
-                SELECT server_name, output_buffer, command_history, process_id, is_active, timestamp
-                FROM console_states
-                ORDER BY timestamp DESC
-            """)).fetchall()
-
-            states = {}
-            for row in results:
-                server_name = row[0]
-                try:
-                    output_buffer = json.loads(row[1]) if row[1] else []
-                    command_history = json.loads(row[2]) if row[2] else []
-                    states[server_name] = {
-                        'output_buffer': output_buffer,
-                        'command_history': command_history,
-                        'process_id': row[3],
-                        'is_active': row[4],
-                        'timestamp': row[5]
-                    }
-                except json.JSONDecodeError:
-                    logger.warning(f"Invalid JSON in console state for {server_name}")
-                    continue
-
-            return states
-    except Exception as e:
-        logger.error(f"Failed to get all console states: {e}")
-        return {}

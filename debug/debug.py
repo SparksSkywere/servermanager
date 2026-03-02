@@ -20,10 +20,8 @@ try:
 except Exception:
     logger = setup_module_logging("Debug")
 
-
 class DebugManager:
     # - System diagnostics
-    # - Log collection
     def __init__(self):
         self.registry_path = REGISTRY_PATH
         self.server_manager_dir = None
@@ -640,10 +638,6 @@ def create_diagnostic_report():
 def enable_debug():
     # Enable debug mode
     return debug_manager.set_debug_mode(True)
-
-def disable_debug():
-    # Disable debug mode
-    return debug_manager.set_debug_mode(False)
 
 def is_debug_enabled():
     # Check if debug mode is enabled

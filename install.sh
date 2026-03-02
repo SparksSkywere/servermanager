@@ -5,7 +5,7 @@
 set -e
 
 # Configuration
-CURRENT_VERSION="1.1"
+CURRENT_VERSION="1.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/Install-Log.txt"
 SERVER_MANAGER_DIR=""

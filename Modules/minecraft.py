@@ -15,7 +15,6 @@ setup_module_path()
 
 logger: logging.Logger = setup_module_logging("Minecraft")
 
-
 def get_java_version(java_path="java"):
     # Get Java version from executable
     try:
@@ -51,7 +50,6 @@ def get_java_version(java_path="java"):
         logger.debug(f"Java version check failed: {java_path} - {str(e)}")
     
     return None, None
-
 
 def detect_java_installations():
     # Find all Java installations on system
@@ -122,7 +120,6 @@ def detect_java_installations():
     
     return unique_installations
 
-
 def get_recommended_java_for_minecraft(version_id):
     # Get the recommended Java installation for a specific Minecraft version
     # Args: version_id (str): Minecraft version ID
@@ -139,7 +136,6 @@ def get_recommended_java_for_minecraft(version_id):
         return suitable_javas[0]
     
     return None
-
 
 def get_minecraft_java_requirement(version_id):
     # Get the minimum Java version required for a Minecraft version
@@ -173,12 +169,8 @@ def get_minecraft_java_requirement(version_id):
         # Default to Java 17 if we can't parse the version
         return 17
 
-
 def check_java_compatibility(version_id, java_path="java"):
-    # Check if a specific Java installation can run the specified Minecraft version
-    # Args: version_id (str): Minecraft version ID
-    #       java_path (str): Path to the Java executable (default: "java" from PATH)
-    # Returns: tuple: (is_compatible, java_version, required_version, message)
+    # Check if a Java installation is compatible with a Minecraft version
     java_major, java_full = get_java_version(java_path)
     required_java = get_minecraft_java_requirement(version_id)
     
@@ -193,7 +185,6 @@ def check_java_compatibility(version_id, java_path="java"):
         message = f"Java {java_full} at {java_path} is incompatible with Minecraft {version_id}. Requires Java {required_java} or later."
     
     return is_compatible, java_major, required_java, message
-
 
 def fetch_minecraft_versions():
     # Fetch available Minecraft server versions from Mojang's manifest
@@ -213,7 +204,6 @@ def fetch_minecraft_versions():
     except Exception as e:
         logger.error(f"Failed to fetch Minecraft versions: {str(e)}")
         return []
-
 
 def get_minecraft_server_jar_url(version_id, versions_list):
     # Get the download URL for the server jar for a given version
@@ -245,7 +235,6 @@ def get_minecraft_server_jar_url(version_id, versions_list):
         logger.error(f"Failed to get server jar URL for {version_id}: {str(e)}")
         return None
 
-
 def fetch_fabric_installer_url(mc_version):
     # Fetch Fabric installer URL for a given Minecraft version
     try:
@@ -257,7 +246,6 @@ def fetch_fabric_installer_url(mc_version):
     except Exception as e:
         logger.error(f"Failed to fetch Fabric installer: {str(e)}")
     return None
-
 
 def fetch_forge_installer_url(mc_version):
     # Fetch Forge installer URL for a given Minecraft version
@@ -273,7 +261,6 @@ def fetch_forge_installer_url(mc_version):
     except Exception as e:
         logger.error(f"Failed to fetch Forge installer: {str(e)}")
     return None
-
 
 def fetch_neoforge_installer_url(mc_version):
     # Fetch NeoForge installer URL for a given Minecraft version
@@ -291,7 +278,6 @@ def fetch_neoforge_installer_url(mc_version):
         logger.error(f"Failed to fetch NeoForge installer: {str(e)}")
     return None
 
-
 class MinecraftServerManager:
     # Class to manage Minecraft server operations and installations
     
@@ -302,30 +288,8 @@ class MinecraftServerManager:
         self.server_manager_dir = server_manager_dir
         self.config = config or {}
     
-    def get_minecraft_install_path(self, server_name):
-        # Get the installation path for a Minecraft server
-        # Args: server_name (str): Name of the server
-        # Returns: str: Full path to the server installation directory
-        minecraft_path = self.config.get("defaults", {}).get("minecraftServersPath", "minecraft_servers")
-        return os.path.join(self.server_manager_dir, minecraft_path, server_name)
-    
-    def create_eula_file(self, install_dir):
-        # Create EULA acceptance file for Minecraft server
-        # Args: install_dir (str): Directory where the server is installed
-        import os
-        eula_path = os.path.join(install_dir, "eula.txt")
-        with open(eula_path, "w") as f:
-            f.write("eula=true\n")
-        logger.info(f"Created EULA file at: {eula_path}")
-    
     def create_launch_script(self, install_dir, jar_file, memory_mb=1024, additional_args="", java_path="java"):
-        # Create a launch script for the Minecraft server
-        # Args: install_dir (str): Directory where the server is installed
-        #       jar_file (str): Name of the server JAR file
-        #       memory_mb (int): Memory allocation in MB
-        #       additional_args (str): Additional JVM or server arguments
-        #       java_path (str): Path to the Java executable
-        # Returns: str: Path to the created launch script
+        # Create a platform-specific launch script for the Minecraft server
         import os
         
         if os.name == 'nt':  # Windows
@@ -400,116 +364,4 @@ class MinecraftServerManager:
         
         return None, None
     
-    def download_server_jar(self, version_id, versions_list, install_dir, jar_name=None):
-        # Download Minecraft server jar file
-        # Args: version_id (str): Minecraft version ID
-        #       versions_list (list): List of available versions
-        #       install_dir (str): Directory to download the jar to
-        #       jar_name (str): Optional custom jar filename
-        # Returns: str: Path to the downloaded jar file
-        import os
-        
-        # Check Java compatibility before downloading
-        is_compatible, java_version, required_version, message = check_java_compatibility(version_id)
-        logger.info(message)
-        
-        if not is_compatible:
-            logger.warning(f"Java compatibility issue detected. Server may not start properly.")
-            logger.warning(f"Current Java: {java_version}, Required: {required_version}+")
-            logger.warning("Consider upgrading Java or using a different Minecraft version.")
-        
-        jar_url = get_minecraft_server_jar_url(version_id, versions_list)
-        if not jar_url:
-            raise Exception(f"Could not get download URL for Minecraft {version_id}")
-        
-        jar_filename = jar_name or f"minecraft_server.{version_id}.jar"
-        jar_path = os.path.join(install_dir, jar_filename)
-        
-        logger.info(f"Downloading Minecraft server {version_id} to {jar_path}")
-        urllib.request.urlretrieve(jar_url, jar_path)
-        logger.info("Download complete.")
-        
-        return jar_path
-    
-    def validate_server_startup(self, install_dir, jar_file):
-        # Validate that a Minecraft server can start with the current Java version
-        # Args: install_dir (str): Server installation directory
-        #       jar_file (str): Server JAR filename
-        # Returns: tuple: (is_valid, message)
-        jar_path = os.path.join(install_dir, jar_file)
-        
-        if not os.path.exists(jar_path):
-            return False, f"Server JAR not found: {jar_path}"
-        
-        # Extract version from jar filename if possible
-        version_match = re.search(r'minecraft_server\.(.+)\.jar', jar_file)
-        if version_match:
-            version_id = version_match.group(1)
-            is_compatible, java_version, required_version, message = check_java_compatibility(version_id)
-            
-            if not is_compatible:
-                return False, f"Java compatibility error: {message}"
-        
-        return True, "Server should start successfully"
-    
-    def launch_jconsole(self, server_name, process_id=None):
-        # Launch Java Console (jconsole) for monitoring a Minecraft server JVM
-        # Args: server_name (str): Name of the Minecraft server
-        #       process_id (int): Optional process ID, will auto-detect if not provided
-        # Returns: tuple: (success, message)
-        try:
-            import psutil
-            
-            # Find the process ID if not provided
-            if process_id is None:
-                # Get server config from database
-                try:
-                    from Modules.Database.server_configs_database import ServerConfigManager
-                    manager = ServerConfigManager()
-                    server_config = manager.get_server(server_name)
-                    if server_config:
-                        process_id = server_config.get("ProcessId")
-                except Exception as e:
-                    logger.error(f"Failed to get server config from database: {e}")
-            
-            if process_id is None:
-                return False, f"Could not find process ID for server '{server_name}'"
-            
-            # Verify the process is running and is a Java process
-            try:
-                process = psutil.Process(process_id)
-                cmdline = process.cmdline()
-                
-                # Check if this is a Java process (Minecraft server)
-                is_java_process = any('java' in arg.lower() for arg in cmdline) or \
-                                any('minecraft' in arg.lower() for arg in cmdline)
-                
-                if not is_java_process:
-                    return False, f"Process {process_id} does not appear to be a Java/Minecraft process"
-                
-            except psutil.NoSuchProcess:
-                return False, f"Process {process_id} is not running"
-            
-            # Launch jconsole with the process ID
-            logger.info(f"Launching jconsole for Minecraft server '{server_name}' (PID: {process_id})")
-            
-            startupinfo = None
-            creationflags = 0
-            if os.name == 'nt':
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = 1  # Show window for jconsole
-                creationflags = 0  # Don't hide jconsole window
-            
-            # Launch jconsole in a separate process
-            subprocess.Popen(['jconsole', str(process_id)], 
-                           startupinfo=startupinfo, 
-                           creationflags=creationflags)
-            
-            return True, f"jconsole launched for server '{server_name}' (PID: {process_id})"
-            
-        except FileNotFoundError:
-            return False, "jconsole not found. Please ensure JDK is installed and jconsole is in PATH"
-        except Exception as e:
-            logger.error(f"Error launching jconsole for server '{server_name}': {str(e)}")
-            return False, f"Failed to launch jconsole: {str(e)}"
+

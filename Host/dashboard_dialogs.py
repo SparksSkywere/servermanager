@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # Dashboard dialogs - Console manager, automation, categories, verification, help/about
-from __future__ import annotations
 
 import os
 import threading
@@ -26,10 +25,8 @@ if TYPE_CHECKING:
 
 logger = get_dashboard_logger()
 
-
 class DashboardDialogsMixin:
-    """Mixin providing dialog methods for the dashboard (console manager,
-    automation, categories, verification, database tools, help/about)."""
+    # Dialog methods - console manager, automation, categories, verification, database tools, help/about
 
     # Type stubs for attributes provided by ServerManagerDashboard at runtime
     if TYPE_CHECKING:
@@ -49,7 +46,7 @@ class DashboardDialogsMixin:
         def update_server_list(self, force_refresh: bool = False) -> None: ...
 
     def show_console_manager(self):
-        """Show console manager dialog with list of active consoles."""
+        # Show console manager dialog with active consoles
         try:
             if not self.console_manager:
                 messagebox.showinfo("Console Manager", "Console manager not available.")
@@ -61,7 +58,7 @@ class DashboardDialogsMixin:
                                  f"Failed to show console manager:\n{str(e)}")
 
     def open_automation_settings(self):
-        """Open the automation settings window."""
+        # Open the automation settings window
         try:
             from Modules.automation_ui import open_automation_settings
             open_automation_settings(self.root, self.server_manager)
@@ -71,7 +68,7 @@ class DashboardDialogsMixin:
                                  f"Failed to open automation settings:\n{str(e)}")
 
     def batch_update_server_types(self):
-        """Batch update all server types using database-based detection."""
+        # Batch update all server types using database-based detection
         try:
             response = messagebox.askyesno(
                 "Update Server Types",
@@ -138,10 +135,9 @@ class DashboardDialogsMixin:
             messagebox.showerror("Update Error",
                 f"Failed to update server types:\n{str(e)}")
 
-    # ── Category management ──────────────────────────────────────────────
-
+    # Category management
     def create_category(self):
-        """Create a new server category."""
+        # Create a new server category
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -168,7 +164,7 @@ class DashboardDialogsMixin:
             messagebox.showerror("Error", f"Failed to create category '{category_name}'.")
 
     def rename_category(self):
-        """Rename an existing category."""
+        # Rename an existing category
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -208,7 +204,7 @@ class DashboardDialogsMixin:
             messagebox.showerror("Error", f"Failed to rename category '{current_name}'.")
 
     def delete_category(self):
-        """Delete a category and move all servers to 'Uncategorized'."""
+        # Delete a category and move servers to Uncategorized
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -245,7 +241,7 @@ class DashboardDialogsMixin:
             messagebox.showerror("Error", f"Failed to delete category '{category_name}'.")
 
     def _update_servers_category(self, old_category, new_category):
-        """Update the category for all servers in *old_category* to *new_category*."""
+        # Update category for all servers from old_category to new_category
         try:
             from Modules.Database.server_configs_database import ServerConfigManager
             manager = ServerConfigManager()
@@ -269,7 +265,7 @@ class DashboardDialogsMixin:
             logger.error(f"Error updating server categories: {str(e)}")
 
     def refresh_categories(self):
-        """Refresh category structure in the current server list without full server refresh."""
+        # Refresh category structure in the server list without full refresh
         current_list = self.get_current_server_list()
         if not current_list:
             logger.warning("refresh_categories: No current server list available")
@@ -355,10 +351,9 @@ class DashboardDialogsMixin:
         logger.info(f"Categories refreshed – {len(current_servers)} servers in "
                      f"{len(all_categories)} categories")
 
-    # ── Verification / diagnostic dialogs ────────────────────────────────
-
+    # Verification / diagnostic dialogs
     def find_broken_servers(self):
-        """Find and display servers that are broken or have issues."""
+        # Find and display broken or misconfigured servers
         try:
             if self.server_manager is None:
                 messagebox.showerror("Error", "Server manager not available")
@@ -460,7 +455,7 @@ class DashboardDialogsMixin:
                 f"Failed to search for broken servers: {str(e)}")
 
     def verify_servers(self):
-        """Verify server information completeness."""
+        # Verify server information completeness
         try:
             if self.server_manager is None:
                 messagebox.showerror("Error", "Server manager not available")
@@ -568,10 +563,9 @@ class DashboardDialogsMixin:
             messagebox.showerror("Error",
                 f"Failed to verify server information: {str(e)}")
 
-    # ── Database tools ───────────────────────────────────────────────────
-
+    # Database tools
     def update_databases(self):
-        """Run the AppID and Minecraft scanners to refresh database content."""
+        # Run AppID and Minecraft scanners to refresh database content
         dialog = tk.Toplevel(self.root)
         dialog.title("Update Databases")
         dialog.geometry("700x500")
@@ -660,7 +654,7 @@ class DashboardDialogsMixin:
                          name="UpdateDatabases").start()
 
     def verify_databases(self):
-        """Verify database schema and data integrity."""
+        # Verify database schema and data integrity
         dialog = tk.Toplevel(self.root)
         dialog.title("Verify Databases")
         dialog.geometry("700x500")
@@ -723,12 +717,11 @@ class DashboardDialogsMixin:
         threading.Thread(target=_run_verify, daemon=True,
                          name="VerifyDatabases").start()
 
-    # ── Help / About ─────────────────────────────────────────────────────
-
+    # Help / About dialogs
     def show_help(self):
-        """Show help dialog."""
+        # Show help dialog
         show_help_dialog(self.root, logger)
 
     def show_about(self):
-        """Show about dialog."""
+        # Show about dialog
         show_about_dialog(self.root, logger)

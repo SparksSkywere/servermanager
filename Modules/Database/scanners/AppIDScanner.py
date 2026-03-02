@@ -15,7 +15,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from Modules.common import setup_module_path
 setup_module_path()
 
-
 try:
     from Modules.Database.steam_database import get_steam_engine
     from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
@@ -66,12 +65,12 @@ class AppIDScanner:
         })
         
         # Rate limiting - More conservative settings for Steam API
-        self.request_delay = 2.0  # Increased from 1.0 to 2.0 seconds
-        self.api_request_delay = 3.0  # Specific delay for Steam Store API calls
+        self.request_delay = 2.0
+        self.api_request_delay = 3.0
         self.last_request_time = 0
         self.last_api_request_time = 0
-        self.rate_limit_backoff = 5.0  # Initial backoff for rate limit errors
-        self.max_rate_limit_backoff = 60.0  # Maximum backoff time
+        self.rate_limit_backoff = 5.0
+        self.max_rate_limit_backoff = 60.0
         
         # Enhanced server-related keywords for better filtering (more restrictive)
         self.server_keywords = [
@@ -195,69 +194,6 @@ class AppIDScanner:
             logger.error(f"Failed to initialise SQLite database: {e}")
             raise
     
-    def migrate_json_to_database(self):
-        # Migrate existing JSON data to database if it doesn't exist in DB yet
-        try:
-            logger.info("Checking for JSON data to migrate to database...")
-            
-            # Load JSON data
-            json_data = self.load_appid_json()
-            dedicated_servers = json_data.get('dedicated_servers', [])
-            
-            if not dedicated_servers:
-                logger.info("No JSON data found to migrate")
-                return
-            
-            migrated_count = 0
-            skipped_count = 0
-            
-            for server in dedicated_servers:
-                appid = server.get('appid')
-                if not appid:
-                    continue
-                
-                # Check if this app already exists in database
-                exists = False
-                if self.use_database:
-                    exists = self.db_session.query(SteamApp).filter(SteamApp.appid == appid).first() is not None
-                else:
-                    cursor = self.sqlite_conn.execute("SELECT 1 FROM steam_apps WHERE appid = ?", (appid,))
-                    exists = cursor.fetchone() is not None
-                
-                if not exists:
-                    # Convert JSON entry to database format
-                    app_data = {
-                        'appid': appid,
-                        'name': server.get('name', ''),
-                        'type': server.get('type', 'Dedicated Server'),
-                        'is_server': True,
-                        'is_dedicated_server': True,
-                        'requires_subscription': False,  # Default for migrated data
-                        'anonymous_install': True,  # Default for migrated data
-                        'publisher': server.get('publisher', ''),
-                        'release_date': server.get('release_date', ''),
-                        'description': server.get('description', ''),
-                        'tags': server.get('tags', '[]'),
-                        'price': '',
-                        'platforms': server.get('platforms', ''),
-                        'source': server.get('source', 'json_migration')
-                    }
-                    
-                    # Save to database
-                    self.save_app_to_database(app_data)
-                    migrated_count += 1
-                else:
-                    skipped_count += 1
-            
-            logger.info(f"Migration complete: {migrated_count} apps migrated, {skipped_count} already existed")
-            
-            # Optionally create a backup of the JSON file
-            if migrated_count > 0:
-                logger.info(f"Migration complete: {migrated_count} apps would have been migrated from JSON (feature disabled)")
-                    
-        except Exception as e:
-            logger.error(f"Error during JSON to database migration: {e}")
-    
     def get_dedicated_servers_from_database(self):
         # Get all dedicated servers from database (replaces JSON functionality)
         try:
@@ -315,58 +251,6 @@ class AppIDScanner:
                 
         except Exception as e:
             logger.error(f"Error getting dedicated servers from database: {e}")
-            return []
-    
-    def add_server_to_json(self, server_data):
-        # Add a single dedicated server to the JSON file (live update)
-        try:
-            # Load existing data
-            appid_data = self.load_appid_json()
-            
-            # Check if server already exists
-            existing_appids = {server['appid'] for server in appid_data['dedicated_servers']}
-            
-            if server_data['appid'] not in existing_appids:
-                # Add new server
-                appid_data['dedicated_servers'].append(server_data)
-                
-                # Sort by name
-                appid_data['dedicated_servers'].sort(key=lambda x: x['name'])
-                
-                # Save with pre-check (but force since we know there's a change)
-                if self.save_appid_json(appid_data, force_update=True):
-                    logger.info(f"Added new dedicated server to JSON: {server_data['name']} (AppID: {server_data['appid']})")
-                    return True
-            else:
-                # Update existing server if data differs
-                for i, existing_server in enumerate(appid_data['dedicated_servers']):
-                    if existing_server['appid'] == server_data['appid']:
-                        if existing_server != server_data:
-                            appid_data['dedicated_servers'][i] = server_data
-                            
-                            # Sort by name
-                            appid_data['dedicated_servers'].sort(key=lambda x: x['name'])
-                            
-                            if self.save_appid_json(appid_data, force_update=True):
-                                logger.info(f"Updated dedicated server in JSON: {server_data['name']} (AppID: {server_data['appid']})")
-                                return True
-                        else:
-                            logger.debug(f"Server data unchanged: {server_data['name']} (AppID: {server_data['appid']})")
-                        break
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error adding server to JSON: {e}")
-            return False
-    
-    def get_json_appid_list(self):
-        # Get the current list of AppIDs from the JSON file for external use
-        try:
-            appid_data = self.load_appid_json()
-            return appid_data.get('dedicated_servers', [])
-        except Exception as e:
-            logger.error(f"Error loading AppID list: {e}")
             return []
 
     def load_appid_json(self):

@@ -9,11 +9,13 @@ import re
 from datetime import datetime, timezone
 import argparse
 
+# Pre-compiled version pattern for Fabric version filtering
+_MC_VERSION_PATTERN = re.compile(r'^1\.\d+(\.\d+)?$')
+
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 from Modules.common import setup_module_path
 setup_module_path()
-
 
 try:
     from Modules.Database.minecraft_database import get_minecraft_engine
@@ -245,7 +247,7 @@ class MinecraftIDScanner:
                         continue
 
                     # Only include standard version numbers (like 1.20.1, 1.19.2, etc.)
-                    if not re.match(r'^1\.\d+(\.\d+)?$', version_id):
+                    if not _MC_VERSION_PATTERN.match(version_id):
                         continue
 
                     # Only include the latest loader for each game version (no duplicates)
@@ -387,44 +389,6 @@ class MinecraftIDScanner:
         except Exception as e:
             logger.error(f"Failed to clear {modloader} entries: {e}")
             raise Exception(f"Database clear operation failed: {e}")
-
-    def get_download_urls(self, version_data):
-        # Get download URLs for different modloaders
-        urls = {"download_url": "", "installer_url": ""}
-
-        try:
-            if version_data["modloader"] == "vanilla":
-                # Get vanilla server jar URL
-                version_url = version_data["url"]
-                version_info = self.make_request(version_url)
-                if version_info:
-                    urls["download_url"] = version_info.get("downloads", {}).get("server", {}).get("url")
-
-            elif version_data["modloader"] == "fabric":
-                # Fabric installer URL
-                installer_url = "https://meta.fabricmc.net/v2/versions/installer"
-                installer_data = self.make_request(installer_url)
-                if installer_data:
-                    urls["installer_url"] = installer_data[0].get("url")
-
-            elif version_data["modloader"] == "forge":
-                # Forge installer URL
-                mc_version = version_data["version_id"]
-                forge_version = version_data["modloader_version"]
-                urls["installer_url"] = f"https://maven.minecraftforge.net/net/minecraftforge/forge/{mc_version}-{forge_version}/forge-{mc_version}-{forge_version}-installer.jar"
-
-            elif version_data["modloader"] == "neoforge":
-                # NeoForge installer URL
-                mc_version = version_data["version_id"]
-                versions_url = f"https://api.neoforged.net/v1/projects/neoforge/versions?game_versions={mc_version}"
-                version_data_api = self.make_request(versions_url)
-                if version_data_api:
-                    urls["installer_url"] = version_data_api[0].get("installer_url")
-
-        except Exception as e:
-            logger.warning(f"Failed to get download URLs for {version_data}: {e}")
-
-        return urls
 
     def scan_minecraft_servers(self, limit=None):
         # Main scanning function
@@ -721,7 +685,6 @@ class MinecraftIDScanner:
         except Exception as e:
             logger.warning(f"Error closing database connection: {e}")
 
-
 def main():
     parser = argparse.ArgumentParser(description='Minecraft Server Scanner')
     parser.add_argument('--limit', type=int, help='Limit number of versions to scan')
@@ -801,7 +764,6 @@ def main():
 
     finally:
         scanner.close()
-
 
 if __name__ == "__main__":
     main()

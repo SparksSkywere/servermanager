@@ -5,9 +5,9 @@ import sys
 import datetime
 import psutil
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import tkinter as tk
 from tkinter import ttk, messagebox
-from typing import Optional
 import requests
 import logging
 
@@ -19,7 +19,6 @@ setup_module_path()
 from Modules.server_logging import log_process_monitoring
 
 logger: logging.Logger = setup_module_logging("Scheduler")
-
 
 class SchedulerManager:
     # - Runs update checks, timers, cluster sync
@@ -139,17 +138,6 @@ class SchedulerManager:
             except Exception:
                 pass  # Dashboard may be closing
     
-    def enable_database_sync(self, interval_seconds: int = 600):
-        # Enable database syncing across cluster nodes
-        self.database_sync_enabled = True
-        self.database_sync_interval = max(60, interval_seconds)  # Minimum 1 minute
-        logger.info(f"Database syncing enabled with {self.database_sync_interval} second interval")
-    
-    def disable_database_sync(self):
-        # Disable database syncing
-        self.database_sync_enabled = False
-        logger.info("Database syncing disabled")
-    
     def sync_cluster_databases(self):
         # Sync database changes across cluster nodes
         try:
@@ -194,25 +182,25 @@ class SchedulerManager:
             # Get local server configurations
             local_servers = self.dashboard.server_manager.get_all_servers()
             
-            for node in nodes:
-                try:
-                    # Get server's configurations via API
-                    node_url = get_node_url(node.ip, node.port)
-                    response = requests.get(f"{node_url}/api/servers", timeout=10)
-                    if response.status_code == 200:
-                        remote_servers = response.json().get('servers', [])
-                        
-                        # Compare and sync missing configurations
-                        for server_name, server_config in local_servers.items():
-                            # Check if remote node has this server
-                            remote_server = next((s for s in remote_servers if s.get('name') == server_name), None)
-                            
-                            if not remote_server:
-                                # Remote node doesn't have this server, send configuration
-                                self._send_server_config_to_node(node, server_name, server_config)
-                            
-                except Exception as e:
-                    logger.error(f"Failed to sync server configs with {node.name}: {str(e)}")
+            def _fetch_remote_servers(node):
+                node_url = get_node_url(node.ip, node.port)
+                response = requests.get(f"{node_url}/api/servers", timeout=10)
+                return node, response
+
+            with ThreadPoolExecutor(max_workers=min(len(nodes), 10)) as executor:
+                futures = {executor.submit(_fetch_remote_servers, n): n for n in nodes}
+                for future in as_completed(futures):
+                    node = futures[future]
+                    try:
+                        node, response = future.result()
+                        if response.status_code == 200:
+                            remote_servers = response.json().get('servers', [])
+                            for server_name, server_config in local_servers.items():
+                                remote_server = next((s for s in remote_servers if s.get('name') == server_name), None)
+                                if not remote_server:
+                                    self._send_server_config_to_node(node, server_name, server_config)
+                    except Exception as e:
+                        logger.error(f"Failed to sync server configs with {node.name}: {str(e)}")
                     
         except Exception as e:
             logger.error(f"Server configuration sync error: {str(e)}")
@@ -237,25 +225,29 @@ class SchedulerManager:
             # Get local cluster configuration
             local_config = self.agent_manager.cluster_db.get_cluster_config()
             
-            for node in nodes:
-                try:
-                    # Send cluster config to remote node
-                    config_data = {
-                        'action': 'sync_cluster_config',
-                        'config': local_config,
-                        'timestamp': datetime.datetime.now().isoformat()
-                    }
-                    
-                    response = requests.post(f"{get_node_url(node.ip, node.port)}/api/cluster/sync",
-                                           json=config_data, timeout=10)
-                    
-                    if response.status_code == 200:
-                        logger.debug(f"Cluster config synced to {node.name}")
-                    else:
-                        logger.warning(f"Failed to sync cluster config to {node.name}: {response.status_code}")
-                        
-                except Exception as e:
-                    logger.error(f"Failed to sync cluster settings with {node.name}: {str(e)}")
+            config_data = {
+                'action': 'sync_cluster_config',
+                'config': local_config,
+                'timestamp': datetime.datetime.now().isoformat()
+            }
+
+            def _post_cluster_config(node):
+                response = requests.post(f"{get_node_url(node.ip, node.port)}/api/cluster/sync",
+                                       json=config_data, timeout=10)
+                return node, response
+
+            with ThreadPoolExecutor(max_workers=min(len(nodes), 10)) as executor:
+                futures = {executor.submit(_post_cluster_config, n): n for n in nodes}
+                for future in as_completed(futures):
+                    node = futures[future]
+                    try:
+                        node, response = future.result()
+                        if response.status_code == 200:
+                            logger.debug(f"Cluster config synced to {node.name}")
+                        else:
+                            logger.warning(f"Failed to sync cluster config to {node.name}: {response.status_code}")
+                    except Exception as e:
+                        logger.error(f"Failed to sync cluster settings with {node.name}: {str(e)}")
                     
         except Exception as e:
             logger.error(f"Cluster settings sync error: {str(e)}")
@@ -280,15 +272,6 @@ class SchedulerManager:
                 
         except Exception as e:
             logger.error(f"Failed to send server config to {node.name}: {str(e)}")
-    
-    def get_database_sync_status(self):
-        # Get the current status of database syncing
-        return {
-            'enabled': self.database_sync_enabled,
-            'interval_seconds': self.database_sync_interval,
-            'last_sync': self.last_database_sync.isoformat() if self.last_database_sync != datetime.datetime.min else None,
-            'next_sync': (self.last_database_sync + datetime.timedelta(seconds=self.database_sync_interval)).isoformat() if self.database_sync_enabled and self.last_database_sync != datetime.datetime.min else None
-        }
     
     def _start_cpu_monitoring(self):
         # Start background CPU monitoring for servers
@@ -997,20 +980,3 @@ Valheim: No console commands available (use CTRL+C)"""
                 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to update schedule: {str(e)}")
-    
-    # Legacy method redirects for backward compatibility
-    def show_update_schedule_dialog(self, server_name: Optional[str] = None, schedule_type: str = "update"):
-        # Legacy method - redirect to unified manager
-        self.show_schedules_manager()
-
-    def show_restart_schedule_dialog(self, server_name: Optional[str] = None):
-        # Legacy method - redirect to unified manager
-        self.show_schedules_manager()
-        
-    def show_update_schedules_overview(self):
-        # Legacy method - redirect to unified manager
-        self.show_schedules_manager()
-
-
-# For backwards compatibility - alias the old class name
-TimerManager = SchedulerManager

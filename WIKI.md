@@ -1,6 +1,6 @@
 # Server Manager — Technical Wiki
 
-**Version:** 1.1  
+**Version:** 1.2 
 **Platform:** Windows 10/11, Windows Server 2016+ (Linux support in early development)  
 **Developer:** Sparks Skywere 
 **Repository:** [https://github.com/SparksSkywere/servermanager](https://github.com/SparksSkywere/servermanager)
@@ -11,7 +11,7 @@
 
 - [Server Manager — Technical Wiki](#server-manager--technical-wiki)
   - [Table of Contents](#table-of-contents)
-  - [1. Introduction and Overview](#1-introduction-and-overview)
+  - [1. Introduction](#1-introduction)
   - [2. System Requirements](#2-system-requirements)
     - [Windows (Primary Platform)](#windows-primary-platform)
     - [Linux (Experimental)](#linux-experimental)
@@ -128,17 +128,17 @@
 
 ---
 
-## 1. Introduction and Overview
+## 1. Introduction
 
-Server Manager is a server management platform developed by Skywere Industries for managing Steam dedicated servers, Minecraft servers, and other game/application servers. It provides both a desktop GUI (built with Tkinter) and a web-based dashboard (built with Flask) for administering servers from a local machine or across a network.
+Server Manager is a server management platform developed by Sparks Skywere for managing dedicated. It provides both a desktop GUI and a web-based platform for administering servers from a local machine or across various networks (All self hosted too!).
 
 The application is designed to run on Windows with administrator privileges and offers the following core capabilities:
 
-- **Server Lifecycle Management** — Install, start, stop, restart, and update game servers through a unified interface. Supports both Steam-based installations via SteamCMD and Minecraft server installations with multiple modloader options.
+- **Server Lifecycle Management** — Install, start, stop, restart, and update game servers through a unified interface.
 - **Real-Time Server Console** — Interactive console that connects to running server processes, allowing operators to view output and send commands in real time through multiple input methods including named pipes and file-based command queues.
 - **Automated Operations** — Schedule server restarts with pre-restart warning broadcasts, MOTD (Message of the Day) announcements at configurable intervals, and automatic update checking with seamless update-and-restart workflows.
 - **Multi-Node Clustering** — A Host/Subhost topology that allows a central Host node to manage multiple Subhost nodes across a network. Nodes join via a secure request-and-approval workflow, and the Host can remotely control servers on any connected Subhost.
-- **Web-Based Dashboard** — A responsive web interface served from a Flask web server (via Waitress WSGI) that provides server management, user administration, analytics charts, and cluster management from any browser on the network.
+- **Web-Based Dashboard** — A web interface served from a Flask web server (via Waitress WSGI) that provides server management, user administration, analytics charts, and cluster management from any browser on the network.
 - **User Management with 2FA** — Multi-user support with role-based access control (admin/user), bcrypt password hashing, and optional TOTP-based two-factor authentication.
 - **Monitoring and Metrics** — Real-time analytics collection with health scoring, Prometheus-format metrics endpoint, SNMP monitoring support, and Grafana integration with pre-built dashboard configurations.
 - **Email Notifications** — SMTP-based email notifications using templates for events such as server alerts, account lockouts, password resets, maintenance windows, and welcome messages. Supports Gmail, Outlook, Office365, Yahoo, custom SMTP, and OAuth 2.0 for Microsoft Exchange.
@@ -200,6 +200,8 @@ All Python dependencies are listed in `requirements.txt` and are installed autom
 ### 3.1 Windows Installation
 
 The Windows installer is a PowerShell script (`install.ps1`) that provides a WinForms-based GUI wizard. It must be run with Administrator privileges.
+
+(Owners note: I do plan to make this an EXE in the future, I have Ps2Exe but need to check signing)
 
 **Steps to install:**
 
@@ -376,8 +378,12 @@ Servermanager/                      # Project root
 │           └── (corresponding _subject.txt and _text.txt files)
 │
 ├── Host/                           # Desktop dashboard modules
-│   ├── dashboard.py                # Main Tkinter dashboard (5200+ lines)
-│   ├── dashboard_functions.py      # Dashboard utility functions (5000+ lines)
+│   ├── dashboard.py                # Main Tkinter dashboard (~1000 lines)
+│   ├── dashboard_functions.py      # Dashboard utility functions (~3700 lines)
+│   ├── dashboard_dialogs.py        # Server configuration dialogs
+│   ├── dashboard_server_config.py  # Server configuration UI
+│   ├── dashboard_server_ops.py     # Server operations UI
+│   ├── dashboard_settings.py       # Dashboard settings UI
 │   ├── dashboard_ui.py             # UI component builders
 │   └── admin_dashboard.py          # Admin dashboard for user/email management
 │
@@ -436,6 +442,12 @@ Servermanager/                      # Project root
 │   ├── dashboard.pid               # Dashboard process ID file
 │   ├── server_automation.pid       # Automation process ID file
 │   └── command_queues/             # File-based command queues per server
+├── tools/                          # Standalone utility scripts
+│   ├── reset_admin_password.py     # Admin password reset utility
+│   ├── reset_admin_2FA.py          # Admin 2FA reset utility
+│   ├── verify_database.py          # Database verification tool
+│   └── verify_dedicated_servers.py # Post-scan server verification
+│
 └── Wiki/                           # Documentation
     └── WIKI.md                     # This file
 ```
@@ -457,7 +469,7 @@ The application follows a layered architecture where modules depend on shared ut
 - `Modules/Database/` — All database operations are isolated here. `database_utils.py` provides shared connection factory functions. Each domain has its own module (server configs, users, steam apps, minecraft, cluster, console states).
 
 **UI Layer:**
-- `Host/dashboard.py` + `Host/dashboard_functions.py` + `Host/dashboard_ui.py` — The Tkinter desktop dashboard.
+- `Host/dashboard.py` + `Host/dashboard_functions.py` + `Host/dashboard_ui.py` + `Host/dashboard_dialogs.py` + `Host/dashboard_server_config.py` + `Host/dashboard_server_ops.py` + `Host/dashboard_settings.py` — The Tkinter desktop dashboard.
 - `www/` — The web interface static files served by the Flask web server.
 
 **Services Layer:**
@@ -476,7 +488,7 @@ The following values are stored:
 | Value Name | Type | Description |
 |---|---|---|
 | `Servermanagerdir` | REG_SZ | Absolute path to the Server Manager installation directory |
-| `CurrentVersion` | REG_SZ | Installed version number (e.g., "1.1") |
+| `CurrentVersion` | REG_SZ | Installed version number (e.g., "1.2") |
 | `UserWorkspace` | REG_SZ | Path to the user workspace directory |
 | `InstallDate` | REG_SZ | Date and time of installation |
 | `LastUpdate` | REG_SZ | Date and time of last update |
@@ -600,7 +612,7 @@ The launcher (`Modules/launcher.py`) is the central process orchestrator. It ext
 
 ### 7.1 Main Dashboard
 
-The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that provides full server management capabilities. It is approximately 5,200 lines of code and is the primary local management interface.
+The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that provides full server management capabilities. It is approximately 1,000 lines of code (with UI logic split across `dashboard_functions.py`, `dashboard_dialogs.py`, `dashboard_server_config.py`, `dashboard_server_ops.py`, and `dashboard_settings.py`) and is the primary local management interface.
 
 **Launch:** Right-click the system tray icon and select "Open Server Dashboard", or run `Host/dashboard.py` directly.
 
@@ -615,7 +627,7 @@ The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that pro
 6. Timer and monitoring initialisation
 
 **Main Interface Components:**
-- **Server List Panel** — Displays all managed servers in a tree view, organised by category. Each server shows its name, type (Steam/Minecraft/Custom), status (Running/Stopped/Error), and CPU/memory usage. Servers can be drag-and-drop reordered with a floating visual indicator. Right-clicking a server opens a context menu with 20+ options including Start, Stop, Restart, Console, Edit Config, View Process Details, Check for Updates, and more.
+- **Server List Panel** — Displays all managed servers in a tree view, organised by category. Each server shows its name, type (Steam/Minecraft/Custom), status (Running/Stopped/Error), and CPU/memory usage. Memory is reported differently based on the server type: Java/Minecraft servers display JVM heap allocation (VMS) with a "(JVM)" suffix, while Steam and other native processes display RSS (Resident Set Size). Servers can be drag-and-drop reordered with a floating visual indicator. Right-clicking a server opens a context menu with 20+ options including Start, Stop, Restart, Console, Edit Config, View Process Details, Check for Updates, and more.
 
 - **System Metrics Panel** — Shows real-time system information with visual progress bars for CPU usage, RAM usage, and disk usage. Information is refreshed periodically by background timers.
 
@@ -623,7 +635,7 @@ The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that pro
 
 - **Server Configuration Dialog** — A editor for each server's settings. Fields include server name, App ID, installation directory, executable path, launch arguments, stop command, MOTD configuration, update schedule, and automation settings.
 
-- **Process Details View** — For a running server, shows detailed process information including PID, CPU usage percentage, memory consumption (RSS/VMS), uptime, number of child processes, open file handles, and network connections.
+- **Process Details View** — For a running server, shows detailed process information including PID, CPU usage percentage, memory consumption, uptime, number of child processes, open file handles, and network connections. Memory is displayed according to process type: Java/Minecraft servers show JVM heap (VMS) with a "(JVM)" label, while Steam and other servers show RSS. The Resources tab shows both RSS and VMS values along with the detected process type.
 
 - **Settings Dialog** — Application-wide settings organised into 5 tabs:
   - **General** — Application theme, log level, auto-start preferences.
@@ -782,6 +794,7 @@ Four cards showing at-a-glance metrics:
 Each managed server is displayed as a card with:
 - Server name and type badge (Steam/Minecraft/Custom)
 - Status indicator (Running with green badge, Stopped with red badge, Error with orange badge)
+- CPU usage and memory usage from real-time process monitoring. Java/Minecraft servers display JVM heap allocation with a "(JVM)" suffix, while Steam and other servers display RSS.
 - Action buttons: Start, Stop, Restart, Remove (with confirmation dialog)
 - Console viewer modal — Click to view live server output and send commands
 
@@ -908,7 +921,7 @@ All API endpoints are prefixed with `/api/` and require authentication unless ot
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/servers` | List all servers with current status |
+| GET | `/api/servers` | List all servers with current status, real-time CPU and memory usage |
 | POST | `/api/servers` | Create a new server (name, appid, type, install_dir) |
 | GET | `/api/servers/<name>/status` | Get status of a specific server |
 | POST | `/api/servers/<name>/start` | Start a server |
@@ -1047,7 +1060,7 @@ For Steam servers, the update checker queries SteamCMD's `app_info_print` comman
 - **Scattered Restarts** — To avoid restarting all servers simultaneously, a hash of the server name is used to compute a consistent time offset, scattering restarts across the schedule window.
 
 **Pre-Restart Warnings:**
-Before restarting a server for updates, warning messages are broadcast to connected players at configurable intervals. The default intervals are 30, 15, 10, 5, and 1 minutes before the restart. The warning message template supports a `{message}` placeholder that is replaced with the remaining time.
+Before restarting a server for updates, warning messages are broadcast to connected players at configurable intervals. The default intervals are 30, 15, 10, 5, and 1 minutes before the restart. The warning message template supports a `{message}` placeholder that is replaced with the remaining time. Warning delivery uses the shared `send_command_to_server()` utility from `common.py`, which tries the persistent stdin pipe first and falls back to the file-based command queue.
 
 **Batch Updates:**
 The `update_all_steam_servers()` method checks and updates all Steam servers sequentially with a 2-second delay between servers to avoid overwhelming the system or SteamCMD.
@@ -1069,7 +1082,7 @@ The Server Automation system (`Modules/server_automation.py`, `ServerAutomationM
 **Restart Warnings:**
 - When a scheduled restart is approaching, warning messages are sent at the configured intervals (e.g., "Server restarting in 30 minutes", "Server restarting in 15 minutes", etc.).
 - The warning command and message template are per-server settings.
-- Warning delivery uses the same multi-method command input system as the console.
+- Warning delivery uses the shared `send_command_to_server()` utility from `common.py`.
 
 **Start Commands:**
 - After a server starts, configured start commands are automatically executed.
@@ -1285,7 +1298,7 @@ The cluster database (`Modules/Database/cluster_database.py`) uses direct SQLite
 | `steam_credentials` | Encrypted Steam login credentials |
 
 **Key Features:**
-- **JSON Migration** — If legacy JSON configuration files exist, they are automatically migrated to the database.
+- **JSON Migration** — If legacy JSON configuration files exist, they are automatically migrated to the database using `_flatten_config()` to recursively flatten nested config dicts into typed key-value pairs.
 - **Heartbeat System** — Nodes periodically send heartbeats to update their `last_ping` timestamp, allowing the system to detect offline nodes.
 - **Token Management** — Cluster authentication tokens have expiration dates and can be revoked.
 - **Category Management** — Server categories support custom display ordering with drag-and-drop reordering capability.
@@ -1415,6 +1428,10 @@ The `WebSecurityManager` (`Modules/web_security.py`) provides web application se
   - **SQL Injection** — Detects common SQL injection patterns (UNION SELECT, OR 1=1, DROP TABLE, etc.).
   - **XSS (Cross-Site Scripting)** — Detects script injection attempts (`<script>`, `javascript:`, `onerror=`, etc.).
   - **Path Traversal** — Detects directory traversal patterns (`../`, `..\\`, `%2e%2e`).
+
+**Client-Side XSS Prevention:**
+- The `escapeHtml()` utility function in the web interface sanitises API response data before rendering into the DOM.
+- All dynamic content rendered via `innerHTML` is escaped to prevent stored/reflected XSS from server data.
 
 **Path Security:**
 - The `PathSecurity` class provides safe path joining that prevents directory traversal.
@@ -1636,6 +1653,12 @@ The dashboard tracker (`services/dashboard_tracker.py`, `DashboardTracker`) moni
 - `start_auto_refresh()` — Starts a background daemon thread that refreshes the dashboard and server status every 10 seconds.
 
 The dashboard tracker is used by the web server to provide real-time status information to the web interface.
+
+**Command Delivery Wrapper:**
+The `send_command_to_server()` function in `Modules/common.py` provides a unified high-level interface for sending commands to server processes. It is used by `ServerAutomationManager` (MOTD, warnings) and `ServerUpdateManager` (pre-restart warnings). The function:
+1. Attempts delivery via the persistent stdin pipe first.
+2. Falls back to the file-based command queue if the pipe is not available.
+3. Returns a boolean indicating success or failure.
 
 ---
 
@@ -2140,7 +2163,7 @@ sudo sh uninstall.sh
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `Servermanagerdir` | REG_SZ | (install path) | Root installation directory |
-| `CurrentVersion` | REG_SZ | "1.1" | Installed version |
+| `CurrentVersion` | REG_SZ | "1.2" | Installed version |
 | `UserWorkspace` | REG_SZ | (auto) | User workspace directory |
 | `InstallDate` | REG_SZ | (auto) | Installation timestamp |
 | `LastUpdate` | REG_SZ | (auto) | Last update timestamp |
@@ -2219,4 +2242,4 @@ Warning Message Template: Server restart in {message} minutes
 
 ---
 
-*This documentation covers Server Manager version 1.1. For the latest updates, check the [GitHub repository](https://github.com/SparksSkywere/servermanager).*
+*This documentation covers Server Manager version 1.2. For the latest updates, check the [GitHub repository](https://github.com/SparksSkywere/servermanager).*

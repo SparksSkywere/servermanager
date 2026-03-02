@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2] - 2026-03-01
+
+Maintenance update!
+
+  Bug Fixes:
+  - Fix server-type-aware RAM display (JVM heap vs RSS) across Tkinter dashboard, web dashboard, web API, and WIKI
+  - Fix Pylance type warnings for psutil in webserver.py
+  - Fix 19,000-line log spam caused by reattach loop (added _reattached_servers tracking)
+  - Fix dashboard freeze during server stop (added _stopping_servers tracking + 5s lock timeout)
+  - Replace batch_update_server_types placeholder with working 3-strategy type detection
+
+  Dead Code Removal:
+  - Full codebase audit: verified 143 findings (141 confirmed dead, 2 false positives)
+  - Removed 152+ dead functions/classes/variables across 30+ files
+  - Removed dead show_java_configuration_dialog (119 lines) from dashboard_functions.py
+  - Scanner updated to skip pywin32 service callbacks and __main__ guard references
+
+  Security:
+  - Fixed XSS vulnerability in dashboard.html (unescaped API data in innerHTML)
+  - Added escapeHtml() utility to create-server.html
+  - Updated security scanner to recognise escapeHtml() as XSS mitigation
+
+  Import Cleanup:
+  - Removed 61 unused imports across 16+ files (Host, Modules, Database, SMNP, SMTP, services, www/js)
+
+  Comment Style Standardisation:
+  - Converted all docstrings to single-line # comments across dashboard_dialogs.py, verify_database.py, console_database.py
+  - Simplified 11 verbose multi-line comment blocks across 6 files (web_security, minecraft, server_manager, webserver, stdin_relay, verify_dedicated_servers)
+  - Added missing file header to webserver.py
+  - Standardised all files to use # comments instead of docstrings
+
+  Compatibility Layer Cleanup:
+  - Removed legacy file-based Authentication class from webserver.py (~100 lines)
+  - Removed deprecated wrapper functions from minecraft_database.py, steam_database.py, SQL_Connection.py (get_engine, get_sql_config_from_registry, build_db_url)
+  - Removed backward-compat spelling aliases (initialize_user_manager, initialize_steam_database, center_window) and updated all callers to use canonical names (initialise_user_manager, centre_window)
+  - Removed ServerConsole = RealTimeConsole alias from server_console.py
+  - Removed db_manager alias from webserver.py and updated all callers to server_manager
+  - Removed analytics backward-compat methods from AnalyticsCollector class, updated webserver to call module-level functions directly
+  - Removed deprecated /api/cluster/register endpoint and auto-register from heartbeat (use approval workflow)
+  - Removed vestigial "info": {} fields from all cluster API responses
+  - Removed unused get_minecraft_sql_config_from_registry and build_minecraft_db_url functions
+  - Removed dead SQLAuthentication._check_password method and unused json import
+  - Cleaned up all legacy/backward/compat comments across 12+ files
+
+  Section Header Cleanup:
+  - Replaced 20 three-line banner blocks (# ====) with single-line # comments across 5 files (common.py, server_console.py, user_management.py, web_security.py, trayicon.py)
+
+  Formatting:
+  - Collapsed double blank lines across 53 Python files
+
+  Performance Fixes:
+  - Parallelised scheduler cluster node requests with ThreadPoolExecutor
+  - Pre-compiled regex patterns in MinecraftIDScanner
+  - Tuned performance scanner to reduce false positives (removed open() from expensive-ops, removed list(dict) iterator flagging)
+
+  Duplication Refactoring:
+  - Analysed 342 reported duplicate groups: 332 CSS/HTML false positives, 10 Python matches (7 false positives, 3 true duplicates)
+  - Extracted send_command_to_server() to common.py shared utility (was duplicated 33 lines x2 in server_automation.py and server_updates.py)
+  - Extracted format_speed() to module-level in dashboard_functions.py (was duplicated inline x2)
+  - Extracted _flatten_config() to ClusterDatabase static method in cluster_database.py (was duplicated inline x2)
+  - Tuned duplication scanner: separate text block threshold (15 lines), Python-only scoring, informational CSS/HTML reporting
+  - Added compatibility scanner for deprecated wrapper detection
+
+## [1.1.1] - 2026-02-24
+
+- Updated documentation and HTML changes
+
 ## [1.1] - 2026-02-20
 
 - v1.1 overhaul + HTTPS/SSL support + security fix

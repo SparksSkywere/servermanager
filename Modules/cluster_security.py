@@ -77,7 +77,7 @@ class SimpleClusterManager:
                 else:
                     logger.warning("Failed to create cluster in database, using registry fallback")
             
-            # Also store in registry for backward compatibility
+            # Store in registry
             set_registry_value(REGISTRY_PATH, "ClusterCreated", datetime.now().isoformat())
             
             logger.info("New cluster created successfully")
@@ -140,7 +140,7 @@ class SimpleClusterManager:
                             if success:
                                 logger.info(f"Cluster config stored in database")
                         
-                        # Store in registry for backward compatibility
+                        # Store in registry
                         set_registry_value(REGISTRY_PATH, "HostAddress", master_ip)
                         set_registry_value(REGISTRY_PATH, "JoinedCluster", datetime.now().isoformat())
                         

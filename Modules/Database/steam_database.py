@@ -80,21 +80,3 @@ def initialise_steam_database():
     except Exception as e:
         logger.error(f"Steam DB init failed: {e}")
         raise
-
-# Backward compat
-initialize_steam_database = initialise_steam_database
-
-def get_engine():
-    # DEPRECATED: Use get_steam_engine() or get_user_engine()
-    logger.warning("get_engine() deprecated")
-    return get_steam_engine()
-
-def get_sql_config_from_registry():
-    # DEPRECATED: Use get_steam_sql_config_from_registry() or get_user_sql_config_from_registry()
-    logger.warning("get_sql_config_from_registry() deprecated")
-    return get_steam_sql_config_from_registry()
-
-def build_db_url(config):
-    # DEPRECATED: Use build_steam_db_url()
-    logger.warning("build_db_url() is deprecated, use build_steam_db_url() or build_user_db_url()")
-    return build_steam_db_url(config)

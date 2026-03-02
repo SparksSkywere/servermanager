@@ -2,7 +2,6 @@
 import os
 import sys
 import logging
-from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 # Setup module path first before any imports
@@ -55,11 +54,6 @@ class SNMPManager(ServerManagerModule):  # type: ignore[valid-type, misc]
             'application.dashboards.count': f'{self.enterprise_base}.3.4',
         }
 
-    def set_analytics_instance(self, analytics_instance):
-        # Set analytics for metric collection
-        self.analytics: Optional['AnalyticsCollector'] = analytics_instance
-        logger.info("Analytics instance configured")
-
     def get_snmp_metrics(self):
         # Get metrics formatted for SNMP monitoring with OID structure
         # Returns metrics with enterprise OID mappings
@@ -103,53 +97,8 @@ class SNMPManager(ServerManagerModule):  # type: ignore[valid-type, misc]
             logger.error(f"Error generating SNMP metrics: {e}")
             return {}
 
-    def get_oid_mapping(self, metric_name):
-        # Get OID for a specific metric name
-        return self.oid_mappings.get(metric_name)
-
-    def get_all_oid_mappings(self):
-        # Get all OID mappings
-        return self.oid_mappings.copy()
-
-    def format_snmp_response(self, oid, value):
-        # Format a single SNMP response
-        return {
-            'oid': oid,
-            'value': value,
-            'timestamp': datetime.now().isoformat()
-        }
-
-    def get_snmp_walk_data(self):
-        # Get all metrics formatted for SNMP walk operation
-        snmp_metrics = self.get_snmp_metrics()
-        walk_data = []
-        
-        for oid, value in sorted(snmp_metrics.items()):
-            walk_data.append(self.format_snmp_response(oid, value))
-            
-        return walk_data
-
-    def get_metric_by_oid(self, requested_oid):
-        # Get a specific metric by its OID
-        snmp_metrics = self.get_snmp_metrics()
-        
-        if requested_oid in snmp_metrics:
-            return self.format_snmp_response(requested_oid, snmp_metrics[requested_oid])
-        
-        logger.warning(f"Requested OID not found: {requested_oid}")
-        return None
-
 # Create global SNMP manager instance
 snmp_manager = None
-
-def get_snmp_manager(analytics_instance=None):
-    # Get the global SNMP manager instance
-    global snmp_manager
-    if snmp_manager is None:
-        snmp_manager = SNMPManager(analytics_instance)
-    elif analytics_instance and not snmp_manager.analytics:
-        snmp_manager.set_analytics_instance(analytics_instance)
-    return snmp_manager
 
 def initialize_snmp(analytics_instance):
     # Initialise SNMP manager with analytics integration

@@ -1484,7 +1484,7 @@
                 updateChartData('disk', mockSystemInfo.disk);
                 updateChartData('network', mockSystemInfo.network);
 
-                // Update progress bars (legacy)
+                // Update progress bars
                 document.getElementById('cpuBar').style.width = `${mockSystemInfo.cpu}%`;
                 document.getElementById('cpuText').textContent = `${mockSystemInfo.cpu}%`;
                 document.getElementById('memBar').style.width = `${mockSystemInfo.memory}%`;
@@ -1845,12 +1845,11 @@
                     servers = [];
                 }
                 
-                // Add mock CPU/memory data for display (in real implementation, this would come from API)
+                // Use real CPU/memory data from the API, fall back to defaults for stopped servers
                 servers.forEach(server => {
-                    if (!server.cpu) server.cpu = Math.floor(Math.random() * 50) + '%';
-                    if (!server.memory) server.memory = Math.floor(Math.random() * 1024) + ' MB';
-                    if (!server.uptime) server.uptime = getServerStatus(server) === 'running' ? 
-                        Math.floor(Math.random() * 24) + 'h ' + Math.floor(Math.random() * 60) + 'm' : '-';
+                    if (!server.cpu) server.cpu = '0%';
+                    if (!server.memory) server.memory = '0 MB';
+                    if (!server.uptime) server.uptime = '-';
                 });
                 
                 renderServerList();
@@ -1928,13 +1927,13 @@
                         <td>
                             <span class="server-status ${statusClass}">
                                 <span class="status-dot ${statusClass}" style="width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 4px;"></span>
-                                ${status.charAt(0).toUpperCase() + status.slice(1)}
+                                ${escapeHtml(status.charAt(0).toUpperCase() + status.slice(1))}
                             </span>
                         </td>
-                        <td class="server-pid">${pid || '-'}</td>
-                        <td class="server-cpu">${cpu}</td>
-                        <td class="server-memory">${memory}</td>
-                        <td class="server-uptime">${uptime}</td>
+                        <td class="server-pid">${escapeHtml(String(pid || '-'))}</td>
+                        <td class="server-cpu">${escapeHtml(String(cpu))}</td>
+                        <td class="server-memory">${escapeHtml(String(memory))}</td>
+                        <td class="server-uptime">${escapeHtml(String(uptime))}</td>
                         <td>
                             <div style="display: flex; gap: 4px;">
                                 <button class="btn btn-sm btn-success" onclick="controlServer('${escapeHtml(name)}', 'start')" 

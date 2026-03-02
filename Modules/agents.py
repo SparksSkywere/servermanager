@@ -22,7 +22,6 @@ except ImportError:
 
 logger: logging.Logger = setup_module_logging("Agents")
 
-
 class ClusterNode:
     def __init__(self, name: str, ip: str, port: int = 5000, status: str = "unknown"):
         self.name = name
@@ -32,7 +31,6 @@ class ClusterNode:
         self.last_ping: Optional[datetime] = None
         self.server_count = 0
         self.is_online = False
-
 
 class AgentManager:
     def __init__(self, config_path: Optional[str] = None):
@@ -65,11 +63,6 @@ class AgentManager:
         except Exception as e:
             logger.error(f"Error getting cluster status: {e}")
             return {'error': str(e)}
-    
-    def is_master_host(self):
-        if not self.cluster_manager:
-            return False
-        return self.cluster_manager.is_master
     
     def join_cluster(self, master_ip: str) -> bool:
         if not self.cluster_manager:
@@ -236,10 +229,6 @@ class AgentManager:
             logger.error(f"Failed to get servers from node {node_name}: {e}")
         
         return []
-    
-    def save_nodes(self):
-        # No longer needed - database operations handle persistence
-        pass
     
     def load_nodes(self):
         # Load cluster nodes from database with status and ping history

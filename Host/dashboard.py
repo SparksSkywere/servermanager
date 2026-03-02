@@ -34,14 +34,13 @@ try:
     import datetime
 
     import tkinter as tk
-    from tkinter import ttk, messagebox, filedialog, scrolledtext, simpledialog
+    from tkinter import messagebox
     early_crash_log("Dashboard", "Standard library imports successful")
 
-    from Modules.Database.user_database import initialize_user_manager
+    from Modules.Database.user_database import initialise_user_manager
     early_crash_log("Dashboard", "User database import successful")
 
     from Modules.server_manager import ServerManager
-    from Modules.minecraft import MinecraftServerManager
     early_crash_log("Dashboard", "Server management imports successful")
 
     from Modules.server_logging import (
@@ -62,9 +61,6 @@ from Modules.scheduler import SchedulerManager
 # Import update management
 from Modules.server_updates import ServerUpdateManager
 
-# Import documentation dialogs
-from Modules.documentation import show_help_dialog, show_about_dialog
-
 # Import core infrastructure
 from Modules.common import ServerManagerModule, initialise_registry_values
 
@@ -73,25 +69,16 @@ from Host.dashboard_ui import setup_ui, expand_all_categories, collapse_all_cate
 
 # Dashboard utility functions
 from Host.dashboard_functions import (
-    load_dashboard_config, update_webserver_status, update_system_info_threaded, centre_window,
+    load_dashboard_config, update_system_info_threaded, centre_window,
     load_appid_scanner_list, load_minecraft_scanner_list,
-    import_server_from_directory_dialog, import_server_from_export_dialog,
-    export_server_dialog, create_progress_dialog_with_console, rename_server_configuration, show_java_configuration_dialog, batch_update_server_types,
-    update_server_status_in_treeview, open_directory_in_explorer, get_current_server_list, get_current_subhost, reattach_to_running_servers,
+    get_current_server_list, get_current_subhost, reattach_to_running_servers,
     update_server_list_for_subhost, refresh_all_subhost_servers,
     refresh_current_subhost_servers, refresh_subhost_servers,
-    load_categories, start_server_operation,
-    stop_server_operation, restart_server_operation, add_server_dialog
+    add_server_dialog
 )
 
 # Import cluster management
 from Modules.agents import AgentManager, show_agent_management_dialog
-
-# Import debugging utilities
-from debug.debug import (
-    get_server_process_details, log_exception, monitor_process_resources
-)
-
 
 # Import mixin modules for dashboard functionality
 from Host.dashboard_server_config import ServerConfigMixin
@@ -109,11 +96,6 @@ import logging
 
 # Get dashboard logger
 logger: logging.Logger = get_dashboard_logger()
-
-
-# =============================================================================
-# MAIN DASHBOARD CLASS
-# =============================================================================
 
 class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogsMixin, DashboardSettingsMixin, ServerManagerModule):
     def __init__(self, debug_mode=False):
@@ -237,7 +219,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         
         # Initialise user management system
         try:
-            engine, self.user_manager = initialize_user_manager()
+            engine, self.user_manager = initialise_user_manager()
         except Exception as e:
             logger.error(f"Failed to initialise user management: {e}")
             messagebox.showerror("Database Error", f"Failed to connect to user database:\n{str(e)}")
@@ -310,8 +292,8 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         base_min_width = self.scale_value(800)
         base_min_height = self.scale_value(600)
         
-        min_width = min(base_min_width, int(screen_width * 0.6))  # Max 60% of screen width
-        min_height = min(base_min_height, int(screen_height * 0.6))  # Max 60% of screen height
+        min_width = min(base_min_width, int(screen_width * 0.6))
+        min_height = min(base_min_height, int(screen_height * 0.6))
         self.root.minsize(min_width, min_height)
         
         # Ensure the main window is properly visible
@@ -326,7 +308,6 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         logger.debug("Dashboard window brought to front")
         
         # Centre the main window on screen with adaptive sizing
-        # Use 85% of screen on large screens, but ensure minimum usable size
         width = max(min_width, int(screen_width * 0.85))
         height = max(min_height, int(screen_height * 0.85))
         # Cap at 90% to leave some space for taskbar/other UI elements
@@ -339,10 +320,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         
         # Lift loading overlay to ensure it's on top after all UI is created
         if hasattr(self, 'loading_frame'):
-            self.loading_frame.lift()  # type: ignore
-        
-        # NOTE: Initial server list refresh is now deferred to run() method
-        # to avoid blocking during window creation
+            self.loading_frame.lift() # type: ignore
         
         # Write PID file
         self.write_pid_file("dashboard", os.getpid())
@@ -368,7 +346,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         # Initialise cluster manager
         try:
             # Use database-backed cluster management (no longer using JSON)
-            agents_config_path = None  # Migration already done
+            agents_config_path = None
             self.agent_manager = AgentManager(agents_config_path)
             logger.debug("Cluster manager initialised")
         except Exception as e:
@@ -385,7 +363,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         # Initialise DPI scaling factors for proper UI sizing across different displays
         try:
             # Get DPI from the root window
-            dpi = self.root.winfo_fpixels('1i')  # Pixels per inch
+            dpi = self.root.winfo_fpixels('1i')
             
             # Standard DPI is 96 on Windows
             self.dpi_scale = dpi / 96.0
@@ -401,10 +379,6 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
     def scale_value(self, value):
         # Scale a value according to the current DPI scaling factor
         return int(value * getattr(self, 'dpi_scale', 1.0))
-    
-    def _reattach_to_running_servers(self):
-        # Detect and reattach to running server processes
-        reattach_to_running_servers(self.server_manager, self.console_manager, logger)
 
     def expand_all_categories(self):
         # Expand all categories in the current server list
@@ -483,12 +457,10 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
 
     def update_server_list(self, force_refresh=False):
         # Update server list from configuration files
-        # update_server_list_logic handles its own background threading internally
         from Host.dashboard_functions import update_server_list_logic
         update_server_list_logic(self, force_refresh)
     
     def toggle_offline_mode(self):
-        # Toggle offline mode
         # Toggle offline mode
         self.variables["offlineMode"] = self.offline_var.get()  # type: ignore
         self.update_webserver_status()
@@ -538,7 +510,6 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
     
     def update_webserver_status(self):
         # Update the web server status display - non-blocking
-        # Runs the port check in a background thread to avoid blocking the main thread
         import threading
         
         def _check_status():
@@ -633,7 +604,6 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             
             # Schedule background initialization without blocking UI
             def background_init_thread():
-                # This runs entirely in a background thread - heavy operations stay here
                 # Import once at the start
                 from Host.dashboard_functions import get_servers_display_data, update_server_list_for_subhost
                 
@@ -652,7 +622,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                         except tk.TclError:
                             pass
                     
-                    # Step 1: System info (lightweight, UI update only) - 10%
+                    # System info (lightweight, UI update only)
                     self.root.after(0, lambda: update_loading_status("Loading system info...", 10))
                     try:
                         logger.debug("Running system info update...")
@@ -663,9 +633,9 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                     
                     logger.debug("Init step 1 complete - system info")
                     
-                    # Step 2: Server list update - do heavy work HERE in background thread - 30%
+                    # Server list update - do heavy work HERE in background thread
                     self.root.after(0, lambda: update_loading_status("Loading server list...", 15))
-                    time.sleep(0.1)  # Allow UI to update
+                    time.sleep(0.1)
                     try:
                         logger.debug("Init step 2 - server list update...")
                         # Get server data in background thread (heavy psutil operations)
@@ -685,11 +655,9 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                     
                     logger.debug("Init step 2 complete - server list")
                     
-                    # Step 3: Reattach to running servers - heavy operations in background - 60%
-                    # Skip full process discovery during startup to avoid hanging
                     # Only do quick PID-based reattachment
                     self.root.after(0, lambda: update_loading_status("Detecting running servers...", 40))
-                    time.sleep(0.1)  # Allow UI to update
+                    time.sleep(0.1)
                     try:
                         logger.debug("Init step 3 - quick reattach to running servers...")
                         # This runs entirely in background thread - no root.after for the heavy work
@@ -699,13 +667,12 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                             from Host.dashboard_functions import cleanup_orphaned_process_entries, cleanup_orphaned_relay_files
                             cleanup_orphaned_process_entries(self.server_manager, logger)
                             cleanup_orphaned_relay_files(logger)
-                            # Full reattach_to_running_servers is too slow for startup
-                            # It will run on the next periodic refresh
+                            # Run on the next periodic refresh
                         logger.debug("Init step 3 complete - quick reattach")
                     except Exception as e:
                         logger.error(f"Error in reattach init: {str(e)}")
                     
-                    # Step 4: Final server list refresh to show updated statuses - 80%
+                    # Final server list refresh to show updated statuses
                     self.root.after(0, lambda: update_loading_status("Finalising...", 80))
                     time.sleep(0.1)
                     try:
@@ -721,7 +688,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                     except Exception as e:
                         logger.error(f"Error in final refresh: {str(e)}")
                     
-                    # Step 5: Start timers for periodic updates (after initial load is complete) - 90%
+                    # Start timers for periodic updates (after initial load is complete)
                     def start_timers():
                         try:
                             if hasattr(self, 'timer_manager') and self.timer_manager:
@@ -729,9 +696,9 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                                 logger.debug("Timer manager started")
                         except Exception as e:
                             logger.error(f"Error starting timers: {str(e)}")
-                    self.root.after(500, start_timers)  # Delay timer start by 500ms
+                    self.root.after(500, start_timers)
                     
-                    # Step 6: Deferred full reattach to running servers (runs after UI is responsive) - 95%
+                    # Deferred full reattach to running servers (runs after UI is responsive)
                     def deferred_full_reattach():
                         try:
                             logger.debug("Starting deferred full reattach to running servers...")
@@ -743,11 +710,11 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                     # Run full reattach after a short delay so it doesn't block UI
                     self.root.after(2000, lambda: threading.Thread(target=deferred_full_reattach, daemon=True).start())
                     
-                    # Complete - 100%
+                    # Complete
                     self.root.after(0, lambda: update_loading_status("Complete!", 100))
                     
                     # Hide loading overlay after everything is done
-                    time.sleep(0.2)  # Brief delay to let UI updates complete
+                    time.sleep(0.2)
                     self.root.after(0, self._hide_loading_overlay)
                     
                     logger.info("Background initialisation completed")
@@ -804,7 +771,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                 try:
                     messagebox.showerror("Dashboard Error", f"Failed to start dashboard: {error_msg}")
                 except tk.TclError:
-                    pass  # Messagebox might fail if Tkinter is in bad state
+                    pass
                 self.on_close()
     
     def on_close(self):
@@ -854,7 +821,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             if self.root and self.root.winfo_exists():
                 self.root.destroy()
         except tk.TclError:
-            pass  # Window already destroyed
+            pass
     
     def _safe_call(self, func, *args, **kwargs):
         # Safely call a function with error handling
@@ -894,146 +861,6 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             messagebox.showerror("Error", "Scheduler not available.")
             return
         self.timer_manager.show_schedules_manager()
-    
-    def show_database_sync_manager(self):
-        # Show database sync configuration dialog
-        if not self.timer_manager:
-            messagebox.showerror("Error", "Scheduler not available.")
-            return
-        
-        if not self.agent_manager:
-            messagebox.showerror("Error", "Cluster manager not available. Database syncing requires cluster configuration.")
-            return
-        
-        # Create dialog
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Database Sync Manager")
-        dialog.geometry("500x400")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        main_frame = ttk.Frame(dialog, padding=20)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Title
-        title_label = ttk.Label(main_frame, text="Database Synchronization", font=("Segoe UI", 14, "bold"))
-        title_label.pack(pady=(0, 20))
-        
-        # Status section
-        status_frame = ttk.LabelFrame(main_frame, text="Current Status", padding=10)
-        status_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        # Status variables
-        sync_status = self.timer_manager.get_database_sync_status()
-        
-        status_text = "Enabled" if sync_status['enabled'] else "Disabled"
-        status_color = "green" if sync_status['enabled'] else "red"
-        
-        status_label = ttk.Label(status_frame, text=f"Status: {status_text}", foreground=status_color)
-        status_label.pack(anchor=tk.W)
-        
-        interval_label = ttk.Label(status_frame, text=f"Sync Interval: {sync_status['interval_seconds']} seconds")
-        interval_label.pack(anchor=tk.W, pady=(5, 0))
-        
-        if sync_status['last_sync']:
-            last_sync_label = ttk.Label(status_frame, text=f"Last Sync: {sync_status['last_sync']}")
-            last_sync_label.pack(anchor=tk.W, pady=(5, 0))
-        
-        if sync_status['next_sync']:
-            next_sync_label = ttk.Label(status_frame, text=f"Next Sync: {sync_status['next_sync']}")
-            next_sync_label.pack(anchor=tk.W, pady=(5, 0))
-        
-        # Configuration section
-        config_frame = ttk.LabelFrame(main_frame, text="Configuration", padding=10)
-        config_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        # Enable/Disable checkbox
-        enabled_var = tk.BooleanVar(value=sync_status['enabled'])
-        enabled_cb = ttk.Checkbutton(config_frame, text="Enable database synchronization", 
-                                   variable=enabled_var)
-        enabled_cb.pack(anchor=tk.W, pady=(0, 10))
-        
-        # Interval setting
-        interval_frame = ttk.Frame(config_frame)
-        interval_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        ttk.Label(interval_frame, text="Sync interval (seconds):").pack(side=tk.LEFT)
-        interval_var = tk.StringVar(value=str(sync_status['interval_seconds']))
-        interval_entry = ttk.Entry(interval_frame, textvariable=interval_var, width=10)
-        interval_entry.pack(side=tk.LEFT, padx=(10, 0))
-        
-        # Info text
-        info_text = ("Database synchronization will periodically sync server configurations, "
-                    "user data, and cluster settings across all online cluster nodes.\n\n"
-                    "This ensures consistency across your cluster and prevents configuration drift.")
-        
-        info_label = ttk.Label(config_frame, text=info_text, wraplength=400, justify=tk.LEFT)
-        info_label.pack(anchor=tk.W, pady=(10, 0))
-        
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(20, 0))
-        
-        def apply_settings():
-            try:
-                interval = int(interval_var.get())
-                if interval < 60:
-                    messagebox.showerror("Error", "Sync interval must be at least 60 seconds.")
-                    return
-                
-                if enabled_var.get():
-                    self.timer_manager.enable_database_sync(interval)
-                    messagebox.showinfo("Success", "Database synchronization enabled.")
-                else:
-                    self.timer_manager.disable_database_sync()
-                    messagebox.showinfo("Success", "Database synchronization disabled.")
-                
-                dialog.destroy()
-                
-            except ValueError:
-                messagebox.showerror("Error", "Invalid interval value. Please enter a number.")
-        
-        def sync_now():
-            if not sync_status['enabled']:
-                messagebox.showerror("Error", "Database synchronization is disabled.")
-                return
-            
-            # Run sync immediately
-            import threading
-            sync_thread = threading.Thread(target=self.timer_manager.sync_cluster_databases, daemon=True)
-            sync_thread.start()
-            
-            messagebox.showinfo("Sync Started", "Database synchronization started in background.")
-        
-        apply_btn = ttk.Button(button_frame, text="Apply Settings", command=apply_settings)
-        apply_btn.pack(side=tk.LEFT, padx=(0, 10))
-        
-        sync_btn = ttk.Button(button_frame, text="Sync Now", command=sync_now)
-        sync_btn.pack(side=tk.LEFT, padx=(0, 10))
-        
-        cancel_btn = ttk.Button(button_frame, text="Cancel", command=dialog.destroy)
-        cancel_btn.pack(side=tk.RIGHT)
-        
-        # Centre dialog with multi-screen support
-        dialog.update_idletasks()
-        dialog_width = dialog.winfo_width()
-        dialog_height = dialog.winfo_height()
-
-        # Calculate center position relative to main window
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog_width) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog_height) // 2
-
-        # Get screen dimensions
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-
-        # Ensure dialog stays within screen bounds
-        x = max(0, min(x, screen_width - dialog_width))
-        y = max(0, min(y, screen_height - dialog_height))
-
-        dialog.geometry(f"+{x}+{y}")
-    
-
 
 def is_dashboard_already_running():
     # Check if another dashboard instance is already running using a lock file with PID
@@ -1079,7 +906,6 @@ def is_dashboard_already_running():
         early_crash_log("Dashboard", f"Single-instance check failed: {e}")
         return False, None
 
-
 def cleanup_dashboard_lock():
     # Clean up the lock file when dashboard exits
     import tempfile
@@ -1095,7 +921,6 @@ def cleanup_dashboard_lock():
                 os.remove(lock_file)
     except Exception:
         pass
-
 
 def bring_existing_dashboard_to_front(pid):
     # Try to bring the existing dashboard window to the front (Windows only)
@@ -1126,7 +951,7 @@ def bring_existing_dashboard_to_front(pid):
             
             if window_pid.value == pid and IsWindowVisible(hwnd):
                 target_hwnd = hwnd
-                return False  # Stop enumeration
+                return False
             return True
         
         EnumWindows(EnumWindowsProc(enum_callback), 0)
@@ -1140,7 +965,6 @@ def bring_existing_dashboard_to_front(pid):
         early_crash_log("Dashboard", f"Could not bring existing window to front: {e}")
     
     return False
-
 
 def main():
     import traceback as tb

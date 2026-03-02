@@ -356,6 +356,13 @@
     <div class="notification" id="notification"></div>
 
     <script>
+        // HTML escaping utility for XSS prevention
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
         let currentTheme = localStorage.getItem('theme_preference') || 'dark';
 
         function applyTheme(theme) {

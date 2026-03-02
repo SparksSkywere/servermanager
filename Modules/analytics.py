@@ -24,7 +24,6 @@ logger: logging.Logger = setup_module_logging("Analytics")
 _snmp_manager: Optional['SNMPManager'] = None
 _grafana_manager: Optional['GrafanaManager'] = None
 
-
 class AnalyticsCollector(ServerManagerModule):
     # - Collects system/server stats every 60s
     # - Thread-safe metric storage
@@ -385,8 +384,6 @@ class AnalyticsCollector(ServerManagerModule):
                     
             return history
 
-
-
     def get_json_metrics(self):
         # Get all metrics in JSON format with metadata
         return {
@@ -507,32 +504,8 @@ class AnalyticsCollector(ServerManagerModule):
                 'system': {}
             }
 
-    # Backward compatibility methods - these delegate to module-level functions
-    def get_prometheus_metrics(self, enabled=True):
-        # Backward compatibility: Get Prometheus metrics
-        from Modules.analytics import get_prometheus_metrics as _get_prometheus_metrics
-        return _get_prometheus_metrics(self, enabled)
-    
-    def get_snmp_metrics(self, enabled=True):
-        # Backward compatibility: Get SNMP metrics
-        from Modules.analytics import get_snmp_metrics as _get_snmp_metrics
-        return _get_snmp_metrics(self, enabled)
-
 # Create global analytics instance
 analytics = AnalyticsCollector()
-
-def get_analytics_instance():
-    # Get the global analytics instance
-    return analytics
-
-def start_analytics():
-    # Start analytics collection
-    analytics.start_collection()
-    return analytics
-
-def stop_analytics():
-    # Stop analytics collection
-    analytics.stop_collection()
 
 # Conditional helper functions for SNMP and Grafana integration
 def get_prometheus_metrics(analytics_instance=None, enabled=True):
@@ -582,22 +555,6 @@ def initialize_grafana_module(analytics_instance=None):
     except Exception as e:
         logger.error(f"Failed to initialise Grafana module: {e}")
         return None
-
-def get_snmp_manager():
-    # Get the SNMP manager instance (if initialised)
-    return _snmp_manager
-
-def get_grafana_manager():
-    # Get the Grafana manager instance (if initialised)
-    return _grafana_manager
-
-def is_snmp_enabled():
-    # Check if SNMP module is initialised and available
-    return _snmp_manager is not None
-
-def is_grafana_enabled():
-    # Check if Grafana module is initialised and available
-    return _grafana_manager is not None
 
 # Initialize integrations eagerly
 _snmp_manager = initialize_snmp_module(None)

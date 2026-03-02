@@ -62,7 +62,6 @@ except ImportError as e:
 
 from Modules.common import ServerManagerModule
 
-
 class ServerManager(ServerManagerModule):
     def __init__(self):
         super().__init__("ServerManager")
@@ -70,16 +69,6 @@ class ServerManager(ServerManagerModule):
         
         self.load_config()
         self.load_servers()
-
-    def get_server_process(self, server_name):
-        # Get active process-None if dead
-        if hasattr(self, 'active_processes') and server_name in self.active_processes:
-            process = self.active_processes[server_name]
-            if process.poll() is None:
-                return process
-            else:
-                del self.active_processes[server_name]
-        return None
         
     def get_servers(self):
         return self.servers
@@ -137,7 +126,7 @@ class ServerManager(ServerManagerModule):
             manager = get_server_config_manager()
             servers = manager.get_all_servers()
             
-            # Convert to dict keyed by name for backward compatibility
+            # Convert to dict keyed by name
             self.servers = {server['Name']: server for server in servers}
                         
             logger.debug(f"Loaded {len(self.servers)} server configurations from database")
@@ -195,10 +184,6 @@ class ServerManager(ServerManagerModule):
     def get_all_servers(self):
         return self.servers.copy()
     
-    def reload_servers(self):
-        self.servers.clear()
-        self.load_servers()
-    
     def reload_server(self, server_name):
         try:
             from Modules.Database.server_configs_database import get_server_config_manager
@@ -225,11 +210,7 @@ class ServerManager(ServerManagerModule):
             return False
     
     def is_server_process_valid(self, server_name, process_id, server_config=None):
-        # Validate that a PID actually belongs to the server it's claimed to be
-        # Prevents issues with Windows PID reuse
-        # belong to a completely different process
-        # PRIMARY validation: ProcessCreateTime matching (most secure)
-        # Returns: (is_valid, process_or_none)
+        # Validate that a PID belongs to the expected server process
         try:
             if process_id is None:
                 return False, None
@@ -271,7 +252,6 @@ class ServerManager(ServerManagerModule):
                     pass
 
             # FALLBACK: If no ProcessCreateTime stored, use heuristic checks
-            # Less secure but necessary for backwards compatibility
             install_dir = server_config.get('InstallDir', '')
             executable_path = server_config.get('ExecutablePath', '')
             server_type = server_config.get('Type', '').lower()
@@ -802,7 +782,7 @@ class ServerManager(ServerManagerModule):
                 pass
             
             server_config['ProcessId'] = process.pid
-            server_config['PID'] = process.pid  # For console manager compatibility
+            server_config['PID'] = process.pid  # For console manager
             server_config['StartTime'] = start_time.isoformat()
             server_config['LastUpdate'] = datetime.now().isoformat()
             server_config['LogStdout'] = stdout_log
@@ -1305,35 +1285,6 @@ class ServerManager(ServerManagerModule):
                 callback(f"Error restarting server: {str(e)}")
             return False, f"Failed to restart server: {str(e)}"
 
-    def remove_server_config(self, server_name):
-        try:
-            server_config = self.get_server_config(server_name)
-            if not server_config:
-                logger.error(f"Server configuration not found in database: {server_name}")
-                return False, f"Server configuration not found in database: {server_name}"
-                
-            if 'ProcessId' in server_config and self.is_process_running(server_config['ProcessId']):
-                logger.error(f"Cannot remove server '{server_name}' while it is running.")
-                return False, f"Cannot remove server '{server_name}' while it is running. Please stop the server first."
-                
-            from Modules.Database.server_configs_database import get_server_config_manager
-            manager = get_server_config_manager()
-            success = manager.delete_server(server_name)
-            
-            if success:
-                logger.info(f"Removed server configuration from database: {server_name}")
-                
-                if server_name in self.servers:
-                    del self.servers[server_name]
-                
-                return True, f"Server '{server_name}' configuration removed successfully."
-            else:
-                return False, f"Failed to remove server configuration from database"
-            
-        except Exception as e:
-            logger.error(f"Error removing server: {str(e)}")
-            return False, f"Failed to remove server: {str(e)}"
-
     def update_server_config(self, server_name, executable_path, startup_args="", stop_command="", 
                            use_config_file=False, config_file_path="", config_argument="--config", 
                            additional_args=""):
@@ -1527,34 +1478,6 @@ class ServerManager(ServerManagerModule):
         except Exception as e:
             logger.error(f"Error checking if server {server_name} is running: {str(e)}")
             return False
-
-    def validate_server_config(self, server_config, install_dir):
-        errors = []
-        warnings = []
-        
-        try:
-            if not install_dir or not os.path.exists(install_dir):
-                errors.append(f"Installation directory not found: {install_dir}")
-            
-            if server_config.get('UseConfigFile', False):
-                config_file_path = server_config.get('ConfigFilePath', '')
-                config_arg = server_config.get('ConfigArgument', '')
-                
-                if not config_file_path:
-                    errors.append("Config file path is required when using config file mode")
-                elif install_dir:
-                    config_full = config_file_path if os.path.isabs(config_file_path) else os.path.join(install_dir, config_file_path)
-                    if not os.path.exists(config_full):
-                        warnings.append(f"Config file not found: {config_full}")
-                
-                if not config_arg:
-                    errors.append("Config argument is required when using config file mode")
-            
-            return errors, warnings
-            
-        except Exception as e:
-            logger.error(f"Error validating server config: {str(e)}")
-            return [f"Validation error: {str(e)}"], []
 
     def get_steamcmd_error_description(self, exit_code):
         error_codes = {
@@ -2045,40 +1968,6 @@ class ServerManager(ServerManagerModule):
         except Exception as e:
             logger.error(f"Complete server installation failed: {str(e)}")
             return False, f"Installation failed: {str(e)}"
-
-    def get_minecraft_versions(self):
-        # Get available Minecraft versions from database (NO FALLBACKS)
-        try:
-            from Modules.Database.scanners.MinecraftIDScanner import MinecraftIDScanner
-            scanner = MinecraftIDScanner(use_database=True, debug_mode=False)
-            servers = scanner.get_servers_from_database(modloader=None, dedicated_only=True)
-            scanner.close()
-
-            if not servers:
-                servers = []
-
-            versions = []
-            for server in servers:
-                versions.append({
-                    "id": server["version_id"],
-                    "type": server["version_type"],
-                    "modloader": server["modloader"],
-                    "modloader_version": server["modloader_version"],
-                    "java_requirement": server["java_requirement"]
-                })
-
-            versions.sort(key=lambda x: x["id"], reverse=True)
-            return versions
-
-        except ImportError as e:
-            error_msg = f"Minecraft database modules not available: {e}"
-            logger.error(error_msg)
-            raise Exception(f"Minecraft database unavailable: {error_msg}")
-
-        except Exception as e:
-            error_msg = f"Failed to retrieve Minecraft versions from database: {e}"
-            logger.error(error_msg)
-            raise Exception(error_msg)
 
     def get_supported_server_types(self):
         return ["Steam", "Minecraft", "Other"]

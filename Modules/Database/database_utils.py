@@ -124,6 +124,6 @@ def get_engine(config):
     return engine
 
 def get_engine_by_type(db_type="user"):
-    # Get engine by database type (for backwards compatibility)
+    # Get engine by database type
     config = get_sql_config_from_registry(db_type)
     return get_engine(config)

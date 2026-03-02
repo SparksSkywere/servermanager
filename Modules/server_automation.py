@@ -1,7 +1,6 @@
 # Server automation module - Handles automated server operations like MOTD broadcasting, restart warnings, and start commands. Can run independently of the dashboard for scheduled operations.
 import os
 import sys
-import time
 import datetime
 import threading
 import psutil
@@ -11,13 +10,12 @@ import logging
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Modules.common import setup_module_path, setup_module_logging
+from Modules.common import setup_module_path, setup_module_logging, send_command_to_server
 setup_module_path()
 
 from Modules.Database.server_configs_database import ServerConfigManager
 
 logger: logging.Logger = setup_module_logging("ServerAutomation")
-
 
 class ServerAutomationManager:
     # Manages automated server operations like MOTD, restart warnings, and start commands
@@ -29,25 +27,6 @@ class ServerAutomationManager:
         self.automation_thread = None
         self.last_motd_broadcast = {}  # Track last MOTD broadcast per server
         self.motd_timers = {}  # Track MOTD timers per server
-
-    def start_automation(self):
-        # Start the automation service
-        if self.running:
-            logger.warning("Automation service already running")
-            return
-
-        self.running = True
-        self.automation_thread = threading.Thread(target=self._automation_loop, daemon=True)
-        self.automation_thread.start()
-        logger.info("Server automation service started")
-
-    def stop_automation(self):
-        # Stop the automation service
-        self.running = False
-        self._stop_event.set()
-        if self.automation_thread and self.automation_thread.is_alive():
-            self.automation_thread.join(timeout=5)
-        logger.info("Server automation service stopped")
 
     def _automation_loop(self):
         # Main automation loop that runs periodically
@@ -194,155 +173,9 @@ class ServerAutomationManager:
             logger.error(f"Error sending MOTD to {server_name}: {str(e)}")
             return False
 
-    def execute_start_command(self, server_name: str, progress_callback: Optional[Callable] = None) -> bool:
-        # Execute the start command for a server after it starts
-        try:
-            server_config = self._get_server_config(server_name)
-            if not server_config:
-                logger.error(f"Server config not found for {server_name}")
-                return False
-
-            start_command = server_config.get('StartCommand', '').strip()
-            if not start_command:
-                return True  # No start command configured, consider success
-
-            # Wait a bit for server to fully start (interruptible)
-            self._stop_event.wait(10)
-
-            if self._send_command_to_server(server_name, start_command):
-                if progress_callback:
-                    progress_callback(f"[INFO] Start command executed for {server_name}")
-                logger.info(f"Start command executed for {server_name}: {start_command}")
-                return True
-            else:
-                if progress_callback:
-                    progress_callback(f"[ERROR] Failed to execute start command for {server_name}")
-                logger.warning(f"Failed to execute start command for {server_name}")
-                return False
-
-        except Exception as e:
-            logger.error(f"Error executing start command for {server_name}: {str(e)}")
-            return False
-
-    def send_restart_warnings(self, server_name: str, progress_callback: Optional[Callable] = None) -> bool:
-        # Send pre-restart warning messages to players
-        try:
-            server_config = self._get_server_config(server_name)
-            if not server_config:
-                logger.error(f"Server config not found for {server_name}")
-                return False
-
-            warning_command = server_config.get('WarningCommand', '')
-            if not warning_command:
-                logger.debug(f"No warning command configured for {server_name}, skipping warnings")
-                return True  # Not an error, just no warnings configured
-
-            warning_intervals_str = server_config.get('WarningIntervals', '30,15,10,5,1')
-            try:
-                warning_intervals = [int(x.strip()) for x in warning_intervals_str.split(',') if x.strip()]
-            except ValueError:
-                warning_intervals = [30, 15, 10, 5, 1]
-
-            if not warning_intervals:
-                warning_intervals = [1]  # At least 1 minute warning
-
-            # Sort intervals in descending order
-            warning_intervals.sort(reverse=True)
-
-            if progress_callback:
-                progress_callback(f"[INFO] Sending restart warnings to {server_name} at intervals: {warning_intervals} minutes")
-
-            # Send warnings at each interval
-            for minutes in warning_intervals:
-                try:
-                    # Format the warning message
-                    if minutes == 1:
-                        message = "1 minute"
-                    else:
-                        message = f"{minutes} minutes"
-
-                    # Replace {message} placeholder with the time remaining
-                    command = warning_command.replace('{message}', message)
-
-                    # Send the command to the server
-                    if self._send_command_to_server(server_name, command):
-                        if progress_callback:
-                            progress_callback(f"[INFO] Sent warning: {message} remaining")
-                        logger.info(f"Sent restart warning to {server_name}: {message} remaining")
-                    else:
-                        if progress_callback:
-                            progress_callback(f"[WARN] Failed to send warning to {server_name}")
-
-                    # Wait until the next warning interval
-                    if warning_intervals.index(minutes) < len(warning_intervals) - 1:
-                        next_interval = warning_intervals[warning_intervals.index(minutes) + 1]
-                        wait_seconds = (minutes - next_interval) * 60
-                        if wait_seconds > 0:
-                            if progress_callback:
-                                progress_callback(f"[INFO] Waiting {wait_seconds} seconds until next warning...")
-                            self._stop_event.wait(wait_seconds)
-                            if self._stop_event.is_set():
-                                return True
-                    else:
-                        # Wait for the final interval before restart
-                        if progress_callback:
-                            progress_callback(f"[INFO] Final warning sent, waiting {minutes * 60} seconds before restart...")
-                        self._stop_event.wait(minutes * 60)
-                        if self._stop_event.is_set():
-                            return True
-
-                except Exception as e:
-                    logger.error(f"Error sending warning at {minutes} minutes: {str(e)}")
-                    continue
-
-            # Send save command before restart if configured
-            save_command = server_config.get('SaveCommand', '')
-            if save_command:
-                if progress_callback:
-                    progress_callback(f"[INFO] Sending save command before restart...")
-                if self._send_command_to_server(server_name, save_command):
-                    logger.info(f"Sent save command to {server_name} before restart")
-                    time.sleep(5)  # Give the server time to save
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Error sending restart warnings for {server_name}: {str(e)}")
-            return False
-
     def _send_command_to_server(self, server_name: str, command: str) -> bool:
-        # Send a command to a running server
-        try:
-            # Try using persistent stdin pipe
-            try:
-                from services.persistent_stdin import send_command_to_stdin_pipe, is_stdin_pipe_available
-                if is_stdin_pipe_available(server_name):
-                    result = send_command_to_stdin_pipe(server_name, command)
-                    # Handle both bool and tuple return types
-                    if isinstance(result, tuple):
-                        return result[0]
-                    return result
-            except ImportError:
-                pass
-
-            # Try using command queue
-            try:
-                from services.command_queue import queue_command, is_relay_active
-                if is_relay_active(server_name):
-                    result = queue_command(server_name, command)
-                    # Handle both bool and tuple return types
-                    if isinstance(result, tuple):
-                        return result[0]
-                    return result
-            except ImportError:
-                pass
-
-            logger.warning(f"No command input method available for {server_name}")
-            return False
-
-        except Exception as e:
-            logger.error(f"Error sending command to {server_name}: {str(e)}")
-            return False
+        # Delegate to shared implementation in common.py
+        return send_command_to_server(server_name, command)
 
     def run(self):
         # Main automation loop - runs indefinitely
@@ -366,7 +199,6 @@ class ServerAutomationManager:
             logger.error(f"Fatal error in server automation: {str(e)}")
             raise
 
-
 def main():
     # Main entry point for running server automation as a standalone process
     try:
@@ -387,7 +219,6 @@ def main():
         return 1
     
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -34,9 +34,8 @@ import sqlite3
 from Modules.server_logging import get_component_logger
 logger = get_component_logger("DatabaseVerifier")
 
-
 class DatabaseVerifier:
-    """Verify and repair database integrity for Steam and Minecraft databases."""
+    # Verify and repair database integrity for Steam and Minecraft databases
     
     def __init__(self, use_database=True, dry_run=False):
         self.use_database = use_database and SQLALCHEMY_AVAILABLE
@@ -49,13 +48,13 @@ class DatabaseVerifier:
     # ── Steam database ──────────────────────────────────────────────────
     
     def _get_steam_session(self):
-        """Get a SQLAlchemy session for the Steam database."""
+        # Get a SQLAlchemy session for the Steam database
         engine = get_steam_engine()  # type: ignore[misc]
         Session = sessionmaker(bind=engine)  # type: ignore[possibly-unbound]
         return Session(), engine
     
     def _get_steam_sqlite(self):
-        """Get an SQLite connection for the Steam database."""
+        # Get an SQLite connection for the Steam database
         db_dir = os.path.join(os.path.dirname(__file__), '..', 'db')
         db_path = os.path.join(db_dir, 'steam_ID.db')
         if not os.path.exists(db_path):
@@ -63,7 +62,7 @@ class DatabaseVerifier:
         return sqlite3.connect(db_path)
     
     def verify_steam_schema(self):
-        """Check that the steam_apps table has all required columns."""
+        # Check that the steam_apps table has all required columns
         required_columns = {
             'appid', 'name', 'type', 'is_server', 'is_dedicated_server',
             'requires_subscription', 'anonymous_install', 'publisher',
@@ -110,7 +109,7 @@ class DatabaseVerifier:
             return set()
     
     def _add_missing_steam_columns(self, missing_columns):
-        """Add missing columns to the steam_apps table."""
+        # Add missing columns to the steam_apps table
         column_defaults = {
             'requires_subscription': ('BOOLEAN', 'FALSE', '0'),
             'anonymous_install': ('BOOLEAN', 'TRUE', '1'),
@@ -149,7 +148,7 @@ class DatabaseVerifier:
             self.results['steam']['issues'].append(f"Column repair failed: {e}")
     
     def verify_steam_data(self):
-        """Check Steam data integrity – row counts, orphan detection, etc."""
+        # Check Steam data integrity - row counts, orphan detection, etc.
         try:
             if self.use_database:
                 session, engine = self._get_steam_session()
@@ -216,13 +215,13 @@ class DatabaseVerifier:
     # ── Minecraft database ──────────────────────────────────────────────
     
     def _get_minecraft_session(self):
-        """Get a SQLAlchemy session for the Minecraft database."""
+        # Get a SQLAlchemy session for the Minecraft database
         engine = get_minecraft_engine()  # type: ignore[misc]
         Session = sessionmaker(bind=engine)  # type: ignore[possibly-unbound]
         return Session(), engine
     
     def _get_minecraft_sqlite(self):
-        """Get an SQLite connection for the Minecraft database."""
+        # Get an SQLite connection for the Minecraft database
         db_dir = os.path.join(os.path.dirname(__file__), '..', 'db')
         db_path = os.path.join(db_dir, 'minecraft_servers.db')
         if not os.path.exists(db_path):
@@ -230,7 +229,7 @@ class DatabaseVerifier:
         return sqlite3.connect(db_path)
     
     def verify_minecraft_data(self):
-        """Check Minecraft data integrity."""
+        # Check Minecraft data integrity
         try:
             if self.use_database:
                 session, engine = self._get_minecraft_session()
@@ -290,7 +289,7 @@ class DatabaseVerifier:
     # ── Public API ──────────────────────────────────────────────────────
     
     def verify_all(self):
-        """Run all verification checks and return results."""
+        # Run all verification checks and return results
         logger.info("Starting database verification...")
         
         if self.dry_run:
@@ -321,7 +320,7 @@ class DatabaseVerifier:
         return self.results
     
     def get_summary_text(self):
-        """Return a human-readable summary of the verification results."""
+        # Return a human-readable summary of the verification results
         lines = []
         
         # Steam summary
@@ -378,7 +377,6 @@ class DatabaseVerifier:
         
         return "\n".join(lines)
 
-
 def main():
     parser = argparse.ArgumentParser(description='Verify database integrity')
     parser.add_argument('--dry-run', action='store_true',
@@ -400,7 +398,6 @@ def main():
     
     verifier.verify_all()
     print(verifier.get_summary_text())
-
 
 if __name__ == "__main__":
     main()

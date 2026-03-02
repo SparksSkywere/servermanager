@@ -129,11 +129,7 @@ except ImportError:
 
 logger: logging.Logger = setup_module_logging("ServerConsole")
 
-
-# =============================================================================
-# REAL-TIME CONSOLE CLASS
-# =============================================================================
-
+# Real-time console class
 class RealTimeConsole:
     # Real-time console for individual server process
     
@@ -976,43 +972,6 @@ class RealTimeConsole:
         except Exception as e:
             logger.error(f"Error closing log files for {self.server_name}: {e}")
     
-    def _update_gui_display(self):
-        # Update the GUI text widget with current buffer contents
-        try:
-            if not self.text_widget or not self.window:
-                return
-                
-            # Get current buffer contents
-            with self.buffer_lock:
-                current_output = self.output_buffer.copy()
-            
-            # Clear and repopulate the text widget
-            self.text_widget.config(state='normal')
-            self.text_widget.delete(1.0, tk.END)
-            
-            for entry in current_output:
-                text = entry.get('text', '')
-                entry_type = entry.get('type', 'stdout')
-                
-                # Set color based on type
-                if entry_type == 'error':
-                    self.text_widget.insert(tk.END, text + '\n', 'error')
-                elif entry_type == 'command':
-                    self.text_widget.insert(tk.END, text + '\n', 'command')
-                elif entry_type == 'system':
-                    self.text_widget.insert(tk.END, text + '\n', 'system')
-                else:
-                    self.text_widget.insert(tk.END, text + '\n')
-            
-            self.text_widget.config(state='disabled')
-            
-            # Auto-scroll if enabled
-            if self.auto_scroll_enabled:
-                self.text_widget.see(tk.END)
-                
-        except Exception as e:
-            logger.debug(f"Error updating GUI display: {e}")
-    
     def _handle_process_termination(self):
         # Handle when the attached process has ended
         try:
@@ -1077,7 +1036,7 @@ class RealTimeConsole:
                 self._start_api_poll_thread()
                 return
             
-            # Legacy direct monitoring (for non-HTTPS mode)
+            # Direct pipe monitoring (for non-HTTPS mode)
             self.output_thread = threading.Thread(
                 target=self._monitor_stdout,
                 daemon=True,
@@ -1826,12 +1785,6 @@ class RealTimeConsole:
             pass
         except Exception as e:
             logger.debug(f"Error refreshing GUI: {e}")
-    
-    def _update_gui_output_batch(self, text, msg_type):
-        # This is a no-op now - GUI updates are handled by _refresh_gui_from_buffer
-        # which is called from the main thread via _start_status_updates
-        # This method exists for compatibility with code that still calls it
-        pass
     
     def send_command(self, command):
         # Send command to server process
@@ -2776,11 +2729,7 @@ class RealTimeConsole:
             logger.error(f"Error killing process for {self.server_name}: {e}")
             return False
 
-
-# =============================================================================
-# CONSOLE MANAGER CLASS
-# =============================================================================
-
+# Console manager class
 class ConsoleManager:
     # Manages multiple server consoles
     
@@ -2788,26 +2737,16 @@ class ConsoleManager:
         self.server_manager = server_manager
         self.consoles = {}  # server_name -> RealTimeConsole
         self.lock = threading.Lock()
-        
-    def create_console(self, server_name, server_config):
-        # Create a new console for a server
-        try:
-            with self.lock:
-                if server_name not in self.consoles:
-                    console = RealTimeConsole(server_name, server_config, self.server_manager, self) 
-                    self.consoles[server_name] = console
-                    logger.debug(f"Created console for {server_name}")
-                    return console
-                else:
-                    return self.consoles[server_name]
-        except Exception as e:
-            logger.error(f"Error creating console for {server_name}: {e}")
-            return None
     
-    def attach_console_to_process(self, server_name, process, server_config=None):
+    # lock_timeout: max seconds to wait for lock (None = blocking, 0 = non-blocking)
+    def attach_console_to_process(self, server_name, process, server_config=None, lock_timeout=None):
         # Attach console to a running process
         try:
-            with self.lock:
+            acquired = self.lock.acquire(timeout=lock_timeout) if lock_timeout is not None else self.lock.acquire()
+            if not acquired:
+                logger.debug(f"Could not acquire lock to attach console for {server_name}, skipping")
+                return False
+            try:
                 # Get or create console
                 console = self.consoles.get(server_name)
                 if not console:
@@ -2823,6 +2762,8 @@ class ConsoleManager:
                 
                 # Attach to process
                 return console.attach_to_process(process)
+            finally:
+                self.lock.release()
                 
         except Exception as e:
             logger.error(f"Error attaching console to process for {server_name}: {e}")
@@ -3142,8 +3083,3 @@ class ConsoleManager:
             
         except Exception as e:
             logger.error(f"Error showing console manager window: {e}")
-
-
-# For backward compatibility - alias the new classes to the old names
-ServerConsole = RealTimeConsole
-ServerConsoleManager = ConsoleManager

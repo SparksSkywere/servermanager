@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # Dashboard settings - Settings dialog, all settings tabs, save logic
-from __future__ import annotations
 
 import json
 import tkinter as tk
@@ -21,10 +20,7 @@ if TYPE_CHECKING:
 
 logger = get_dashboard_logger()
 
-
 class DashboardSettingsMixin:
-    """Mixin providing the settings dialog and all settings tabs."""
-
     # Type stubs for attributes provided by ServerManagerDashboard at runtime
     if TYPE_CHECKING:
         root: tk.Tk
@@ -32,7 +28,7 @@ class DashboardSettingsMixin:
         variables: Dict[str, Any]
 
     def show_settings_dialog(self):
-        """Show settings dialog for editing configuration."""
+        # Show settings dialog for editing configuration
         settings_window = tk.Toplevel(self.root)
         settings_window.title("Settings")
         settings_window.geometry("800x600")
@@ -84,10 +80,9 @@ class DashboardSettingsMixin:
 
         self.settings_window = settings_window
 
-    # ── Tabs ─────────────────────────────────────────────────────────────
-
+    # Tabs
     def _create_dashboard_settings_tab(self, parent, config, db):
-        """Create dashboard settings controls."""
+        # Create dashboard settings controls
         canvas = tk.Canvas(parent)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
@@ -123,7 +118,7 @@ class DashboardSettingsMixin:
         self._create_settings_controls(scrollable_frame, settings, "dashboard")
 
     def _create_cluster_settings_tab(self, parent, db):
-        """Create cluster settings controls."""
+        # Create cluster settings controls
         from Modules.common import REGISTRY_PATH, get_registry_value, set_registry_value
 
         main_frame = ttk.Frame(parent, padding=10)
@@ -200,7 +195,7 @@ class DashboardSettingsMixin:
                    command=save_cluster_settings).pack(anchor=tk.E, pady=(10, 0))
 
     def _create_pending_requests_section(self, parent, db):
-        """Build the pending join-requests treeview (Host only)."""
+        # Build the pending join-requests treeview (Host only)
         requests_frame = ttk.LabelFrame(parent, text="Pending Join Requests", padding=10)
         requests_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
 
@@ -316,7 +311,7 @@ class DashboardSettingsMixin:
         requests_frame.after(10000, _auto)
 
     def _create_update_settings_tab(self, parent, config, db):
-        """Create update settings controls."""
+        # Create update settings controls
         canvas = tk.Canvas(parent)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
@@ -352,7 +347,7 @@ class DashboardSettingsMixin:
         self.update_config_text = text_widget
 
     def _create_steam_settings_tab(self, parent, db):
-        """Create Steam credentials settings tab."""
+        # Create Steam credentials settings tab
         main_frame = ttk.Frame(parent, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -504,7 +499,7 @@ class DashboardSettingsMixin:
                    command=clear_steam_credentials).pack(side=tk.RIGHT)
 
     def _create_system_settings_tab(self, parent, config, db):
-        """Create system settings controls."""
+        # Create system settings controls
         canvas = tk.Canvas(parent)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
@@ -534,10 +529,9 @@ class DashboardSettingsMixin:
         ]
         self._create_settings_controls(scrollable_frame, settings, "main")
 
-    # ── Shared helpers ───────────────────────────────────────────────────
-
+    # Shared helpers
     def _create_settings_controls(self, parent, settings, config_type):
-        """Create form controls for a list of settings."""
+        # Create form controls for a list of settings
         self.settings_vars = getattr(self, 'settings_vars', {})
         self.settings_vars[config_type] = {}
 
@@ -560,7 +554,7 @@ class DashboardSettingsMixin:
             self.settings_vars[config_type][key] = (var, value_type)
 
     def _save_settings(self, window, db):
-        """Save all settings to database."""
+        # Save all settings to database
         try:
             if "dashboard" in getattr(self, 'settings_vars', {}):
                 for key, (var, value_type) in self.settings_vars["dashboard"].items():

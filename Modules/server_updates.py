@@ -12,13 +12,12 @@ import logging
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Modules.common import setup_module_path, ServerManagerModule, setup_module_logging, get_subprocess_creation_flags
+from Modules.common import setup_module_path, ServerManagerModule, setup_module_logging, get_subprocess_creation_flags, send_command_to_server
 setup_module_path()
 
 from Modules.Database.cluster_database import get_cluster_database
 
 logger: logging.Logger = setup_module_logging("ServerUpdateManager")
-
 
 class ServerUpdateManager(ServerManagerModule):
     # - Automatic updates and restarts
@@ -643,38 +642,8 @@ class ServerUpdateManager(ServerManagerModule):
             logger.error(f"Error sending restart warnings for {server_name}: {str(e)}")
     
     def _send_command_to_server(self, server_name: str, command: str) -> bool:
-        # Send a command to a running server
-        try:
-            # Try using persistent stdin pipe
-            try:
-                from services.persistent_stdin import send_command_to_stdin_pipe, is_stdin_pipe_available
-                if is_stdin_pipe_available(server_name):
-                    result = send_command_to_stdin_pipe(server_name, command)
-                    # Handle both bool and tuple return types
-                    if isinstance(result, tuple):
-                        return result[0]
-                    return result
-            except ImportError:
-                pass
-            
-            # Try using command queue
-            try:
-                from services.command_queue import queue_command, is_relay_active
-                if is_relay_active(server_name):
-                    result = queue_command(server_name, command)
-                    # Handle both bool and tuple return types
-                    if isinstance(result, tuple):
-                        return result[0]
-                    return result
-            except ImportError:
-                pass
-            
-            logger.warning(f"No command input method available for {server_name}")
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error sending command to {server_name}: {str(e)}")
-            return False
+        # Delegate to shared implementation in common.py
+        return send_command_to_server(server_name, command)
     
     def send_motd(self, server_name: str, message: str, progress_callback: Optional[Callable] = None) -> bool:
         # Send a MOTD/broadcast message to a server

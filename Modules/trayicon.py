@@ -31,7 +31,6 @@ except ImportError:
 
 logger: logging.Logger = setup_module_logging("TrayIcon")
 
-
 def is_another_trayicon_running():
     # Check for existing trayicon process
     try:
@@ -51,11 +50,7 @@ def is_another_trayicon_running():
         logger.error(f"Trayicon check failed: {e}")
         return False, None
 
-
-# =============================================================================
-# TRAY ICON CLASS
-# =============================================================================
-
+# Tray icon class
 class ServerManagerTrayIcon(ServerManagerModule):
     # - Lives in system tray
     # - Quick access to dashboard, web UI, admin panel
@@ -70,6 +65,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
         self.standalone_mode = False
         self.notifications_enabled = False
         self.admin_dashboard_process = None
+        self._shutting_down = False
         
         parser = argparse.ArgumentParser(description='Server Manager Tray Icon')
         parser.add_argument('--debug', action='store_true', help='Enable debug logging')
@@ -341,21 +337,22 @@ class ServerManagerTrayIcon(ServerManagerModule):
         except Exception as e:
             logger.error(f"Status update failed: {str(e)}")
         
-        # Schedule next update
+        # Schedule next update unless shutting down
+        if self._shutting_down:
+            return
         try:
-            # Use a safer threading approach
             timer = threading.Timer(10.0, self.update_server_status)
-            timer.daemon = True  # Make sure timer thread doesn't prevent shutdown
+            timer.daemon = True
             timer.start()
         except Exception as e:
             logger.error(f"Error scheduling next status update: {str(e)}")
-            # If we can't schedule the next update, try again in 30 seconds
-            try:
-                timer = threading.Timer(30.0, self.update_server_status)
-                timer.daemon = True
-                timer.start()
-            except Exception as retry_error:
-                logger.error(f"Failed to reschedule status update even with retry: {str(retry_error)}")
+            if not self._shutting_down:
+                try:
+                    timer = threading.Timer(30.0, self.update_server_status)
+                    timer.daemon = True
+                    timer.start()
+                except Exception as retry_error:
+                    logger.error(f"Failed to reschedule status update: {str(retry_error)}")
 
     def check_webserver_status(self):
         # Check if the web server is running and update status
@@ -536,12 +533,12 @@ class ServerManagerTrayIcon(ServerManagerModule):
 
         try:
             # Import required modules
-            from Modules.Database.user_database import initialize_user_manager
+            from Modules.Database.user_database import initialise_user_manager
             from Host.admin_dashboard import admin_login
             from Modules.automation_ui import open_automation_settings
 
             # Initialize user manager and require authentication
-            user_manager = initialize_user_manager()
+            user_manager = initialise_user_manager()
             if not admin_login(user_manager):
                 logger.info("Authentication failed for automation settings")
                 return
@@ -902,120 +899,72 @@ class ServerManagerTrayIcon(ServerManagerModule):
             logger.error(f"Error checking port {port}: {str(e)}")
             return False
     
+    def _stop_child_processes(self):
+        # Terminate launcher, dashboard, and admin dashboard processes
+        pid_targets = [
+            ("launcher.pid", "launcher"),
+            ("dashboard.pid", "dashboard"),
+            ("admin_dashboard.pid", "admin dashboard"),
+        ]
+        for pid_file, label in pid_targets:
+            try:
+                pid_path = os.path.join(self.paths["temp"], pid_file)
+                if not os.path.exists(pid_path):
+                    continue
+                with open(pid_path, 'r') as f:
+                    pid_info = json.load(f)
+                pid = pid_info.get("ProcessId")
+                if pid and self.is_process_running(pid):
+                    try:
+                        psutil.Process(pid).terminate()
+                        logger.info(f"Terminated {label} (PID {pid})")
+                    except Exception as e:
+                        logger.error(f"Error terminating {label}: {e}")
+                os.remove(pid_path)
+            except Exception as e:
+                logger.error(f"Error processing {pid_file}: {e}")
+
+        # Also terminate subprocesses we started directly
+        for proc, label in [
+            (self.dashboard_process, "dashboard"),
+            (self.admin_dashboard_process, "admin dashboard"),
+        ]:
+            if proc and proc.poll() is None:
+                try:
+                    proc.terminate()
+                    logger.info(f"Terminated {label} subprocess")
+                except Exception as e:
+                    logger.error(f"Error terminating {label} subprocess: {e}")
+
     def exit_app(self):
-        # Exit the application
+        # Signal shutdown to stop the status update timer loop
+        self._shutting_down = True
         logger.info("Exiting application")
         
-        # First, attempt to stop the launcher process
-        try:
-            launcher_pid_file = os.path.join(self.paths["temp"], "launcher.pid")
-            if os.path.exists(launcher_pid_file):
-                with open(launcher_pid_file, 'r') as f:
-                    pid_info = json.load(f)
-                
-                launcher_pid = pid_info.get("ProcessId")
-                if launcher_pid and self.is_process_running(launcher_pid):
-                    try:
-                        launcher_process = psutil.Process(launcher_pid)
-                        launcher_process.terminate()
-                        logger.info(f"Terminated launcher process with PID {launcher_pid}")
-                    except Exception as e:
-                        logger.error(f"Error terminating launcher process: {str(e)}")
-        except Exception as e:
-            logger.error(f"Error accessing launcher PID file: {str(e)}")
+        # Stop the tray icon first so it disappears immediately
+        if self.icon:
+            try:
+                self.icon.stop()
+                logger.debug("Tray icon stopped")
+            except Exception as e:
+                logger.error(f"Error stopping icon: {e}")
+
+        # Terminate all child processes
+        self._stop_child_processes()
         
-        # Remove PID file
+        # Remove trayicon PID file
         try:
             pid_file = os.path.join(self.paths["temp"], "trayicon.pid")
             if os.path.exists(pid_file):
                 os.remove(pid_file)
                 logger.debug("Removed tray icon PID file")
         except Exception as e:
-            logger.error(f"Error removing PID file: {str(e)}")
+            logger.error(f"Error removing PID file: {e}")
         
-        # Stop dashboard if we started it
-        if self.dashboard_process and self.dashboard_process.poll() is None:
-            try:
-                self.dashboard_process.terminate()
-                logger.info("Terminated dashboard process")
-            except Exception as e:
-                logger.error(f"Error terminating dashboard process: {str(e)}")
-        
-        # Stop admin dashboard if we started it
-        if self.admin_dashboard_process and self.admin_dashboard_process.poll() is None:
-            try:
-                self.admin_dashboard_process.terminate()
-                logger.info("Terminated admin dashboard process")
-            except Exception as e:
-                logger.error(f"Error terminating admin dashboard process: {str(e)}")
-        
-        # Also try to find and close other dashboard instances by PID file
-        try:
-            dashboard_pid_file = os.path.join(self.paths["temp"], "dashboard.pid")
-            if os.path.exists(dashboard_pid_file):
-                with open(dashboard_pid_file, 'r') as f:
-                    pid_info = json.load(f)
-                
-                dashboard_pid = pid_info.get("ProcessId")
-                if dashboard_pid and self.is_process_running(dashboard_pid):
-                    try:
-                        dashboard_process = psutil.Process(dashboard_pid)
-                        dashboard_process.terminate()
-                        logger.info(f"Terminated existing dashboard process with PID {dashboard_pid}")
-                    except Exception as e:
-                        logger.error(f"Error terminating existing dashboard: {str(e)}")
-                
-                # Remove the PID file
-                os.remove(dashboard_pid_file)
-        except Exception as e:
-            logger.error(f"Error terminating existing dashboard: {str(e)}")
-        
-        # Also try to find and close admin dashboard instances by PID file
-        try:
-            admin_pid_file = os.path.join(self.paths["temp"], "admin_dashboard.pid")
-            if os.path.exists(admin_pid_file):
-                with open(admin_pid_file, 'r') as f:
-                    pid_info = json.load(f)
-                
-                admin_pid = pid_info.get("ProcessId")
-                if admin_pid and self.is_process_running(admin_pid):
-                    try:
-                        admin_process = psutil.Process(admin_pid)
-                        admin_process.terminate()
-                        logger.info(f"Terminated existing admin dashboard process with PID {admin_pid}")
-                    except Exception as e:
-                        logger.error(f"Error terminating existing admin dashboard: {str(e)}")
-                
-                # Remove the PID file
-                os.remove(admin_pid_file)
-        except Exception as e:
-            logger.error(f"Error terminating existing admin dashboard: {str(e)}")
-        
-        # As a final failsafe, call the stop_servermanager script to ensure all processes are terminated
-        try:
-            stop_script = os.path.join(self.paths["scripts"], "stop_servermanager.py")
-            if os.path.exists(stop_script):
-                # Use CREATE_NO_WINDOW to prevent console popup on Windows
-                startupinfo = None
-                creationflags = 0
-                if os.name == 'nt':
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = 0
-                    creationflags = subprocess.CREATE_NO_WINDOW
-                
-                subprocess.run([sys.executable, stop_script], timeout=10,
-                              startupinfo=startupinfo, creationflags=creationflags)
-                logger.info("Executed stop_servermanager.py")
-        except Exception as e:
-            logger.error(f"Error running stop_servermanager.py: {str(e)}")
-        
-        # Stop the icon
-        if self.icon:
-            self.icon.stop()
-        
-        # Exit the application
         logger.info("Server Manager tray icon terminated")
+        
+        # Force exit to ensure no lingering threads keep the process alive
+        os._exit(0)
 
     def run(self):
         # Run the tray icon application

@@ -38,7 +38,6 @@ def get_subhost_info(subhost_id):
     if node and node['node_type'] == 'subhost':
         return {
             "id": node['name'],
-            "info": {},  # Legacy compat
             "last_seen": node['last_ping'] or node['added_at'],
             "registered_at": node['added_at'],
             "ip_address": node['ip_address'],
@@ -57,7 +56,6 @@ def require_cluster_auth(f):
             logger.debug("Allowing unauthenticated access to cluster role endpoint")
             return f(*args, **kwargs)
             
-        # In simplified cluster system, authentication is handled automatically
         # Log the access and allow the request to proceed
         logger.debug(f"Cluster API access from {request.remote_addr}")
         return f(*args, **kwargs)
@@ -137,7 +135,7 @@ def _calculate_subhost_status(last_ping, current_time):
             seconds_ago = int(time_diff.total_seconds())
             
             # Mark as active if last seen within 5 minutes
-            if seconds_ago < 300:  # 5 minutes
+            if seconds_ago < 300:
                 status = "active"
             else:
                 status = "inactive"
@@ -210,62 +208,9 @@ def api_cluster_role():
         "hostAddress": host_address
     })
 
-@cluster_api.route("/api/cluster/register", methods=["POST"])
-@require_cluster_auth
-def api_register_subhost():
-    # Register a subhost with the host (DEPRECATED - use approval workflow instead)
-    try:
-        data = request.get_json()
-        if not data:
-            logger.warning("Register subhost request received with no data")
-            return jsonify({"error": "No data provided"}), 400
-            
-        subhost_id = data.get("subhost_id")
-        if not subhost_id:
-            logger.warning("Register subhost request missing subhost_id")
-            return jsonify({"error": "subhost_id is required"}), 400
-        
-        # Check if node is already registered
-        existing_node = cluster_db.get_cluster_node(subhost_id)
-        if existing_node:
-            # Update existing node
-            cluster_db.update_node_status(subhost_id, "active")
-            logger.info(f"Subhost {subhost_id} updated registration")
-            return jsonify({
-                "status": "updated",
-                "subhost_id": subhost_id,
-                "message": f"Subhost {subhost_id} registration updated"
-            })
-        
-        # Add new node using legacy registration path (should use approval workflow)
-        info = data.get("info", {})
-        success = cluster_db.add_cluster_node(
-            name=subhost_id,
-            ip_address=request.remote_addr or "unknown",
-            node_type="subhost",
-            cluster_token=""  # No token required for legacy registration
-        )
-        
-        if success:
-            logger.info(f"Subhost {subhost_id} registered successfully (legacy)")
-            logger.info(f"SUBHOST_REGISTRATION: Subhost {subhost_id} registered (user: system)")
-            
-            return jsonify({
-                "status": "registered",
-                "subhost_id": subhost_id,
-                "message": f"Subhost {subhost_id} registered successfully"
-            })
-        else:
-            return jsonify({"error": "Failed to register subhost"}), 500
-        
-    except Exception as e:
-        logger.error(f"Error registering subhost: {str(e)}")
-        return jsonify({"error": "An internal error occurred"}), 500
-
 @cluster_api.route("/api/cluster/request-join", methods=["POST"])
 def api_request_join():
     # Request to join cluster - requires approval
-    # This endpoint is unauthenticated so subhosts can send join requests
     try:
         logger.info(f"Join request received from {request.remote_addr}")
         
@@ -285,7 +230,6 @@ def api_request_join():
         os_info = info.get("os", "")
         
         # Use IP from info if provided (subhost knows its own IP better), fallback to remote_addr
-        # This supports both hostname and IP address connections
         client_ip = info.get("ip_address") or request.remote_addr or "unknown"
         hostname = info.get("hostname") or machine_name or subhost_id
         
@@ -380,7 +324,7 @@ def api_get_requests():
                         from datetime import datetime
                         last_ping = datetime.fromisoformat(node['last_ping'])
                         time_diff = datetime.now() - last_ping
-                        is_online = time_diff.total_seconds() < 300  # 5 minutes
+                        is_online = time_diff.total_seconds() < 300
                     except (ValueError, TypeError, AttributeError):
                         pass
                 
@@ -723,24 +667,8 @@ def api_subhost_heartbeat():
             cluster_db.update_node_status(subhost_id, "active", datetime.now())
             logger.debug(f"Heartbeat received from registered subhost: {subhost_id}")
         else:
-            # Auto-register unregistered subhosts for backward compatibility
-            info = data.get("info", {})
-            machine_name = info.get("machine_name", "")
-            
-            success = cluster_db.add_cluster_node(
-                name=subhost_id,
-                ip_address=request.remote_addr or "unknown",
-                node_type="subhost",
-                cluster_token=""
-            )
-            
-            if success:
-                cluster_db.update_node_status(subhost_id, "active", datetime.now())
-                logger.info(f"Auto-registered new subhost from heartbeat: {subhost_id}")
-                logger.info(f"SUBHOST_AUTO_REGISTRATION: Subhost {subhost_id} auto-registered via heartbeat (user: system)")
-            else:
-                logger.error(f"Failed to auto-register subhost {subhost_id}")
-                return jsonify({"error": "Failed to register subhost"}), 500
+            logger.warning(f"Heartbeat from unregistered subhost {subhost_id} - use approval workflow to register")
+            return jsonify({"error": "Subhost not registered. Use the approval workflow to join the cluster."}), 403
         
         # Update host heartbeat as well
         cluster_db.heartbeat()
@@ -777,10 +705,9 @@ def api_list_subhosts():
                 if status == "inactive":
                     inactive_count += 1
                 
-                # Convert to legacy format
+                # Build subhost response
                 active_subhosts[subhost_id] = {
                     "id": subhost_id,
-                    "info": {},  # Legacy compatibility: info field no longer stored
                     "last_seen": node['last_ping'] or node['added_at'],
                     "registered_at": node['added_at'],
                     "status": status,
@@ -815,7 +742,7 @@ def api_cluster_status():
             "timestamp": datetime.now().isoformat()
         }
         
-        subhost_count = 0  # Initialise before conditional block
+        subhost_count = 0
         if role == "Host":
             # Include subhost information for hosts
             all_nodes = cluster_db.get_all_cluster_nodes()
@@ -825,7 +752,6 @@ def api_cluster_status():
                 if node['node_type'] == 'subhost':
                     subhosts[node['name']] = {
                         "id": node['name'],
-                        "info": {},  # Legacy compatibility
                         "last_seen": node['last_ping'] or node['added_at'],
                         "registered_at": node['added_at'],
                         "ip_address": node['ip_address'],
@@ -1042,7 +968,7 @@ def api_cluster_nodes():
                 nodes.append({
                     "id": node['name'],
                     "subhost_id": node['name'],
-                    "hostname": node['name'],  # Use name as hostname for now
+                    "hostname": node['name'],
                     "ip_address": node['ip_address'],
                     "status": node['status'].title() if node['status'] else "Unknown",
                     "approved_timestamp": node['added_at'],
@@ -1087,10 +1013,7 @@ def api_revoke_node(node_id):
         logger.error(f"Error revoking node: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
 
-
-# ====== REMOTE HOST API ENDPOINTS (Separate from Cluster) ======
 # These endpoints handle one-time remote connections without cluster membership
-
 @cluster_api.route("/api/status", methods=["GET"])
 def api_server_status():
     # Get server status - used for remote host connectivity testing
@@ -1104,7 +1027,6 @@ def api_server_status():
     except Exception as e:
         logger.error(f"Error getting server status: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
-
 
 @cluster_api.route("/api/cluster/auth/login", methods=["POST"])
 def api_remote_login():
@@ -1125,7 +1047,6 @@ def api_remote_login():
             user = user_manager.authenticate_user(username, password)
             if user:
                 # For simplicity, return success without complex session management
-                # In production environments, proper session tokens should be used
                 logger.info(f"Remote host authentication successful for user: {username}")
                 return jsonify({
                     "success": True,
@@ -1143,18 +1064,15 @@ def api_remote_login():
         logger.error(f"Error in remote login: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
 
-
 @cluster_api.route("/api/cluster/auth/logout", methods=["POST"])
 def api_remote_logout():
     # Logout from remote host connection
     try:
         # For now, just return success status
-        # In production environments, session tokens should be invalidated here
         return jsonify({"success": True, "message": "Logged out successfully"})
     except Exception as e:
         logger.error(f"Error in remote logout: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
-
 
 @cluster_api.route("/api/servers", methods=["GET"])
 def api_get_servers():
@@ -1189,7 +1107,6 @@ def api_get_servers():
     except Exception as e:
         logger.error(f"Error getting servers: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
-
 
 @cluster_api.route("/api/servers/<server_name>/status", methods=["GET"])
 def api_get_server_status(server_name):
@@ -1232,7 +1149,6 @@ def api_get_server_status(server_name):
         logger.error(f"Error getting server status for {server_name}: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
 
-
 @cluster_api.route("/api/servers/<server_name>/start", methods=["POST"])
 def api_start_server(server_name):
     # Start a specific server
@@ -1263,7 +1179,6 @@ def api_start_server(server_name):
         logger.error(f"Error starting server {server_name}: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
 
-
 @cluster_api.route("/api/servers/<server_name>/stop", methods=["POST"])
 def api_stop_server(server_name):
     # Stop a specific server
@@ -1293,7 +1208,6 @@ def api_stop_server(server_name):
     except Exception as e:
         logger.error(f"Error stopping server {server_name}: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
-
 
 @cluster_api.route("/api/servers/<server_name>/restart", methods=["POST"])
 def api_restart_server(server_name):

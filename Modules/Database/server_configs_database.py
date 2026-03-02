@@ -21,13 +21,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from Modules.common import setup_module_path
 setup_module_path()
 
-from Modules.Database.database_utils import get_sql_config_from_registry, get_engine, get_engine_by_type
+from Modules.Database.database_utils import get_engine, get_engine_by_type
 
 from Modules.server_logging import get_component_logger
 logger = get_component_logger("ServerConfigsDB")
 
 Base = declarative_base()
-
 
 class ServerConfig(Base):
     # Server configuration stored in database
@@ -101,7 +100,6 @@ class ServerConfig(Base):
     # Relationships
     permissions = relationship("ServerPermission", back_populates="server", cascade="all, delete-orphan")
 
-
 class ServerPermission(Base):
     # User permissions for server access
     __tablename__ = 'server_permissions'
@@ -130,16 +128,9 @@ class ServerPermission(Base):
         {'sqlite_autoincrement': True},
     )
 
-
-def get_server_config_sql_config_from_registry():
-    # Get SQL config for server configs database from registry
-    return get_sql_config_from_registry("server_configs")
-
-
 def get_server_configs_engine():
     # Get SQLAlchemy engine for server configs database
     return get_engine_by_type("server_configs")
-
 
 def get_engine_by_type(db_type="server_configs"):
     # Get engine by database type with fallback to default location
@@ -181,7 +172,6 @@ def get_engine_by_type(db_type="server_configs"):
             "db_path": "servermanager_servers.db"
         })
 
-
 def init_server_configs_db(engine=None):
     # Initialize the server configs database tables
     if engine is None:
@@ -193,7 +183,6 @@ def init_server_configs_db(engine=None):
         logger.info("Server configs database tables created/verified")
         _db_initialized = True
     return engine
-
 
 class ServerConfigManager:
     # Manager class for server configurations in database
@@ -228,17 +217,6 @@ class ServerConfigManager:
         session = self.get_session()
         try:
             server = session.query(ServerConfig).filter(ServerConfig.name == name).first()
-            if server:
-                return self._server_to_dict(server)
-            return None
-        finally:
-            session.close()
-    
-    def get_server_by_id(self, server_id: int) -> Optional[Dict[str, Any]]:
-        # Get a specific server configuration by ID
-        session = self.get_session()
-        try:
-            server = session.query(ServerConfig).filter(ServerConfig.id == server_id).first()
             if server:
                 return self._server_to_dict(server)
             return None
@@ -527,213 +505,6 @@ class ServerConfigManager:
         finally:
             session.close()
     
-    def copy_server(self, source_name: str, new_name: str, copy_to_user: Optional[str] = None, copied_by: Optional[str] = None) -> bool:
-        # Copy a server configuration to a new name, optionally for a specific user
-        session = self.get_session()
-        try:
-            source = session.query(ServerConfig).filter(ServerConfig.name == source_name).first()
-            if not source:
-                logger.error(f"Source server not found: {source_name}")
-                return False
-            
-            # Check if target name already exists
-            existing = session.query(ServerConfig).filter(ServerConfig.name == new_name).first()
-            if existing:
-                logger.error(f"Target server name already exists: {new_name}")
-                return False
-            
-            # Parse extra config
-            extra_config = json.loads(source.extra_config) if source.extra_config else {}
-            
-            # Create new server config with all fields
-            new_server = ServerConfig(
-                name=new_name,
-                server_type=source.server_type,
-                app_id=source.app_id,
-                install_dir=source.install_dir,
-                executable_path=source.executable_path,
-                startup_args=source.startup_args,
-                version=source.version,
-                mod_loader=source.mod_loader,
-                category=source.category,
-                
-                # Server control settings
-                stop_command=source.stop_command,
-                use_config_file=source.use_config_file,
-                config_file_path=source.config_file_path,
-                config_argument=source.config_argument,
-                additional_args=source.additional_args,
-                notes=source.notes,
-                
-                # Minecraft/Java specific
-                java_path=source.java_path,
-                ram=source.ram,
-                jvm_args=source.jvm_args,
-                
-                # Status tracking
-                auto_start=False,  # Don't auto-start copied servers
-                imported=source.imported,
-                
-                # Don't copy process info - new server starts fresh
-                process_id=None,
-                process_create_time=None,
-                
-                # Don't copy sync info
-                last_sync=None,
-                synced_by='',
-                
-                # Logging paths - copy for reference
-                log_stdout=source.log_stdout,
-                log_stderr=source.log_stderr,
-                
-                # Don't copy corruption info
-                last_corruption_check=None,
-                corruption_recovery_actions='[]',
-                
-                extra_config=json.dumps(extra_config)
-            )
-            
-            session.add(new_server)
-            session.commit()
-            
-            # Copy permissions or add for specific user
-            if copy_to_user:
-                # Grant full permissions to the specified user
-                self._add_permission(session, new_server.id, copy_to_user, {
-                    'view': True, 'start': True, 'stop': True, 
-                    'restart': True, 'console': True, 'edit': True
-                }, copied_by)
-            else:
-                # Copy all existing permissions
-                for perm in source.permissions:
-                    self._add_permission(session, new_server.id, perm.username, {
-                        'view': perm.can_view,
-                        'start': perm.can_start,
-                        'stop': perm.can_stop,
-                        'restart': perm.can_restart,
-                        'console': perm.can_console,
-                        'edit': perm.can_edit
-                    }, copied_by)
-            
-            session.commit()
-            logger.info(f"Copied server config '{source_name}' to '{new_name}'")
-            return True
-            
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Failed to copy server config: {e}")
-            return False
-        finally:
-            session.close()
-    
-    def get_server_permissions(self, name: str) -> Dict[str, Any]:
-        # Get permissions for a server
-        session = self.get_session()
-        try:
-            server = session.query(ServerConfig).filter(ServerConfig.name == name).first()
-            if not server:
-                return {"allowed_users": [], "user_permissions": {}}
-            
-            allowed_users = []
-            user_permissions = {}
-            
-            for perm in server.permissions:
-                allowed_users.append(perm.username)
-                user_permissions[perm.username] = {
-                    'view': perm.can_view,
-                    'start': perm.can_start,
-                    'stop': perm.can_stop,
-                    'restart': perm.can_restart,
-                    'console': perm.can_console,
-                    'edit': perm.can_edit
-                }
-            
-            return {
-                "allowed_users": allowed_users,
-                "user_permissions": user_permissions
-            }
-            
-        finally:
-            session.close()
-    
-    def set_server_permissions(self, name: str, allowed_users: List[str], 
-                                user_permissions: Dict[str, Dict[str, bool]], 
-                                updated_by: str = None) -> bool:
-        # Set permissions for a server (replaces existing permissions)
-        session = self.get_session()
-        try:
-            server = session.query(ServerConfig).filter(ServerConfig.name == name).first()
-            if not server:
-                return False
-            
-            # Remove existing permissions
-            session.query(ServerPermission).filter(ServerPermission.server_id == server.id).delete()
-            
-            # Add new permissions
-            for username in allowed_users:
-                perms = user_permissions.get(username, {})
-                self._add_permission(session, server.id, username, perms, updated_by)
-            
-            session.commit()
-            logger.info(f"Updated permissions for server: {name}")
-            return True
-            
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Failed to set server permissions: {e}")
-            return False
-        finally:
-            session.close()
-    
-    def get_servers_for_user(self, username: str, is_admin: bool = False) -> List[Dict[str, Any]]:
-        # Get servers that a specific user has access to
-        session = self.get_session()
-        try:
-            if is_admin:
-                # Admins see all servers
-                servers = session.query(ServerConfig).filter(ServerConfig.is_active == True).all()
-            else:
-                # Regular users see only servers they have permissions for
-                servers = session.query(ServerConfig).join(ServerPermission).filter(
-                    ServerConfig.is_active == True,
-                    ServerPermission.username == username,
-                    ServerPermission.can_view == True
-                ).all()
-            
-            result = []
-            for server in servers:
-                server_dict = self._server_to_dict(server)
-                
-                # Add user's specific permissions
-                if is_admin:
-                    server_dict['permissions'] = {
-                        'view': True, 'start': True, 'stop': True,
-                        'restart': True, 'console': True, 'edit': True
-                    }
-                else:
-                    perm = session.query(ServerPermission).filter(
-                        ServerPermission.server_id == server.id,
-                        ServerPermission.username == username
-                    ).first()
-                    if perm:
-                        server_dict['permissions'] = {
-                            'view': perm.can_view,
-                            'start': perm.can_start,
-                            'stop': perm.can_stop,
-                            'restart': perm.can_restart,
-                            'console': perm.can_console,
-                            'edit': perm.can_edit
-                        }
-                    else:
-                        server_dict['permissions'] = {'view': False}
-                
-                result.append(server_dict)
-            
-            return result
-            
-        finally:
-            session.close()
-    
     def import_from_json_files(self, servers_dir: str) -> int:
         # Import server configurations from JSON files
         if not os.path.exists(servers_dir):
@@ -767,24 +538,6 @@ class ServerConfigManager:
                 logger.error(f"Failed to import {filename}: {e}")
         
         return imported
-    
-    def export_to_json_file(self, name: str, output_dir: str) -> bool:
-        # Export a server configuration to a JSON file
-        server_config = self.get_server(name)
-        if not server_config:
-            return False
-        
-        try:
-            output_path = os.path.join(output_dir, f"{name}.json")
-            with open(output_path, 'w') as f:
-                json.dump(server_config, f, indent=4, default=str)
-            
-            logger.info(f"Exported server config to: {output_path}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to export server config: {e}")
-            return False
     
     def _server_to_dict(self, server: ServerConfig) -> Dict[str, Any]:
         # Convert a ServerConfig object to a dictionary
@@ -904,7 +657,6 @@ class ServerConfigManager:
         )
         session.add(permission)
 
-
 # Convenience function to get a singleton instance
 _config_manager_instance = ServerConfigManager()
 _auto_migration_done = False
@@ -941,28 +693,3 @@ def get_server_config_manager(auto_migrate: bool = True) -> ServerConfigManager:
     
     return _config_manager_instance
 
-
-def sync_server_to_db(server_name: str, config: Dict[str, Any]) -> bool:
-    # Sync a single server configuration to the database
-    try:
-        manager = get_server_config_manager(auto_migrate=False)
-        existing = manager.get_server(server_name)
-        
-        if existing:
-            return manager.update_server(server_name, config)
-        else:
-            return manager.create_server(config)
-    except Exception as e:
-        logger.error(f"Error syncing server {server_name} to database: {e}")
-        return False
-
-
-def get_all_servers_from_db() -> Dict[str, Dict[str, Any]]:
-    # Get all servers from database as a dictionary keyed by server name
-    try:
-        manager = get_server_config_manager()
-        servers = manager.get_all_servers()
-        return {s['Name']: s for s in servers}
-    except Exception as e:
-        logger.error(f"Error getting servers from database: {e}")
-        return {}

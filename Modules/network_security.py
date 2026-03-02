@@ -50,66 +50,6 @@ class NetworkSecurityManager:
         except Exception as e:
             logger.error(f"Error checking IP address {ip_address}: {e}")
             return False
-            
-    def add_allowed_network(self, network):
-        # - Add an allowed network
-        try:
-            net = ipaddress.ip_network(network, strict=False)
-            if net not in self.allowed_networks:
-                self.allowed_networks.append(net)
-                logger.info(f"Added allowed network: {network}")
-                return True
-        except Exception as e:
-            logger.error(f"Failed to add network {network}: {e}")
-        return False
-        
-    def remove_allowed_network(self, network):
-        # Remove an allowed network
-        try:
-            net = ipaddress.ip_network(network, strict=False)
-            if net in self.allowed_networks:
-                self.allowed_networks.remove(net)
-                logger.info(f"Removed allowed network: {network}")
-                return True
-        except Exception as e:
-            logger.error(f"Failed to remove network {network}: {e}")
-        return False
-
-def require_allowed_network(security_manager):
-    # Decorator to check if client IP is from an allowed network
-    def decorator(f):
-        @wraps(f)
-        def decorated_function(*args, **kwargs):
-            client_ip = request.environ.get('REMOTE_ADDR', request.remote_addr)
-            
-            # Handle proxied requests
-            forwarded_for = request.headers.get('X-Forwarded-For')
-            real_ip = request.headers.get('X-Real-IP')
-            
-            if forwarded_for:
-                client_ip = forwarded_for.split(',')[0].strip()
-            elif real_ip:
-                client_ip = real_ip
-                
-            # Skip network validation for localhost requests (development/debugging)
-            if client_ip in ['127.0.0.1', '::1', 'localhost']:
-                return f(*args, **kwargs)
-                
-            if not security_manager.is_ip_allowed(client_ip):
-                logger.warning(f"Access denied for IP address: {client_ip} on endpoint: {request.endpoint}")
-                return jsonify({
-                    "error": "Access denied", 
-                    "message": "Your IP address is not allowed to access this resource",
-                    "timestamp": datetime.now().isoformat()
-                }), 403
-                
-            # Additional logging for cluster endpoints
-            if '/api/cluster/' in request.path:
-                logger.info(f"Cluster API access from allowed IP: {client_ip} to {request.endpoint}")
-                
-            return f(*args, **kwargs)
-        return decorated_function
-    return decorator
 
 def require_cluster_network_security(security_manager):
     # Decorator for cluster API endpoints with additional security
@@ -155,6 +95,3 @@ def require_cluster_network_security(security_manager):
             return f(*args, **kwargs)
         return decorated_function
     return decorator
-
-# Global instance
-network_security = NetworkSecurityManager()

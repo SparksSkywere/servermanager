@@ -86,9 +86,6 @@ def initialise_user_manager():
         logger.error(f"User manager init failed: {e}")
         raise
 
-# Backward compat
-initialize_user_manager = initialise_user_manager
-
 def sql_login(user_manager, parent_window=None):
     # SQL login dialog
     # - Returns (success, user) tuple

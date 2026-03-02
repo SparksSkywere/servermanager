@@ -9,7 +9,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from Modules.common import centre_window, REGISTRY_PATH
 
-
 def show_help_dialog(parent_window, logger=None):
     # Display help dialog with organised tabs
     try:
@@ -45,7 +44,6 @@ def show_help_dialog(parent_window, logger=None):
         if logger:
             logger.error(error_msg)
         messagebox.showerror("Error", f"Help failed: {str(e)}")
-
 
 def _add_overview_tab(notebook):
     # Overview tab content
@@ -84,7 +82,6 @@ Server Manager Dashboard supports the following server types:
     
     overview_text.insert(tk.END, overview_content)
     overview_text.config(state=tk.DISABLED)
-
 
 def _add_controls_tab(notebook):
     # Add the Controls & Shortcuts tab to the help notebook
@@ -149,7 +146,6 @@ Web Server Status Indicator
     
     controls_text.insert(tk.END, controls_content)
     controls_text.config(state=tk.DISABLED)
-
 
 def _add_server_management_tab(notebook):
     # Add the Server Management tab to the help notebook
@@ -230,7 +226,6 @@ The import and export features allow you to:
     
     servers_text.insert(tk.END, servers_content)
     servers_text.config(state=tk.DISABLED)
-
 
 def _add_troubleshooting_tab(notebook):
     # Add the Troubleshooting tab to the help notebook
@@ -332,13 +327,11 @@ If issues persist after trying the above solutions:
     troubleshooting_text.insert(tk.END, troubleshooting_content)
     troubleshooting_text.config(state=tk.DISABLED)
 
-
 def get_version_from_registry():
     # Get the current version from Windows registry
     # Returns: Version string from registry or 'Unknown' if not found
     from Modules.common import get_registry_value
     return get_registry_value(REGISTRY_PATH, "CurrentVersion", "Unknown")
-
 
 def get_application_info():
     # Get comprehensive application information for display
@@ -369,7 +362,6 @@ def get_application_info():
         ],
         "contact": "For support and documentation, visit the project repository."
     }
-
 
 def show_about_dialog(parent_window, logger=None):
     # Display a professional about dialog with comprehensive application information
@@ -437,7 +429,6 @@ Network: {app_info['system_requirements']['network']}"""
             logger.error(error_msg)
         messagebox.showerror("Error", f"Failed to show about dialog: {str(e)}")
 
-
 # Test function for standalone testing
 def test_documentation():
     # Test function to run the documentation dialogs standalone
@@ -462,7 +453,6 @@ def test_documentation():
     centre_window(root, 400, 200)
     
     root.mainloop()
-
 
 if __name__ == "__main__":
     test_documentation()

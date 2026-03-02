@@ -15,7 +15,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from Modules.common import setup_module_path
 setup_module_path()
 
-
 from Modules.server_logging import get_component_logger
 logger = get_component_logger("StdinRelay")
 
@@ -25,7 +24,6 @@ win32file: Any = None
 pywintypes: Any = None
 win32security: Any = None
 win32api: Any = None
-con: Any = None
 
 _NAMED_PIPES_AVAILABLE = False
 if sys.platform == 'win32':
@@ -35,23 +33,19 @@ if sys.platform == 'win32':
         import pywintypes as _pywintypes
         import win32security as _win32security
         import win32api as _win32api
-        import ntsecuritycon as _con
         win32pipe = _win32pipe
         win32file = _win32file
         pywintypes = _pywintypes
         win32security = _win32security
         win32api = _win32api
-        con = _con
         _NAMED_PIPES_AVAILABLE = True
     except ImportError:
         logger.warning("pywin32 not available - stdin relay cannot function")
-
 
 def sanitise_pipe_name(server_name: str) -> str:
     # Valid Windows pipe name from server name
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in server_name)
     return f"\\\\.\\pipe\\ServerManager_stdin_{safe_name}"
-
 
 def get_relay_pid_file(server_name: str) -> Path:
     # Relay PID file path
@@ -59,7 +53,6 @@ def get_relay_pid_file(server_name: str) -> Path:
     temp_dir = Path(__file__).parent.parent / "temp"
     temp_dir.mkdir(parents=True, exist_ok=True)
     return temp_dir / f"relay_{safe_name}.pid"
-
 
 def cleanup_existing_relays(server_name: str):
     # Clean up any existing relay processes and pipes for a server
@@ -124,7 +117,6 @@ def cleanup_existing_relays(server_name: str):
     except Exception as e:
         logger.error(f"Error cleaning up existing relays for {server_name}: {e}")
 
-
 def is_relay_running(server_name: str) -> bool:
     # Check relay availability via pipe test
     info_file = get_relay_pid_file(server_name).with_suffix('.json')
@@ -158,12 +150,8 @@ def is_relay_running(server_name: str) -> bool:
         logger.debug(f"Error checking relay status: {e}")
         return False
 
-
 def start_relay_for_server(server_name: str, server_process: subprocess.Popen, server_pid: int) -> bool:
-    # Start the stdin relay service for a server
-    # This launches a SEPARATE PROCESS that survives dashboard restarts
-    # Args: server_name, server_process (subprocess.Popen), server_pid (PID)
-    # Returns: True if relay was started successfully, False otherwise
+    # Start a persistent stdin relay process for a server
     if not _NAMED_PIPES_AVAILABLE:
         logger.error("Named pipes not available - cannot start stdin relay")
         return False
@@ -231,7 +219,6 @@ def start_relay_for_server(server_name: str, server_process: subprocess.Popen, s
     except Exception as e:
         logger.error(f"Failed to start relay process: {e}", exc_info=True)
         return False
-
 
 def _run_relay_thread(server_name: str, server_process: subprocess.Popen, server_pid: int):
     # Stdin relay thread
@@ -381,7 +368,6 @@ def _run_relay_thread(server_name: str, server_process: subprocess.Popen, server
     
     logger.info(f"Stdin relay for {server_name} shutting down")
 
-
 def send_command_via_relay(server_name: str, command: str, timeout: float = 5.0) -> tuple[bool, str]:
     # Send a command to a server via its stdin relay pipe
     # Args: server_name - The name of the server, command - The command to send, timeout - Timeout in seconds
@@ -450,7 +436,6 @@ def send_command_via_relay(server_name: str, command: str, timeout: float = 5.0)
     except Exception as e:
         logger.error(f"Error sending command via relay: {e}", exc_info=True)
         return False, str(e)
-
 
 # Standalone execution for testing
 if __name__ == "__main__":

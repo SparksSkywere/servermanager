@@ -3,7 +3,7 @@
  */
 
 import API from './api.js';
-import { showNotification, formatBytes, getRandomColor } from './utils.js';
+import { showNotification, getRandomColor } from './utils.js';
 
 export class Dashboard {
     constructor() {

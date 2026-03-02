@@ -24,11 +24,7 @@ _paths_initialized = False
 # Logging setup - centralised in server_logging.py
 logger: logging.Logger = get_component_logger("Common")
 
-# =============================================================================
-# REGISTRY UTILITIES
-# =============================================================================
-
-# Registry utility functions
+# Registry utilities
 def initialise_paths_from_registry(registry_path):
     # Grab paths from registry - returns (success, dir, paths dict)
     try:
@@ -59,7 +55,6 @@ def initialise_paths_from_registry(registry_path):
     except Exception as e:
         logger.error(f"Path init failed: {str(e)}")
         return False, None, {}
-
 
 def initialise_registry_values(registry_path):
     # Pull config values from registry - SteamCmd path, web port, etc.
@@ -124,10 +119,7 @@ def initialise_registry_values(registry_path):
         logger.error(f"Failed to initialise registry values: {str(e)}")
         return False, None, 8080, {}
 
-# =============================================================================
-# PATH MANAGEMENT
-# =============================================================================
-
+# Path management
 class ServerManagerPaths:
     # Path resolver for all server manager directories - Falls back to script dir if registry fails
     def __init__(self):
@@ -239,11 +231,7 @@ class ServerManagerPaths:
         else:
             raise KeyError(f"PID file for process type not found: {process_type}")
 
-# =============================================================================
-# PROCESS MANAGEMENT
-# =============================================================================
-
-# Process and PID file handling
+# Process management
 class ProcessManager:
     # Manages PID files and process lifecycle
     def __init__(self, paths_manager):
@@ -341,11 +329,7 @@ class ProcessManager:
             logger.error(f"Failed to kill process {pid}: {str(e)}")
             return False
 
-# =============================================================================
-# CONFIGURATION MANAGEMENT
-# =============================================================================
-
-# Config management
+# Configuration management
 class ConfigManager:
     # Handles app config via database - Falls back to JSON migration if db empty
     def __init__(self, paths_manager):
@@ -548,11 +532,7 @@ process_manager = ProcessManager(paths)
 config_manager = ConfigManager(paths)
 system_utils = SystemUtils()
 
-# =============================================================================
-# BASE MODULE CLASS
-# =============================================================================
-
-# Base class for all modules
+# Base module class
 class ServerManagerModule:
     # Inherit from this for common functionality - Paths, config, PID management baked in
     def __init__(self, module_name=None):
@@ -649,10 +629,7 @@ def setup_module_path():
     project_root = os.path.dirname(script_dir)
     sys.path.insert(0, project_root)
 
-# =============================================================================
-# DATABASE UTILITIES
-# =============================================================================
-
+# Database utilities
 def get_database_connection(db_path=None):
     # Centralized database connection utility
     import sqlite3
@@ -686,10 +663,7 @@ def execute_database_query(conn, query, params=None, fetch=False):
         logger.error(f"Database query failed: {query} - {e}")
         raise
 
-# =============================================================================
-# ERROR HANDLING UTILITIES
-# =============================================================================
-
+# Error handling utilities
 def handle_database_error(operation, error, logger):
     # Centralized database error handling
     logger.error(f"Database {operation} failed: {error}")
@@ -702,10 +676,7 @@ def handle_generic_error(operation, error, logger):
     logger.error(f"Traceback: {traceback.format_exc()}")
     return False
 
-# =============================================================================
-# WEB UTILITIES
-# =============================================================================
-
+# Web utilities
 def get_base_url(host='localhost', port=8080):
     # Get base URL with appropriate protocol based on SSL settings
     ssl_enabled = os.getenv("SSL_ENABLED", "false").lower() == "true"
@@ -859,9 +830,6 @@ def centre_window(window, width=None, height=None, parent=None):
     
     window.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
-# Alias for backwards compat
-center_window = centre_window
-
 # Automation settings utilities
 def get_automation_settings_fields():
     # Return the standard automation settings field names
@@ -921,15 +889,43 @@ def save_automation_settings(server_config, automation_data):
     
     return server_config
 
+def send_command_to_server(server_name: str, command: str) -> bool:
+    # Send a command to a running server via persistent stdin pipe or command queue
+    try:
+        try:
+            from services.persistent_stdin import send_command_to_stdin_pipe, is_stdin_pipe_available
+            if is_stdin_pipe_available(server_name):
+                result = send_command_to_stdin_pipe(server_name, command)
+                if isinstance(result, tuple):
+                    return result[0]
+                return result
+        except ImportError:
+            pass
+        try:
+            from services.command_queue import queue_command, is_relay_active
+            if is_relay_active(server_name):
+                result = queue_command(server_name, command)
+                if isinstance(result, tuple):
+                    return result[0]
+                return result
+        except ImportError:
+            pass
+        logger.warning(f"No command input method available for {server_name}")
+        return False
+    except Exception as e:
+        logger.error(f"Error sending command to {server_name}: {str(e)}")
+        return False
+
 # Exports
 __all__ = [
     'paths', 'process_manager', 'config_manager', 'system_utils', 'ServerManagerModule',
     'initialise_paths_from_registry', 'initialise_registry_values', 'REGISTRY_ROOT', 'REGISTRY_PATH',
     'setup_module_logging', 'setup_module_path', 'get_server_manager_dir', 'get_registry_value',
     'ensure_directory_exists', 'get_absolute_path', 'is_admin', 'get_subprocess_creation_flags',
-    'should_hide_server_consoles', 'centre_window', 'center_window',
+    'should_hide_server_consoles', 'centre_window',
     'get_automation_settings_fields', 'get_default_automation_settings', 'load_automation_settings', 'save_automation_settings',
     'get_database_connection', 'execute_database_query', 'handle_database_error', 'handle_generic_error',
     'get_base_url', 'get_allowed_origins', 'get_node_url', 'validate_port',
-    'set_registry_value', 'get_registry_values', 'get_host_type', 'get_host_address', 'is_cluster_enabled'
+    'set_registry_value', 'get_registry_values', 'get_host_type', 'get_host_address', 'is_cluster_enabled',
+    'send_command_to_server'
 ]

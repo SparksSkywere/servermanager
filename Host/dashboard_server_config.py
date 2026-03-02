@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 # Dashboard server configuration dialogs - Configure, Java, Minecraft, Steam, Other server types
-from __future__ import annotations
 
 import os
 import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, scrolledtext
+from tkinter import ttk, messagebox, filedialog
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import sys
@@ -15,20 +14,16 @@ setup_module_path()
 
 from Modules.server_logging import get_dashboard_logger
 from Host.dashboard_functions import (
-    centre_window, load_appid_scanner_list, load_minecraft_scanner_list,
-    rename_server_configuration, show_java_configuration_dialog
+    centre_window, load_appid_scanner_list,
+    rename_server_configuration
 )
-from debug.debug import log_exception
 
 if TYPE_CHECKING:
     from Modules.server_manager import ServerManager
 
 logger = get_dashboard_logger()
 
-
 class ServerConfigMixin:
-    """Mixin providing server configuration dialog methods for the dashboard."""
-
     # Type stubs for attributes provided by ServerManagerDashboard at runtime
     if TYPE_CHECKING:
         root: tk.Tk
@@ -48,7 +43,7 @@ class ServerConfigMixin:
         def update_server_list(self, force_refresh: bool = False) -> None: ...
 
     def _create_scrollable_dialog(self, parent, title, width_ratio=0.9, height_ratio=0.8):
-        """Create a scrollable dialog with standard setup"""
+        # Create a scrollable dialog with standard setup
         dialog = tk.Toplevel(parent)
         dialog.title(title)
         dialog_width = min(900, int(parent.winfo_screenwidth() * width_ratio))
@@ -90,7 +85,7 @@ class ServerConfigMixin:
         return dialog, scrollable_frame
 
     def _create_labeled_entry(self, parent, label_text, variable, row, column=0, width=30):
-        """Create a labeled entry field"""
+        # Create a labeled entry field
         ttk.Label(parent, text=f"{label_text}:", font=("Segoe UI", 10, "bold")).grid(
             row=row, column=column, padx=10, pady=5, sticky=tk.W)
         entry = ttk.Entry(parent, textvariable=variable, width=width, font=("Segoe UI", 10))
@@ -98,7 +93,7 @@ class ServerConfigMixin:
         return entry
 
     def _create_labeled_combo(self, parent, label_text, variable, values, row, column=0, width=27):
-        """Create a labeled combobox"""
+        # Create a labeled combobox
         ttk.Label(parent, text=f"{label_text}:", font=("Segoe UI", 10, "bold")).grid(
             row=row, column=column, padx=10, pady=5, sticky=tk.W)
         combo = ttk.Combobox(parent, textvariable=variable, values=values,
@@ -107,7 +102,7 @@ class ServerConfigMixin:
         return combo
 
     def _browse_appid(self, appid_var, parent_dialog):
-        """Browse and select Steam dedicated server AppID"""
+        # Browse and select Steam dedicated server AppID
         appid_dialog = tk.Toplevel(parent_dialog)
         appid_dialog.title("Select Dedicated Server")
         appid_dialog.transient(parent_dialog)
@@ -249,7 +244,7 @@ class ServerConfigMixin:
         centre_window(appid_dialog, 600, 500, parent_dialog)
 
     def _create_startup_configuration_section(self, parent, server_config, install_dir):
-        """Create the startup configuration section and return all variables"""
+        # Create the startup configuration section and return all variables
         startup_frame = ttk.LabelFrame(parent, text="Startup Configuration", padding=10)
         startup_frame.pack(fill=tk.X, pady=(0, 15))
 
@@ -351,7 +346,7 @@ class ServerConfigMixin:
     def _create_command_preview_section(self, parent, exe_var, startup_mode_var, args_var,
                                       config_file_var, config_arg_var, additional_args_var,
                                       install_dir):
-        """Create the command preview section"""
+        # Create the command preview section
         preview_frame = ttk.LabelFrame(parent, text="Command Preview", padding=10)
         preview_frame.pack(fill=tk.X, pady=(0, 15))
 
@@ -407,7 +402,7 @@ class ServerConfigMixin:
         return update_preview
 
     def _create_scheduled_commands_section(self, parent, server_config):
-        """Create the scheduled commands section and return all variables"""
+        # Create the scheduled commands section and return all variables
         commands_frame = ttk.LabelFrame(parent, text="\u23f0 Scheduled Commands", padding=10)
         commands_frame.pack(fill=tk.X, pady=(0, 15))
 
@@ -922,420 +917,3 @@ class ServerConfigMixin:
         ttk.Button(button_frame, text="Save Configuration", command=save_configuration).pack(side=tk.RIGHT)
 
         centre_window(dialog, None, None, self.root)
-
-    def configure_java(self):
-        # Open Java configuration dialog for selected server
-        current_list = self.get_current_server_list()
-        if not current_list:
-            messagebox.showwarning("No Selection", "No server list available.")
-            return
-
-        selected_items = current_list.selection()
-        if not selected_items:
-            messagebox.showwarning("No Selection", "Please select a server to configure Java for.")
-            return
-
-        item = selected_items[0]
-        server_name = current_list.item(item)["values"][0]
-
-        server_config = None
-        if hasattr(self, 'server_manager') and self.server_manager:
-            server_config = self.server_manager.get_server_config(server_name)
-
-        if not server_config:
-            messagebox.showerror("Error", f"Server configuration not found for '{server_name}'")
-            return
-
-        if server_config.get("Type") != "Minecraft":
-            messagebox.showinfo("Info", f"Java configuration is only available for Minecraft servers.\n'{server_name}' is a {server_config.get('Type', 'Unknown')} server.")
-            return
-
-        result = show_java_configuration_dialog(self.root, server_name, server_config,
-                                               self.server_manager)
-
-        if result['success']:
-            self.update_server_list(force_refresh=True)
-
-    def show_server_type_configuration(self):
-        # Redirect to unified configure_server method
-        self.configure_server()
-
-    def show_minecraft_server_config(self, server_name, server_config):
-        # Show Minecraft-specific configuration dialog
-        from Modules.minecraft import MinecraftServerManager
-
-        dialog = tk.Toplevel(self.root)
-        dialog.title(f"Minecraft Server Configuration - {server_name}")
-        dialog.geometry("800x700")
-
-        main_frame = ttk.Frame(dialog, padding=15)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-
-        title_label = ttk.Label(main_frame, text=f"Minecraft Server Configuration - {server_name}",
-                               font=("Segoe UI", 14, "bold"))
-        title_label.pack(pady=(0, 20))
-
-        notebook = ttk.Notebook(main_frame)
-        notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-
-        # Basic Configuration Tab
-        basic_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(basic_frame, text="Basic Settings")
-
-        info_frame = ttk.LabelFrame(basic_frame, text="Server Information", padding=10)
-        info_frame.pack(fill=tk.X, pady=(0, 15))
-
-        ttk.Label(info_frame, text="Server Name:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        name_var = tk.StringVar(value=server_name)
-        ttk.Entry(info_frame, textvariable=name_var, width=40, state="readonly").grid(row=0, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(info_frame, text="Minecraft Version:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        version_var = tk.StringVar(value=server_config.get("Version", ""))
-        ttk.Entry(info_frame, textvariable=version_var, width=40).grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(info_frame, text="Install Directory:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        install_dir_var = tk.StringVar(value=server_config.get("InstallDir", ""))
-        ttk.Entry(info_frame, textvariable=install_dir_var, width=40).grid(row=2, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(info_frame, text="Server JAR:").grid(row=3, column=0, sticky=tk.W, pady=5)
-        jar_var = tk.StringVar(value=os.path.basename(server_config.get("ExecutablePath", "")))
-        ttk.Entry(info_frame, textvariable=jar_var, width=40).grid(row=3, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        # Java Configuration Tab
-        java_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(java_frame, text="Java Settings")
-
-        java_info_frame = ttk.LabelFrame(java_frame, text="Java Configuration", padding=10)
-        java_info_frame.pack(fill=tk.X, pady=(0, 15))
-
-        ttk.Label(java_info_frame, text="Java Path:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        java_path_var = tk.StringVar(value=server_config.get("JavaPath", "java"))
-        java_entry = ttk.Entry(java_info_frame, textvariable=java_path_var, width=50)
-        java_entry.grid(row=0, column=1, sticky=tk.W, padx=(10, 5), pady=5)
-
-        def browse_java():
-            file_types = [("Java Executable", "java.exe"), ("All Files", "*.*")] if os.name == 'nt' else [("All Files", "*")]
-            java_path = filedialog.askopenfilename(title="Select Java Executable", filetypes=file_types)
-            if java_path:
-                java_path_var.set(java_path)
-
-        ttk.Button(java_info_frame, text="Browse", command=browse_java).grid(row=0, column=2, padx=(5, 0), pady=5)
-
-        def auto_detect_java():
-            try:
-                from Modules.minecraft import get_recommended_java_for_minecraft
-                version = version_var.get()
-                if version:
-                    recommended = get_recommended_java_for_minecraft(version)
-                    if recommended:
-                        java_path_var.set(recommended["path"])
-                        messagebox.showinfo("Auto-Detect", f"Found: {recommended['display_name']}")
-                    else:
-                        messagebox.showwarning("No Java Found", "No compatible Java installation found.")
-                else:
-                    messagebox.showwarning("No Version", "Please enter Minecraft version first.")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to detect Java: {str(e)}")
-
-        ttk.Button(java_info_frame, text="Auto-Detect", command=auto_detect_java).grid(row=0, column=3, padx=(5, 0), pady=5)
-
-        memory_frame = ttk.LabelFrame(java_frame, text="Memory Settings", padding=10)
-        memory_frame.pack(fill=tk.X, pady=(0, 15))
-
-        ttk.Label(memory_frame, text="RAM Allocation (MB):").grid(row=0, column=0, sticky=tk.W, pady=5)
-        ram_var = tk.StringVar(value=str(server_config.get("RAM", 1024)))
-        ttk.Entry(memory_frame, textvariable=ram_var, width=20).grid(row=0, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(memory_frame, text="JVM Arguments:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        jvm_args_var = tk.StringVar(value=server_config.get("JVMArgs", ""))
-        ttk.Entry(memory_frame, textvariable=jvm_args_var, width=50).grid(row=1, column=1, columnspan=2, sticky=tk.W, padx=(10, 0), pady=5)
-
-        # Advanced Tab
-        advanced_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(advanced_frame, text="Advanced")
-
-        props_frame = ttk.LabelFrame(advanced_frame, text="Server Properties", padding=10)
-        props_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-
-        props_text = tk.Text(props_frame, height=20, width=70)
-        props_scroll = ttk.Scrollbar(props_frame, orient=tk.VERTICAL, command=props_text.yview)
-        props_text.configure(yscrollcommand=props_scroll.set)
-
-        props_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        props_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        mc_install_dir = server_config.get("InstallDir", "")
-        props_file = os.path.join(mc_install_dir, "server.properties")
-        if os.path.exists(props_file):
-            try:
-                with open(props_file, 'r', encoding='utf-8') as f:
-                    props_text.insert(tk.END, f.read())
-            except Exception as e:
-                props_text.insert(tk.END, f"# Error reading server.properties: {str(e)}\n")
-        else:
-            props_text.insert(tk.END, "# server.properties file not found\n# Create server first or manually add properties here\n")
-
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
-
-        def on_save():
-            try:
-                server_config["Version"] = version_var.get()
-                server_config["InstallDir"] = install_dir_var.get()
-                server_config["ExecutablePath"] = os.path.join(install_dir_var.get(), jar_var.get())
-                server_config["JavaPath"] = java_path_var.get()
-                server_config["RAM"] = int(ram_var.get()) if ram_var.get().isdigit() else 1024
-                server_config["JVMArgs"] = jvm_args_var.get()
-                server_config["LastUpdate"] = datetime.datetime.now().isoformat()
-
-                if self.server_manager:
-                    self.server_manager.update_server(server_name, server_config)
-
-                save_install_dir = install_dir_var.get()
-                if save_install_dir and os.path.exists(save_install_dir):
-                    save_props_file = os.path.join(save_install_dir, "server.properties")
-                    try:
-                        with open(save_props_file, 'w', encoding='utf-8') as f:
-                            f.write(props_text.get(1.0, tk.END))
-                    except Exception as e:
-                        messagebox.showwarning("Properties Save Failed", f"Failed to save server.properties: {str(e)}")
-
-                try:
-                    manager = MinecraftServerManager(self.server_manager_dir, self.config)
-                    manager.create_launch_script(
-                        install_dir_var.get(),
-                        jar_var.get(),
-                        int(ram_var.get()) if ram_var.get().isdigit() else 1024,
-                        jvm_args_var.get(),
-                        java_path_var.get()
-                    )
-                except Exception as e:
-                    messagebox.showwarning("Script Update Failed", f"Failed to update launch script: {str(e)}")
-
-                messagebox.showinfo("Success", f"Configuration saved for '{server_name}'!")
-                dialog.destroy()
-                self.update_server_list(force_refresh=True)
-
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to save configuration: {str(e)}")
-
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy, width=12).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="Save", command=on_save, width=12).pack(side=tk.RIGHT)
-
-        centre_window(dialog, 950, 750, self.root)
-
-    def show_steam_server_config(self, server_name, server_config):
-        # Show Steam-specific configuration dialog
-        dialog = tk.Toplevel(self.root)
-        dialog.title(f"Steam Server Configuration - {server_name}")
-        dialog.geometry("700x600")
-
-        main_frame = ttk.Frame(dialog, padding=15)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-
-        title_label = ttk.Label(main_frame, text=f"Steam Server Configuration - {server_name}",
-                               font=("Segoe UI", 14, "bold"))
-        title_label.pack(pady=(0, 20))
-
-        notebook = ttk.Notebook(main_frame)
-        notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-
-        basic_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(basic_frame, text="Basic Settings")
-
-        info_frame = ttk.LabelFrame(basic_frame, text="Server Information", padding=10)
-        info_frame.pack(fill=tk.X, pady=(0, 15))
-
-        ttk.Label(info_frame, text="Server Name:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        name_var = tk.StringVar(value=server_name)
-        ttk.Entry(info_frame, textvariable=name_var, width=40, state="readonly").grid(row=0, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(info_frame, text="Steam App ID:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        app_id_var = tk.StringVar(value=server_config.get("AppID", ""))
-        ttk.Entry(info_frame, textvariable=app_id_var, width=40).grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(info_frame, text="Install Directory:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        install_dir_var = tk.StringVar(value=server_config.get("InstallDir", ""))
-        ttk.Entry(info_frame, textvariable=install_dir_var, width=40).grid(row=2, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(info_frame, text="Server Executable:").grid(row=3, column=0, sticky=tk.W, pady=5)
-        exe_var = tk.StringVar(value=os.path.basename(server_config.get("ExecutablePath", "")))
-        ttk.Entry(info_frame, textvariable=exe_var, width=40).grid(row=3, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        launch_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(launch_frame, text="Launch Parameters")
-
-        args_frame = ttk.LabelFrame(launch_frame, text="Launch Arguments", padding=10)
-        args_frame.pack(fill=tk.X, pady=(0, 15))
-
-        ttk.Label(args_frame, text="Command Line Arguments:").pack(anchor=tk.W, pady=(0, 5))
-        args_var = tk.StringVar(value=server_config.get("LaunchArgs", ""))
-        args_text = tk.Text(args_frame, height=5, width=70)
-        args_text.insert(1.0, args_var.get())
-        args_text.pack(fill=tk.X, pady=(0, 10))
-
-        steam_frame = ttk.LabelFrame(launch_frame, text="Common Steam Settings", padding=10)
-        steam_frame.pack(fill=tk.X, pady=(0, 15))
-
-        ttk.Label(steam_frame, text="Server Port:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        port_var = tk.StringVar(value=str(server_config.get("Port", 27015)))
-        ttk.Entry(steam_frame, textvariable=port_var, width=20).grid(row=0, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(steam_frame, text="Max Players:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        maxplayers_var = tk.StringVar(value=str(server_config.get("MaxPlayers", 16)))
-        ttk.Entry(steam_frame, textvariable=maxplayers_var, width=20).grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(steam_frame, text="Server Name (in-game):").grid(row=2, column=0, sticky=tk.W, pady=5)
-        servername_var = tk.StringVar(value=server_config.get("ServerName", ""))
-        ttk.Entry(steam_frame, textvariable=servername_var, width=40).grid(row=2, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(steam_frame, text="Map:").grid(row=3, column=0, sticky=tk.W, pady=5)
-        map_var = tk.StringVar(value=server_config.get("Map", ""))
-        ttk.Entry(steam_frame, textvariable=map_var, width=40).grid(row=3, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        advanced_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(advanced_frame, text="Advanced")
-
-        steamcmd_frame = ttk.LabelFrame(advanced_frame, text="SteamCMD Configuration", padding=10)
-        steamcmd_frame.pack(fill=tk.X, pady=(0, 15))
-
-        ttk.Label(steamcmd_frame, text="SteamCMD Path:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        steamcmd_var = tk.StringVar(value=server_config.get("SteamCMDPath", ""))
-        ttk.Entry(steamcmd_frame, textvariable=steamcmd_var, width=50).grid(row=0, column=1, sticky=tk.W, padx=(10, 5), pady=5)
-
-        def browse_steamcmd():
-            file_types = [("SteamCMD", "steamcmd.exe"), ("All Files", "*.*")] if os.name == 'nt' else [("All Files", "*")]
-            steamcmd_path = filedialog.askopenfilename(title="Select SteamCMD Executable", filetypes=file_types)
-            if steamcmd_path:
-                steamcmd_var.set(steamcmd_path)
-
-        ttk.Button(steamcmd_frame, text="Browse", command=browse_steamcmd).grid(row=0, column=2, padx=(5, 0), pady=5)
-
-        auto_update_var = tk.BooleanVar(value=server_config.get("AutoUpdate", False))
-        ttk.Checkbutton(steamcmd_frame, text="Enable automatic updates", variable=auto_update_var).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=5)
-
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
-
-        def on_save():
-            try:
-                server_config["AppID"] = app_id_var.get()
-                server_config["InstallDir"] = install_dir_var.get()
-                server_config["ExecutablePath"] = os.path.join(install_dir_var.get(), exe_var.get())
-                server_config["LaunchArgs"] = args_text.get(1.0, tk.END).strip()
-                server_config["Port"] = int(port_var.get()) if port_var.get().isdigit() else 27015
-                server_config["MaxPlayers"] = int(maxplayers_var.get()) if maxplayers_var.get().isdigit() else 16
-                server_config["ServerName"] = servername_var.get()
-                server_config["Map"] = map_var.get()
-                server_config["SteamCMDPath"] = steamcmd_var.get()
-                server_config["AutoUpdate"] = auto_update_var.get()
-                server_config["LastUpdate"] = datetime.datetime.now().isoformat()
-
-                if self.server_manager:
-                    self.server_manager.update_server(server_name, server_config)
-
-                messagebox.showinfo("Success", f"Configuration saved for '{server_name}'!")
-                dialog.destroy()
-                self.update_server_list(force_refresh=True)
-
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to save configuration: {str(e)}")
-
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy, width=12).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="Save", command=on_save, width=12).pack(side=tk.RIGHT)
-
-        centre_window(dialog, 700, 600, self.root)
-
-    def show_other_server_config(self, server_name, server_config):
-        # Show generic server configuration dialog
-        dialog = tk.Toplevel(self.root)
-        dialog.title(f"Server Configuration - {server_name}")
-        dialog.geometry("600x500")
-
-        main_frame = ttk.Frame(dialog, padding=15)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-
-        title_label = ttk.Label(main_frame, text=f"Server Configuration - {server_name}",
-                               font=("Segoe UI", 14, "bold"))
-        title_label.pack(pady=(0, 20))
-
-        info_frame = ttk.LabelFrame(main_frame, text="Server Information", padding=10)
-        info_frame.pack(fill=tk.X, pady=(0, 15))
-
-        ttk.Label(info_frame, text="Server Name:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        name_var = tk.StringVar(value=server_name)
-        ttk.Entry(info_frame, textvariable=name_var, width=40, state="readonly").grid(row=0, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(info_frame, text="Server Type:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        type_var = tk.StringVar(value=server_config.get("Type", "Other"))
-        ttk.Entry(info_frame, textvariable=type_var, width=40).grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(info_frame, text="Install Directory:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        install_dir_var = tk.StringVar(value=server_config.get("InstallDir", ""))
-        ttk.Entry(info_frame, textvariable=install_dir_var, width=40).grid(row=2, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        ttk.Label(info_frame, text="Server Executable:").grid(row=3, column=0, sticky=tk.W, pady=5)
-        exe_var = tk.StringVar(value=server_config.get("ExecutablePath", ""))
-        ttk.Entry(info_frame, textvariable=exe_var, width=40).grid(row=3, column=1, sticky=tk.W, padx=(10, 0), pady=5)
-
-        def browse_executable():
-            file_types = [("Executable Files", "*.exe;*.bat;*.cmd;*.ps1;*.sh;*.jar"), ("All Files", "*.*")] if os.name == 'nt' else [("All Files", "*")]
-            exe_path = filedialog.askopenfilename(title="Select Server Executable", filetypes=file_types)
-            if exe_path:
-                exe_var.set(exe_path)
-
-        ttk.Button(info_frame, text="Browse", command=browse_executable).grid(row=3, column=2, padx=(5, 0), pady=5)
-
-        launch_frame = ttk.LabelFrame(main_frame, text="Launch Configuration", padding=10)
-        launch_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-
-        ttk.Label(launch_frame, text="Command Line Arguments:").pack(anchor=tk.W, pady=(0, 5))
-        args_var = tk.StringVar(value=server_config.get("LaunchArgs", ""))
-        args_text = tk.Text(launch_frame, height=8, width=70)
-        args_text.insert(1.0, args_var.get())
-        args_scroll = ttk.Scrollbar(launch_frame, orient=tk.VERTICAL, command=args_text.yview)
-        args_text.configure(yscrollcommand=args_scroll.set)
-
-        args_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        args_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        work_dir_frame = ttk.Frame(main_frame)
-        work_dir_frame.pack(fill=tk.X, pady=(0, 15))
-
-        ttk.Label(work_dir_frame, text="Working Directory:").pack(side=tk.LEFT)
-        work_dir_var = tk.StringVar(value=server_config.get("WorkingDir", ""))
-        ttk.Entry(work_dir_frame, textvariable=work_dir_var, width=50).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 5))
-
-        def browse_work_dir():
-            work_dir = filedialog.askdirectory(title="Select Working Directory")
-            if work_dir:
-                work_dir_var.set(work_dir)
-
-        ttk.Button(work_dir_frame, text="Browse", command=browse_work_dir).pack(side=tk.RIGHT)
-
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
-
-        def on_save():
-            try:
-                server_config["Type"] = type_var.get()
-                server_config["InstallDir"] = install_dir_var.get()
-                server_config["ExecutablePath"] = exe_var.get()
-                server_config["LaunchArgs"] = args_text.get(1.0, tk.END).strip()
-                server_config["WorkingDir"] = work_dir_var.get()
-                server_config["LastUpdate"] = datetime.datetime.now().isoformat()
-
-                if self.server_manager:
-                    self.server_manager.update_server(server_name, server_config)
-
-                messagebox.showinfo("Success", f"Configuration saved for '{server_name}'!")
-                dialog.destroy()
-                self.update_server_list(force_refresh=True)
-
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to save configuration: {str(e)}")
-
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy, width=12).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="Save", command=on_save, width=12).pack(side=tk.RIGHT)
-
-        centre_window(dialog, 600, 500, self.root)

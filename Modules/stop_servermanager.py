@@ -18,7 +18,6 @@ setup_module_path()
 
 logger: logging.Logger = setup_module_logging("StopServerManager")
 
-
 def run_as_admin():
     # Re-run with admin (hidden)
     if sys.platform == 'win32':
@@ -26,7 +25,6 @@ def run_as_admin():
     else:
         print("Admin required")
     sys.exit()
-
 
 class ServerManagerStopper(ServerManagerModule):
     # - Terminates all SM components

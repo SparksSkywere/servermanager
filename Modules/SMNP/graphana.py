@@ -2,7 +2,6 @@
 import os
 import sys
 import logging
-from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 # Setup module path first before any imports
@@ -41,11 +40,6 @@ class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
             'histogram': 'histogram',
             'summary': 'summary'
         }
-
-    def set_analytics_instance(self, analytics_instance):
-        # Set analytics for metric collection
-        self.analytics: Optional['AnalyticsCollector'] = analytics_instance
-        logger.info("Analytics instance configured")
 
     def get_prometheus_metrics(self):
         # Metrics in Prometheus format
@@ -127,80 +121,6 @@ class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
         else:
             return 'gauge'  # Default to gauge
 
-    def get_grafana_json_metrics(self):
-        # Get metrics in JSON format suitable for Grafana JSON datasource
-        if not self.analytics:
-            logger.warning("Analytics instance not configured")
-            return {}
-            
-        assert self.analytics is not None  # For type checker
-            
-        try:
-            current_metrics = self.analytics.get_current_metrics()
-            health = self.analytics.get_system_health()
-            server_summary = self.analytics.get_server_summary()
-            
-            # Format for Grafana JSON datasource
-            grafana_data = {
-                'timestamp': datetime.now().isoformat(),
-                'metrics': {
-                    'system': {
-                        'cpu_percent': current_metrics.get('system.cpu.percent', 0),
-                        'memory_percent': current_metrics.get('system.memory.percent', 0),
-                        'disk_percent': current_metrics.get('system.disk.percent', 0),
-                        'uptime_seconds': current_metrics.get('system.uptime', 0),
-                        'health_score': health['health_score'],
-                        'health_status': health['status']
-                    },
-                    'servers': {
-                        'total': server_summary['total_servers'],
-                        'running': server_summary['running_servers'],
-                        'offline': server_summary['offline_servers'],
-                        'error': server_summary['error_servers']
-                    },
-                    'application': {
-                        'webserver_cpu': current_metrics.get('application.webserver.cpu_percent', 0),
-                        'webserver_memory': current_metrics.get('application.webserver.memory_rss', 0),
-                        'webserver_connections': current_metrics.get('application.webserver.connections', 0),
-                        'dashboards_count': current_metrics.get('application.dashboards.count', 0)
-                    }
-                },
-                'server_details': server_summary['servers']
-            }
-            
-            logger.debug("Generated Grafana JSON metrics")
-            return grafana_data
-            
-        except Exception as e:
-            logger.error(f"Error generating Grafana JSON metrics: {e}")
-            return {}
-
-    def get_time_series_data(self, metric_name, hours=24):
-        # Get time series data for a specific metric
-        if not self.analytics:
-            logger.warning("Analytics instance not configured")
-            return []
-            
-        assert self.analytics is not None  # For type checker
-            
-        try:
-            history = self.analytics.get_metric_history(metric_name, hours)
-            
-            # Format for Grafana time series
-            time_series = []
-            for entry in history:
-                time_series.append({
-                    'timestamp': entry['timestamp'],
-                    'value': entry['value']
-                })
-            
-            logger.debug(f"Generated time series data for {metric_name}: {len(time_series)} points")
-            return time_series
-            
-        except Exception as e:
-            logger.error(f"Error generating time series data for {metric_name}: {e}")
-            return []
-
     def get_dashboard_config(self):
         # Get basic Grafana dashboard configuration
         dashboard_config = {
@@ -272,21 +192,8 @@ class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
         
         return dashboard_config
 
-    def export_metrics_endpoint_data(self):
-        # Export data formatted for /metrics endpoint
-        return self.get_prometheus_metrics()
-
 # Create global Grafana manager instance
 grafana_manager = None
-
-def get_grafana_manager(analytics_instance=None):
-    # Get the global Grafana manager instance
-    global grafana_manager
-    if grafana_manager is None:
-        grafana_manager = GrafanaManager(analytics_instance)
-    elif analytics_instance and not grafana_manager.analytics:
-        grafana_manager.set_analytics_instance(analytics_instance)
-    return grafana_manager
 
 def initialize_grafana(analytics_instance):
     # Initialise Grafana manager with analytics integration

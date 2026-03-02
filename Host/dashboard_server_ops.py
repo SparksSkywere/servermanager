@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 # Dashboard server operations - Start, stop, restart, kill, update, import, export
-from __future__ import annotations
 
 import os
 import threading
-import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import sys
@@ -30,10 +28,7 @@ if TYPE_CHECKING:
 
 logger = get_dashboard_logger()
 
-
 class ServerOpsMixin:
-    """Mixin providing server operation methods for the dashboard."""
-
     # Type stubs for attributes provided by ServerManagerDashboard at runtime
     if TYPE_CHECKING:
         root: tk.Tk
@@ -195,6 +190,25 @@ class ServerOpsMixin:
                 messagebox.showerror("Error", process_details["error"])
                 return
 
+            # Determine memory display based on server/process type
+            memory_info = process_details['memory_info']
+            is_java_process = False
+            try:
+                cmdline = process_details.get('cmdline', [])
+                is_java_process = any('java' in arg.lower() or 'javaw' in arg.lower() for arg in cmdline)
+            except Exception:
+                pass
+            if not is_java_process:
+                # Fall back to server type from config
+                srv_cfg = process_details.get('server_config', {})
+                if srv_cfg.get('Type', '').lower() == 'minecraft':
+                    is_java_process = True
+
+            if is_java_process:
+                memory_display = f"{memory_info['vms'] / (1024 * 1024):.1f} MB (JVM)"
+            else:
+                memory_display = f"{memory_info['rss'] / (1024 * 1024):.1f} MB"
+
             dialog = tk.Toplevel(self.root)
             dialog.title(f"Process Details: {server_name} (PID: {process_details['pid']})")
             dialog.transient(self.root)
@@ -219,7 +233,7 @@ class ServerOpsMixin:
                 ("Name:", process_details["name"]),
                 ("Server Uptime:", process_details.get("server_uptime", "Unknown")),
                 ("CPU Usage:", f"{process_details['cpu_percent']:.1f}%"),
-                ("Memory Usage:", f"{process_details['memory_info']['rss'] / (1024 * 1024):.1f} MB"),
+                ("Memory Usage:", memory_display),
                 ("Memory %:", f"{process_details['memory_percent']:.1f}%"),
                 ("Threads:", str(process_details["num_threads"]))
             ]
@@ -241,10 +255,15 @@ class ServerOpsMixin:
             resource_text = scrolledtext.ScrolledText(resources_frame, width=80, height=20)
             resource_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
+            jvm_section = ""
+            if is_java_process:
+                jvm_section = f"JVM Heap (VMS): {memory_info['vms'] / (1024 * 1024):.2f} MB\n"
+
             resource_info = f"""Memory Information:
-RSS (Resident Set Size): {process_details['memory_info']['rss'] / (1024 * 1024):.2f} MB
-VMS (Virtual Memory Size): {process_details['memory_info']['vms'] / (1024 * 1024):.2f} MB
-Memory Percentage: {process_details['memory_percent']:.2f}%
+RSS (Resident Set Size): {memory_info['rss'] / (1024 * 1024):.2f} MB
+VMS (Virtual Memory Size): {memory_info['vms'] / (1024 * 1024):.2f} MB
+{jvm_section}Memory Percentage: {process_details['memory_percent']:.2f}%
+Process Type: {'Java/JVM' if is_java_process else 'Native'}
 
 Open Files: {process_details.get('open_files_count', 'N/A')}
 Network Connections: {process_details.get('connections_count', 'N/A')}
@@ -599,77 +618,6 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         except Exception as e:
             logger.error(f"Error refreshing dashboard: {str(e)}")
             messagebox.showerror("Error", f"Failed to refresh dashboard: {str(e)}")
-
-    def sync_all(self):
-        # Synchronise all server data with the database
-        try:
-            if self.variables["offlineMode"]:
-                messagebox.showinfo("Offline Mode", "Cannot sync while in offline mode.")
-                return
-
-            if not self.current_user:
-                messagebox.showinfo("Authentication Required", "Please log in to synchronise data.")
-                return
-
-            progress_dialog = tk.Toplevel(self.root)
-            progress_dialog.title("Synchronising Data")
-            progress_dialog.transient(self.root)
-            progress_dialog.grab_set()
-
-            progress_frame = ttk.Frame(progress_dialog, padding=20)
-            progress_frame.pack(fill=tk.BOTH, expand=True)
-
-            status_label = ttk.Label(progress_frame, text="Starting synchronization...")
-            status_label.pack(pady=10)
-
-            progress_bar = ttk.Progressbar(progress_frame, mode="indeterminate")
-            progress_bar.pack(fill=tk.X, pady=10)
-            progress_bar.start()
-
-            def sync_data():
-                try:
-                    status_label.config(text="Syncing server configurations...")
-
-                    from Modules.Database.server_configs_database import ServerConfigManager
-                    manager = ServerConfigManager()
-                    synced_count = 0
-
-                    all_servers = manager.get_all_servers()
-                    for server_config in all_servers:
-                        server_name = server_config.get('Name', 'Unknown')
-                        try:
-                            server_config['LastSync'] = datetime.datetime.now().isoformat()
-                            if self.current_user and hasattr(self.current_user, 'username'):
-                                server_config['SyncedBy'] = getattr(self.current_user, 'username', 'Unknown')
-                            else:
-                                server_config['SyncedBy'] = "Unknown"
-
-                            manager.update_server(server_name, server_config)
-                            synced_count += 1
-
-                        except Exception as e:
-                            logger.error(f"Error syncing server {server_name}: {str(e)}")
-
-                    status_label.config(text=f"Synchronization complete. Synced {synced_count} servers.")
-                    progress_bar.stop()
-
-                    progress_dialog.after(2000, progress_dialog.destroy)
-                    logger.info(f"Sync completed. {synced_count} servers synchronised.")
-
-                except Exception as e:
-                    logger.error(f"Error during sync: {str(e)}")
-                    status_label.config(text=f"Sync failed: {str(e)}")
-                    progress_bar.stop()
-                    progress_dialog.after(3000, progress_dialog.destroy)
-
-            sync_thread = threading.Thread(target=sync_data, daemon=True)
-            sync_thread.start()
-
-            centre_window(progress_dialog, 400, 150, self.root)
-
-        except Exception as e:
-            logger.error(f"Error in sync all: {str(e)}")
-            messagebox.showerror("Error", f"Failed to synchronise data: {str(e)}")
 
     def check_server_updates(self):
         # Check for updates for the selected server

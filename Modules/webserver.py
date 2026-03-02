@@ -1,6 +1,7 @@
+# -*- coding: utf-8 -*-
+# Flask web server - REST API and static file serving
 import os
 import sys
-import json
 import logging
 import argparse
 import datetime
@@ -44,7 +45,6 @@ if TYPE_CHECKING:
 
 logger: logging.Logger = setup_module_logging("WebServer")
 
-
 class DummyDashboardTracker:
     # Stub when real tracker unavailable
     def start_auto_refresh(self): pass
@@ -52,7 +52,6 @@ class DummyDashboardTracker:
     def get_dashboards(self): return []
     def get_servers(self): return []
     def refresh(self): pass
-
 
 tracker = None
 try:
@@ -96,107 +95,6 @@ except ImportError as e:
     UserManager = None
     CoreServerManager = None
 
-# Legacy Authentication system (kept for fallback compatibility)
-class Authentication:
-    def __init__(self, config_path):
-        self.config_path = config_path
-        self.users = self._load_users()
-        self.tokens = {}
-
-    def _hash_password(self, password):
-        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-    def _check_password(self, password, hashed):
-        return bcrypt.checkpw(password.encode(), hashed.encode())
-
-    def _load_users(self):
-        # Legacy file-based user loading - no longer creating config folder
-        # All authentication should use SQL database now
-        try:
-            users_file = os.path.join(self.config_path, "users.json")
-            if not os.path.exists(users_file):
-                logger.warning("Users file not found. File-based auth is deprecated - use SQL authentication.")
-                return {}
-            
-            # Try to read the users file with error handling for permissions
-            try:
-                with open(users_file, 'r') as f:
-                    return json.load(f)
-            except PermissionError:
-                logger.error(f"Permission denied accessing users file: {users_file}")
-                logger.warning("Using in-memory user storage due to file permission issues")
-                return {}
-            except json.JSONDecodeError:
-                logger.error(f"Invalid JSON in users file: {users_file}")
-                return {}
-        except Exception as e:
-            logger.error(f"Failed to load users: {e}")
-            return {}
-
-    def _save_users(self):
-        # Legacy file-based user saving - deprecated, no longer creating folders
-        # All authentication should use SQL database now
-        logger.warning("File-based user save attempted - this is deprecated. Use SQL authentication.")
-        return False
-
-    def authenticate(self, username, password):
-        if username in self.users:
-            stored_hash = self.users[username]["password"]
-            if self._check_password(password, stored_hash):
-                token = str(uuid.uuid4())
-                self.tokens[token] = {
-                    "username": username,
-                    "created": datetime.datetime.now().isoformat(),
-                    "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat()
-                }
-                return {"token": token, "username": username}
-        return None
-
-    def verify_token(self, token):
-        if token in self.tokens:
-            token_data = self.tokens[token]
-            expires = datetime.datetime.fromisoformat(token_data["expires"])
-            if datetime.datetime.now() < expires:
-                return token_data
-            del self.tokens[token]
-        return None
-
-    def is_admin(self, username):
-        return self.users.get(username, {}).get("isAdmin", False)
-
-    def get_all_users(self):
-        return [{"username": u, "isAdmin": d.get("isAdmin", False)} for u, d in self.users.items()]
-
-    def add_user(self, username, password, is_admin=False):
-        if username in self.users:
-            return False
-        if not self._validate_password(password):
-            logger.error(f"Invalid password for user {username}: Must be at least 8 characters")
-            return False
-        self.users[username] = {
-            "password": self._hash_password(password),
-            "isAdmin": is_admin
-        }
-        return self._save_users()
-
-    def delete_user(self, username):
-        if username in self.users and username != "admin":
-            del self.users[username]
-            return self._save_users()
-        return False
-
-    def change_password(self, username, new_password):
-        if username in self.users:
-            if not self._validate_password(new_password):
-                logger.error(f"Invalid new password for user {username}: Must be at least 8 characters")
-                return False
-            self.users[username]["password"] = self._hash_password(new_password)
-            return self._save_users()
-        return False
-
-    def _validate_password(self, password):
-        return len(password) >= 8
-
 # SQL Authentication system
 class SQLAuthentication:
     def __init__(self, engine):
@@ -209,16 +107,6 @@ class SQLAuthentication:
 
     def _hash_password(self, password):
         return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-    def _check_password(self, password, hashed):
-        # Try bcrypt first, fallback to SHA256 for backward compatibility
-        try:
-            return bcrypt.checkpw(password.encode(), hashed.encode())
-        except Exception:
-            # Fallback to SHA256 for backward compatibility
-            import hashlib
-            hashed_password = hashlib.sha256(password.encode()).hexdigest()
-            return hashed == hashed_password
 
     def authenticate(self, username, password):
         if self.user_manager is None:
@@ -312,8 +200,8 @@ class SQLAuthentication:
     def _validate_password(self, password):
         return len(password) >= 8
 
-# Legacy ServerManager class (kept for web API compatibility)
-# Now uses database instead of JSON files
+# ServerManager class for web API
+# Uses database instead of JSON files
 class ServerManager:
     def __init__(self, servers_path=None):
         # servers_path is now ignored - we use database instead
@@ -415,7 +303,6 @@ class ServerManager:
             return False, f"Failed to create server config"
 
 from Modules.common import ServerManagerModule
-
 
 class ServerManagerWebServer(ServerManagerModule):
     def __init__(self):
@@ -590,16 +477,16 @@ class ServerManagerWebServer(ServerManagerModule):
 
         try:
             self.server_manager = ServerManager()
-            self.db_manager = self.server_manager  # Alias for backward compatibility
             logger.debug("Server manager initialised successfully")
         except Exception as e:
             logger.error(f"Failed to Initialise server manager: {e}")
             self.server_manager = None
-            self.db_manager = None
 
         try:
-            from Modules.analytics import AnalyticsCollector
+            from Modules.analytics import AnalyticsCollector, get_prometheus_metrics, get_snmp_metrics
             self.analytics = AnalyticsCollector()
+            self._get_prometheus_metrics = get_prometheus_metrics
+            self._get_snmp_metrics = get_snmp_metrics
             self.analytics.start_collection()
             logger.debug("Analytics module initialised and started successfully")
         except Exception as e:
@@ -714,10 +601,6 @@ class ServerManagerWebServer(ServerManagerModule):
             except Exception as e:
                 logger.error(f"Error in subhost communication loop: {e}")
                 self._shutdown_event.wait(30)
-
-
-
-
 
     def _configure_ssl(self):
         # Auto-configure SSL if certificates are available
@@ -1048,15 +931,40 @@ class ServerManagerWebServer(ServerManagerModule):
                     for server_name, server_config in servers.items():
                         try:
                             status, pid = self.server_manager.get_server_status(server_name)
+                            server_type = server_config.get("Type", "Unknown")
+                            cpu_val = "0%"
+                            memory_val = "0 MB"
+
+                            # Get real CPU and memory data for running servers
+                            if status == "Running" and pid and psutil is not None:
+                                _psutil = psutil
+                                try:
+                                    proc = _psutil.Process(pid)
+                                    cpu_val = f"{proc.cpu_percent(interval=None):.1f}%"
+                                    mem = proc.memory_info()
+                                    # Detect Java/JVM processes for accurate memory reporting
+                                    is_java = False
+                                    try:
+                                        cmdline = proc.cmdline()
+                                        is_java = any('java' in a.lower() or 'javaw' in a.lower() for a in cmdline)
+                                    except Exception:
+                                        if server_type.lower() == 'minecraft':
+                                            is_java = True
+                                    if is_java:
+                                        memory_val = f"{mem.vms / (1024 * 1024):.1f} MB (JVM)"
+                                    else:
+                                        memory_val = f"{mem.rss / (1024 * 1024):.1f} MB"
+                                except Exception:
+                                    pass
+
                             server_info = {
                                 "id": server_name,
                                 "name": server_name,
                                 "status": status,
-                                "cpu": 0,  # Placeholder - would need system monitoring
-                                "memory": 0,  # Placeholder - would need system monitoring
-                                "disk": 0,  # Placeholder - would need system monitoring
+                                "cpu": cpu_val,
+                                "memory": memory_val,
                                 "pid": pid,
-                                "type": server_config.get("Type", "Unknown"),
+                                "type": server_type,
                                 "path": server_config.get("InstallDir", ""),
                                 "executable": server_config.get("ExecutablePath", ""),
                                 "app_id": server_config.get("AppID", ""),
@@ -1073,9 +981,8 @@ class ServerManagerWebServer(ServerManagerModule):
                                 "id": server_name,
                                 "name": server_name,
                                 "status": "Error",
-                                "cpu": 0,
-                                "memory": 0,
-                                "disk": 0,
+                                "cpu": "0%",
+                                "memory": "0 MB",
                                 "pid": None,
                                 "type": server_config.get("Type", "Unknown"),
                                 "path": server_config.get("InstallDir", ""),
@@ -1334,7 +1241,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 # Get automation settings
                 from Modules.common import load_automation_settings
                 try:
-                    server_config = self.db_manager.get_server_config(server_id)  # type: ignore
+                    server_config = self.server_manager.get_server_config(server_id)  # type: ignore
                     if not server_config:
                         return jsonify({"error": "Server configuration not found"}), 404
                     
@@ -1370,7 +1277,7 @@ class ServerManagerWebServer(ServerManagerModule):
 
                 from Modules.common import load_automation_settings
                 try:
-                    server_config = self.db_manager.get_server_config(server_id)  # type: ignore
+                    server_config = self.server_manager.get_server_config(server_id)  # type: ignore
                     if not server_config:
                         return jsonify({"error": "Server configuration not found"}), 404
                     
@@ -1409,7 +1316,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 # Get automation settings
                 from Modules.common import load_automation_settings
                 try:
-                    server_config = self.db_manager.get_server_config(server_id)  # type: ignore
+                    server_config = self.server_manager.get_server_config(server_id)  # type: ignore
                     if not server_config:
                         return jsonify({"error": "Server configuration not found"}), 404
                     
@@ -1496,7 +1403,7 @@ class ServerManagerWebServer(ServerManagerModule):
                         else:
                             return jsonify({"error": "Failed to create user"}), 500
                     except Exception as e:
-                        logger.error(f"Legacy user creation error: {e}")
+                        logger.error(f"Fallback user creation error: {e}")
                         return jsonify({"error": "Failed to create user"}), 500
 
             except Exception as e:
@@ -1529,7 +1436,7 @@ class ServerManagerWebServer(ServerManagerModule):
                         else:
                             return jsonify({"error": "User not found"}), 404
                     except Exception as e:
-                        logger.error(f"Legacy user deletion error: {e}")
+                        logger.error(f"Fallback user deletion error: {e}")
                         return jsonify({"error": "Failed to delete user"}), 500
 
             except Exception as e:
@@ -1570,7 +1477,7 @@ class ServerManagerWebServer(ServerManagerModule):
                         else:
                             return jsonify({"error": "User not found"}), 404
                     except Exception as e:
-                        logger.error(f"Legacy password reset error: {e}")
+                        logger.error(f"Fallback password reset error: {e}")
                         return jsonify({"error": "Failed to reset password"}), 500
 
             except Exception as e:
@@ -1902,9 +1809,9 @@ class ServerManagerWebServer(ServerManagerModule):
                 format_type = request.args.get('format', 'json')
                 
                 if format_type == 'prometheus':
-                    return self.analytics.get_prometheus_metrics(), 200, {'Content-Type': 'text/plain'}
+                    return self._get_prometheus_metrics(), 200, {'Content-Type': 'text/plain'}
                 elif format_type == 'snmp':
-                    return jsonify(self.analytics.get_snmp_metrics())
+                    return jsonify(self._get_snmp_metrics())
                 else:
                     return jsonify(self.analytics.get_json_metrics())
                     
@@ -1973,7 +1880,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 
                 assert self.analytics is not None  # For type checker
                     
-                snmp_metrics = self.analytics.get_snmp_metrics()
+                snmp_metrics = self._get_snmp_metrics()
                 if not snmp_metrics or not isinstance(snmp_metrics, dict):
                     return jsonify({"error": "No SNMP metrics available"}), 503
                 
@@ -2000,7 +1907,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 
                 assert self.analytics is not None  # For type checker
                     
-                return self.analytics.get_prometheus_metrics(), 200, {'Content-Type': 'text/plain'}
+                return self._get_prometheus_metrics(), 200, {'Content-Type': 'text/plain'}
                 
             except Exception as e:
                 logger.error(f"Prometheus metrics error: {e}")
@@ -2102,7 +2009,7 @@ class ServerManagerWebServer(ServerManagerModule):
                     else:
                         logger.debug("SECURITY: Using secure default localhost binding (127.0.0.1)")
                 else:
-                    # Legacy behaviour - only bind to all interfaces if explicitly configured as cluster host
+                    # Only bind to all interfaces if explicitly configured as cluster host
                     if host_type == "Host" and cluster_enabled:
                         # For cluster hosts, allow external binding but log security warning
                         default_host = "0.0.0.0"
@@ -2372,17 +2279,12 @@ class ServerManagerWebServer(ServerManagerModule):
             except Exception:
                 return
             
-            # Check if the desktop console is already actively saving state for this server
-            # If the DB was updated recently (within 5 seconds), skip log file monitoring
-            # to avoid conflicts with the desktop console's authoritative data
+            # Skip if desktop console is actively saving state for this server
             try:
                 from Modules.Database.console_database import load_console_state_db
                 existing_output, _ = load_console_state_db(server_name)
                 if existing_output is not None and len(existing_output) > 0:
-                    # Desktop console is actively saving - check if the data is fresh
-                    # The desktop console saves every 3 seconds, so if data exists and is recent,
-                    # the desktop console is handling updates. We only need to fill in gaps
-                    # when there's no existing data.
+                    # Desktop console is actively saving, check if data is fresh
                     last_entry = existing_output[-1] if existing_output else None
                     if last_entry and isinstance(last_entry, dict) and last_entry.get('timestamp'):
                         # Desktop console is providing updates, skip log-based monitoring

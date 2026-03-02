@@ -15,7 +15,6 @@ from Host.dashboard_functions import get_current_server_list
 
 logger: logging.Logger = get_dashboard_logger()
 
-
 def setup_ui(dashboard):
     # Create and configure the main dashboard user interface
     # Setup the menu bar first
@@ -275,12 +274,7 @@ def setup_ui(dashboard):
         frame = ttk.LabelFrame(dashboard.metrics_frame, text=f"{metric['icon']} {metric['title']}", padding=scaled_padding)
         frame.grid(row=metric["row"], column=metric["col"], padx=3, pady=3, sticky="nsew")
         
-        # Let the frame size naturally based on content
-        # Don't use fixed heights - this was causing the button bar to be pushed off screen
-        # The grid with uniform sizing will handle proportional sizing
-        
         # Create value label with DPI-aware wrapping
-        # Calculate wrap width based on screen size and DPI
         screen_width = dashboard.root.winfo_screenwidth()
         base_wrap = 150 if metric["name"] == "gpu" else 120
         
@@ -294,7 +288,6 @@ def setup_ui(dashboard):
         value.pack(anchor=tk.W, fill=tk.BOTH, expand=True)
         
         dashboard.metric_labels[metric["name"]] = value
-
 
 def setup_menu_bar(dashboard):
     # Setup the menu bar
@@ -322,7 +315,6 @@ def setup_menu_bar(dashboard):
     dashboard.menubar.add_cascade(label="Help", menu=help_menu)
     help_menu.add_command(label="About", command=dashboard.show_about)
     help_menu.add_command(label="Help", command=dashboard.show_help)
-
 
 def add_subhost_tab(dashboard, subhost_name, is_local=False):
     # Add a new tab for a subhost
@@ -401,24 +393,6 @@ def add_subhost_tab(dashboard, subhost_name, is_local=False):
     
     logger.info(f"Added tab for subhost: {subhost_name}")
 
-
-def remove_subhost_tab(dashboard, subhost_name):
-    # Remove a tab for a subhost
-    if subhost_name in dashboard.tab_frames:
-        # Remove from notebook
-        tab_index = dashboard.server_notebook.index(dashboard.tab_frames[subhost_name])
-        dashboard.server_notebook.forget(tab_index)
-        
-        # Clean up references
-        del dashboard.server_lists[subhost_name]
-        del dashboard.tab_frames[subhost_name]
-        
-        # Update navigation arrows
-        update_tab_navigation(dashboard)
-        
-        logger.info(f"Removed tab for subhost: {subhost_name}")
-
-
 def load_subhost_tabs(dashboard):
     # Load tabs for all available subhosts
     try:
@@ -436,7 +410,6 @@ def load_subhost_tabs(dashboard):
     except Exception as e:
         logger.warning(f"Could not load subhost tabs: {e}")
 
-
 def update_tab_navigation(dashboard):
     # Update the state of navigation arrows based on tab count and visibility
     tab_count = len(dashboard.server_notebook.tabs())
@@ -449,20 +422,17 @@ def update_tab_navigation(dashboard):
         dashboard.left_arrow.config(state=tk.NORMAL)
         dashboard.right_arrow.config(state=tk.NORMAL)
 
-
 def scroll_tabs_left(dashboard):
     # Scroll tabs to the left
     current_tab = dashboard.server_notebook.index(dashboard.server_notebook.select())
     if current_tab > 0:
         dashboard.server_notebook.select(current_tab - 1)
 
-
 def scroll_tabs_right(dashboard):
     # Scroll tabs to the right
     current_tab = dashboard.server_notebook.index(dashboard.server_notebook.select())
     if current_tab < len(dashboard.server_notebook.tabs()) - 1:
         dashboard.server_notebook.select(current_tab + 1)
-
 
 def expand_all_categories(dashboard):
     # Expand all categories in the current server list
@@ -499,10 +469,8 @@ def expand_all_categories(dashboard):
         if hasattr(dashboard, 'expand_all_btn'):
             dashboard.root.after(100, lambda: dashboard.expand_all_btn.config(state=tk.NORMAL))
 
-
 def collapse_all_categories(dashboard):
     # Collapse all categories in the current server list
-    # Debounce check to prevent rapid clicking issues
     if hasattr(dashboard, '_collapsing_categories') and dashboard._collapsing_categories:
         return
     dashboard._collapsing_categories = True
@@ -534,7 +502,6 @@ def collapse_all_categories(dashboard):
         # Re-enable button after a short delay
         if hasattr(dashboard, 'collapse_all_btn'):
             dashboard.root.after(100, lambda: dashboard.collapse_all_btn.config(state=tk.NORMAL))
-
 
 def show_server_context_menu(dashboard, event):
     # Show context menu on right-click in server list
@@ -573,7 +540,6 @@ def show_server_context_menu(dashboard, event):
     # Show context menu
     dashboard.server_context_menu.tk_popup(event.x_root, event.y_root)
 
-
 def on_server_list_click(dashboard, event):
     # Handle left-click on server list - deselect all if clicking on empty space
     current_list = get_current_server_list(dashboard)
@@ -584,11 +550,9 @@ def on_server_list_click(dashboard, event):
     
     if not item:
         # Clicked on empty space - clear all selections (like Windows Explorer)
-        # Only clear if there are actually items in the list and not during refresh
         if current_list.get_children() and not getattr(dashboard, '_refreshing_server_list', False):
             current_list.selection_remove(current_list.selection())
             logger.debug("Cleared server list selection due to empty space click")
-
 
 def on_server_double_click(dashboard, event):
     # Handle double-click on server list - open configuration dialog
@@ -602,7 +566,6 @@ def on_server_double_click(dashboard, event):
         # Double-clicked on a server - open configuration
         current_list.selection_set(item)
         dashboard.configure_server()
-
 
 def on_drag_start(dashboard, event):
     # Handle drag start for server/category movement
@@ -625,19 +588,18 @@ def on_drag_start(dashboard, event):
     item_values = current_list.item(item)['values']
     
     # Only allow dragging servers, not categories
-    if not item_values or not item_values[1]:  # No server name = category
+    if not item_values or not item_values[1]:
         return
         
     # Store drag information
     dashboard._drag_item = item
     dashboard._drag_start_y = event.y
     dashboard._drag_data = item_values
-    dashboard._drag_active = False  # Will be set to True when drag threshold is exceeded
+    dashboard._drag_active = False
     dashboard._highlighted_category = None
     
     # Highlight the dragged item
     current_list.selection_set(item)
-
 
 def on_drag_motion(dashboard, event):
     # Handle drag motion - provide visual feedback
@@ -650,7 +612,7 @@ def on_drag_motion(dashboard, event):
     
     # Check if we've moved enough to start the drag
     if not getattr(dashboard, '_drag_active', False):
-        if abs(event.y - dashboard._drag_start_y) > 5:  # 5 pixel threshold
+        if abs(event.y - dashboard._drag_start_y) > 5:
             dashboard._drag_active = True
             # Create floating drag indicator
             _create_drag_indicator(dashboard, current_list, dashboard._drag_data[0] if dashboard._drag_data else "")
@@ -689,10 +651,10 @@ def on_drag_motion(dashboard, event):
         
         # Find the parent category for the target
         parent = current_list.parent(current_item)
-        if not target_values[1]:  # No server name = this IS a category
+        if not target_values[1]:
             category_item = current_item
             category_name = target_values[0]
-        elif parent:  # Server under a category
+        elif parent:
             category_item = parent
             category_name = current_list.item(parent)['values'][0]
         else:
@@ -700,16 +662,15 @@ def on_drag_motion(dashboard, event):
             category_name = ""
         
         if category_item:
-            current_list.config(cursor="hand2")  # Hand cursor for valid drop
+            current_list.config(cursor="hand2")
             _highlight_category(dashboard, current_list, category_item)
             _update_drag_indicator(dashboard, True, category_name)
         else:
-            current_list.config(cursor="no")  # No cursor for invalid drop
+            current_list.config(cursor="no")
             _update_drag_indicator(dashboard, False, "")
     else:
         current_list.config(cursor="")
         _update_drag_indicator(dashboard, False, "")
-
 
 def _create_drag_indicator(dashboard, parent, server_name):
     # Create a floating drag indicator window
@@ -723,8 +684,8 @@ def _create_drag_indicator(dashboard, parent, server_name):
         
         # Create toplevel window for drag indicator
         dashboard._drag_indicator = tk.Toplevel(dashboard.root)
-        dashboard._drag_indicator.overrideredirect(True)  # No window decorations
-        dashboard._drag_indicator.attributes('-alpha', 0.85)  # Slightly transparent
+        dashboard._drag_indicator.overrideredirect(True)
+        dashboard._drag_indicator.attributes('-alpha', 0.85)
         dashboard._drag_indicator.attributes('-topmost', True)
         
         # Create frame with border
@@ -749,20 +710,18 @@ def _create_drag_indicator(dashboard, parent, server_name):
     except Exception as e:
         logger.debug(f"Error creating drag indicator: {e}")
 
-
 def _update_drag_indicator(dashboard, valid, category_name):
     # Update the drag indicator to show target status
     try:
         if hasattr(dashboard, '_drag_target_label') and dashboard._drag_target_label:
             if valid and category_name:
-                dashboard._drag_target_label.config(text=f'→ {category_name}', fg='#2e7d32')  # Green
+                dashboard._drag_target_label.config(text=f'→ {category_name}', fg='#2e7d32')
             elif not valid:
-                dashboard._drag_target_label.config(text='✗ Invalid target', fg='#c62828')  # Red
+                dashboard._drag_target_label.config(text='✗ Invalid target', fg='#c62828')
             else:
                 dashboard._drag_target_label.config(text='')
     except (tk.TclError, AttributeError):
         pass
-
 
 def _destroy_drag_indicator(dashboard):
     # Destroy the drag indicator window
@@ -772,7 +731,6 @@ def _destroy_drag_indicator(dashboard):
             dashboard._drag_indicator = None
     except tk.TclError:
         pass
-
 
 def _highlight_category(dashboard, treeview, category_item):
     # Highlight a category row to show it's a valid drop target
@@ -787,11 +745,10 @@ def _highlight_category(dashboard, treeview, category_item):
             treeview.item(category_item, tags=current_tags)
         
         # Configure the drop_target tag style
-        treeview.tag_configure('drop_target', background='#c8e6c9')  # Light green
+        treeview.tag_configure('drop_target', background='#c8e6c9')
         
     except Exception as e:
         logger.debug(f'Error highlighting category: {e}')
-
 
 def _clear_category_highlight(dashboard, treeview):
     # Clear any category highlighting
@@ -807,7 +764,6 @@ def _clear_category_highlight(dashboard, treeview):
         dashboard._highlighted_category = None
     except (tk.TclError, AttributeError):
         pass
-
 
 def on_drag_release(dashboard, event):
     # Handle drag release - move server to new category
@@ -846,9 +802,9 @@ def on_drag_release(dashboard, event):
         drop_values = current_list.item(drop_item)['values']
         parent = current_list.parent(drop_item)
         
-        if not drop_values[1]:  # No server name = this IS a category
+        if not drop_values[1]:
             target_category = drop_values[0]
-        elif parent:  # Server under a category - use parent category
+        elif parent:
             parent_values = current_list.item(parent)['values']
             target_category = parent_values[0]
         else:
@@ -857,7 +813,7 @@ def on_drag_release(dashboard, event):
             
         # Get source data
         source_values = dashboard._drag_data
-        if not source_values or not source_values[1]:  # Not a server
+        if not source_values or not source_values[1]:
             return
             
         server_name = source_values[0]

@@ -39,7 +39,6 @@ def create_provisioning_uri(secret: str, username: str, issuer: str):
         issuer_name=issuer
     )
 
-
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -52,11 +51,7 @@ from Modules.server_logging import get_component_logger
 logger = get_component_logger("UserManagement")
 Base = declarative_base()
 
-
-# =============================================================================
-# USER MODEL
-# =============================================================================
-
+# User model
 class User(Base):
     __tablename__ = 'users'
     
@@ -82,11 +77,7 @@ class User(Base):
     timezone = Column(String(50), nullable=True)
     theme_preference = Column(String(20), default='dark')
 
-
-# =============================================================================
-# USER MANAGER
-# =============================================================================
-
+# User manager
 class UserManager:
     def __init__(self, engine=None):
         if engine is None:
@@ -220,52 +211,6 @@ class UserManager:
             logger.error(f"Error updating user {username}: {e}")
             return False
 
-    def initiate_password_reset(self, username):
-        # Initiate password reset for a user
-        try:
-            user = self.get_user(username)
-            if not user:
-                logger.warning(f"User not found for password reset: {username}")
-                return False, "User not found"
-            
-            if not getattr(user, 'email', None) or not str(getattr(user, 'email', '')).strip():
-                logger.warning(f"No email address for user: {username}")
-                return False, "No email address configured"
-            
-            # Generate temporary password
-            import secrets
-            import string
-            temp_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
-            
-            # Update user with temporary password
-            import bcrypt
-            hashed_temp = bcrypt.hashpw(temp_password.encode(), bcrypt.gensalt()).decode()
-            
-            session = self.Session()
-            db_user = session.query(User).filter(User.username == username).first()
-            if db_user:
-                setattr(db_user, 'password', hashed_temp)
-                session.commit()
-                
-                # Send password reset email
-                try:
-                    from Modules.SMTP.notifications import notification_manager
-                    notification_manager.send_password_reset_email(db_user, temp_password)
-                    logger.info(f"Password reset email sent to: {username}")
-                    session.close()
-                    return True, "Password reset email sent"
-                except Exception as email_error:
-                    logger.error(f"Failed to send password reset email to {username}: {email_error}")
-                    session.close()
-                    return False, "Failed to send email"
-            else:
-                session.close()
-                return False, "User not found"
-                
-        except Exception as e:
-            logger.error(f"Error initiating password reset for {username}: {e}")
-            return False, "Internal error"
-
     def authenticate_user(self, username, password):
         # Authenticate a user with username and password
         max_retries = 3
@@ -281,7 +226,7 @@ class UserManager:
                     logger.warning(f"Inactive user attempted login: {username}")
                     return None
                 
-                # Verify password - try bcrypt first, fallback to SHA256 for backward compatibility
+                # Verify password - try bcrypt first, fallback to SHA256
                 stored_password = getattr(user, 'password', None)
                 if not stored_password:
                     logger.warning(f"No password stored for user: {username}")
@@ -295,7 +240,7 @@ class UserManager:
                     if bcrypt.checkpw(password.encode(), stored_password.encode()):
                         authenticated = True
                 except Exception:
-                    # If bcrypt fails, try SHA256 for backward compatibility
+                    # If bcrypt fails, try SHA256 hash check
                     hashed_password = hashlib.sha256(password.encode()).hexdigest()
                     if stored_password == hashed_password:
                         authenticated = True

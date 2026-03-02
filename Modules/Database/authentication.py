@@ -10,7 +10,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from Modules.common import setup_module_path
 setup_module_path()
 
-
 from Modules.server_logging import get_component_logger
 logger = get_component_logger("Authentication")
 
@@ -64,7 +63,7 @@ def authenticate_user(username, password, auth_type="auto"):
             if user_manager:
                 user = user_manager.get_user(username)
                 if user and getattr(user, 'is_active', True):
-                    # Check password - try bcrypt first, then fallback to SHA256 for compatibility
+                    # Check password - try bcrypt first, then SHA256 fallback
                     stored_password = getattr(user, 'password', '')
                     
                     # Try bcrypt verification first
@@ -81,7 +80,7 @@ def authenticate_user(username, password, auth_type="auto"):
                     except Exception as e:
                         logger.debug(f"Bcrypt verification failed, trying SHA256: {e}")
                     
-                    # Fallback to SHA256 for backward compatibility
+                    # Fallback to SHA256 hash check
                     hashed_password = hashlib.sha256(password.encode()).hexdigest()
                     if stored_password == hashed_password:
                         logger.info(f"SQL authentication successful for user: {username} (SHA256)")
@@ -122,7 +121,7 @@ def authenticate_windows_user(username, password):
         import win32con
         
         # Authenticate against local machine using Windows API
-        domain = "."  # Local machine
+        domain = "."
         
         # Use LogonUser API to validate credentials securely
         hToken = win32security.LogonUser(
@@ -145,35 +144,6 @@ def authenticate_windows_user(username, password):
     except Exception as e:
         logger.debug(f"Windows authentication error for {username}: {e}")
         return False
-
-def is_admin_user(username, auth_type="auto"):
-    # Check if user has admin privileges in SQL or Windows
-    logger.debug(f"Checking admin status for user: {username} with type: {auth_type}")
-    
-    # Check SQL user admin status
-    if auth_type in ["auto", "sql"] and SQL_AVAILABLE:
-        try:
-            user_manager = get_user_manager()
-            if user_manager:
-                user = user_manager.get_user(username)
-                if user:
-                    is_admin = getattr(user, 'is_admin', False)
-                    logger.debug(f"SQL user {username} admin status: {is_admin}")
-                    return is_admin
-        except Exception as e:
-            logger.error(f"Error checking SQL admin status: {e}")
-    
-    # Check Windows user admin status
-    if auth_type in ["auto", "windows"] and WINDOWS_AUTH_AVAILABLE:
-        try:
-            if is_windows_admin(username):
-                logger.debug(f"Windows user {username} is admin")
-                return True
-        except Exception as e:
-            logger.error(f"Error checking Windows admin status: {e}")
-    
-    logger.debug(f"User {username} is not admin")
-    return False
 
 def is_windows_admin(username):
     # Check if Windows user is in local Administrators group
@@ -275,26 +245,6 @@ def create_user(username, password, email="", is_admin=False):
         logger.error(f"Error creating user {username}: {e}")
         return False
 
-def update_user_password(username, new_password):
-    # Update password for SQL user
-    if not SQL_AVAILABLE:
-        logger.error("SQL authentication not available - cannot update passwords")
-        return False
-    
-    try:
-        user_manager = get_user_manager()
-        if user_manager:
-            result = user_manager.update_user(username, password=new_password)
-            if result:
-                logger.info(f"Updated password for SQL user: {username}")
-            return result
-        else:
-            logger.error("UserManager not available")
-            return False
-    except Exception as e:
-        logger.error(f"Error updating password for user {username}: {e}")
-        return False
-
 def delete_user(username):
     # Delete SQL user (Windows users managed by OS)
     if not SQL_AVAILABLE:
@@ -313,24 +263,4 @@ def delete_user(username):
             return False
     except Exception as e:
         logger.error(f"Error deleting user {username}: {e}")
-        return False
-
-def set_user_admin_status(username, is_admin):
-    # Set or remove admin status for SQL user
-    if not SQL_AVAILABLE:
-        logger.error("SQL authentication not available - cannot update admin status")
-        return False
-    
-    try:
-        user_manager = get_user_manager()
-        if user_manager:
-            result = user_manager.update_user(username, is_admin=is_admin)
-            if result:
-                logger.info(f"Updated admin status for SQL user {username} to {is_admin}")
-            return result
-        else:
-            logger.error("UserManager not available")
-            return False
-    except Exception as e:
-        logger.error(f"Error updating admin status for user {username}: {e}")
         return False

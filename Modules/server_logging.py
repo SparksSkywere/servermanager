@@ -511,17 +511,6 @@ class LogManager:
         
         return stats
 
-    def reset_log_statistics(self):
-        # Reset logging statistics
-        self._log_stats = {
-            'errors': 0,
-            'warnings': 0,
-            'last_reset': time.time()
-        }
-        
-        if hasattr(self, 'main_logger'):
-            self.main_logger.info("Log statistics reset")
-
     def start_log_maintenance(self, compress_interval=86400, delete_interval=604800):
         # Start a background thread for log maintenance
         self._maintenance_stop_event.clear()

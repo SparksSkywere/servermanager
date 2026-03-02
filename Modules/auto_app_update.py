@@ -33,7 +33,6 @@ except ImportError:
 
 logger: logging.Logger = setup_module_logging("AutoAppUpdate")
 
-
 class AutoUpdater:
     # - Checks Steam servers for updates
     # - Applies updates with optional force

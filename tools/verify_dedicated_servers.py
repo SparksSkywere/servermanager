@@ -21,7 +21,6 @@ except ImportError:
     SQLALCHEMY_AVAILABLE = False
     print("Warning: SQLAlchemy not available, SQLite fallback")
 
-
 logger: logging.Logger = setup_module_logging("ServerVerifier")
 
 # DB models
@@ -150,11 +149,7 @@ class DedicatedServerVerifier:
             return None
     
     def is_valid_dedicated_server(self, app_name, app_details=None):
-        # Strict validation to determine if an app is a legitimate dedicated server
-        # Uses keyword matching, pattern recognition, and Steam API data validation
-        # Args: app_name: Name of the application
-        #       app_details: Detailed app information from Steam API
-        # Returns: bool: True if it's a valid dedicated server, False otherwise
+        # Validate whether a Steam app is a legitimate dedicated server
         if not app_name:
             return False
         

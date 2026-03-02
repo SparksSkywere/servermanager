@@ -43,7 +43,6 @@ try:
 except ImportError:
     logger.warning("cryptography package not available - SSL certificate generation disabled")
 
-
 def get_ssl_directory():
     # Get the SSL certificates directory from registry or default location.
     try:
@@ -57,7 +56,6 @@ def get_ssl_directory():
     # Create directory if it doesn't exist
     # Directories are now created in Start-ServerManager.pyw
     return ssl_dir
-
 
 def get_ssl_config_from_registry():
     # Get SSL configuration from Windows registry.
@@ -87,7 +85,6 @@ def get_ssl_config_from_registry():
     
     return config
 
-
 def set_ssl_config_in_registry(enabled=None, cert_path=None, key_path=None, auto_generate=None):
     # Set SSL configuration in Windows registry
     try:
@@ -104,7 +101,6 @@ def set_ssl_config_in_registry(enabled=None, cert_path=None, key_path=None, auto
     except Exception as e:
         logger.error(f"Failed to save SSL config to registry: {e}")
         return False
-
 
 def get_local_hostnames():
     # Get list of local hostnames and IP addresses for certificate SANs
@@ -144,7 +140,6 @@ def get_local_hostnames():
         pass
     
     return list(hostnames)
-
 
 def generate_self_signed_certificate(
     cert_path=None, 
@@ -280,7 +275,6 @@ def generate_self_signed_certificate(
         logger.error(f"Traceback: {traceback.format_exc()}")
         return None, None
 
-
 def verify_certificate(cert_path, key_path):
     # Verify that a certificate and key pair are valid and match
     if not _cryptography_available:
@@ -373,7 +367,6 @@ def verify_certificate(cert_path, key_path):
         result["error"] = f"Certificate verification failed: {e}"
         return result
 
-
 def ensure_ssl_certificate():
     # Ensure SSL certificate exists, generating one if needed
     config = get_ssl_config_from_registry()
@@ -404,25 +397,9 @@ def ensure_ssl_certificate():
     
     return None, None
 
-
-def is_ssl_enabled():
-    # Check if SSL is enabled in configuration
-    config = get_ssl_config_from_registry()
-    return config["enabled"]
-
-
-def enable_ssl(auto_generate=True):
-    # Enable SSL in configuration
-    set_ssl_config_in_registry(enabled=True, auto_generate=auto_generate)
-    if auto_generate:
-        return ensure_ssl_certificate()
-    return None, None
-
-
 def disable_ssl():
     # Disable SSL in configuration
     set_ssl_config_in_registry(enabled=False)
-
 
 # CLI interface for manual certificate management
 if __name__ == "__main__":
