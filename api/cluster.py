@@ -55,7 +55,7 @@ def require_cluster_auth(f):
         if request.endpoint == 'cluster_api.api_cluster_role':
             logger.debug("Allowing unauthenticated access to cluster role endpoint")
             return f(*args, **kwargs)
-            
+
         # Log the access and allow the request to proceed
         logger.debug(f"Cluster API access from {request.remote_addr}")
         return f(*args, **kwargs)
@@ -84,11 +84,11 @@ def _validate_subhost(subhost_id):
     # Validate subhost exists and return info, or error response
     if not is_subhost_registered(subhost_id):
         return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
-    
+
     subhost_info = get_subhost_info(subhost_id)
     if not subhost_info:
         return jsonify({"error": f"Subhost {subhost_id} not found"}), 404
-    
+
     return subhost_info
 
 def _get_subhost_api_url(subhost_info):
@@ -100,7 +100,7 @@ def _forward_request_to_subhost(url, method='GET', json_data=None, headers=None,
     try:
         if headers is None:
             headers = {}
-        
+
         if method.upper() == 'GET':
             response = requests.get(url, headers=headers, timeout=timeout)
         elif method.upper() == 'POST':
@@ -109,12 +109,12 @@ def _forward_request_to_subhost(url, method='GET', json_data=None, headers=None,
             response = requests.delete(url, headers=headers, timeout=timeout)
         else:
             return jsonify({"error": f"Unsupported method: {method}"}), 400
-            
+
         if response.status_code == 200:
             return jsonify(response.json()), 200
         else:
             return jsonify({"error": f"Subhost returned error: {response.status_code}"}), response.status_code
-            
+
     except requests.RequestException as e:
         logger.error(f"Failed to connect to subhost: {str(e)}")
         return jsonify({"error": "Failed to connect to subhost"}), 503
@@ -133,13 +133,13 @@ def _calculate_subhost_status(last_ping, current_time):
             last_ping_time = datetime.fromisoformat(last_ping)
             time_diff = current_time - last_ping_time
             seconds_ago = int(time_diff.total_seconds())
-            
+
             # Mark as active if last seen within 5 minutes
             if seconds_ago < 300:
                 status = "active"
             else:
                 status = "inactive"
-                
+
             last_seen_ago = f"{seconds_ago} seconds ago"
             return status, last_seen_ago, seconds_ago
         except (ValueError, TypeError, AttributeError):
@@ -151,7 +151,7 @@ def _cleanup_old_subhosts(active_subhosts, current_time):
     # Clean up inactive subhosts that haven't been seen for over 1 hour
     old_count = len(active_subhosts)
     nodes_to_remove = []
-    
+
     for subhost_id, data in active_subhosts.items():
         if data['status'] == 'inactive':
             last_ping = data['last_seen']
@@ -163,16 +163,16 @@ def _cleanup_old_subhosts(active_subhosts, current_time):
                         nodes_to_remove.append(subhost_id)
                 except (ValueError, TypeError, AttributeError):
                     pass
-    
+
     # Remove old nodes
     for subhost_id in nodes_to_remove:
         cluster_db.remove_cluster_node(subhost_id)
         active_subhosts.pop(subhost_id, None)
-    
+
     cleanup_count = old_count - len(active_subhosts)
     if cleanup_count > 0:
         logger.info(f"Cleaned up {cleanup_count} old subhost entries")
-    
+
     return cleanup_count
 
 def _build_server_info(server_name, server_config, status, pid, error=None):
@@ -189,14 +189,14 @@ def _build_server_info(server_name, server_config, status, pid, error=None):
         "last_started": server_config.get('StartTime', ''),
         "auto_start": server_config.get('AutoStart', False)
     }
-    
+
     if error:
         base_info.update({
             "status": "Error",
             "pid": None,
             "error": error
         })
-    
+
     return base_info
 
 @cluster_api.route("/api/cluster/role", methods=["GET"])
@@ -213,28 +213,28 @@ def api_request_join():
     # Request to join cluster - requires approval
     try:
         logger.info(f"Join request received from {request.remote_addr}")
-        
+
         data = request.get_json()
         if not data:
             logger.warning("Join request received with no data")
             return jsonify({"error": "No data provided"}), 400
-            
+
         subhost_id = data.get("subhost_id")
         if not subhost_id:
             logger.warning("Join request missing subhost_id")
             return jsonify({"error": "subhost_id is required"}), 400
-        
+
         # Extract subhost information from the join request
         info = data.get("info", {})
         machine_name = info.get("machine_name", "")
         os_info = info.get("os", "")
-        
+
         # Use IP from info if provided (subhost knows its own IP better), fallback to remote_addr
         client_ip = info.get("ip_address") or request.remote_addr or "unknown"
         hostname = info.get("hostname") or machine_name or subhost_id
-        
+
         logger.info(f"Join request details - ID: {subhost_id}, Machine: {machine_name}, IP: {client_ip}, Remote: {request.remote_addr}")
-        
+
         # Check if this subhost already has a pending request
         existing_requests = cluster_db.get_pending_requests()
         for existing in existing_requests:
@@ -246,7 +246,7 @@ def api_request_join():
                     "request_id": existing['id'],
                     "message": "Join request already pending. Awaiting approval from cluster administrator."
                 })
-        
+
         # Check if already registered as an active node
         existing_node = cluster_db.get_cluster_node(subhost_id)
         if existing_node:
@@ -256,7 +256,7 @@ def api_request_join():
                 "subhost_id": subhost_id,
                 "message": "This subhost is already registered in the cluster."
             })
-        
+
         # Store pending request in database with both IP and hostname
         request_id = cluster_db.add_pending_request(
             node_name=subhost_id,
@@ -266,20 +266,20 @@ def api_request_join():
             os_info=os_info,
             request_data=json.dumps(data)
         )
-        
+
         if request_id is None:
             logger.error(f"Failed to store join request for {subhost_id}")
             return jsonify({"error": "Failed to store join request"}), 500
-        
+
         logger.info(f"Subhost {subhost_id} requested to join cluster from {client_ip} (request ID: {request_id})")
-        
+
         return jsonify({
             "status": "pending_approval",
             "subhost_id": subhost_id,
             "request_id": request_id,
             "message": "Join request submitted. Awaiting approval from cluster administrator."
         })
-        
+
     except Exception as e:
         logger.error(f"Error processing join request: {str(e)}")
         import traceback
@@ -292,13 +292,13 @@ def api_get_requests():
     # Get pending and approved cluster join requests for dashboard display
     try:
         role, _ = get_cluster_role()
-        
+
         if role != "Host":
             return jsonify({"error": "This operation is only available on host instances"}), 403
-        
+
         # Get pending requests
         pending_requests = cluster_db.get_pending_requests()
-        
+
         # Format pending requests for frontend
         pending = []
         for req in pending_requests:
@@ -311,7 +311,7 @@ def api_get_requests():
                 "requested_at": req['requested_at'],
                 "status": req['status']
             })
-        
+
         # Get approved/active nodes
         all_nodes = cluster_db.get_all_cluster_nodes()
         approved = []
@@ -327,10 +327,10 @@ def api_get_requests():
                         is_online = time_diff.total_seconds() < 300
                     except (ValueError, TypeError, AttributeError):
                         pass
-                
+
                 # Use hostname from node data, fallback to name
                 display_hostname = node.get('hostname') or node['name']
-                
+
                 approved.append({
                     "id": node['name'],
                     "name": display_hostname,
@@ -341,12 +341,12 @@ def api_get_requests():
                     "online": is_online,
                     "status": node['status']
                 })
-        
+
         return jsonify({
             "pending": pending,
             "approved": approved
         })
-        
+
     except Exception as e:
         logger.error(f"Error getting cluster requests: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -359,7 +359,7 @@ def api_approve_request(node_id):
         role, _ = get_cluster_role()
         if role != "Host":
             return jsonify({"error": "This operation is only available on host instances"}), 403
-        
+
         # Find the pending request
         pending_requests = cluster_db.get_pending_requests()
         matching_request = None
@@ -367,25 +367,25 @@ def api_approve_request(node_id):
             if req['node_name'] == node_id:
                 matching_request = req
                 break
-        
+
         if not matching_request:
             return jsonify({"error": f"No pending request found for node {node_id}"}), 404
-        
+
         # Generate approval token for secure communication
         import secrets
         # Use cryptographically secure token for cluster communication
         approval_token = secrets.token_urlsafe(32)
-        
+
         # Approve the request
         success = cluster_db.approve_request(
             request_id=matching_request['id'],
             approved_by="dashboard",
             approval_token=approval_token
         )
-        
+
         if not success:
             return jsonify({"error": "Failed to approve request"}), 500
-        
+
         # Add to registered nodes with hostname
         cluster_db.add_cluster_node(
             name=node_id,
@@ -395,15 +395,15 @@ def api_approve_request(node_id):
             cluster_token=approval_token,
             hostname=matching_request['machine_name']
         )
-        
+
         logger.info(f"Approved cluster request from dashboard: {node_id} (hostname: {matching_request['machine_name']})")
-        
+
         return jsonify({
             "status": "approved",
             "node_id": node_id,
             "message": f"Node {node_id} approved successfully"
         })
-        
+
     except Exception as e:
         logger.error(f"Error approving request: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -416,7 +416,7 @@ def api_reject_request(node_id):
         role, _ = get_cluster_role()
         if role != "Host":
             return jsonify({"error": "This operation is only available on host instances"}), 403
-        
+
         # Find the pending request
         pending_requests = cluster_db.get_pending_requests()
         matching_request = None
@@ -424,27 +424,27 @@ def api_reject_request(node_id):
             if req['node_name'] == node_id:
                 matching_request = req
                 break
-        
+
         if not matching_request:
             return jsonify({"error": f"No pending request found for node {node_id}"}), 404
-        
+
         # Reject the request
         success = cluster_db.reject_request(
             request_id=matching_request['id'],
             rejected_by="dashboard"
         )
-        
+
         if not success:
             return jsonify({"error": "Failed to reject request"}), 500
-        
+
         logger.info(f"Rejected cluster request from dashboard: {node_id}")
-        
+
         return jsonify({
             "status": "rejected",
             "node_id": node_id,
             "message": f"Node {node_id} rejected"
         })
-        
+
     except Exception as e:
         logger.error(f"Error rejecting request: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -456,19 +456,19 @@ def api_get_pending():
     try:
         role, _ = get_cluster_role()
         logger.info(f"api_get_pending called - role: {role}")
-        
+
         if role != "Host":
             logger.warning(f"Pending requests requested from non-host: {role}")
             return jsonify({"error": "This operation is only available on host instances"}), 403
-        
+
         # Get pending requests from database
         logger.info("Getting pending requests from database...")
         pending_requests = cluster_db.get_pending_requests()
         logger.info(f"Database returned {len(pending_requests)} pending requests")
-        
+
         if pending_requests:
             logger.info(f"First request: {pending_requests[0]}")
-        
+
         # Convert to legacy format for compatibility
         pending_dict = {}
         for req in pending_requests:
@@ -483,15 +483,15 @@ def api_get_pending():
                 "machine_name": req['machine_name'],
                 "os_info": req['os_info']
             }
-        
+
         response_data = {
             "pending_requests": pending_dict,
             "count": len(pending_requests)
         }
-        
+
         logger.info(f"Returning response with {response_data['count']} requests")
         return jsonify(response_data)
-        
+
     except Exception as e:
         logger.error(f"Error getting pending requests: {str(e)}")
         import traceback
@@ -506,7 +506,7 @@ def api_approve_subhost(subhost_id):
         role, _ = get_cluster_role()
         if role != "Host":
             return jsonify({"error": "This operation is only available on host instances"}), 403
-        
+
         # Find the pending request in database
         pending_requests = cluster_db.get_pending_requests()
         matching_request = None
@@ -514,24 +514,24 @@ def api_approve_subhost(subhost_id):
             if req['node_name'] == subhost_id:
                 matching_request = req
                 break
-        
+
         if not matching_request:
             return jsonify({"error": f"No pending request found for subhost {subhost_id}"}), 404
-        
+
         # Generate cryptographically secure approval token
         import secrets
         approval_token = secrets.token_urlsafe(32)
-        
+
         # Approve the request in database
         success = cluster_db.approve_request(
             request_id=matching_request['id'],
             approved_by="system",
             approval_token=approval_token
         )
-        
+
         if not success:
             return jsonify({"error": "Failed to approve request"}), 500
-        
+
         # Add to registered nodes with hostname
         cluster_db.add_cluster_node(
             name=subhost_id,
@@ -541,16 +541,16 @@ def api_approve_subhost(subhost_id):
             cluster_token=approval_token,
             hostname=matching_request['machine_name']
         )
-        
+
         logger.info(f"Subhost {subhost_id} approved and registered (hostname: {matching_request['machine_name']})")
-        
+
         return jsonify({
             "status": "approved",
             "subhost_id": subhost_id,
             "approval_token": approval_token,
             "message": f"Subhost {subhost_id} approved successfully"
         })
-        
+
     except Exception as e:
         logger.error(f"Error approving subhost: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -563,7 +563,7 @@ def api_reject_subhost(subhost_id):
         role, _ = get_cluster_role()
         if role != "Host":
             return jsonify({"error": "This operation is only available on host instances"}), 403
-        
+
         # Find the pending request in database
         pending_requests = cluster_db.get_pending_requests()
         matching_request = None
@@ -571,27 +571,27 @@ def api_reject_subhost(subhost_id):
             if req['node_name'] == subhost_id:
                 matching_request = req
                 break
-        
+
         if not matching_request:
             return jsonify({"error": f"No pending request found for subhost {subhost_id}"}), 404
-        
+
         # Reject the request in database
         success = cluster_db.reject_request(
             request_id=matching_request['id'],
             rejected_by="system"
         )
-        
+
         if not success:
             return jsonify({"error": "Failed to reject request"}), 500
-        
+
         logger.info(f"Subhost {subhost_id} join request rejected")
-        
+
         return jsonify({
             "status": "rejected",
             "subhost_id": subhost_id,
             "message": f"Subhost {subhost_id} join request rejected"
         })
-        
+
     except Exception as e:
         logger.error(f"Error rejecting subhost: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -609,7 +609,7 @@ def api_check_approval(subhost_id):
                 "approval_token": registered_node.get('cluster_token'),
                 "message": "Subhost approved and registered"
             })
-        
+
         # Check pending requests
         pending_requests = cluster_db.get_pending_requests()
         for req in pending_requests:
@@ -633,13 +633,13 @@ def api_check_approval(subhost_id):
                         "approved": False,
                         "message": "Join request was rejected"
                     })
-        
+
         return jsonify({
             "status": "not_found",
                 "approved": False,
                 "message": "No join request found"
             })
-            
+
     except Exception as e:
         logger.error(f"Error checking approval status: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -653,15 +653,15 @@ def api_subhost_heartbeat():
         if not data:
             logger.warning("Heartbeat request received with no data")
             return jsonify({"error": "No data provided"}), 400
-            
+
         subhost_id = data.get("subhost_id")
         if not subhost_id:
             logger.warning("Heartbeat request missing subhost_id")
             return jsonify({"error": "subhost_id is required"}), 400
-        
+
         # Check if subhost is registered
         existing_node = cluster_db.get_cluster_node(subhost_id)
-        
+
         if existing_node:
             # Update last ping timestamp and status
             cluster_db.update_node_status(subhost_id, "active", datetime.now())
@@ -669,15 +669,15 @@ def api_subhost_heartbeat():
         else:
             logger.warning(f"Heartbeat from unregistered subhost {subhost_id} - use approval workflow to register")
             return jsonify({"error": "Subhost not registered. Use the approval workflow to join the cluster."}), 403
-        
+
         # Update host heartbeat as well
         cluster_db.heartbeat()
-        
+
         return jsonify({
             "status": "acknowledged",
             "timestamp": datetime.now().isoformat()
         })
-        
+
     except Exception as e:
         logger.error(f"Error processing heartbeat: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -689,22 +689,22 @@ def api_list_subhosts():
     try:
         # Get all cluster nodes
         all_nodes = cluster_db.get_all_cluster_nodes()
-        
+
         # Filter for subhosts and convert to legacy format
         active_subhosts = {}
         inactive_count = 0
         current_time = datetime.now()
-        
+
         for node in all_nodes:
             if node['node_type'] == 'subhost':
                 subhost_id = node['name']
                 last_ping = node['last_ping']
-                
+
                 # Calculate subhost status
                 status, last_seen_ago, _ = _calculate_subhost_status(last_ping, current_time)
                 if status == "inactive":
                     inactive_count += 1
-                
+
                 # Build subhost response
                 active_subhosts[subhost_id] = {
                     "id": subhost_id,
@@ -715,17 +715,17 @@ def api_list_subhosts():
                     "ip_address": node['ip_address'],
                     "port": node['port']
                 }
-        
+
         # Clean up old inactive subhosts
         _cleanup_old_subhosts(active_subhosts, current_time)
-        
+
         logger.debug(f"Listed {len(active_subhosts)} subhosts ({inactive_count} inactive)")
-        
+
         return jsonify({
             "subhosts": active_subhosts,
             "count": len(active_subhosts)
         })
-        
+
     except Exception as e:
         logger.error(f"Error listing subhosts: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -735,19 +735,19 @@ def api_cluster_status():
     # Get overall cluster status - no auth required for initial connection checks
     try:
         role, host_address = get_cluster_role()
-        
+
         cluster_status = {
             "role": role,
             "host_address": host_address,
             "timestamp": datetime.now().isoformat()
         }
-        
+
         subhost_count = 0
         if role == "Host":
             # Include subhost information for hosts
             all_nodes = cluster_db.get_all_cluster_nodes()
             subhosts = {}
-            
+
             for node in all_nodes:
                 if node['node_type'] == 'subhost':
                     subhosts[node['name']] = {
@@ -759,10 +759,10 @@ def api_cluster_status():
                         "status": node['status']
                     }
                     subhost_count += 1
-            
+
             cluster_status["subhosts"] = subhosts
             cluster_status["subhost_count"] = subhost_count
-            
+
             # Add host status information
             host_status = cluster_db.get_host_status()
             if host_status:
@@ -773,12 +773,12 @@ def api_cluster_status():
                 cluster_status["host_status"] = "unknown"
                 cluster_status["dashboard_active"] = True
                 cluster_status["maintenance_mode"] = False
-            
+
         subhost_count_str = str(subhost_count) if role == 'Host' else 'N/A'
         logger.debug(f"Cluster status requested - Role: {role}, Subhosts: {subhost_count_str}")
-        
+
         return jsonify(cluster_status)
-        
+
     except Exception as e:
         logger.error(f"Error getting cluster status: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -789,7 +789,7 @@ def api_get_host_status():
     try:
         # This endpoint is available without authentication for subhosts to check host status
         host_status = cluster_db.get_host_status()
-        
+
         if host_status:
             return jsonify({
                 "host_status": host_status['status'],
@@ -809,7 +809,7 @@ def api_get_host_status():
                 "last_heartbeat": None,
                 "timestamp": datetime.now().isoformat()
             })
-        
+
     except Exception as e:
         logger.error(f"Error getting host status: {str(e)}")
         return jsonify({
@@ -829,15 +829,15 @@ def api_get_subhost_servers(subhost_id):
         host_check = _check_host_role()
         if host_check:
             return host_check
-            
+
         subhost_info = _validate_subhost(subhost_id)
         if isinstance(subhost_info, tuple):  # Error response
             return subhost_info
-            
+
         subhost_api_url = _get_subhost_api_url(subhost_info)
         result, status_code = _forward_request_to_subhost(f"{subhost_api_url}/api/servers", timeout=10)
         return result, status_code
-            
+
     except Exception as e:
         logger.error(f"Error getting subhost servers: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -849,9 +849,9 @@ def api_start_subhost_server(subhost_id, server_name):
         role, _ = get_cluster_role()
         if role != "Host":
             return jsonify({"error": "This operation is only available on host instances"}), 403
-            
+
         return _execute_subhost_server_command(subhost_id, server_name, "start")
-        
+
     except Exception as e:
         logger.error(f"Error starting subhost server: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -863,9 +863,9 @@ def api_stop_subhost_server(subhost_id, server_name):
         role, _ = get_cluster_role()
         if role != "Host":
             return jsonify({"error": "This operation is only available on host instances"}), 403
-            
+
         return _execute_subhost_server_command(subhost_id, server_name, "stop")
-        
+
     except Exception as e:
         logger.error(f"Error stopping subhost server: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -877,9 +877,9 @@ def api_restart_subhost_server(subhost_id, server_name):
         role, _ = get_cluster_role()
         if role != "Host":
             return jsonify({"error": "This operation is only available on host instances"}), 403
-            
+
         return _execute_subhost_server_command(subhost_id, server_name, "restart")
-        
+
     except Exception as e:
         logger.error(f"Error restarting subhost server: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -891,25 +891,25 @@ def api_install_subhost_server(subhost_id):
         host_check = _check_host_role()
         if host_check:
             return host_check
-            
+
         data = request.get_json()
         if not data:
             return jsonify({"error": "No installation data provided"}), 400
-            
+
         subhost_info = _validate_subhost(subhost_id)
         if isinstance(subhost_info, tuple):  # Error response
             return subhost_info
-            
+
         subhost_api_url = _get_subhost_api_url(subhost_info)
         headers = {"Content-Type": "application/json"}
-        
-        result, status_code = _forward_request_to_subhost(f"{subhost_api_url}/api/servers", 
-                                           method='POST', json_data=data, 
+
+        result, status_code = _forward_request_to_subhost(f"{subhost_api_url}/api/servers",
+                                           method='POST', json_data=data,
                                            headers=headers, timeout=30)
         if status_code == 200:  # Success
             logger.info(f"Successfully initiated server installation on subhost {subhost_id}")
         return result, status_code
-            
+
     except Exception as e:
         logger.error(f"Error installing server on subhost: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -921,18 +921,18 @@ def api_remove_subhost_server(subhost_id, server_name):
         host_check = _check_host_role()
         if host_check:
             return host_check
-            
+
         subhost_info = _validate_subhost(subhost_id)
         if isinstance(subhost_info, tuple):  # Error response
             return subhost_info
-            
+
         subhost_api_url = _get_subhost_api_url(subhost_info)
-        result, status_code = _forward_request_to_subhost(f"{subhost_api_url}/api/servers/{server_name}", 
+        result, status_code = _forward_request_to_subhost(f"{subhost_api_url}/api/servers/{server_name}",
                                                         method='DELETE', timeout=15)
         if status_code == 200:  # Success
             logger.info(f"Successfully removed server {server_name} from subhost {subhost_id}")
         return result, status_code
-            
+
     except Exception as e:
         logger.error(f"Error removing server from subhost: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -942,9 +942,9 @@ def _execute_subhost_server_command(subhost_id, server_name, action):
     subhost_info = _validate_subhost(subhost_id)
     if isinstance(subhost_info, tuple):  # Error response
         return subhost_info
-        
+
     subhost_api_url = _get_subhost_api_url(subhost_info)
-    result, status_code = _forward_request_to_subhost(f"{subhost_api_url}/api/servers/{server_name}/{action}", 
+    result, status_code = _forward_request_to_subhost(f"{subhost_api_url}/api/servers/{server_name}/{action}",
                                                      method='POST', timeout=15)
     if status_code == 200:  # Success
         logger.info(f"Successfully executed {action} on server {server_name} on subhost {subhost_id}")
@@ -958,11 +958,11 @@ def api_cluster_nodes():
         host_check = _check_host_role()
         if host_check:
             return host_check
-            
+
         # Get all registered subhosts from database
         all_nodes = cluster_db.get_all_cluster_nodes()
         nodes = []
-        
+
         for node in all_nodes:
             if node['node_type'] == 'subhost':
                 nodes.append({
@@ -974,10 +974,10 @@ def api_cluster_nodes():
                     "approved_timestamp": node['added_at'],
                     "last_seen": node['last_ping'] or node['added_at']
                 })
-            
+
         logger.debug(f"Returning {len(nodes)} approved cluster nodes")
         return jsonify(nodes)
-        
+
     except Exception as e:
         logger.error(f"Error getting cluster nodes: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -990,25 +990,25 @@ def api_revoke_node(node_id):
         host_check = _check_host_role()
         if host_check:
             return host_check
-        
+
         # Check if node exists
         existing_node = cluster_db.get_cluster_node(node_id)
         if not existing_node:
             return jsonify({"error": f"Node {node_id} not found"}), 404
-        
+
         # Remove the node
         success = cluster_db.remove_cluster_node(node_id)
         if not success:
             return jsonify({"error": "Failed to remove node"}), 500
-        
+
         logger.info(f"Revoked cluster node: {node_id}")
-        
+
         return jsonify({
             "status": "revoked",
             "node_id": node_id,
             "message": f"Node {node_id} has been removed from the cluster"
         })
-        
+
     except Exception as e:
         logger.error(f"Error revoking node: {str(e)}")
         return jsonify({"error": "An internal error occurred"}), 500
@@ -1035,14 +1035,14 @@ def api_remote_login():
         data = request.get_json()
         username = data.get('username')
         password = data.get('password')
-        
+
         if not username or not password:
             return jsonify({"success": False, "error": "Username and password required"}), 400
-        
+
         # Import user management for authentication
         try:
             engine, user_manager = initialise_user_manager()  # Use already imported function
-            
+
             # Authenticate user
             user = user_manager.authenticate_user(username, password)
             if user:
@@ -1055,11 +1055,11 @@ def api_remote_login():
                 })
             else:
                 return jsonify({"success": False, "error": "Invalid credentials"}), 401
-                
+
         except Exception as auth_error:
             logger.error(f"Authentication error: {str(auth_error)}")
             return jsonify({"success": False, "error": "Authentication system error"}), 500
-            
+
     except Exception as e:
         logger.error(f"Error in remote login: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
@@ -1080,30 +1080,30 @@ def api_get_servers():
     try:
         # Import server manager
         server_manager = _create_server_manager()
-        
+
         # Get all servers with their current status
         servers = server_manager.get_all_servers()
         result = []
-        
+
         for server_name, server_config in servers.items():
             try:
                 # Get server status
                 status, pid = server_manager.get_server_status(server_name)
                 server_info = _build_server_info(server_name, server_config, status, pid)
                 result.append(server_info)
-                
+
             except Exception as server_error:
                 logger.debug(f"Error getting status for server {server_name}: {str(server_error)}")
                 # Add server with error status if status check fails
                 server_info = _build_server_info(server_name, server_config, "Error", None, str(server_error))
                 result.append(server_info)
-        
+
         return jsonify({
             "success": True,
             "servers": result,
             "count": len(result)
         })
-        
+
     except Exception as e:
         logger.error(f"Error getting servers: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
@@ -1113,15 +1113,15 @@ def api_get_server_status(server_name):
     # Get status of a specific server
     try:
         server_manager = _create_server_manager()
-        
+
         # Check if server exists
         server_config = server_manager.get_server_config(server_name)
         if not server_config:
             return jsonify({"success": False, "error": "Server not found"}), 404
-        
+
         # Get server status
         status, pid = server_manager.get_server_status(server_name)
-        
+
         # Get additional process details if the server is currently running
         process_info = {}
         if status == "Running" and pid:
@@ -1134,7 +1134,7 @@ def api_get_server_status(server_name):
                 }
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
-        
+
         result = {
             "name": server_name,
             "status": status,
@@ -1142,9 +1142,9 @@ def api_get_server_status(server_name):
             "type": server_config.get('Type', 'Unknown'),
             "process_info": process_info
         }
-        
+
         return jsonify({"success": True, "server": result})
-        
+
     except Exception as e:
         logger.error(f"Error getting server status for {server_name}: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
@@ -1154,15 +1154,15 @@ def api_start_server(server_name):
     # Start a specific server
     try:
         server_manager = _create_server_manager()
-        
+
         # Check if server exists
         server_config = server_manager.get_server_config(server_name)
         if not server_config:
             return jsonify({"success": False, "error": "Server not found"}), 404
-        
+
         # Start the server
         success = server_manager.start_server_advanced(server_name)
-        
+
         if success:
             logger.info(f"Remote request: Started server {server_name}")
             return jsonify({
@@ -1174,7 +1174,7 @@ def api_start_server(server_name):
                 "success": False,
                 "error": f"Failed to start server '{server_name}'"
             }), 500
-            
+
     except Exception as e:
         logger.error(f"Error starting server {server_name}: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
@@ -1184,15 +1184,15 @@ def api_stop_server(server_name):
     # Stop a specific server
     try:
         server_manager = _create_server_manager()
-        
+
         # Check if server exists
         server_config = server_manager.get_server_config(server_name)
         if not server_config:
             return jsonify({"success": False, "error": "Server not found"}), 404
-        
+
         # Stop the server
         success = server_manager.stop_server(server_name)
-        
+
         if success:
             logger.info(f"Remote request: Stopped server {server_name}")
             return jsonify({
@@ -1204,7 +1204,7 @@ def api_stop_server(server_name):
                 "success": False,
                 "error": f"Failed to stop server '{server_name}'"
             }), 500
-            
+
     except Exception as e:
         logger.error(f"Error stopping server {server_name}: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
@@ -1214,19 +1214,19 @@ def api_restart_server(server_name):
     # Restart a specific server
     try:
         server_manager = _create_server_manager()
-        
+
         # Check if server exists
         server_config = server_manager.get_server_config(server_name)
         if not server_config:
             return jsonify({"success": False, "error": "Server not found"}), 404
-        
+
         # Restart the server (stop then start)
         stop_success = server_manager.stop_server(server_name)
         if stop_success:
             # Wait a moment before starting
             time.sleep(2)
             start_success = server_manager.start_server_advanced(server_name)
-            
+
             if start_success:
                 logger.info(f"Remote request: Restarted server {server_name}")
                 return jsonify({
@@ -1243,7 +1243,7 @@ def api_restart_server(server_name):
                 "success": False,
                 "error": f"Failed to stop server for restart"
             }), 500
-            
+
     except Exception as e:
         logger.error(f"Error restarting server {server_name}: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500

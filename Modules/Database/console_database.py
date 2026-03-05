@@ -67,13 +67,13 @@ def load_console_state_db(server_name, max_age_seconds=None):
 
             if result:
                 timestamp = result[4]
-                
+
                 # Apply age check only when max_age_seconds is specified
                 if max_age_seconds is not None:
                     if timestamp is None:
                         logger.debug(f"Console state for {server_name} has no timestamp, skipping")
                         return None, None
-                        
+
                     if isinstance(timestamp, str):
                         timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
 

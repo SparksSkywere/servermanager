@@ -17,7 +17,7 @@ from Host.dashboard_functions import (
     centre_window, update_server_status_in_treeview, open_directory_in_explorer,
     import_server_from_directory_dialog, import_server_from_export_dialog,
     export_server_dialog, create_progress_dialog_with_console,
-    start_server_operation, stop_server_operation, restart_server_operation
+    start_server_operation, stop_server_operation, restart_server_operation # type: ignore
 )
 from debug.debug import get_server_process_details, log_exception, monitor_process_resources
 
@@ -50,6 +50,46 @@ class ServerOpsMixin:
         def update_system_info(self) -> None: ...
         def update_webserver_status(self) -> None: ...
 
+    def _make_server_op_callback(self, error_as_info=False):
+        """Create a standard server operation completion callback.
+
+        Args:
+            error_as_info: If True, show failures via showinfo instead of showerror
+                          (used for stop operations where failure is informational).
+        """
+        def on_completion(success, message):
+            def update_ui():
+                if not success:
+                    if error_as_info:
+                        messagebox.showinfo("Info", message)
+                    else:
+                        messagebox.showerror("Error", message)
+                self.update_server_list(force_refresh=True)
+            self.root.after(0, update_ui)
+        return on_completion
+
+    @staticmethod
+    def _make_progress_callback(progress_dialog, scheduled=False):
+        """Create a progress callback for server update/restart operations.
+
+        Args:
+            progress_dialog: Dialog with update_console method, or None for scheduled ops.
+            scheduled: If True, also log messages via logger and handle None dialog.
+        """
+        def progress_callback(message):
+            try:
+                if progress_dialog and hasattr(progress_dialog, 'update_console'):
+                    progress_dialog.update_console(message)
+                elif not scheduled:
+                    print(message)
+                if scheduled:
+                    logger.info(message)
+            except Exception as e:
+                if not scheduled:
+                    print(f"Console callback error: {e}, message: {message}")
+                logger.error(f"Console callback error: {e}, message: {message}")
+        return progress_callback
+
     def start_server(self):
         # Start the selected game server (Steam/Minecraft/Other)
         current_list = self.get_current_server_list()
@@ -68,13 +108,6 @@ class ServerOpsMixin:
             messagebox.showerror("Error", "Server manager not initialised.")
             return
 
-        def on_completion(success, message):
-            def update_ui():
-                if not success:
-                    messagebox.showerror("Error", message)
-                self.update_server_list(force_refresh=True)
-            self.root.after(0, update_ui)
-
         self.update_server_status(server_name, "Starting...")
 
         start_server_operation(
@@ -82,7 +115,7 @@ class ServerOpsMixin:
             server_manager=self.server_manager,
             console_manager=self.console_manager,
             status_callback=lambda status: self.update_server_status(server_name, status),
-            completion_callback=on_completion
+            completion_callback=self._make_server_op_callback()
         )
 
     def stop_server(self):
@@ -109,13 +142,6 @@ class ServerOpsMixin:
         if not confirm:
             return
 
-        def on_completion(success, message):
-            def update_ui():
-                if not success:
-                    messagebox.showinfo("Info", message)
-                self.update_server_list(force_refresh=True)
-            self.root.after(0, update_ui)
-
         self.update_server_status(server_name, "Stopping...")
 
         stop_server_operation(
@@ -123,7 +149,7 @@ class ServerOpsMixin:
             server_manager=self.server_manager,
             console_manager=self.console_manager,
             status_callback=lambda status: self.update_server_status(server_name, status),
-            completion_callback=on_completion
+            completion_callback=self._make_server_op_callback(error_as_info=True)
         )
 
     def restart_server(self):
@@ -150,13 +176,6 @@ class ServerOpsMixin:
         if not confirm:
             return
 
-        def on_completion(success, message):
-            def update_ui():
-                if not success:
-                    messagebox.showerror("Error", message)
-                self.update_server_list(force_refresh=True)
-            self.root.after(0, update_ui)
-
         self.update_server_status(server_name, "Restarting...")
 
         restart_server_operation(
@@ -164,7 +183,7 @@ class ServerOpsMixin:
             server_manager=self.server_manager,
             console_manager=self.console_manager,
             status_callback=lambda status: self.update_server_status(server_name, status),
-            completion_callback=on_completion
+            completion_callback=self._make_server_op_callback()
         )
 
     def view_process_details(self):
@@ -748,14 +767,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
         def update_worker():
             try:
-                def progress_callback(message):
-                    try:
-                        if hasattr(progress_dialog, 'update_console'):
-                            progress_dialog.update_console(message)
-                        else:
-                            print(message)
-                    except Exception as e:
-                        print(f"Console callback error: {e}, message: {message}")
+                progress_callback = self._make_progress_callback(progress_dialog)
 
                 if self.update_manager:
                     success, message = self.update_manager.update_server(
@@ -809,18 +821,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
         def update_all_worker():
             try:
-                def progress_callback(message):
-                    try:
-                        if progress_dialog and hasattr(progress_dialog, 'update_console'):
-                            progress_dialog.update_console(message)
-                        elif not scheduled:
-                            print(message)
-                        if scheduled:
-                            logger.info(message)
-                    except Exception as e:
-                        if not scheduled:
-                            print(f"Console callback error: {e}, message: {message}")
-                        logger.error(f"Console callback error: {e}, message: {message}")
+                progress_callback = self._make_progress_callback(progress_dialog, scheduled=scheduled)
 
                 if self.update_manager:
                     results = self.update_manager.update_all_steam_servers(progress_callback=progress_callback, scheduled=scheduled)
@@ -897,14 +898,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
         def restart_all_worker():
             try:
-                def progress_callback(message):
-                    try:
-                        if hasattr(progress_dialog, 'update_console'):
-                            progress_dialog.update_console(message)
-                        else:
-                            print(message)
-                    except Exception as e:
-                        print(f"Console callback error: {e}, message: {message}")
+                progress_callback = self._make_progress_callback(progress_dialog)
 
                 if self.update_manager:
                     results = self.update_manager.restart_all_servers(progress_callback=progress_callback, scheduled=False)

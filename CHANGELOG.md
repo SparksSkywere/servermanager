@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3]
+
+  Dead Code / Placeholder Cleanup:
+  - Removed dead placeholder `install_server()` and `check_for_updates()` from `server_operations.py` (real implementations exist in `server_manager.py` and `server_updates.py`)
+  - Fixed misleading "Additional placeholder functions" comment in `dashboard_functions.py` (functions were fully implemented)
+  - Full audit of 42 missing-implementation findings: 18 were TYPE_CHECKING stubs, 4 were string template comments, 2 were type-checker declarations, 6 were informational NOTEs, 8 were intentional fallback patterns, 2 were dead code (removed), 2 had misleading comments (fixed)
+  - Removed 70 lines of unreachable 2FA dialog code from `user_database.py` (dead `_show_2fa_setup_dialog` method)
+
+  Code Quality Fixes:
+  - Added `encoding='utf-8'` to 29 `open()` calls across 15 files (dashboard.py, cluster_database.py, server_configs_database.py, auto_app_update.py, common.py, launcher.py, minecraft.py, server_logging.py, server_manager.py, stop_servermanager.py, trayicon.py, debug.py, dashboard_tracker.py)
+  - Extracted hardcoded Java installation paths in `minecraft.py` to module-level `WINDOWS_JAVA_SEARCH_PATHS` constant
+  - Stripped trailing whitespace from 4,759 lines across 55 Python files
+  - Added explicit `-> bool` return type annotation to `RegistryModule.initialise_from_registry()` in `common.py` to fix Pylance override type mismatch in subclasses
+
+  Duplication Refactoring:
+  - Extracted `RegistryModule` base class into `common.py` — consolidates shared Windows Registry initialisation logic from `security.py` (`SecurityManager`) and `server_operations.py` (`ServerOperations`), eliminating duplicate `registry_path` / `server_manager_dir` / `paths` setup and `initialise_from_registry()` patterns
+  - Extracted `make_2fa_callbacks()` factory into `common.py` — consolidates duplicate 2FA setup/verify callback generation from `admin_dashboard.py` and `user_database.py`
+  - Extracted `_make_server_op_callback()` in `dashboard_server_ops.py` — consolidates 3 duplicate `on_completion` closures (start/stop/restart) with `error_as_info` parameter
+  - Extracted `_make_progress_callback()` staticmethod in `dashboard_server_ops.py` — consolidates 3 duplicate progress callback closures with `scheduled` parameter for logger support
+  - Extracted `populate_server_tree()` in `dashboard_functions.py` — consolidates duplicate populate/search/filter logic used by both server browser dialogs; reused in `dashboard_server_config.py` to replace inline duplicate
+  - Extracted `make_canvas_width_updater()` in `dashboard_functions.py` — consolidates duplicate scrollable canvas width-binding logic from `dashboard_functions.py` and `dashboard_server_config.py`
+
+  CSS Refactoring:
+  - Created `www/css/common.css` — extracted shared layout styles (body reset, page-container, header, nav, content-area, card, responsive grid) from inline `<style>` blocks
+  - Migrated `admin.html`, `cluster.html`, `create-server.html`, and `dashboard.html` to use linked `common.css` instead of duplicated inline CSS
+
+  Documentation:
+  - Updated WIKI.md: corrected directory layout, removed references to non-existent files (`update-database.pyw`, `migrate_database_schema.py`), updated architecture documentation for `RegistryModule` and shared utility patterns
+  - Fixed incorrect `uninstall.sh` references to `uninstaller.sh` in WIKI.md
+  - Updated version references from 1.2 to 1.3 in WIKI.md and README.md
+  - Added Screenshots!
+
 ## [1.2] - 2026-03-01
 
 Maintenance update!

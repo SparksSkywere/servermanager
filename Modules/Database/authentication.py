@@ -53,9 +53,9 @@ def authenticate_user(username, password, auth_type="auto"):
     if not username or not password:
         logger.warning("Username and password are required")
         return False
-    
+
     logger.debug(f"Attempting to authenticate user: {username} with type: {auth_type}")
-    
+
     # Try SQL authentication first (if available and requested)
     if auth_type in ["auto", "sql"] and SQL_AVAILABLE:
         try:
@@ -65,7 +65,7 @@ def authenticate_user(username, password, auth_type="auto"):
                 if user and getattr(user, 'is_active', True):
                     # Check password - try bcrypt first, then SHA256 fallback
                     stored_password = getattr(user, 'password', '')
-                    
+
                     # Try bcrypt verification first
                     try:
                         import bcrypt
@@ -79,7 +79,7 @@ def authenticate_user(username, password, auth_type="auto"):
                             return True
                     except Exception as e:
                         logger.debug(f"Bcrypt verification failed, trying SHA256: {e}")
-                    
+
                     # Fallback to SHA256 hash check
                     hashed_password = hashlib.sha256(password.encode()).hexdigest()
                     if stored_password == hashed_password:
@@ -96,7 +96,7 @@ def authenticate_user(username, password, auth_type="auto"):
                     logger.debug(f"SQL user not found or inactive: {username}")
         except Exception as e:
             logger.error(f"SQL authentication error: {e}")
-    
+
     # Try Windows authentication if available and requested
     if auth_type in ["auto", "windows"] and WINDOWS_AUTH_AVAILABLE:
         try:
@@ -105,7 +105,7 @@ def authenticate_user(username, password, auth_type="auto"):
                 return True
         except Exception as e:
             logger.error(f"Windows authentication error: {e}")
-    
+
     logger.warning(f"Authentication failed for user: {username}")
     return False
 
@@ -114,15 +114,15 @@ def authenticate_windows_user(username, password):
     if not WINDOWS_AUTH_AVAILABLE:
         logger.error("Windows authentication not available")
         return False
-    
+
     try:
         # Import Windows modules (only reached if WINDOWS_AUTH_AVAILABLE is True)
         import win32security
         import win32con
-        
+
         # Authenticate against local machine using Windows API
         domain = "."
-        
+
         # Use LogonUser API to validate credentials securely
         hToken = win32security.LogonUser(
             username,
@@ -131,7 +131,7 @@ def authenticate_windows_user(username, password):
             win32con.LOGON32_LOGON_NETWORK,
             win32con.LOGON32_PROVIDER_DEFAULT
         )
-        
+
         if hToken:
             # Close the token handle
             hToken.Close()
@@ -140,7 +140,7 @@ def authenticate_windows_user(username, password):
         else:
             logger.debug(f"Windows authentication failed for: {username}")
             return False
-            
+
     except Exception as e:
         logger.debug(f"Windows authentication error for {username}: {e}")
         return False
@@ -149,11 +149,11 @@ def is_windows_admin(username):
     # Check if Windows user is in local Administrators group
     if not WINDOWS_AUTH_AVAILABLE:
         return False
-    
+
     try:
         # Import Windows module (only reached if WINDOWS_AUTH_AVAILABLE is True)
         import win32net
-        
+
         # Try primary method - get user's group memberships
         try:
             import socket
@@ -163,7 +163,7 @@ def is_windows_admin(username):
                 if group['name'].lower() in ['administrators', 'admin']:
                     return True
         except Exception:
-            # Fallback - try with local groups  
+            # Fallback - try with local groups
             try:
                 import socket
                 hostname = socket.gethostname()
@@ -175,9 +175,9 @@ def is_windows_admin(username):
                 # Final fallback - assume not admin for safety
                 logger.debug(f"Could not determine admin status for {username}, assuming not admin")
                 return False
-        
+
         return False
-        
+
     except Exception as e:
         logger.debug(f"Error checking Windows admin status for {username}: {e}")
         return False
@@ -185,7 +185,7 @@ def is_windows_admin(username):
 def get_all_users(auth_type="sql"):
     # Get list of users from SQL or Windows (returns current user only for Windows)
     users = []
-    
+
     if auth_type == "sql" and SQL_AVAILABLE:
         try:
             user_manager = get_user_manager()
@@ -204,7 +204,7 @@ def get_all_users(auth_type="sql"):
                 logger.info(f"Retrieved {len(users)} SQL users")
         except Exception as e:
             logger.error(f"Error getting SQL users: {e}")
-    
+
     elif auth_type == "windows" and WINDOWS_AUTH_AVAILABLE:
         try:
             # Windows user enumeration requires admin privileges, return current user only
@@ -222,7 +222,7 @@ def get_all_users(auth_type="sql"):
             logger.info(f"Retrieved 1 Windows user (current user)")
         except Exception as e:
             logger.error(f"Error getting Windows users: {e}")
-    
+
     return users
 
 def create_user(username, password, email="", is_admin=False):
@@ -230,7 +230,7 @@ def create_user(username, password, email="", is_admin=False):
     if not SQL_AVAILABLE:
         logger.error("SQL authentication not available - cannot create users")
         return False
-    
+
     try:
         user_manager = get_user_manager()
         if user_manager:
@@ -250,7 +250,7 @@ def delete_user(username):
     if not SQL_AVAILABLE:
         logger.error("SQL authentication not available - cannot delete users")
         return False
-    
+
     try:
         user_manager = get_user_manager()
         if user_manager:

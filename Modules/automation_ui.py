@@ -19,13 +19,11 @@ logger: logging.Logger = setup_module_logging("AutomationUI")
 
 class AutomationSettingsWindow:
     # Window for configuring server automation settings (MOTD, restart warnings, start commands)
-    # Can be opened from both trayicon and dashboard
-
     def __init__(self, parent=None, server_manager=None):
         self.parent = parent
         self.window = None
         self.server_manager = server_manager or ServerConfigManager()
-        self.db_manager = ServerConfigManager()  # Always use for database operations
+        self.db_manager = ServerConfigManager()
         self.servers = []
         self.current_server = None
         self.variables = {}
@@ -48,28 +46,28 @@ class AutomationSettingsWindow:
         canvas = tk.Canvas(main_frame, highlightthickness=0)
         scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
-        
+
         scrollable_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        
+
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-        
+
         # Add mouse wheel scrolling
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        
+
         def _bind_to_mousewheel(event):
             canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        
+
         def _unbind_from_mousewheel(event):
             canvas.unbind_all("<MouseWheel>")
-        
+
         canvas.bind('<Enter>', _bind_to_mousewheel)
         canvas.bind('<Leave>', _unbind_from_mousewheel)
-        
+
         # Pack canvas and scrollbar
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -187,10 +185,10 @@ class AutomationSettingsWindow:
         # Warning test with time entry
         warning_test_frame = ttk.Frame(test_frame)
         warning_test_frame.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
-        
+
         test_warning_btn = ttk.Button(warning_test_frame, text="Test Warning", command=self.test_warning_command)
         test_warning_btn.pack(side=tk.LEFT)
-        
+
         ttk.Label(warning_test_frame, text="Time (minutes):").pack(side=tk.LEFT, padx=(10, 2))
         self.warning_test_time_var = tk.StringVar(value="5")
         warning_time_entry = ttk.Entry(warning_test_frame, textvariable=self.warning_test_time_var, width=8)
@@ -259,7 +257,7 @@ class AutomationSettingsWindow:
                 self.servers = servers
             else:
                 self.servers = []
-            
+
             # Extract server names, handling both 'Name' and 'name' keys
             server_names = []
             for server in self.servers:
@@ -292,7 +290,7 @@ class AutomationSettingsWindow:
             if server_config:
                 # Load automation settings using common function
                 settings = load_automation_settings(server_config)
-                
+
                 # Update UI variables
                 self.motd_cmd_var.set(settings.get('motd_command', ''))
                 self.motd_msg_var.set(settings.get('motd_message', ''))
@@ -315,28 +313,28 @@ class AutomationSettingsWindow:
         if not server_name:
             messagebox.showwarning("Warning", "Please select a server first.")
             return
-        
+
         motd_cmd = self.motd_cmd_var.get().strip()
         motd_msg = self.motd_msg_var.get().strip()
-        
+
         if not motd_cmd:
             messagebox.showwarning("Warning", "No MOTD command configured.")
             return
-        
+
         if not motd_msg:
             messagebox.showwarning("Warning", "No MOTD message configured.")
             return
-        
+
         if not isinstance(self.server_manager, (ServerManager, ServerConfigManager)):
             messagebox.showerror("Error", "Cannot test commands without server manager access.")
             return
-        
+
         # Check if server is running
         automation = ServerAutomationManager(self.server_manager)
         if not automation._is_server_running(server_name):
             messagebox.showerror("Error", "Server not running")
             return
-        
+
         # Send the command
         try:
             success = automation.send_motd(server_name, motd_msg)
@@ -354,27 +352,27 @@ class AutomationSettingsWindow:
         if not server_name:
             messagebox.showwarning("Warning", "Please select a server first.")
             return
-        
+
         warning_cmd = self.warning_cmd_var.get().strip()
         msg_template = self.warning_msg_template_var.get().strip()
-        
+
         if not warning_cmd:
             messagebox.showwarning("Warning", "No warning command configured.")
             return
-        
+
         if not msg_template:
             msg_template = "Server restarting in {message}"
-        
+
         if not isinstance(self.server_manager, (ServerManager, ServerConfigManager)):
             messagebox.showerror("Error", "Cannot test commands without server manager access.")
             return
-        
+
         # Check if server is running
         automation = ServerAutomationManager(self.server_manager)
         if not automation._is_server_running(server_name):
             messagebox.showerror("Error", "Server not running")
             return
-        
+
         # Get test time from entry field
         try:
             test_minutes = int(self.warning_test_time_var.get().strip())
@@ -387,7 +385,7 @@ class AutomationSettingsWindow:
         except ValueError:
             messagebox.showwarning("Warning", "Please enter a valid positive number for minutes.")
             return
-        
+
         # Send a single test warning
         if "{message}" in warning_cmd:
             # Use {message} directly in the warning command
@@ -396,7 +394,7 @@ class AutomationSettingsWindow:
             # Use the message template approach
             test_message = msg_template.replace("{message}", time_msg)
             command = warning_cmd.replace("{message}", test_message)
-        
+
         try:
             success = automation._send_command_to_server(server_name, command)
             if success:
@@ -413,23 +411,23 @@ class AutomationSettingsWindow:
         if not server_name:
             messagebox.showwarning("Warning", "Please select a server first.")
             return
-        
+
         save_cmd = self.save_cmd_var.get().strip()
-        
+
         if not save_cmd:
             messagebox.showwarning("Warning", "No save command configured.")
             return
-        
+
         if not isinstance(self.server_manager, (ServerManager, ServerConfigManager)):
             messagebox.showerror("Error", "Cannot test commands without server manager access.")
             return
-        
+
         # Check if server is running
         automation = ServerAutomationManager(self.server_manager)
         if not automation._is_server_running(server_name):
             messagebox.showerror("Error", "Server not running")
             return
-        
+
         # Send the command
         try:
             success = automation._send_command_to_server(server_name, save_cmd)
@@ -489,7 +487,6 @@ class AutomationSettingsWindow:
 
 def open_automation_settings(parent=None, server_manager=None):
     # Function to open the automation settings window
-    # Can be called from trayicon or dashboard
     try:
         window = AutomationSettingsWindow(parent, server_manager)
         if parent:

@@ -16,9 +16,8 @@ logger = get_component_logger("Grafana")
 _HAS_SERVER_MANAGER_MODULE = True
 
 class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
-    # - Prometheus format metrics
-    # - Analytics integration
-    
+    # Prometheus format metrics
+
     def __init__(self, analytics_instance=None):
         try:
             super().__init__("Grafana")
@@ -27,12 +26,12 @@ class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
             logger.error(f"Base module init failed: {e}")
             self.module_name = "Grafana"
             self.logger = logging.getLogger("Grafana")
-        
+
         self.analytics: Optional['AnalyticsCollector'] = analytics_instance
-        
+
         # Prometheus prefixes
         self.metric_prefix = "servermanager"
-        
+
         # Metric types
         self.metric_types = {
             'counter': 'counter',
@@ -46,30 +45,30 @@ class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
         if not self.analytics:
             logger.warning("Analytics not configured")
             return ""
-            
+
         assert self.analytics is not None  # For type checker
-            
+
         try:
             current_metrics = self.analytics.get_current_metrics()
             prometheus_output = []
-            
+
             prometheus_output.append(f"# HELP {self.metric_prefix}_info Server Manager metrics")
             prometheus_output.append(f"# TYPE {self.metric_prefix}_info gauge")
             prometheus_output.append("")
-            
+
             for metric_name, value in current_metrics.items():
                 # Convert metric name to Prometheus format
                 prom_name = f"{self.metric_prefix}_{metric_name.replace('.', '_')}"
-                
+
                 # Add metric help and type
                 prometheus_output.append(f"# HELP {prom_name} {self._get_metric_description(metric_name)}")
                 prometheus_output.append(f"# TYPE {prom_name} {self._get_metric_type(metric_name)}")
                 prometheus_output.append(f"{prom_name} {value}")
                 prometheus_output.append("")
-            
+
             logger.debug(f"Generated Prometheus metrics for {len(current_metrics)} metrics")
             return '\n'.join(prometheus_output)
-            
+
         except Exception as e:
             logger.error(f"Error generating Prometheus metrics: {e}")
             return ""
@@ -95,31 +94,30 @@ class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
             'application.webserver.connections': 'Number of webserver connections',
             'application.dashboards.count': 'Number of active dashboards'
         }
-        
+
         return descriptions.get(metric_name, f"Server Manager metric: {metric_name}")
 
     def _get_metric_type(self, metric_name):
         # Get Prometheus metric type for a metric
-        # Most metrics are gauges (current value)
         gauge_metrics = [
             'system.cpu.percent', 'system.memory.percent', 'system.disk.percent',
             'servers.total', 'servers.count', 'application.webserver.cpu_percent',
             'application.webserver.connections', 'application.dashboards.count'
         ]
-        
+
         # Counter metrics (always increasing)
         counter_metrics = [
             'system.network.bytes_sent', 'system.network.bytes_recv',
             'system.disk.read_bytes', 'system.disk.write_bytes',
             'system.uptime'
         ]
-        
+
         if any(gauge_metric in metric_name for gauge_metric in gauge_metrics):
             return 'gauge'
         elif any(counter_metric in metric_name for counter_metric in counter_metrics):
             return 'counter'
         else:
-            return 'gauge'  # Default to gauge
+            return 'gauge'
 
     def get_dashboard_config(self):
         # Get basic Grafana dashboard configuration
@@ -189,7 +187,7 @@ class GrafanaManager(ServerManagerModule):  # type: ignore[valid-type, misc]
                 ]
             }
         }
-        
+
         return dashboard_config
 
 # Create global Grafana manager instance

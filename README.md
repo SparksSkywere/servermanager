@@ -4,9 +4,7 @@
 
 A server management platform for Steam dedicated servers, Minecraft servers, and other game/application servers. Provides a desktop GUI and web-based dashboard for managing servers locally or across a network.
 
-**Version:** 1.2 | **Developer:** Sparks Skywere
-
--> For full technical documentation, see [WIKI.md](WIKI.md).
+**Version:** 1.3 | **Developer:** Sparks Skywere
 
 ---
 

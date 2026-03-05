@@ -28,40 +28,40 @@ class DebugManager:
         self.paths = {}
         self.debug_enabled = False
         self.initialise_from_registry()
-    
+
     def initialise_from_registry(self):
         # Pull paths from registry
         self.server_manager_dir = get_server_manager_dir()
-        
+
         self.paths = {
             "root": self.server_manager_dir,
             "logs": os.path.join(self.server_manager_dir, "logs"),
             "temp": os.path.join(self.server_manager_dir, "temp"),
             "debug": os.path.join(self.server_manager_dir, "logs", "debug")
         }
-            
+
         for path in self.paths.values():
             os.makedirs(path, exist_ok=True)
-        
+
         logger.info(f"Debug manager initialised")
         return True
-    
+
     def set_debug_mode(self, enabled=True):
         # Enable or disable debug mode
         self.debug_enabled = enabled
         level = logging.DEBUG if enabled else logging.INFO
         logger.setLevel(level)
-        
+
         # Update root logger as well
         logging.getLogger().setLevel(level)
-        
+
         logger.info(f"Debug mode {'enabled' if enabled else 'disabled'}")
         return True
-    
+
     def is_debug_enabled(self):
         # Check if debug mode is enabled
         return self.debug_enabled
-    
+
     def get_system_info(self):
         # Get basic system information
         try:
@@ -75,14 +75,14 @@ class DebugManager:
                 "processor": platform.processor(),
                 "python_version": platform.python_version()
             }
-            
+
             # CPU info
             cpu_info = {
                 "physical_cores": psutil.cpu_count(logical=False),
                 "logical_cores": psutil.cpu_count(logical=True),
                 "cpu_percent": psutil.cpu_percent(interval=0.1)
             }
-            
+
             # Memory info
             memory = psutil.virtual_memory()
             memory_info = {
@@ -91,7 +91,7 @@ class DebugManager:
                 "used": memory.used,
                 "percent": memory.percent
             }
-            
+
             # Disk info (use C:\ on Windows, fallback to / on other systems)
             try:
                 if platform.system() == 'Windows':
@@ -112,7 +112,7 @@ class DebugManager:
                     "percent": 0,
                     "error": "Unable to get disk usage"
                 }
-            
+
             # Network info
             net_io = psutil.net_io_counters()
             network_info = {
@@ -121,13 +121,13 @@ class DebugManager:
                 "packets_sent": net_io.packets_sent,
                 "packets_recv": net_io.packets_recv
             }
-            
+
             # Server Manager info
             sm_info = {
                 "install_dir": self.server_manager_dir,
                 "debug_enabled": self.debug_enabled
             }
-            
+
             # Combine all info
             info = {
                 "system": system_info,
@@ -138,20 +138,20 @@ class DebugManager:
                 "server_manager": sm_info,
                 "timestamp": datetime.datetime.now().isoformat()
             }
-            
+
             return info
         except Exception as e:
             logger.error(f"Failed to get system information: {str(e)}")
             return {"error": str(e)}
-    
+
     def get_process_info(self, pid):
         # Get information about a specific process
         try:
             if not pid or not psutil.pid_exists(pid):
                 return None
-                
+
             process = psutil.Process(pid)
-            
+
             info = {
                 "pid": process.pid,
                 "name": process.name(),
@@ -164,31 +164,31 @@ class DebugManager:
                     "vms": process.memory_info().vms
                 }
             }
-            
+
             return info
         except Exception as e:
             logger.error(f"Failed to get process information for PID {pid}: {str(e)}")
             return None
-    
+
     def get_server_status(self, server_name=None):
         # Get status of a specific server
         try:
             if not self.server_manager_dir:
                 return {"error": "Server manager directory not initialised"}
-            
+
             # Get server config from database
             try:
                 from Modules.Database.server_configs_database import ServerConfigManager
                 manager = ServerConfigManager()
             except Exception as e:
                 return {"error": f"Failed to access database: {str(e)}"}
-            
+
             if server_name:
                 # Get status for specific server
                 server_config = manager.get_server(server_name)
                 if not server_config:
                     return {"error": f"Server configuration not found: {server_name}"}
-                
+
                 # Check if process is running
                 if "PID" in server_config and server_config["PID"]:
                     try:
@@ -204,7 +204,7 @@ class DebugManager:
                         server_config["IsRunning"] = False
                 else:
                     server_config["IsRunning"] = False
-                
+
                 return server_config
             else:
                 # Get status for all servers
@@ -214,20 +214,20 @@ class DebugManager:
                     sname = server.get("Name", "Unknown")
                     server_status = self.get_server_status(sname)
                     servers.append(server_status)
-                
+
                 return servers
         except Exception as e:
             logger.error(f"Failed to get server status: {str(e)}")
             return {"error": str(e)}
-    
+
     def get_detailed_process_info(self, pid):
         # Get comprehensive process information including children, files, etc.
         try:
             if not pid or not psutil.pid_exists(pid):
                 return None
-                
+
             process = psutil.Process(pid)
-            
+
             # Basic process info
             basic_info = {
                 "pid": process.pid,
@@ -242,25 +242,25 @@ class DebugManager:
                 },
                 "num_threads": process.num_threads()
             }
-            
+
             # Try to get executable path
             try:
                 basic_info["exe"] = process.exe()
             except (psutil.AccessDenied, psutil.ZombieProcess):
                 basic_info["exe"] = "Access Denied"
-            
+
             # Try to get command line
             try:
                 basic_info["cmdline"] = process.cmdline()
             except (psutil.AccessDenied, psutil.ZombieProcess):
                 basic_info["cmdline"] = ["Access Denied"]
-            
+
             # Try to get working directory
             try:
                 basic_info["cwd"] = process.cwd()
             except (psutil.AccessDenied, psutil.ZombieProcess):
                 basic_info["cwd"] = "Access Denied"
-            
+
             # Get child processes
             children = []
             try:
@@ -279,9 +279,9 @@ class DebugManager:
                         pass
             except (psutil.AccessDenied, psutil.ZombieProcess):
                 pass
-            
+
             basic_info["children"] = children
-            
+
             # Get open files
             try:
                 open_files = process.open_files()
@@ -290,7 +290,7 @@ class DebugManager:
             except (psutil.AccessDenied, psutil.ZombieProcess):
                 basic_info["open_files_count"] = "Access Denied"
                 basic_info["open_files"] = []
-            
+
             # Get network connections
             try:
                 connections = process.connections()
@@ -307,12 +307,12 @@ class DebugManager:
             except (psutil.AccessDenied, psutil.ZombieProcess):
                 basic_info["connections_count"] = "Access Denied"
                 basic_info["connections"] = []
-            
+
             return basic_info
         except Exception as e:
             logger.error(f"Failed to get detailed process information for PID {pid}: {str(e)}")
             return None
-    
+
     def check_port_status(self, host="localhost", port=8080, timeout=1):
         # Check if a port is open on the specified host
         try:
@@ -323,7 +323,7 @@ class DebugManager:
         except Exception as e:
             logger.error(f"Error checking port {host}:{port}: {str(e)}")
             return False
-    
+
     def get_network_info(self):
         # Get detailed network information
         try:
@@ -332,7 +332,7 @@ class DebugManager:
                 "connections": [],
                 "io_counters": {}
             }
-            
+
             # Get network interfaces
             for interface_name, addresses in psutil.net_if_addrs().items():
                 interface_info = []
@@ -345,7 +345,7 @@ class DebugManager:
                     }
                     interface_info.append(addr_info)
                 network_info["interfaces"][interface_name] = interface_info
-            
+
             # Get network I/O counters
             io_counters = psutil.net_io_counters(pernic=True)
             for interface, counters in io_counters.items():
@@ -359,7 +359,7 @@ class DebugManager:
                     "dropin": counters.dropin,
                     "dropout": counters.dropout
                 }
-            
+
             # Get active connections (limited to first 20)
             try:
                 connections = psutil.net_connections()[:20]
@@ -375,12 +375,12 @@ class DebugManager:
                     network_info["connections"].append(conn_info)
             except psutil.AccessDenied:
                 network_info["connections"] = ["Access Denied - requires administrator privileges"]
-            
+
             return network_info
         except Exception as e:
             logger.error(f"Failed to get network information: {str(e)}")
             return {"error": str(e)}
-    
+
     def get_disk_info(self):
         # Get detailed disk information
         try:
@@ -388,7 +388,7 @@ class DebugManager:
                 "partitions": [],
                 "usage": {}
             }
-            
+
             # Get disk partitions
             for partition in psutil.disk_partitions():
                 partition_info: dict = {
@@ -397,7 +397,7 @@ class DebugManager:
                     "fstype": partition.fstype,
                     "opts": partition.opts
                 }
-                
+
                 # Get usage for this partition
                 try:
                     usage = psutil.disk_usage(partition.mountpoint)
@@ -411,9 +411,9 @@ class DebugManager:
                 except PermissionError:
                     error_dict: dict = {"error": "Access Denied"}
                     partition_info["usage"] = error_dict
-                
+
                 disk_info["partitions"].append(partition_info)
-            
+
             # Get disk I/O counters
             try:
                 disk_io = psutil.disk_io_counters(perdisk=True)
@@ -429,21 +429,21 @@ class DebugManager:
                     }
             except Exception:
                 disk_info["io_counters"] = {"error": "Could not retrieve I/O counters"}
-            
+
             return disk_info
         except Exception as e:
             logger.error(f"Failed to get disk information: {str(e)}")
             return {"error": str(e)}
-    
+
     def monitor_process_resources(self, pid, duration=5):
         # Monitor a process's resource usage over time
         try:
             if not psutil.pid_exists(pid):
                 return {"error": f"Process {pid} does not exist"}
-            
+
             process = psutil.Process(pid)
             measurements = []
-            
+
             # Take measurements every second for the specified duration
             for i in range(duration):
                 try:
@@ -461,7 +461,7 @@ class DebugManager:
                     measurements.append(measurement)
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     break
-            
+
             return {
                 "pid": pid,
                 "measurements": measurements,
@@ -471,7 +471,7 @@ class DebugManager:
         except Exception as e:
             logger.error(f"Failed to monitor process {pid}: {str(e)}")
             return {"error": str(e)}
-    
+
     def create_diagnostic_report(self):
         # Create a comprehensive diagnostic report
         try:
@@ -482,7 +482,7 @@ class DebugManager:
                 "network_info": self.get_network_info(),
                 "disk_info": self.get_disk_info()
             }
-            
+
             # Add basic registry information
             try:
                 from Modules.common import REGISTRY_ROOT
@@ -500,7 +500,7 @@ class DebugManager:
                 report["registry"] = registry_info
             except (FileNotFoundError, OSError):
                 report["registry"] = {"error": "Failed to read registry"}
-            
+
             # Add file system check
             try:
                 fs_check = {}
@@ -514,7 +514,7 @@ class DebugManager:
                 report["file_system_check"] = fs_check
             except OSError:
                 report["file_system_check"] = {"error": "Failed to check file system"}
-            
+
             # Add running processes summary
             try:
                 running_processes = []
@@ -524,13 +524,13 @@ class DebugManager:
                             running_processes.append(proc.info)
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         pass
-                
+
                 # Sort by CPU usage and take top 10
                 running_processes.sort(key=lambda x: x['cpu_percent'], reverse=True)
                 report["top_processes"] = running_processes[:10]
             except (psutil.Error, OSError):
                 report["top_processes"] = {"error": "Failed to get process list"}
-            
+
             # Add port checks for common server ports
             try:
                 port_checks = {}
@@ -540,18 +540,18 @@ class DebugManager:
                 report["port_status"] = port_checks
             except OSError:
                 report["port_status"] = {"error": "Failed to check ports"}
-            
+
             # Save report to file
             report_path = os.path.join(self.paths["debug"], f"diagnostic_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-            with open(report_path, 'w') as f:
+            with open(report_path, 'w', encoding='utf-8') as f:
                 json.dump(report, f, indent=2)
-            
+
             logger.info(f"Comprehensive diagnostic report created: {report_path}")
             return report_path
         except Exception as e:
             logger.error(f"Failed to create diagnostic report: {str(e)}")
             return None
-    
+
     def log_exception(self, e, message="An exception occurred"):
         # Log an exception with traceback
         exc_info = sys.exc_info()
@@ -560,13 +560,13 @@ class DebugManager:
             logger.error(f"{message}: {str(e)}\n{tb_text}")
         else:
             logger.error(f"{message}: {str(e)}")
-    
+
     def get_server_process_details(self, server_name):
         # Get detailed process information for a specific server
         try:
             if not self.server_manager_dir:
                 return {"error": "Server manager directory not initialised"}
-                
+
             # Get server config from database
             try:
                 from Modules.Database.server_configs_database import ServerConfigManager
@@ -574,29 +574,29 @@ class DebugManager:
                 server_config = manager.get_server(server_name)
             except Exception as e:
                 return {"error": f"Failed to access database: {str(e)}"}
-            
+
             if not server_config:
                 return {"error": f"Server configuration not found: {server_name}"}
-                
+
             # Check if server has a process ID registered
             if 'ProcessId' not in server_config:
                 return {"error": f"Server '{server_name}' is not running"}
-                
+
             process_id = server_config['ProcessId']
-            
+
             # Check if process is still running
             if not psutil.pid_exists(process_id):
                 return {"error": f"Server process (PID {process_id}) is not running"}
-            
+
             # Get detailed process information
             process_details = self.get_detailed_process_info(process_id)
             if not process_details:
                 return {"error": f"Could not retrieve process details for PID {process_id}"}
-            
+
             # Add server-specific information
             process_details["server_name"] = server_name
             process_details["server_config"] = server_config
-            
+
             # Calculate uptime from server start time if available
             if 'StartTime' in server_config:
                 try:
@@ -605,20 +605,20 @@ class DebugManager:
                     days = uptime.days
                     hours, remainder = divmod(uptime.seconds, 3600)
                     minutes, seconds = divmod(remainder, 60)
-                    
+
                     if days > 0:
                         uptime_str = f"{days}d {hours}h {minutes}m"
                     else:
                         uptime_str = f"{hours}h {minutes}m {seconds}s"
-                    
+
                     process_details["server_uptime"] = uptime_str
                 except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError, TypeError):
                     process_details["server_uptime"] = "Unknown"
             else:
                 process_details["server_uptime"] = "Unknown"
-            
+
             return process_details
-            
+
         except Exception as e:
             logger.error(f"Failed to get server process details for {server_name}: {str(e)}")
             return {"error": str(e)}

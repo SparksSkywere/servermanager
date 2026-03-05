@@ -21,42 +21,42 @@ from Modules.launcher import ServerManagerLauncher
 class ServerManagerService(win32serviceutil.ServiceFramework):
     # - Windows service for SM
     # - Manages game servers and web dashboard
-    
+
     _svc_name_ = "ServerManagerService"
     _svc_display_name_ = "Server Manager Service"
     _svc_description_ = "Manages game servers and provides web dashboard interface"
     _svc_deps_ = None
     _exe_name_ = None
     _exe_args_ = None
-    
+
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
         self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
         self.launcher = None
         self.running = False
-        
+
         self.setup_service_logging()
-        
+
     def setup_service_logging(self):
         # Service logging setup
         from Modules.server_logging import get_component_logger
         self.logger = get_component_logger("ServerManagerService")
         self.logger.info("Service logging initialised")
-    
+
     def SvcStop(self):
         # Called when the service is asked to stop
         self.logger.info("Service stop requested")
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         win32event.SetEvent(self.hWaitStop)
         self.running = False
-        
+
         # Stop the launcher
         if self.launcher:
             try:
                 self.launcher.cleanup()
             except Exception as e:
                 self.logger.error(f"Error stopping launcher: {e}")
-    
+
     def SvcDoRun(self):
         # Called when the service is started
         try:
@@ -66,10 +66,10 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
                 servicemanager.PYS_SERVICE_STARTED,
                 (self._svc_name_, '')
             )
-            
+
             self.running = True
             self.main_loop()
-            
+
         except Exception as e:
             self.logger.error(f"Service error: {e}")
             self.logger.error(traceback.format_exc())
@@ -78,24 +78,24 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
                 servicemanager.PYS_SERVICE_STOPPED,
                 (self._svc_name_, f'Error: {e}')
             )
-    
+
     def main_loop(self):
         # Main service loop
         try:
             # Initialise and start the launcher in service mode
             self.launcher = ServerManagerLauncher()
             self.launcher.is_service = True
-            
+
             self.logger.info("Starting Server Manager launcher...")
-            
+
             # Start the launcher in a separate thread
             import threading
             launcher_thread = threading.Thread(target=self.launcher.run)
             launcher_thread.daemon = True
             launcher_thread.start()
-            
+
             self.logger.info("Server Manager Service started successfully")
-            
+
             # Wait for stop signal
             while self.running:
                 # Wait for stop event or timeout every 30 seconds
@@ -110,9 +110,9 @@ class ServerManagerService(win32serviceutil.ServiceFramework):
                         launcher_thread = threading.Thread(target=self.launcher.run)
                         launcher_thread.daemon = True
                         launcher_thread.start()
-            
+
             self.logger.info("Server Manager Service stopping...")
-            
+
         except Exception as e:
             self.logger.error(f"Main loop error: {e}")
             self.logger.error(traceback.format_exc())
@@ -129,10 +129,10 @@ def install_service():
             startType=win32service.SERVICE_AUTO_START,
             description=ServerManagerService._svc_description_
         )
-        
+
         print(f"Service '{ServerManagerService._svc_display_name_}' installed successfully")
         return True
-        
+
     except Exception as e:
         print(f"Failed to install service: {e}")
         return False
@@ -143,7 +143,7 @@ def uninstall_service():
         win32serviceutil.RemoveService(ServerManagerService._svc_name_)
         print(f"Service '{ServerManagerService._svc_display_name_}' uninstalled successfully")
         return True
-        
+
     except Exception as e:
         print(f"Failed to uninstall service: {e}")
         return False
@@ -154,7 +154,7 @@ def start_service():
         win32serviceutil.StartService(ServerManagerService._svc_name_)
         print(f"Service '{ServerManagerService._svc_display_name_}' started successfully")
         return True
-        
+
     except Exception as e:
         print(f"Failed to start service: {e}")
         return False
@@ -165,7 +165,7 @@ def stop_service():
         win32serviceutil.StopService(ServerManagerService._svc_name_)
         print(f"Service '{ServerManagerService._svc_display_name_}' stopped successfully")
         return True
-        
+
     except Exception as e:
         print(f"Failed to stop service: {e}")
         return False
@@ -180,7 +180,7 @@ def main():
     else:
         # Handle command line arguments
         command = sys.argv[1].lower()
-        
+
         if command == 'install':
             install_service()
         elif command == 'uninstall' or command == 'remove':

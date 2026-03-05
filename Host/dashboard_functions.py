@@ -22,6 +22,38 @@ from Modules.server_logging import get_dashboard_logger, log_dashboard_event
 
 logger: logging.Logger = get_dashboard_logger()
 
+def make_canvas_width_updater(canvas):
+    # Create a callback that updates canvas window width on resize.
+    def update_canvas_width(event=None):
+        try:
+            if canvas.winfo_width() > 1:
+                canvas.itemconfig(1, width=canvas.winfo_width())
+        except tk.TclError:
+            pass
+    return update_canvas_width
+
+def populate_server_tree(server_tree, dedicated_servers, search_var):
+    # Populate a server treeview with filter support and wire up search binding.
+    def populate_servers(filter_text: str = ""):
+        server_tree.delete(*server_tree.get_children())
+        for server in dedicated_servers:
+            server_name = server["name"]
+            if not filter_text or filter_text.lower() in server_name.lower():
+                server_tree.insert("", tk.END, values=(
+                    server_name,
+                    server["appid"],
+                    server.get("developer", "Unknown")[:25] + ("..." if len(server.get("developer", "")) > 25 else ""),
+                    server.get("type", "Dedicated Server")
+                ))
+
+    populate_servers()
+
+    def on_search(*args):
+        populate_servers(search_var.get())
+
+    search_var.trace('w', on_search)
+    return populate_servers
+
 def format_speed(bytes_per_sec):
     # Format bytes/sec to human-readable speed string
     if bytes_per_sec >= 1024**3:
@@ -54,9 +86,9 @@ def load_dashboard_config(server_manager_dir):
     try:
         from Modules.Database.cluster_database import get_cluster_database
         db = get_cluster_database()
-        
+
         flat_config = db.get_dashboard_config()
-        
+
         # Convert flattened config back to nested structure
         config = {}
         for key, value in flat_config.items():
@@ -67,7 +99,7 @@ def load_dashboard_config(server_manager_dir):
                     current[k] = {}
                 current = current[k]
             current[keys[-1]] = value
-        
+
         # Migrate from JSON if database is empty
         if not config:
             config_path = os.path.join(server_manager_dir, "data", "dashboard.json")
@@ -84,9 +116,9 @@ def load_dashboard_config(server_manager_dir):
                             current[k] = {}
                         current = current[k]
                     current[keys[-1]] = value
-        
+
         return config
-        
+
     except Exception as e:
         logger.error(f"Error loading dashboard config from database: {e}")
         return {}
@@ -105,51 +137,51 @@ def create_server_type_selection_dialog(root, supported_server_types):
     type_dialog.title("Select Server Type")
     type_dialog.transient(root)
     type_dialog.grab_set()
-    
+
     main_frame = ttk.Frame(type_dialog, padding=20)
     main_frame.pack(fill=tk.BOTH, expand=True)
-    
+
     title_label = ttk.Label(main_frame, text="Select Server Type:", font=("Segoe UI", 12, "bold"))
     title_label.pack(pady=(0, 20))
-    
+
     type_var = tk.StringVar(value="")
-    
+
     for stype in supported_server_types:
         ttk.Radiobutton(main_frame, text=stype, variable=type_var, value=stype).pack(anchor=tk.W, pady=5)
-    
+
     button_frame = ttk.Frame(main_frame)
     button_frame.pack(fill=tk.X, pady=(20, 0))
-    
+
     def proceed():
         if not type_var.get():
             messagebox.showwarning("No Selection", "Please select a server type.")
             return
         type_dialog.destroy()
-        
+
     def cancel():
         type_var.set("")
         type_dialog.destroy()
-    
+
     def on_dialog_close():
         type_var.set("")
         type_dialog.destroy()
-    
+
     type_dialog.protocol("WM_DELETE_WINDOW", on_dialog_close)
-    
+
     ttk.Button(button_frame, text="Cancel", command=cancel, width=12).pack(side=tk.LEFT)
     ttk.Button(button_frame, text="Next", command=proceed, width=12).pack(side=tk.RIGHT)
-    
+
     centre_window(type_dialog, 380, 280, root)
-    
+
     root.wait_window(type_dialog)
     return type_var.get()
 
 def get_steam_credentials(root, use_stored=True):
     # Loads saved credentials first if use_stored=True, otherwise shows dialog
     from Modules.Database.cluster_database import ClusterDatabase
-    
+
     credentials = {"anonymous": False, "username": "", "password": "", "steam_guard_code": ""}
-    
+
     if use_stored:
         try:
             db = ClusterDatabase()
@@ -178,48 +210,48 @@ def get_steam_credentials(root, use_stored=True):
                     return creds
         except Exception as e:
             logger.debug(f"Could not load stored Steam credentials: {e}")
-    
+
     dialog = tk.Toplevel(root)
     dialog.title("Steam Login")
     dialog.geometry("400x380")
     dialog.resizable(False, False)
     dialog.transient(root)
     dialog.grab_set()
-    
+
     main_frame = ttk.Frame(dialog, padding=20)
     main_frame.pack(fill=tk.BOTH, expand=True)
-    
+
     ttk.Label(main_frame, text="Steam Credentials", font=("Segoe UI", 12, "bold")).pack(anchor=tk.W, pady=(0, 15))
-    
+
     ttk.Label(main_frame, text="Username:").pack(anchor=tk.W, pady=(0, 5))
     username_var = tk.StringVar()
     username_entry = ttk.Entry(main_frame, textvariable=username_var, width=35)
     username_entry.pack(fill=tk.X, pady=(0, 10))
-    
+
     ttk.Label(main_frame, text="Password:").pack(anchor=tk.W, pady=(0, 5))
     password_var = tk.StringVar()
     password_entry = ttk.Entry(main_frame, textvariable=password_var, width=35, show="*")
     password_entry.pack(fill=tk.X, pady=(0, 10))
-    
+
     # Steam Guard code field (optional)
     ttk.Label(main_frame, text="Steam Guard Code (optional):").pack(anchor=tk.W, pady=(0, 5))
     guard_var = tk.StringVar()
     guard_entry = ttk.Entry(main_frame, textvariable=guard_var, width=35)
     guard_entry.pack(fill=tk.X, pady=(0, 10))
-    
+
     save_var = tk.BooleanVar(value=True)
     save_check = ttk.Checkbutton(main_frame, text="Save credentials for future use", variable=save_var)
     save_check.pack(anchor=tk.W, pady=(0, 15))
-    
+
     result = {"success": False}
-    
+
     def on_login():
         credentials["username"] = username_var.get()
         credentials["password"] = password_var.get()
         credentials["steam_guard_code"] = guard_var.get()
         credentials["anonymous"] = False
         result["success"] = True
-        
+
         if save_var.get() and credentials["username"]:
             try:
                 db = ClusterDatabase()
@@ -230,41 +262,41 @@ def get_steam_credentials(root, use_stored=True):
                 )
             except Exception as e:
                 logger.debug(f"Failed to save Steam credentials: {e}")
-        
+
         dialog.destroy()
-        
+
     def on_anonymous():
         credentials["anonymous"] = True
         result["success"] = True
-        
+
         if save_var.get():
             try:
                 db = ClusterDatabase()
                 db.save_steam_credentials(use_anonymous=True)
             except Exception as e:
                 logger.debug(f"Failed to save anonymous preference: {e}")
-        
+
         dialog.destroy()
-        
+
     def on_cancel():
         dialog.destroy()
-    
+
     button_frame = ttk.Frame(main_frame)
     button_frame.pack(fill=tk.X, pady=(10, 0))
-    
+
     ttk.Button(button_frame, text="Login", command=on_login, width=12).pack(side=tk.RIGHT, padx=(5, 0))
     ttk.Button(button_frame, text="Anonymous", command=on_anonymous, width=12).pack(side=tk.RIGHT, padx=(5, 0))
     ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
-    
+
     dialog.update_idletasks()
     x = root.winfo_rootx() + (root.winfo_width() - dialog.winfo_width()) // 2
     y = root.winfo_rooty() + (root.winfo_height() - dialog.winfo_height()) // 2
     dialog.geometry(f"+{x}+{y}")
-    
+
     username_entry.focus_set()
-    
+
     root.wait_window(dialog)
-    
+
     return credentials if result["success"] else None
 
 def load_appid_scanner_list(server_manager_dir):
@@ -391,41 +423,41 @@ def create_minecraft_version_browser_dialog(parent, modloader="Vanilla"):
     dialog.geometry("700x500")
     dialog.transient(parent)
     dialog.grab_set()
-    
+
     main_frame = ttk.Frame(dialog, padding=15)
     main_frame.pack(fill=tk.BOTH, expand=True)
-    
+
     title_label = ttk.Label(main_frame, text=f"Select {modloader} Minecraft Version", font=("Segoe UI", 12, "bold"))
     title_label.pack(pady=(0, 15))
-    
+
     list_frame = ttk.LabelFrame(main_frame, text="Available Versions", padding=10)
     list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-    
+
     columns = ("version", "type", "modloader_version", "java", "date")
     version_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
-    
+
     version_tree.heading("version", text="Version")
     version_tree.heading("type", text="Type")
     version_tree.heading("modloader_version", text="Modloader Version")
     version_tree.heading("java", text="Java")
     version_tree.heading("date", text="Release Date")
-    
+
     version_tree.column("version", width=120, minwidth=100)
     version_tree.column("type", width=80, minwidth=60)
     version_tree.column("modloader_version", width=150, minwidth=100)
     version_tree.column("java", width=60, minwidth=50)
     version_tree.column("date", width=120, minwidth=100)
-    
+
     scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=version_tree.yview)
     version_tree.configure(yscrollcommand=scrollbar.set)
-    
+
     version_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-    
+
     # Load versions from database
     try:
         versions = get_minecraft_versions_from_database(modloader.lower(), dedicated_only=True)
-        
+
         for version_data in versions:
             version_tree.insert("", tk.END, values=(
                 version_data.get("version_id", ""),
@@ -434,13 +466,13 @@ def create_minecraft_version_browser_dialog(parent, modloader="Vanilla"):
                 f"Java {version_data.get('java_requirement', 17)}",
                 "Database"  # Source indicator
             ))
-            
+
     except Exception as e:
         logger.error(f"Error loading versions for browser dialog: {e}")
         messagebox.showerror("Error", f"Failed to load versions: {str(e)}")
-    
+
     selected_version: Dict[str, Optional[Dict[str, Any]]] = {"version": None}
-    
+
     def on_select():
         selection = version_tree.selection()
         if selection:
@@ -454,22 +486,22 @@ def create_minecraft_version_browser_dialog(parent, modloader="Vanilla"):
             dialog.destroy()
         else:
             messagebox.showinfo("No Selection", "Please select a version.")
-    
+
     def on_cancel():
         dialog.destroy()
-    
+
     button_frame = ttk.Frame(main_frame)
     button_frame.pack(fill=tk.X)
-    
+
     ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT)
     ttk.Button(button_frame, text="Select", command=on_select).pack(side=tk.RIGHT)
-    
+
     version_tree.bind("<Double-1>", lambda e: on_select())
-    
+
     centre_window(dialog, 700, 500, parent)
-    
+
     parent.wait_window(dialog)
-    
+
     return selected_version["version"]
 
 def create_steam_appid_browser_dialog(parent, server_manager_dir):
@@ -478,21 +510,21 @@ def create_steam_appid_browser_dialog(parent, server_manager_dir):
     dialog.geometry("700x500")
     dialog.transient(parent)
     dialog.grab_set()
-    
+
     main_frame = ttk.Frame(dialog, padding=15)
     main_frame.pack(fill=tk.BOTH, expand=True)
-    
+
     title_label = ttk.Label(main_frame, text="Select Steam Dedicated Server", font=("Segoe UI", 12, "bold"))
     title_label.pack(pady=(0, 15))
-    
+
     search_frame = ttk.Frame(main_frame)
     search_frame.pack(fill=tk.X, pady=(0, 10))
-    
+
     ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT)
     search_var = tk.StringVar()
     search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
     search_entry.pack(side=tk.LEFT, padx=(5, 10))
-    
+
     # Load dedicated servers from scanner's AppID list
     try:
         dedicated_servers_data, metadata = load_appid_scanner_list(server_manager_dir)
@@ -538,48 +570,31 @@ def create_steam_appid_browser_dialog(parent, server_manager_dir):
         messagebox.showerror("Database Error", f"{error_msg}\n\nThe database must be available and populated with AppID scanner data.")
         dialog.destroy()
         return None
-    
+
     list_frame = ttk.LabelFrame(main_frame, text="Available Servers", padding=10)
     list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-    
+
     columns = ("name", "appid", "developer", "type")
     server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
-    
+
     server_tree.heading("name", text="Server Name")
     server_tree.heading("appid", text="App ID")
     server_tree.heading("developer", text="Developer")
     server_tree.heading("type", text="Type")
-    
+
     server_tree.column("name", width=300, minwidth=200)
     server_tree.column("appid", width=80, minwidth=60)
     server_tree.column("developer", width=150, minwidth=100)
     server_tree.column("type", width=120, minwidth=80)
-    
+
     scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=server_tree.yview)
     server_tree.configure(yscrollcommand=scrollbar.set)
-    
+
     server_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-    
-    def populate_servers(filter_text: str = ""):
-        server_tree.delete(*server_tree.get_children())
-        for server in dedicated_servers:
-            server_name = server["name"]
-            if not filter_text or filter_text.lower() in server_name.lower():
-                server_tree.insert("", tk.END, values=(
-                    server_name, 
-                    server["appid"],
-                    server.get("developer", "Unknown")[:25] + ("..." if len(server.get("developer", "")) > 25 else ""),
-                    server.get("type", "Dedicated Server")
-                ))
-    
-    populate_servers()
-    
-    def on_search(*args):
-        populate_servers(search_var.get())
-    
-    search_var.trace('w', on_search)
-    
+
+    populate_server_tree(server_tree, dedicated_servers, search_var)
+
     def show_server_info(event):
         item = server_tree.selection()
         if item:
@@ -589,26 +604,26 @@ def create_steam_appid_browser_dialog(parent, server_manager_dir):
                 if server["appid"] == str(item_values[1]):
                     selected_server = server
                     break
-            
+
             if selected_server and selected_server.get("description"):
                 tooltip = tk.Toplevel(dialog)
                 tooltip.wm_overrideredirect(True)
                 tooltip.geometry(f"+{event.x_root+10}+{event.y_root+10}")
-                
+
                 desc = selected_server["description"][:200] + ("..." if len(selected_server["description"]) > 200 else "")
-                
-                label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}", 
+
+                label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}",
                                background="lightyellow", relief="solid", borderwidth=1,
                                wraplength=300, justify=tk.LEFT, font=("Segoe UI", 9))
                 label.pack()
-                
+
                 # Auto-hide after 3 seconds
                 tooltip.after(3000, tooltip.destroy)
-    
+
     server_tree.bind('<Double-1>', show_server_info)
-    
+
     selected_appid: Dict[str, Optional[str]] = {"appid": None}
-    
+
     def on_select():
         selection = server_tree.selection()
         if selection:
@@ -618,31 +633,31 @@ def create_steam_appid_browser_dialog(parent, server_manager_dir):
             dialog.destroy()
         else:
             messagebox.showinfo("No Selection", "Please select a server from the list.")
-    
+
     def on_cancel():
         dialog.destroy()
-    
+
     button_frame = ttk.Frame(main_frame)
     button_frame.pack(fill=tk.X)
-    
+
     ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT)
     ttk.Button(button_frame, text="Select Server", command=on_select).pack(side=tk.RIGHT)
-    
+
     centre_window(dialog, 700, 500, parent)
-    
+
     parent.wait_window(dialog)
-    
+
     return selected_appid["appid"]
 
 def check_appid_in_database(appid):
     if not appid:
         return None
-    
+
     try:
         # For now, return basic info since database integration is complex
         logger.info(f"Checking AppID {appid} - database integration disabled for now")
         return {"exists": True, "name": f"Server {appid}", "type": "Steam"}
-        
+
     except Exception as e:
         logger.error(f"Error checking AppID in database: {e}")
         return None
@@ -650,38 +665,38 @@ def check_appid_in_database(appid):
 def detect_server_type_from_appid(appid):
     if not appid:
         return "Other"
-    
+
     app_info = check_appid_in_database(appid)
     if app_info and app_info.get('exists'):
         return "Steam"
-    
+
     return "Other"
 
 def detect_server_type_from_directory(directory_path):
     if not directory_path or not os.path.exists(directory_path):
         return "Other"
-    
+
     try:
         files = os.listdir(directory_path)
         files_lower = [f.lower() for f in files]
-        
+
         # Check for Minecraft indicators
         minecraft_indicators = ['server.jar', 'minecraft_server.jar', 'forge-installer.jar', 'fabric-server-launch.jar']
         if any(indicator in files_lower for indicator in minecraft_indicators):
             return "Minecraft"
-        
+
         # Check for Steam indicators
         steam_indicators = ['steamapps', 'steam.exe', 'steamcmd.exe']
         if any(indicator in files_lower for indicator in steam_indicators):
             return "Steam"
-        
+
         return "Other"
-        
+
     except Exception as e:
         logger.error(f"Error detecting server type from directory: {e}")
         return "Other"
 
-def perform_server_installation(server_type, server_name, install_dir, app_id=None, 
+def perform_server_installation(server_type, server_name, install_dir, app_id=None,
                                minecraft_version=None, credentials=None,
                                server_manager=None, progress_callback=None, console_callback=None,
                                steam_cmd_path=None):
@@ -701,28 +716,28 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
                 steam_cmd_path = os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), "SteamCMD")
                 if console_callback:
                     console_callback(f"[WARN] SteamCMD path not found in registry, using default: {steam_cmd_path}")
-            
+
             if not os.path.exists(os.path.join(steam_cmd_path, "steamcmd.exe")):
                 error_msg = f"SteamCMD not found at {steam_cmd_path}. Please install SteamCMD or configure the correct path."
                 if console_callback:
                     console_callback(f"[ERROR] {error_msg}")
                 return False, error_msg
-        
+
         if console_callback:
             console_callback(f"[INFO] Starting installation of {server_type} server '{server_name}'")
             console_callback(f"[INFO] Installation directory: {install_dir}")
-            
+
         server_config = {
             'Name': server_name,
             'Type': server_type,
             'InstallDir': install_dir
         }
-        
+
         if server_type == "Steam" and app_id:
             server_config['AppId'] = app_id
             if console_callback:
                 console_callback(f"[INFO] Steam App ID: {app_id}")
-                
+
         if server_type == "Minecraft" and minecraft_version:
             server_config['MinecraftVersion'] = minecraft_version.get('version_id', '')
             server_config['Modloader'] = minecraft_version.get('modloader', 'vanilla')
@@ -730,15 +745,15 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
             if console_callback:
                 console_callback(f"[INFO] Minecraft Version: {minecraft_version.get('version_id', '')}")
                 console_callback(f"[INFO] Modloader: {minecraft_version.get('modloader', 'vanilla')}")
-        
+
         if progress_callback:
             progress_callback("Creating server configuration...")
         if console_callback:
             console_callback("[INFO] Creating server configuration...")
-        
+
         if console_callback:
             console_callback("[INFO] Calling server manager to install server...")
-            
+
         success, message = server_manager.install_server_complete(
             server_name=server_name,
             server_type=server_type,
@@ -753,7 +768,7 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
             progress_callback=console_callback,
             cancel_flag=None
         )
-        
+
         if success:
             success_msg = message or f"Server '{server_name}' installed successfully"
             if progress_callback:
@@ -766,7 +781,7 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
             if console_callback:
                 console_callback(f"[ERROR] {error_msg}")
             return False, error_msg
-            
+
     except Exception as e:
         error_msg = f"Installation failed: {str(e)}"
         logger.error(f"Error performing server installation: {str(e)}")
@@ -780,7 +795,7 @@ def update_webserver_status(webserver_status_label, offline_var, paths, variable
     try:
         status = check_webserver_status(paths, variables)
         webserver_status_label.config(text=status)
-        
+
         if status == "Running":
             webserver_status_label.config(foreground="green")
         elif status == "Stopped":
@@ -799,7 +814,7 @@ _previous_network_time = None
 
 def update_system_info(metric_labels, system_name, os_info, variables):
     global _previous_network_stats, _previous_network_time
-    
+
     try:
         # Update system name and OS info
         try:
@@ -848,26 +863,26 @@ def update_system_info(metric_labels, system_name, os_info, variables):
         try:
             current_time = time.time()
             network_stats = psutil.net_io_counters()
-            
+
             if network_stats:
                 if _previous_network_stats is not None and _previous_network_time is not None:
                     # Calculate time difference
                     time_diff = current_time - _previous_network_time
-                    
+
                     if time_diff > 0:
                         # Calculate current transfer rates (bytes per second)
                         bytes_sent_per_sec = (network_stats.bytes_sent - _previous_network_stats.bytes_sent) / time_diff
                         bytes_recv_per_sec = (network_stats.bytes_recv - _previous_network_stats.bytes_recv) / time_diff
-                        
+
                         sent_display = format_speed(bytes_sent_per_sec)
                         recv_display = format_speed(bytes_recv_per_sec)
-                        
+
                         metric_labels["network"].config(text=f"Network: ↑{sent_display} ↓{recv_display}")
                     else:
                         metric_labels["network"].config(text="Network: Calculating...")
                 else:
                     metric_labels["network"].config(text="Network: Initialising...")
-                
+
                 _previous_network_stats = network_stats
                 _previous_network_time = current_time
             else:
@@ -879,29 +894,29 @@ def update_system_info(metric_labels, system_name, os_info, variables):
         # Update GPU info - use direct nvidia-smi with CREATE_NO_WINDOW to prevent console popup
         try:
             gpu_info = "GPU: Not detected"
-            
+
             try:
                 from distutils import spawn
                 nvidia_smi = spawn.find_executable('nvidia-smi')
                 if nvidia_smi is None and platform.system() == "Windows":
-                    nvidia_smi = os.path.join(os.environ.get('systemdrive', 'C:'), 
+                    nvidia_smi = os.path.join(os.environ.get('systemdrive', 'C:'),
                                              "Program Files", "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe")
                     if not os.path.exists(nvidia_smi):
                         nvidia_smi = None
-                
+
                 if nvidia_smi:
                     startupinfo = subprocess.STARTUPINFO()
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                     startupinfo.wShowWindow = 0
-                    
+
                     result = subprocess.run(
-                        [nvidia_smi, "--query-gpu=index,name,memory.total,memory.used,utilization.gpu", 
+                        [nvidia_smi, "--query-gpu=index,name,memory.total,memory.used,utilization.gpu",
                          "--format=csv,noheader,nounits"],
                         capture_output=True, text=True, timeout=5,
                         startupinfo=startupinfo,
                         creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
                     )
-                    
+
                     if result.returncode == 0 and result.stdout.strip():
                         lines = result.stdout.strip().split('\n')
                         if len(lines) == 1:
@@ -920,7 +935,7 @@ def update_system_info(metric_labels, system_name, os_info, variables):
                 gpu_info = "GPU: Detection timeout"
             except Exception:
                 gpu_info = "GPU: Not detected"
-            
+
             metric_labels["gpu"].config(text=gpu_info)
         except Exception as e:
             logger.error(f"Error getting GPU info: {e}")
@@ -943,10 +958,10 @@ def update_system_info(metric_labels, system_name, os_info, variables):
 def collect_system_info_data():
     # Collect system information data in a thread-safe manner (no UI updates)
     global _previous_network_stats, _previous_network_time
-    
+
     logger.debug("[SUBPROCESS_TRACE] collect_system_info_data() called")
     data = {}
-    
+
     try:
         try:
             data['system_name'] = platform.node()
@@ -967,7 +982,7 @@ def collect_system_info_data():
             # Get per-core CPU usage (includes overall calculation)
             per_core_cpu = psutil.cpu_percent(percpu=True, interval=0.5)
             overall_cpu = sum(per_core_cpu) / len(per_core_cpu) if per_core_cpu else 0
-            
+
             if len(per_core_cpu) <= 8:  # Show per-core for systems with 8 or fewer cores
                 core_usage = ", ".join([f"{i}:{usage:.0f}%" for i, usage in enumerate(per_core_cpu)])
                 data['cpu_percent'] = f"Overall: {overall_cpu:.1f}%\nCores: {core_usage}"
@@ -977,7 +992,7 @@ def collect_system_info_data():
                     data['cpu_percent'] = f"Overall: {overall_cpu:.1f}%\nHigh usage cores: {len(high_usage_cores)}/{len(per_core_cpu)}"
                 else:
                     data['cpu_percent'] = f"Overall: {overall_cpu:.1f}%\nAll cores: <50% usage"
-                    
+
         except Exception as e:
             logger.error(f"Error getting CPU info: {e}")
             data['cpu_percent'] = None
@@ -1029,25 +1044,25 @@ def collect_system_info_data():
         try:
             current_time = time.time()
             network_stats = psutil.net_io_counters()
-            
+
             if network_stats:
                 data['network_stats'] = network_stats
                 data['network_time'] = current_time
-                
+
                 if _previous_network_stats is not None and _previous_network_time is not None:
                     time_diff = current_time - _previous_network_time
-                    
+
                     if time_diff > 0:
                         bytes_sent_per_sec = (network_stats.bytes_sent - _previous_network_stats.bytes_sent) / time_diff
                         bytes_recv_per_sec = (network_stats.bytes_recv - _previous_network_stats.bytes_recv) / time_diff
-                        
+
                         data['network_sent_display'] = format_speed(bytes_sent_per_sec)
                         data['network_recv_display'] = format_speed(bytes_recv_per_sec)
                     else:
                         data['network_display'] = "Network: Calculating..."
                 else:
                     data['network_display'] = "Network: Initialising..."
-                
+
                 _previous_network_stats = network_stats
                 _previous_network_time = current_time
             else:
@@ -1065,25 +1080,25 @@ def collect_system_info_data():
                 nvidia_smi = spawn.find_executable('nvidia-smi')
                 if nvidia_smi is None and platform.system() == "Windows":
                     # Try default NVIDIA installation path
-                    nvidia_smi = os.path.join(os.environ.get('systemdrive', 'C:'), 
+                    nvidia_smi = os.path.join(os.environ.get('systemdrive', 'C:'),
                                              "Program Files", "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe")
                     if not os.path.exists(nvidia_smi):
                         nvidia_smi = None
-                
+
                 if nvidia_smi:
                     # Use CREATE_NO_WINDOW to prevent console flash
                     startupinfo = subprocess.STARTUPINFO()
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                     startupinfo.wShowWindow = 0  # SW_HIDE
-                    
+
                     result = subprocess.run(
-                        [nvidia_smi, "--query-gpu=index,name,memory.total,memory.used,utilization.gpu", 
+                        [nvidia_smi, "--query-gpu=index,name,memory.total,memory.used,utilization.gpu",
                          "--format=csv,noheader,nounits"],
                         capture_output=True, text=True, timeout=5,
                         startupinfo=startupinfo,
                         creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
                     )
-                    
+
                     if result.returncode == 0 and result.stdout.strip():
                         lines = result.stdout.strip().split('\n')
                         if len(lines) == 1:
@@ -1115,7 +1130,7 @@ def collect_system_info_data():
             except Exception as e:
                 logger.debug(f"nvidia-smi GPU detection failed: {e}")
                 gpu_info = "GPU: Not detected"
-            
+
             data['gpu_info'] = gpu_info
         except Exception as e:
             logger.error(f"Error getting GPU info: {e}")
@@ -1130,24 +1145,24 @@ def collect_system_info_data():
     except Exception as e:
         logger.error(f"Error collecting system info data: {e}")
         data['error'] = str(e)
-    
+
     return data
 
 def update_system_info_threaded(metric_labels, system_name, os_info, callback=None):
     # Update system information using background threading to prevent UI freezing
     import threading
-    
+
     def background_update():
         try:
             data = collect_system_info_data()
-            
+
             def update_ui():
                 try:
                     if 'system_name' in data:
                         system_name.config(text=data['system_name'])
                     if 'os_info' in data:
                         os_info.config(text=data['os_info'])
-                    
+
                     if data.get('cpu_percent') is not None:
                         if isinstance(data['cpu_percent'], str) and '\n' in data['cpu_percent']:
                             # Multi-line CPU display (per-core)
@@ -1157,78 +1172,78 @@ def update_system_info_threaded(metric_labels, system_name, os_info, callback=No
                             metric_labels["cpu"].config(text=f"CPU: {data['cpu_percent']:.1f}%")
                     else:
                         metric_labels["cpu"].config(text="CPU: N/A")
-                    
+
                     if all(k in data for k in ['memory_used_gb', 'memory_total_gb', 'memory_percent']):
                         metric_labels["memory"].config(
                             text=f"Memory: {data['memory_used_gb']:.1f}GB / {data['memory_total_gb']:.1f}GB ({data['memory_percent']:.1f}%)"
                         )
                     else:
                         metric_labels["memory"].config(text="Memory: N/A")
-                    
+
                     if 'disk_info' in data:
                         metric_labels["disk"].config(text=data['disk_info'])
                     else:
                         metric_labels["disk"].config(text="Disk: N/A")
-                    
+
                     if 'network_display' in data:
                         metric_labels["network"].config(text=data['network_display'])
                     elif 'network_sent_display' in data and 'network_recv_display' in data:
                         metric_labels["network"].config(text=f"Network: ↑{data['network_sent_display']} ↓{data['network_recv_display']}")
                     else:
                         metric_labels["network"].config(text="Network: N/A")
-                    
+
                     if 'gpu_info' in data:
                         metric_labels["gpu"].config(text=data['gpu_info'])
                     else:
                         metric_labels["gpu"].config(text="GPU: Error")
-                    
+
                     if data.get('uptime_seconds') is not None:
                         uptime_str = format_uptime_from_start_time(data['uptime_seconds'])
                         metric_labels["uptime"].config(text=f"Uptime: {uptime_str}")
                     else:
                         metric_labels["uptime"].config(text="Uptime: N/A")
-                    
+
                     if callback:
                         callback()
-                        
+
                 except Exception as e:
                     logger.error(f"Error updating UI with system data: {e}")
                     # Set all labels to error state
                     for label_name in metric_labels:
                         metric_labels[label_name].config(text=f"{label_name.title()}: Error")
-            
+
             if hasattr(system_name, 'after'):
                 system_name.after(0, update_ui)
             elif hasattr(system_name, 'root') and hasattr(system_name.root, 'after'):
                 system_name.root.after(0, update_ui)
-                
+
         except Exception as e:
             logger.error(f"Error in background system info update: {e}")
-    
+
     thread = threading.Thread(target=background_update, daemon=True)
     thread.start()
 
-# Additional placeholder functions that dashboard.py might need
+# Server list and subhost helper functions for dashboard.py
 def get_current_server_list(dashboard):
     current_tab_id = dashboard.server_notebook.select()
     if not current_tab_id:
         return None
-        
+
     for subhost_name, tab_frame in dashboard.tab_frames.items():
         if str(tab_frame) in current_tab_id:
             return dashboard.server_lists.get(subhost_name)
-    
+
     return None
 
 def get_current_subhost(dashboard):
     current_tab_id = dashboard.server_notebook.select()
     if not current_tab_id:
         return "Local Host"
-        
+
     for subhost_name, tab_frame in dashboard.tab_frames.items():
         if str(tab_frame) in current_tab_id:
             return subhost_name
-    
+
     return "Local Host"
 
 def format_uptime_from_start_time(start_time):
@@ -1289,8 +1304,8 @@ def open_directory_in_explorer(directory_path):
         import subprocess
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        subprocess.Popen(f'explorer "{directory_path}"', 
-                        startupinfo=startupinfo, 
+        subprocess.Popen(f'explorer "{directory_path}"',
+                        startupinfo=startupinfo,
                         creationflags=subprocess.CREATE_NO_WINDOW)
         return True, "Directory opened"
     except Exception as e:
@@ -1304,91 +1319,91 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
         centre_window(dialog, parent=root)
         dialog.transient(root)
         dialog.grab_set()
-        
+
         result = {'success': False, 'message': 'Dialog cancelled'}
-        
+
         main_frame = ttk.Frame(dialog, padding="10")
         main_frame.grid(row=0, column=0, sticky="nsew")
-        
+
         ttk.Label(main_frame, text="Select Server Directory:").grid(row=0, column=0, sticky="w", pady=(0, 5))
-        
+
         dir_frame = ttk.Frame(main_frame)
         dir_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         dir_frame.columnconfigure(0, weight=1)
-        
+
         dir_var = tk.StringVar()
         dir_entry = ttk.Entry(dir_frame, textvariable=dir_var, state='readonly')
         dir_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        
+
         def browse_directory():
             directory = filedialog.askdirectory(title="Select Server Directory")
             if directory:
                 dir_var.set(directory)
-        
+
         ttk.Button(dir_frame, text="Browse", command=browse_directory).grid(row=0, column=1)
-        
+
         ttk.Label(main_frame, text="Server Name:").grid(row=2, column=0, sticky="w", pady=(10, 5))
         name_var = tk.StringVar()
         ttk.Entry(main_frame, textvariable=name_var).grid(row=3, column=0, sticky="ew", pady=(0, 10))
-        
+
         # Server type selection (manual)
         ttk.Label(main_frame, text="Server Type:").grid(row=4, column=0, sticky="w", pady=(0, 5))
-        
+
         try:
             from Modules.server_manager import ServerManager
             temp_manager = ServerManager()
             supported_types = temp_manager.get_supported_server_types()
         except Exception:
             supported_types = ["Steam", "Minecraft", "Other"]
-        
+
         type_var = tk.StringVar(value="Other")  # Default to Other
         type_combo = ttk.Combobox(main_frame, textvariable=type_var, values=supported_types, state="readonly")
         type_combo.grid(row=5, column=0, sticky="ew", pady=(0, 10))
-        
+
         # Steam App ID field (initially hidden)
         steam_frame = ttk.Frame(main_frame)
         steam_frame.grid(row=6, column=0, sticky="ew", pady=(0, 10))
         steam_frame.grid_remove()  # Initially hidden
-        
+
         ttk.Label(steam_frame, text="Steam App ID:").grid(row=0, column=0, sticky="w", pady=(0, 5))
-        
+
         appid_frame = ttk.Frame(steam_frame)
         appid_frame.grid(row=1, column=0, sticky="ew", pady=(0, 5))
         appid_frame.columnconfigure(0, weight=1)
-        
+
         app_id_var = tk.StringVar()
         app_id_entry = ttk.Entry(appid_frame, textvariable=app_id_var)
         app_id_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        
+
         def browse_appid():
             selected_appid = create_steam_appid_browser_dialog(dialog, server_manager_dir)
             if selected_appid:
                 app_id_var.set(selected_appid)
-        
+
         ttk.Button(appid_frame, text="Browse", command=browse_appid, width=10).grid(row=0, column=1)
-        
+
         # Minecraft configuration (initially hidden)
         minecraft_frame = ttk.Frame(main_frame)
         minecraft_frame.grid(row=7, column=0, sticky="ew", pady=(0, 10))
         minecraft_frame.grid_remove()  # Initially hidden
-        
+
         ttk.Label(minecraft_frame, text="Modloader:").grid(row=0, column=0, sticky="w", pady=(0, 5))
         modloader_var = tk.StringVar(value="Vanilla")
-        modloader_combo = ttk.Combobox(minecraft_frame, textvariable=modloader_var, 
-                                     values=["Vanilla", "Forge", "Fabric", "Spigot", "Paper"], 
+        modloader_combo = ttk.Combobox(minecraft_frame, textvariable=modloader_var,
+                                     values=["Vanilla", "Forge", "Fabric", "Spigot", "Paper"],
                                      state="readonly")
         modloader_combo.grid(row=1, column=0, sticky="ew", pady=(0, 5))
-        
+
         ttk.Label(minecraft_frame, text="Minecraft Version:").grid(row=2, column=0, sticky="w", pady=(0, 5))
-        
+
         version_frame = ttk.Frame(minecraft_frame)
         version_frame.grid(row=3, column=0, sticky="ew", pady=(0, 5))
         version_frame.columnconfigure(0, weight=1)
-        
+
         version_var = tk.StringVar()
         version_entry = ttk.Entry(version_frame, textvariable=version_var)
         version_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        
+
         def browse_minecraft_version():
             selected_version = create_minecraft_version_browser_dialog(dialog, modloader_var.get())
             if selected_version:
@@ -1396,13 +1411,13 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
                 # Update modloader if it was changed in the browser
                 if selected_version.get("modloader"):
                     modloader_var.set(selected_version["modloader"].title())
-        
+
         ttk.Button(version_frame, text="Browse", command=browse_minecraft_version, width=10).grid(row=0, column=1)
-        
+
         def on_type_change(*args):
             # Show/hide fields based on server type
             server_type = type_var.get()
-            
+
             if server_type == "Steam":
                 steam_frame.grid()
                 minecraft_frame.grid_remove()
@@ -1412,40 +1427,40 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
             else:  # Other
                 steam_frame.grid_remove()
                 minecraft_frame.grid_remove()
-        
+
         type_var.trace_add('write', on_type_change)
-        
+
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=8, column=0, sticky="ew", pady=(20, 0))
-        
+
         def import_server():
             directory = dir_var.get()
             server_name = name_var.get().strip()
             server_type = type_var.get()
-            
+
             if not directory or not os.path.exists(directory):
                 messagebox.showerror("Error", "Please select a valid directory")
                 return
-                
+
             if not server_name:
                 messagebox.showerror("Error", "Please enter a server name")
                 return
-            
+
             if not server_type:
                 messagebox.showerror("Error", "Please select a server type")
                 return
-            
+
             try:
                 if dashboard_server_manager is None:
                     from Modules.server_manager import ServerManager
                     server_manager = ServerManager()
                 else:
                     server_manager = dashboard_server_manager
-                
+
                 app_id = app_id_var.get().strip() if server_type == "Steam" else ""
                 minecraft_version = version_var.get().strip() if server_type == "Minecraft" else ""
                 modloader = modloader_var.get() if server_type == "Minecraft" else ""
-                
+
                 success = server_manager.import_server_config(
                     server_name=server_name,
                     server_type=server_type,
@@ -1454,11 +1469,11 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
                     startup_args="",
                     app_id=app_id
                 )
-                
+
                 if success:
                     # Reload server list to include the newly imported server
                     server_manager.load_servers()
-                    
+
                     # For Minecraft servers, update the configuration with version/modloader
                     if server_type == "Minecraft" and (minecraft_version or modloader):
                         try:
@@ -1469,29 +1484,29 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
                                     server_config["minecraft_version"] = minecraft_version
                                 if modloader:
                                     server_config["modloader"] = modloader
-                                
+
                                 # Save updated config to database
                                 server_manager.update_server(server_name, server_config)
                         except Exception as e:
                             logger.warning(f"Could not update Minecraft config: {e}")
-                    
+
                     result['success'] = True
                     result['message'] = f"Server '{server_name}' imported successfully from {directory}"
-                    
+
                     if update_callback:
                         update_callback()
-                        
+
                     dialog.destroy()
                     messagebox.showinfo("Success", result['message'])
                 else:
                     messagebox.showerror("Error", f"Failed to import server '{server_name}'")
-                
+
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to import server: {str(e)}")
-        
+
         ttk.Button(button_frame, text="Import", command=import_server).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
-        
+
         dialog.columnconfigure(0, weight=1)
         dialog.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
@@ -1499,10 +1514,10 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
         minecraft_frame.columnconfigure(0, weight=1)
         appid_frame.columnconfigure(0, weight=1)
         version_frame.columnconfigure(0, weight=1)
-        
+
         dialog.wait_window()
         return result
-        
+
     except Exception as e:
         logger.error(f"Error in import server from directory dialog: {e}")
         return {'success': False, 'message': str(e)}
@@ -1513,38 +1528,38 @@ def import_server_from_export_dialog(root, paths, server_manager_dir, update_cal
             title="Select Server Export File",
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
         )
-        
+
         if not file_path:
             return {'success': False, 'message': 'No file selected'}
-            
+
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-                
+
             server_name = config.get('Name', os.path.splitext(os.path.basename(file_path))[0])
-            
+
             confirm = messagebox.askyesno(
                 "Confirm Import",
                 f"Import server configuration '{server_name}'?\n\n"
                 f"Type: {config.get('Type', 'Unknown')}\n"
                 f"Original Path: {config.get('InstallDir', 'Unknown')}"
             )
-            
+
             if confirm:
                 if update_callback:
                     update_callback()
-                    
+
                 return {
-                    'success': True, 
+                    'success': True,
                     'message': f"Server '{server_name}' imported successfully from export file"
                 }
             else:
                 return {'success': False, 'message': 'Import cancelled'}
-                
+
         except json.JSONDecodeError:
             messagebox.showerror("Error", "Invalid JSON file format")
             return {'success': False, 'message': 'Invalid JSON file'}
-            
+
     except Exception as e:
         logger.error(f"Error in import server from export dialog: {e}")
         return {'success': False, 'message': str(e)}
@@ -1554,41 +1569,41 @@ def export_server_dialog(root, current_list, paths):
         if not current_list.selection():
             messagebox.showwarning("No Selection", "Please select a server to export")
             return {'success': False, 'message': 'No server selected'}
-            
+
         item = current_list.selection()[0]
         server_name = current_list.item(item, "values")[0]
-        
+
         dialog = tk.Toplevel(root)
         dialog.title(f"Export Server: {server_name}")
         dialog.geometry("550x350")
         centre_window(dialog, parent=root)
         dialog.transient(root)
         dialog.grab_set()
-        
+
         result = {'success': False, 'message': 'Export cancelled'}
-        
+
         main_frame = ttk.Frame(dialog, padding="10")
         main_frame.grid(row=0, column=0, sticky="nsew")
-        
+
         ttk.Label(main_frame, text="Export Options:").grid(row=0, column=0, sticky="w", pady=(0, 10))
-        
+
         include_files_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            main_frame, 
-            text="Include server files (creates larger archive)", 
+            main_frame,
+            text="Include server files (creates larger archive)",
             variable=include_files_var
         ).grid(row=1, column=0, sticky="w", pady=(0, 5))
-        
+
         ttk.Label(main_frame, text="Export Location:").grid(row=2, column=0, sticky="w", pady=(10, 5))
-        
+
         location_frame = ttk.Frame(main_frame)
         location_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
         location_frame.columnconfigure(0, weight=1)
-        
+
         location_var = tk.StringVar()
         location_entry = ttk.Entry(location_frame, textvariable=location_var, state='readonly')
         location_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        
+
         def browse_export_location():
             filename = filedialog.asksaveasfilename(
                 title="Save Export As",
@@ -1598,55 +1613,55 @@ def export_server_dialog(root, current_list, paths):
             )
             if filename:
                 location_var.set(filename)
-        
+
         ttk.Button(location_frame, text="Browse", command=browse_export_location).grid(row=0, column=1)
-        
+
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=4, column=0, sticky="ew", pady=(20, 0))
-        
+
         def perform_export():
             export_path = location_var.get()
-            
+
             if not export_path:
                 messagebox.showerror("Error", "Please select an export location")
                 return
-            
+
             try:
                 # Get the actual server configuration from database
                 from Modules.Database.server_configs_database import get_server_config_manager
                 manager = get_server_config_manager()
                 server_config = manager.get_server(server_name)
-                
+
                 if not server_config:
                     messagebox.showerror("Error", f"Server configuration not found for {server_name}")
                     return
-                
+
                 export_config = server_config.copy()
                 export_config['ExportDate'] = datetime.datetime.now().isoformat()
                 export_config['IncludeFiles'] = include_files_var.get()
-                
+
                 with open(export_path, 'w', encoding='utf-8') as f:
                     json.dump(export_config, f, indent=2)
-                
+
                 result['success'] = True
                 result['message'] = f"Server '{server_name}' exported successfully to {export_path}"
-                
+
                 dialog.destroy()
                 messagebox.showinfo("Export Complete", result['message'])
-                
+
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to export server: {str(e)}")
-        
+
         ttk.Button(button_frame, text="Export", command=perform_export).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
-        
+
         dialog.columnconfigure(0, weight=1)
         dialog.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
-        
+
         dialog.wait_window()
         return result
-        
+
     except Exception as e:
         logger.error(f"Error in export server dialog: {e}")
         return {'success': False, 'message': str(e)}
@@ -1661,52 +1676,52 @@ def create_progress_dialog_with_console(parent, title="Progress"):
             centre_window(self.dialog, parent=parent)
             self.dialog.transient(parent)
             self.dialog.grab_set()
-            
+
             main_frame = ttk.Frame(self.dialog, padding="10")
             main_frame.pack(fill=tk.BOTH, expand=True)
-            
+
             self.progress_var = tk.StringVar(value="Running...")
             ttk.Label(main_frame, textvariable=self.progress_var).pack(pady=(0, 5))
-            
+
             self.progress_bar = ttk.Progressbar(main_frame, mode='indeterminate')
             self.progress_bar.pack(fill=tk.X, pady=(0, 10))
             self.progress_bar.start()
-            
+
             ttk.Label(main_frame, text="Console Output:").pack(anchor=tk.W)
-            
+
             console_frame = ttk.Frame(main_frame)
             console_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 10))
-            
+
             self.console_text = scrolledtext.ScrolledText(
-                console_frame, 
-                height=15, 
-                wrap=tk.WORD, 
+                console_frame,
+                height=15,
+                wrap=tk.WORD,
                 font=('Consolas', 9)
             )
             self.console_text.pack(fill=tk.BOTH, expand=True)
-            
+
             # Close button (initially disabled)
             self.close_button = ttk.Button(
-                main_frame, 
-                text="Close", 
+                main_frame,
+                text="Close",
                 command=self.close_dialog,
                 state=tk.DISABLED
             )
             self.close_button.pack(pady=(10, 0))
-            
+
             self.is_closed = False
-            
+
         def update_progress(self, message):
             if not self.is_closed:
                 self.progress_var.set(message)
                 self.dialog.update_idletasks()
-                
+
         def update_console(self, message):
             if not self.is_closed:
                 self.console_text.insert(tk.END, message + "\n")
                 self.console_text.see(tk.END)
                 self.dialog.update_idletasks()
-                
+
         def complete(self, message="Operation completed", auto_close=False):
             if not self.is_closed:
                 self.progress_bar.stop()
@@ -1718,18 +1733,18 @@ def create_progress_dialog_with_console(parent, title="Progress"):
                 else:
                     self.close_button.config(state=tk.NORMAL)
                     self.update_console(f"[COMPLETE] {message}")
-                
+
         def close_dialog(self):
             self.is_closed = True
             self.dialog.destroy()
-            
+
         def show(self):
             # Show the dialog and return self for method chaining
             return self
-            
+
         def __contains__(self, key):
             return key in ['console_text', 'console_callback']
-            
+
         def __getitem__(self, key):
             if key == 'console_text':
                 return self.console_text
@@ -1737,29 +1752,29 @@ def create_progress_dialog_with_console(parent, title="Progress"):
                 return self.update_console
             else:
                 raise KeyError(f"Key '{key}' not found")
-    
+
     return ProgressDialog(parent, title)
 
 def rename_server_configuration(server_name, new_name, server_manager):
     try:
         if not new_name or not new_name.strip():
             return False, "New server name cannot be empty"
-            
+
         new_name = new_name.strip()
-        
+
         if new_name == server_name:
             return False, "New name is the same as current name"
-            
+
         servers = server_manager.get_servers()
         if new_name in servers:
             return False, f"Server '{new_name}' already exists"
-            
+
         success = server_manager.rename_server(server_name, new_name)
         if success:
             return True, f"Server renamed from '{server_name}' to '{new_name}'"
         else:
             return False, f"Failed to rename server '{server_name}'"
-            
+
     except Exception as e:
         logger.error(f"Error renaming server: {e}")
         return False, f"Error renaming server: {str(e)}"
@@ -1849,7 +1864,7 @@ def is_port_open(host, port, timeout=1):
 def check_webserver_status(paths, variables):
     if variables.get("offlineMode", False):
         return "Offline Mode"
-        
+
     try:
         webserver_port = variables.get("webserverPort", 8080)
         if is_port_open("localhost", webserver_port):
@@ -1874,23 +1889,23 @@ def test_remote_host_connection(host, port, username, password, use_ssl=False, t
         protocol = "https" if use_ssl else "http"
         base_url = f"{protocol}://{host}:{port}"
         test_url = f"{base_url}/api/status"
-        
+
         ssl_verify = _get_ssl_verify_setting() if use_ssl else True
-        
+
         response = requests.get(test_url, timeout=timeout, verify=ssl_verify)
-        
+
         if response.status_code == 200:
             auth_url = f"{base_url}/cluster/api/auth/login"
             auth_data = {"username": username, "password": password}
             auth_response = requests.post(auth_url, json=auth_data, timeout=timeout, verify=ssl_verify)
-            
+
             if auth_response.status_code == 200:
                 return True, "Connection and authentication successful"
             else:
                 return False, "Authentication failed - check username/password"
         else:
             return False, f"Server responded with status {response.status_code}"
-            
+
     except requests.exceptions.ConnectionError:
         return False, "Could not connect to remote host - check host/port"
     except requests.exceptions.Timeout:
@@ -1902,22 +1917,22 @@ class RemoteHostManager:
     def __init__(self):
         self.active_connections = {}
         self.session_cache = {}
-    
+
     def connect(self, host, port, username, password, use_ssl=False, timeout=10):
         # Establish authenticated session with remote host
         try:
             protocol = "https" if use_ssl else "http"
             base_url = f"{protocol}://{host}:{port}"
             connection_id = f"{host}:{port}"
-            
+
             session = requests.Session()
             session.verify = _get_ssl_verify_setting() if use_ssl else True
-            
+
             auth_url = f"{base_url}/cluster/api/auth/login"
             auth_data = {"username": username, "password": password}
-            
+
             auth_response = session.post(auth_url, json=auth_data, timeout=timeout)
-            
+
             if auth_response.status_code == 200:
                 self.active_connections[connection_id] = {
                     "host": host,
@@ -1931,10 +1946,10 @@ class RemoteHostManager:
                 return True, "Connected successfully"
             else:
                 return False, "Authentication failed"
-                
+
         except Exception as e:
             return False, f"Connection failed: {str(e)}"
-    
+
     def disconnect(self, host, port):
         connection_id = f"{host}:{port}"
         if connection_id in self.active_connections:
@@ -1947,79 +1962,79 @@ class RemoteHostManager:
             del self.active_connections[connection_id]
             return True
         return False
-    
+
     def get_servers(self, host, port):
         connection_id = f"{host}:{port}"
         if connection_id not in self.active_connections:
             return False, "Not connected to remote host"
-        
+
         try:
             conn = self.active_connections[connection_id]
             session = conn["session"]
             base_url = conn["base_url"]
             timeout = conn["timeout"]
-            
+
             response = session.get(f"{base_url}/api/servers", timeout=timeout)
-            
+
             if response.status_code == 200:
                 servers_data = response.json()
                 return True, servers_data
             else:
                 return False, f"Failed to get servers: {response.status_code}"
-                
+
         except Exception as e:
             return False, f"Error getting servers: {str(e)}"
-    
+
     def start_server(self, host, port, server_name):
         return self._server_action(host, port, server_name, "start")
-    
+
     def stop_server(self, host, port, server_name):
         return self._server_action(host, port, server_name, "stop")
-    
+
     def restart_server(self, host, port, server_name):
         return self._server_action(host, port, server_name, "restart")
-    
+
     def _server_action(self, host, port, server_name, action):
         connection_id = f"{host}:{port}"
         if connection_id not in self.active_connections:
             return False, "Not connected to remote host"
-        
+
         try:
             conn = self.active_connections[connection_id]
             session = conn["session"]
             base_url = conn["base_url"]
             timeout = conn["timeout"]
-            
+
             response = session.post(f"{base_url}/api/servers/{server_name}/{action}", timeout=timeout)
-            
+
             if response.status_code == 200:
                 result = response.json()
                 return True, result.get("message", f"Server {action} successful")
             else:
                 return False, f"Failed to {action} server: {response.status_code}"
-                
+
         except Exception as e:
             return False, f"Error performing {action}: {str(e)}"
-    
+
     def get_server_status(self, host, port, server_name):
         connection_id = f"{host}:{port}"
         if connection_id not in self.active_connections:
             return False, "Not connected to remote host"
-        
+
         try:
             conn = self.active_connections[connection_id]
             session = conn["session"]
             base_url = conn["base_url"]
             timeout = conn["timeout"]
-            
+
             response = session.get(f"{base_url}/api/servers/{server_name}/status", timeout=timeout)
-            
+
             if response.status_code == 200:
                 status_data = response.json()
                 return True, status_data
             else:
                 return False, f"Failed to get server status: {response.status_code}"
-                
+
         except Exception as e:
             return False, f"Error getting server status: {str(e)}"
 
@@ -2061,13 +2076,13 @@ def cleanup_orphaned_process_entries(server_manager, logger):
                         is_valid, _ = server_manager.is_server_process_valid(server_name, pid, server_config)
                         if not is_valid:
                             logger.debug(f"Cleaning up stale/invalid PID {pid} for server {server_name}")
-                            
+
                             server_config.pop('ProcessId', None)
                             server_config.pop('PID', None)
                             server_config.pop('StartTime', None)
                             server_config.pop('ProcessCreateTime', None)
                             server_config['LastUpdate'] = datetime.datetime.now().isoformat()
-                            
+
                             server_manager.update_server(server_name, server_config)
                             cleaned_count += 1
                     else:
@@ -2075,37 +2090,37 @@ def cleanup_orphaned_process_entries(server_manager, logger):
                         try:
                             if not psutil.pid_exists(pid):
                                 logger.debug(f"Cleaning up orphaned PID {pid} for server {server_name}")
-                                
+
                                 server_config.pop('ProcessId', None)
                                 server_config.pop('PID', None)
                                 server_config.pop('StartTime', None)
                                 server_config.pop('ProcessCreateTime', None)
                                 server_config['LastUpdate'] = datetime.datetime.now().isoformat()
-                                
+
                                 server_manager.update_server(server_name, server_config)
                                 cleaned_count += 1
-                                
+
                         except (psutil.NoSuchProcess, psutil.AccessDenied):
                             logger.debug(f"Cleaning up invalid PID {pid} for server {server_name}")
-                            
+
                             server_config.pop('ProcessId', None)
                             server_config.pop('PID', None)
                             server_config.pop('StartTime', None)
                             server_config.pop('ProcessCreateTime', None)
                             server_config['LastUpdate'] = datetime.datetime.now().isoformat()
-                            
+
                             server_manager.update_server(server_name, server_config)
                             cleaned_count += 1
-                            
+
                         except Exception as e:
                             logger.debug(f"Error checking PID {pid} for server {server_name}: {e}")
-                        
+
             except Exception as e:
                 logger.error(f"Error cleaning up process entries for server {server_name}: {e}")
-        
+
         if cleaned_count > 0:
             logger.debug(f"Cleaned up {cleaned_count} stale/orphaned process entries and corruption issues")
-            
+
     except Exception as e:
         logger.error(f"Error in cleanup_orphaned_process_entries: {e}")
 
@@ -2173,17 +2188,17 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
     try:
         if not server_manager or not console_manager:
             return
-            
+
         logger.debug("Detecting running server processes for console reattachment...")
-        
+
         # First, clean up orphaned process entries
         cleanup_orphaned_process_entries(server_manager, logger)
 
         # Also clean up orphaned relay files
         cleanup_orphaned_relay_files(logger)
-        
+
         server_configs = server_manager.get_servers()
-        
+
         # Try stored PIDs first
         reattached_by_pid = 0
         for server_name, server_config in server_configs.items():
@@ -2200,7 +2215,7 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                                     is_valid, _ = server_manager.is_server_process_valid(server_name, pid, server_config)
                                 else:
                                     is_valid = _process_matches_server(process, server_name, server_config)
-                                
+
                                 if not is_valid:
                                     logger.debug(f"PID {pid} for {server_name} is now a different process ({process.name()}), clearing stale PID")
                                     server_config.pop('ProcessId', None)
@@ -2213,9 +2228,9 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                                     except Exception:
                                         pass
                                     continue
-                                
+
                                 logger.debug(f"Found running server process for {server_name} (PID: {pid})")
-                                
+
                                 # Ensure StartTime and ProcessCreateTime are set from process creation time if missing
                                 config_updated = False
                                 if 'StartTime' not in server_config or not server_config.get('StartTime'):
@@ -2237,14 +2252,14 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                                         logger.debug(f"Set ProcessCreateTime for {server_name} from running process")
                                     except Exception as e:
                                         logger.debug(f"Could not get process creation time for {server_name}: {e}")
-                                
+
                                 if config_updated:
                                     server_manager.update_server(server_name, server_config)
-                                
+
                                 success = console_manager.attach_console_to_process(
                                     server_name, process, server_config
                                 )
-                                
+
                                 if success:
                                     logger.debug(f"Reattached console to {server_name}")
                                     reattached_by_pid += 1
@@ -2271,42 +2286,42 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                         server_manager.update_server(server_name, server_config)
                     except Exception as e:
                         logger.error(f"Error checking process {pid} for {server_name}: {e}")
-                        
+
             except Exception as e:
                 logger.error(f"Error processing server {server_name} for reattachment: {e}")
-        
+
         # Third, try improved process discovery - scan all processes
         reattached_by_discovery = 0
         try:
             all_processes = psutil.process_iter(['pid', 'name', 'exe', 'cmdline', 'cwd'])
-            
+
             for proc in all_processes:
                 try:
                     # Skip system processes and our own process
                     if proc.info['pid'] == os.getpid():
                         continue
-                        
+
                     for server_name, server_config in server_configs.items():
                         if _process_matches_server(proc, server_name, server_config):
                             # Check if we already reattached this server
                             if hasattr(console_manager, 'consoles') and server_name in console_manager.consoles:
                                 logger.debug(f"Server {server_name} already has console attached")
                                 continue
-                                
+
                             logger.debug(f"Found running server process for {server_name} (PID: {proc.info['pid']}) via discovery")
-                            
+
                             success = console_manager.attach_console_to_process(
                                 server_name, proc, server_config
                             )
-                            
+
                             if success:
                                 logger.debug(f"Reattached console to {server_name} via discovery")
                                 reattached_by_discovery += 1
-                                
+
                                 # Update the server config with the current PID and StartTime
                                 server_config['ProcessId'] = proc.info['pid']
                                 server_config['PID'] = proc.info['pid']
-                                
+
                                 # Store ProcessCreateTime for secure PID validation
                                 try:
                                     create_time = proc.create_time()
@@ -2316,27 +2331,27 @@ def reattach_to_running_servers(server_manager, console_manager, logger):
                                     logger.debug(f"Set StartTime and ProcessCreateTime for {server_name} from discovered process")
                                 except Exception as e:
                                     logger.debug(f"Could not get process creation time for discovered {server_name}: {e}")
-                                
+
                                 server_manager.update_server(server_name, server_config)
                             else:
                                 logger.warning(f"Failed to reattach console to discovered process for {server_name}")
                             break  # Found a match, no need to check other servers
-                            
+
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
                 except Exception as e:
                     logger.debug(f"Error checking process {proc.info['pid']}: {e}")
                     continue
-                    
+
         except ImportError:
             logger.warning("psutil not available for enhanced process discovery")
         except Exception as e:
             logger.error(f"Error during enhanced process discovery: {e}")
-        
+
         total_reattached = reattached_by_pid + reattached_by_discovery
         if total_reattached > 0:
             logger.info(f"Reattached {total_reattached} running server(s)")
-        
+
     except Exception as e:
         logger.error(f"Error in reattach_to_running_servers: {e}")
 
@@ -2345,35 +2360,35 @@ def _process_matches_server(process, server_name, server_config):
         proc_info = process.info
         install_dir = server_config.get('InstallDir', '').lower()
         executable_path = server_config.get('ExecutablePath', '').lower()
-        
+
         # If we don't have install_dir, we can't reliably match
         if not install_dir:
             return False
-        
+
         install_dir_norm = os.path.normpath(install_dir)
-        
+
         # Working directory matches install directory (strongest match)
         if proc_info.get('cwd') and install_dir:
             cwd_norm = os.path.normpath(proc_info['cwd'].lower())
             if cwd_norm == install_dir_norm:
                 return True
-        
+
         # Executable path is inside install directory
         exe_path = proc_info.get('exe', '').lower()
         if exe_path and install_dir:
             exe_norm = os.path.normpath(exe_path)
             if exe_norm.startswith(install_dir_norm + os.sep) or exe_norm == install_dir_norm:
                 return True
-            
+
         # Command line contains install directory path (not just server name)
         cmdline = proc_info.get('cmdline', [])
         if cmdline:
             cmdline_str = ' '.join(cmdline).lower()
-            
+
             # Check for install directory in command line (more reliable than server name)
             if install_dir and install_dir in cmdline_str:
                 return True
-                
+
             # Check for executable path from config (if it's an absolute path within install dir)
             if executable_path:
                 if os.path.isabs(executable_path):
@@ -2386,11 +2401,11 @@ def _process_matches_server(process, server_name, server_config):
                     full_exe = os.path.normpath(os.path.join(install_dir, executable_path))
                     if full_exe.lower() in cmdline_str:
                         return True
-        
+
         # Type-specific validation with stricter requirements
         proc_name = proc_info.get('name', '').lower()
         server_type = server_config.get('Type', '').lower()
-        
+
         # Minecraft servers - require install directory in cmdline, not just any java process
         if server_type == 'minecraft' and ('java' in proc_name or 'javaw' in proc_name):
             if cmdline:
@@ -2401,7 +2416,7 @@ def _process_matches_server(process, server_name, server_config):
                 if has_jar and has_install_dir:
                     return True
         return False
-        
+
     except Exception as e:
         logger.debug(f"Error matching process {process.pid} to server {server_name}: {e}")
         return False
@@ -2409,12 +2424,12 @@ def _process_matches_server(process, server_name, server_config):
 def update_server_list_for_subhost(subhost_name, servers_data, server_lists, server_manager_dir, logger):
     # Update the server list for a specific subhost with enhanced selection preservation and categorization
     logger.debug(f"Updating server list for subhost {subhost_name} with {len(servers_data)} servers")
-    
+
     if subhost_name not in server_lists:
         return
-        
+
     server_list = server_lists[subhost_name]
-    
+
     # Preserve current selection - handle multiple selections
     current_selection = server_list.selection()
     selected_server_names = []
@@ -2427,10 +2442,10 @@ def update_server_list_for_subhost(subhost_name, servers_data, server_lists, ser
                     selected_server_names.append(server_name)
             except Exception as e:
                 logger.debug(f"Error getting selection info for item {item_id}: {e}")
-    
+
     if selected_server_names:
         logger.debug(f"Preserving selection for servers: {selected_server_names}")
-    
+
     # Preserve category expanded/collapsed states before clearing
     category_states = {}
     for item in server_list.get_children():
@@ -2443,35 +2458,35 @@ def update_server_list_for_subhost(subhost_name, servers_data, server_lists, ser
                 logger.debug(f"Preserved category state: {category_name} -> {'expanded' if is_open else 'collapsed'}")
         except Exception as e:
             logger.debug(f"Error preserving category state: {e}")
-    
+
     for item in server_list.get_children():
         server_list.delete(item)
-    
+
     # Load all categories from persistence (including empty ones)
     all_categories = load_categories(server_manager_dir)
-    
+
     categories = {}
     for category in all_categories:
         categories[category] = []
-    
+
     for server_name, server_info in servers_data.items():
         category = server_info.get('category', 'Uncategorized')
         if category not in categories:
             categories[category] = []
         categories[category].append((server_name, server_info))
-    
+
     selected_item_ids = []
     for category_name in all_categories:
         servers = categories.get(category_name, [])
-        
+
         # Determine if category should be open (restore previous state, default to True for new)
         should_be_open = category_states.get(category_name, True)
-        
+
         # Insert category as parent (even if empty)
-        category_item = server_list.insert("", tk.END, text=category_name, 
-                                         values=(category_name, "", "", "", "", ""), 
+        category_item = server_list.insert("", tk.END, text=category_name,
+                                         values=(category_name, "", "", "", "", ""),
                                          open=should_be_open, tags=('category',))
-        
+
         for server_name, server_info in servers:
             try:
                 status = server_info.get('status', 'Unknown')
@@ -2479,18 +2494,18 @@ def update_server_list_for_subhost(subhost_name, servers_data, server_lists, ser
                 cpu = server_info.get('cpu', '0%')
                 memory = server_info.get('memory', '0 MB')
                 uptime = server_info.get('uptime', '00:00:00')
-                
+
                 item_id = server_list.insert(category_item, tk.END, values=(
                     server_name, status, pid, cpu, memory, uptime
                 ), tags=('server',))
-                
+
                 # Track the item ID if this server was previously selected
                 if server_name in selected_server_names:
                     selected_item_ids.append(item_id)
-                    
+
             except Exception as e:
                 logger.error(f"Error adding server {server_name} to list: {e}")
-    
+
     # Restore selection for all previously selected servers that still exist
     if selected_item_ids:
         try:
@@ -2508,12 +2523,12 @@ def get_servers_display_data(server_manager, logger):
     try:
         servers_data = {}
         raw_servers = server_manager.get_all_servers()
-        
+
         logger.debug(f"get_servers_display_data: Processing {len(raw_servers)} raw servers")
-        
+
         # Periodically cleanup stale CPU cache entries
         cleanup_cpu_cache()
-        
+
         for server_name, server_config in raw_servers.items():
             try:
                 server_config = raw_servers.get(server_name)
@@ -2535,7 +2550,7 @@ def get_servers_display_data(server_manager, logger):
                     else:
                         display_status = 'Stopped'
                         pid = None
-                
+
                 display_data = {
                     'status': display_status,
                     'pid': str(pid) if pid else '',
@@ -2544,13 +2559,13 @@ def get_servers_display_data(server_manager, logger):
                     'uptime': '00:00:00',
                     'category': server_config.get('Category') or 'Uncategorized' if server_config else 'Uncategorized'
                 }
-                
+
                 # Get CPU and memory usage if server is running
                 if display_status == 'Running' and pid:
                     try:
                         # Use cached process object for accurate CPU readings
                         global _cpu_process_cache
-                        
+
                         if pid not in _cpu_process_cache:
                             # Create new process object and Initialise CPU tracking
                             try:
@@ -2573,15 +2588,15 @@ def get_servers_display_data(server_manager, logger):
                             except (psutil.NoSuchProcess, psutil.AccessDenied):
                                 _cpu_process_cache.pop(pid, None)
                                 cpu_percent = 0.0
-                        
+
                         display_data['cpu'] = f"{cpu_percent:.1f}%"
-                        
+
                         # Get memory usage (can use the cached process or create new)
                         try:
                             process = _cpu_process_cache.get(pid) or psutil.Process(pid)
                             memory_info = process.memory_info()
                             server_type = server_config.get('Type', '').lower() if server_config else ''
-                            
+
                             # Detect Java processes via cmdline or server type config
                             is_java_process = False
                             try:
@@ -2591,7 +2606,7 @@ def get_servers_display_data(server_manager, logger):
                                 # Cmdline unavailable, fall back to server type from config
                                 if server_type == 'minecraft':
                                     is_java_process = True
-                            
+
                             if is_java_process:
                                 # Use VMS for Java/Minecraft servers (includes JVM heap allocation)
                                 memory_mb = memory_info.vms / (1024 * 1024)
@@ -2604,10 +2619,10 @@ def get_servers_display_data(server_manager, logger):
                                 # Use RSS for other/unknown server types
                                 memory_mb = memory_info.rss / (1024 * 1024)
                                 display_data['memory'] = f"{memory_mb:.1f} MB"
-                                
+
                         except (psutil.NoSuchProcess, psutil.AccessDenied):
                             pass
-                        
+
                         # Calculate uptime - try StartTime first, then fall back to process creation time
                         uptime_calculated = False
                         if 'StartTime' in server_config and server_config['StartTime']:
@@ -2617,7 +2632,7 @@ def get_servers_display_data(server_manager, logger):
                                     start_time = datetime.datetime.fromisoformat(start_time_str)
                                 else:
                                     start_time = start_time_str
-                                
+
                                 uptime = datetime.datetime.now() - start_time
                                 total_seconds = int(uptime.total_seconds())
                                 if total_seconds >= 0:
@@ -2631,7 +2646,7 @@ def get_servers_display_data(server_manager, logger):
                                     uptime_calculated = True
                             except Exception as e:
                                 logger.debug(f"Could not calculate uptime from StartTime for {server_name}: {e}")
-                        
+
                         # Fall back to process creation time if StartTime not available
                         if not uptime_calculated:
                             try:
@@ -2650,12 +2665,12 @@ def get_servers_display_data(server_manager, logger):
                                         display_data['uptime'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
                             except Exception as e:
                                 logger.debug(f"Could not calculate uptime from process for {server_name}: {e}")
-                        
+
                     except Exception as e:
                         logger.debug(f"Could not get process details for {server_name} (PID {pid}): {e}")
-                
+
                 servers_data[server_name] = display_data
-                
+
             except Exception as e:
                 logger.error(f"Error processing server {server_name}: {e}")
                 # Add with default stopped status
@@ -2666,15 +2681,15 @@ def get_servers_display_data(server_manager, logger):
                     'memory': '0 MB',
                     'uptime': '00:00:00'
                 }
-        
+
         logger.debug(f"get_servers_display_data returning {len(servers_data)} servers")
         if 'Hytale' in servers_data:
             logger.debug(f"Hytale in final result: {servers_data['Hytale']}")
         else:
             logger.debug("Hytale NOT in final result")
-        
+
         return servers_data
-        
+
     except Exception as e:
         logger.error(f"Error getting servers display data: {e}")
         return {}
@@ -2685,18 +2700,18 @@ def refresh_subhost_servers(subhost_name, server_manager, server_lists, server_m
             _refresh_local_subhost_async(server_manager, server_lists, server_manager_dir, logger)
         else:
             _refresh_remote_subhost_async(subhost_name, server_lists, server_manager_dir, logger)
-            
+
     except Exception as e:
         logger.error(f"Error refreshing servers for subhost {subhost_name}: {e}")
 
 def _refresh_local_subhost_async(server_manager, server_lists, server_manager_dir, logger):
     import threading
-    
+
     def async_refresh():
         try:
             # Heavy psutil operations run in background thread
             servers = get_servers_display_data(server_manager, logger)
-            
+
             # Schedule UI update on main thread
             import tkinter as tk
             root = None
@@ -2704,45 +2719,45 @@ def _refresh_local_subhost_async(server_manager, server_lists, server_manager_di
                 widget = server_lists["Local Host"]
                 if isinstance(widget, tk.Widget):
                     root = widget.winfo_toplevel()
-            
+
             if not root:
                 for widget_list in server_lists.values():
                     if isinstance(widget_list, tk.Widget):
                         root = widget_list.winfo_toplevel()
                         break
-            
+
             def update_ui():
                 try:
                     update_server_list_for_subhost("Local Host", servers, server_lists, server_manager_dir, logger)
                 except Exception as e:
                     logger.error(f"Error updating Local Host server list UI: {e}")
-            
+
             if root:
                 root.after(0, update_ui)
             else:
                 # Fallback: try direct update (caller must be on main thread)
                 update_server_list_for_subhost("Local Host", servers, server_lists, server_manager_dir, logger)
-                
+
         except Exception as e:
             logger.error(f"Error in async Local Host refresh: {e}")
-    
+
     thread = threading.Thread(target=async_refresh, daemon=True, name="LocalHostRefresh")
     thread.start()
 
 def _refresh_remote_subhost_async(subhost_name, server_lists, server_manager_dir, logger):
     import threading
-    
+
     def async_refresh():
         try:
             from Modules.agents import AgentManager
             agent_manager = AgentManager()
-            
+
             if subhost_name not in agent_manager.nodes:
                 logger.warning(f"Node {subhost_name} not found in agent manager")
                 return
-                
+
             node = agent_manager.nodes[subhost_name]
-            
+
             servers = None
             import requests
             try:
@@ -2757,7 +2772,7 @@ def _refresh_remote_subhost_async(subhost_name, server_lists, server_manager_dir
                 logger.warning(f"Connection error getting servers from node {subhost_name}")
             except Exception as e:
                 logger.error(f"Error getting servers from node {subhost_name}: {e}")
-            
+
             converted_servers = {}
             if servers:
                 if isinstance(servers, dict):
@@ -2780,14 +2795,14 @@ def _refresh_remote_subhost_async(subhost_name, server_lists, server_manager_dir
                                 'memory': server_info.get('memory', '0 MB'),
                                 'uptime': server_info.get('uptime', '00:00:00')
                             }
-            
+
             # Update the UI on the main thread
             def update_ui():
                 try:
                     update_server_list_for_subhost(subhost_name, converted_servers, server_lists, server_manager_dir, logger)
                 except Exception as e:
                     logger.error(f"Error updating UI for subhost {subhost_name}: {e}")
-            
+
             import tkinter as tk
             root = None
             for widget_list in server_lists.values():
@@ -2797,15 +2812,15 @@ def _refresh_remote_subhost_async(subhost_name, server_lists, server_manager_dir
                         break
                 if root:
                     break
-            
+
             if root:
                 root.after(0, update_ui)
             else:
                 logger.warning(f"Could not find root window for UI update of subhost {subhost_name}")
-                
+
         except Exception as e:
             logger.error(f"Error in async refresh for subhost {subhost_name}: {e}")
-    
+
     thread = threading.Thread(target=async_refresh, daemon=True)
     thread.start()
 
@@ -2828,7 +2843,7 @@ def update_server_list_logic(dashboard, force_refresh=False):
         if hasattr(dashboard, '_refreshing_server_list') and dashboard._refreshing_server_list:
             log_dashboard_event("SERVER_LIST_UPDATE", "Skipping update - refresh already in progress", "DEBUG")
             return
-        
+
         # Skip update if it's been less than configured interval since the last update and force_refresh isn't specified
         update_interval = dashboard.variables.get("serverListUpdateInterval", 30)
         if not force_refresh and \
@@ -2836,11 +2851,11 @@ def update_server_list_logic(dashboard, force_refresh=False):
            (datetime.datetime.now() - dashboard.variables["lastServerListUpdate"]).total_seconds() < update_interval:
             log_dashboard_event("SERVER_LIST_UPDATE", f"Skipping update - last update was less than {update_interval} seconds ago", "DEBUG")
             return
-        
+
         dashboard._refreshing_server_list = True
-        
+
         import threading
-        
+
         def _background_server_list_update():
             try:
                 # Periodically check for running servers that need console reattachment
@@ -2850,7 +2865,7 @@ def update_server_list_logic(dashboard, force_refresh=False):
                             _check_and_reattach_running_servers(dashboard.server_manager, dashboard.console_manager, logger)
                         except Exception as e:
                             logger.debug(f"Error in periodic reattach check: {e}")
-                
+
                 # Collect server data for all Local Host servers in background
                 local_servers_data = None
                 if dashboard.server_manager:
@@ -2858,7 +2873,7 @@ def update_server_list_logic(dashboard, force_refresh=False):
                         local_servers_data = get_servers_display_data(dashboard.server_manager, logger)
                     except Exception as e:
                         logger.error(f"Error getting server display data in background: {e}")
-                
+
                 # Schedule UI updates on the main thread
                 def _update_ui():
                     try:
@@ -2867,7 +2882,7 @@ def update_server_list_logic(dashboard, force_refresh=False):
                                 "Local Host", local_servers_data,
                                 dashboard.server_lists, dashboard.server_manager_dir, logger
                             )
-                        
+
                         # Refresh remote subhosts (these already use async internally)
                         for subhost_name in list(dashboard.server_lists.keys()):
                             if subhost_name != "Local Host":
@@ -2878,25 +2893,25 @@ def update_server_list_logic(dashboard, force_refresh=False):
                                     )
                                 except Exception as e:
                                     logger.error(f"Error refreshing remote subhost {subhost_name}: {e}")
-                        
+
                         dashboard.variables["lastServerListUpdate"] = datetime.datetime.now()
                     except Exception as e:
                         logger.error(f"Error updating server list UI: {e}")
                     finally:
                         dashboard._refreshing_server_list = False
-                
+
                 if hasattr(dashboard, 'root') and dashboard.root:
                     dashboard.root.after(0, _update_ui)
                 else:
                     dashboard._refreshing_server_list = False
-                    
+
             except Exception as e:
                 logger.error(f"Error in background server list update: {e}")
                 dashboard._refreshing_server_list = False
-        
+
         thread = threading.Thread(target=_background_server_list_update, daemon=True, name="ServerListUpdate")
         thread.start()
-            
+
     except Exception as e:
         logger.error(f"Error in update_server_list: {str(e)}")
         dashboard._refreshing_server_list = False
@@ -2913,24 +2928,24 @@ def _check_and_reattach_running_servers(server_manager, console_manager, logger)
     try:
         server_configs = server_manager.get_servers()
         current_running = set()
-        
+
         for server_name, server_config in server_configs.items():
             try:
                 pid = server_config.get('ProcessId') or server_config.get('PID')
                 if not pid:
                     continue
-                
+
                 if not psutil.pid_exists(pid):
                     # Server no longer running, remove from tracked set
                     _reattached_servers.discard(server_name)
                     continue
-                
+
                 current_running.add(server_name)
-                
+
                 # Skip servers that are currently being stopped to avoid lock contention
                 if server_name in _stopping_servers:
                     continue
-                
+
                 # Check if console is already active
                 if hasattr(console_manager, 'consoles') and server_name in console_manager.consoles:
                     console = console_manager.consoles.get(server_name)
@@ -2938,63 +2953,63 @@ def _check_and_reattach_running_servers(server_manager, console_manager, logger)
                         # Console is active, mark as reattached and skip
                         _reattached_servers.add(server_name)
                         continue
-                
+
                 # Skip if we already reattached this server and haven't seen it stop
                 if server_name in _reattached_servers:
                     continue
-                
+
                 try:
                     process = psutil.Process(pid)
                     if not process.is_running():
                         _reattached_servers.discard(server_name)
                         continue
-                    
+
                     # Validate this is still the correct process using ProcessCreateTime
                     is_valid = False
                     if hasattr(server_manager, 'is_server_process_valid'):
                         is_valid, _ = server_manager.is_server_process_valid(server_name, pid, server_config)
                     else:
                         is_valid = _process_matches_server(process, server_name, server_config)
-                    
+
                     if not is_valid:
                         continue
-                    
+
                     # Server is running but no console attached - reattach
                     logger.debug(f"Reattaching console to running server: {server_name} (PID: {pid})")
                     success = console_manager.attach_console_to_process(server_name, process, server_config, lock_timeout=5)
                     if success:
                         _reattached_servers.add(server_name)
                         logger.info(f"Reattached console to {server_name}")
-                    
+
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
-                    
+
             except Exception as e:
                 logger.debug(f"Error checking server {server_name} for reattachment: {e}")
-        
+
         # Clean up tracked set for servers that are no longer running
         _reattached_servers = _reattached_servers & current_running
-                
+
     except Exception as e:
         logger.debug(f"Error in _check_and_reattach_running_servers: {e}")
 
 # These functions are used by both dashboard.py and server_console.py to avoid code duplication
-def start_server_operation(server_name, server_manager, console_manager=None, 
+def start_server_operation(server_name, server_manager, console_manager=None,
                           status_callback=None, completion_callback=None, parent_window=None):
     import threading
-    
+
     def start_in_background():
         try:
             if server_manager is None:
                 if completion_callback:
                     completion_callback(False, "Server manager not initialised.")
                 return
-            
+
             success, result = server_manager.start_server_advanced(
-                server_name, 
+                server_name,
                 callback=status_callback
             )
-            
+
             # If successful and we got a process object, attach console
             if success and hasattr(result, 'pid'):
                 if console_manager:
@@ -3005,15 +3020,15 @@ def start_server_operation(server_name, server_manager, console_manager=None,
                 message = f"Server '{server_name}' started successfully with PID {result.pid}."
             else:
                 message = result if isinstance(result, str) else "Server started successfully"
-            
+
             if completion_callback:
                 completion_callback(success, message)
-                
+
         except Exception as e:
             logger.error(f"Error starting server: {str(e)}")
             if completion_callback:
                 completion_callback(False, f"Failed to start server: {str(e)}")
-    
+
     start_thread = threading.Thread(target=start_in_background, daemon=True)
     start_thread.start()
     return start_thread
@@ -3021,10 +3036,10 @@ def start_server_operation(server_name, server_manager, console_manager=None,
 def stop_server_operation(server_name, server_manager, console_manager=None,
                          status_callback=None, completion_callback=None, parent_window=None):
     import threading
-    
+
     # Mark server as stopping so reattach checks skip it during shutdown
     _stopping_servers.add(server_name)
-    
+
     def stop_in_background():
         try:
             if server_manager is None:
@@ -3036,7 +3051,7 @@ def stop_server_operation(server_name, server_manager, console_manager=None,
                 server_name,
                 callback=status_callback
             )
-            
+
             # Clean up console state when server is stopped
             # This prevents old PID data from causing issues with reused PIDs
             if success and console_manager:
@@ -3044,21 +3059,21 @@ def stop_server_operation(server_name, server_manager, console_manager=None,
                     console_manager.cleanup_console_on_stop(server_name)
                 except Exception as e:
                     logger.warning(f"Failed to cleanup console on stop: {e}")
-            
+
             # Clear reattach and stopping tracking so server can be reattached after restart
             global _reattached_servers
             _reattached_servers.discard(server_name)
             _stopping_servers.discard(server_name)
-            
+
             if completion_callback:
                 completion_callback(success, message if message else "Server stopped successfully")
-                
+
         except Exception as e:
             logger.error(f"Error stopping server: {str(e)}")
             _stopping_servers.discard(server_name)
             if completion_callback:
                 completion_callback(False, f"Failed to stop server: {str(e)}")
-    
+
     stop_thread = threading.Thread(target=stop_in_background, daemon=True)
     stop_thread.start()
     return stop_thread
@@ -3066,10 +3081,10 @@ def stop_server_operation(server_name, server_manager, console_manager=None,
 def restart_server_operation(server_name, server_manager, console_manager=None,
                             status_callback=None, completion_callback=None, parent_window=None):
     import threading
-    
+
     # Mark server as stopping during the stop phase of restart
     _stopping_servers.add(server_name)
-    
+
     def restart_in_background():
         try:
             if server_manager is None:
@@ -3081,10 +3096,10 @@ def restart_server_operation(server_name, server_manager, console_manager=None,
                 server_name,
                 callback=status_callback
             )
-            
+
             # Clear stopping tracking now that restart is complete
             _stopping_servers.discard(server_name)
-            
+
             # If successful and we got a process object, attach console
             if success and hasattr(result, 'pid'):
                 if console_manager:
@@ -3095,16 +3110,16 @@ def restart_server_operation(server_name, server_manager, console_manager=None,
                 message = f"Server '{server_name}' restarted successfully with PID {result.pid}."
             else:
                 message = result if isinstance(result, str) else "Server restarted successfully"
-            
+
             if completion_callback:
                 completion_callback(success, message)
-                
+
         except Exception as e:
             logger.error(f"Error restarting server: {str(e)}")
             _stopping_servers.discard(server_name)
             if completion_callback:
                 completion_callback(False, f"Failed to restart server: {str(e)}")
-    
+
     restart_thread = threading.Thread(target=restart_in_background, daemon=True)
     restart_thread.start()
     return restart_thread
@@ -3114,7 +3129,7 @@ def add_server_dialog(dashboard):
     if dashboard.server_manager is None:
         messagebox.showerror("Error", "Server manager not initialised.")
         return
-        
+
     server_type = create_server_type_selection_dialog(dashboard.root, dashboard.supported_server_types)
     if not server_type:
         return
@@ -3132,46 +3147,39 @@ def add_server_dialog(dashboard):
     dialog_width = min(950, int(dashboard.root.winfo_screenwidth() * 0.9))
     dialog_height = min(700, int(dashboard.root.winfo_screenheight() * 0.8))
     dialog.minsize(dialog_width, dialog_height)
-    
+
     main_frame = ttk.Frame(dialog, padding=15)
     main_frame.pack(fill=tk.BOTH, expand=True)
 
     # Installation control
     dashboard.install_cancelled = tk.BooleanVar(value=False)
-    
+
     # Paned window for top-bottom split layout
     paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
     paned_window.pack(fill=tk.BOTH, expand=True)
-    
+
     # Top frame for setup information
     top_frame = ttk.Frame(paned_window)
     paned_window.add(top_frame, weight=1)
-    
+
     canvas = tk.Canvas(top_frame, highlightthickness=0)
     scrollbar = ttk.Scrollbar(top_frame, orient="vertical", command=canvas.yview)
     scrollable_frame = ttk.Frame(canvas)
-    
+
     scrollable_frame.bind(
         "<Configure>",
         lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
     )
-    
+
     canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
     canvas.configure(yscrollcommand=scrollbar.set)
-    
+
     scrollbar.pack(side="right", fill="y")
     canvas.pack(side="left", fill="both", expand=True)
-    
-    # Update canvas window width when the canvas changes size
-    def update_canvas_width(event=None):
-        try:
-            if canvas.winfo_width() > 1:
-                canvas.itemconfig(1, width=canvas.winfo_width())
-        except tk.TclError:
-            pass
-    
+
+    update_canvas_width = make_canvas_width_updater(canvas)
     canvas.bind("<Configure>", update_canvas_width)
-    
+
     # Configure scrollable frame grid with proper column weights
     scrollable_frame.columnconfigure(0, weight=0, minsize=150)
     scrollable_frame.columnconfigure(1, weight=1, minsize=200)
@@ -3198,57 +3206,57 @@ def add_server_dialog(dashboard):
     if server_type == "Minecraft":
         try:
             available_modloaders = ["Vanilla", "Forge", "Fabric", "NeoForge"]
-            
+
             # Modloader selection (positioned above version dropdown)
             ttk.Label(scrollable_frame, text="Modloader:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-            modloader_combo = ttk.Combobox(scrollable_frame, textvariable=form_vars['modloader'], 
+            modloader_combo = ttk.Combobox(scrollable_frame, textvariable=form_vars['modloader'],
                                          values=available_modloaders, state="readonly", width=32, font=("Segoe UI", 10))
             modloader_combo.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
             current_row += 1
-            
+
             # Minecraft version dropdown (positioned below modloader)
             ttk.Label(scrollable_frame, text="Minecraft Version:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-            version_combo = ttk.Combobox(scrollable_frame, textvariable=form_vars['minecraft_version'], 
+            version_combo = ttk.Combobox(scrollable_frame, textvariable=form_vars['minecraft_version'],
                                        values=[], state="readonly", width=32, font=("Segoe UI", 10))
             version_combo.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
             current_row += 1
-            
+
             def update_version_list(*args):
                 try:
                     selected_modloader = form_vars['modloader'].get().lower()
                     if selected_modloader == "vanilla":
                         selected_modloader = "vanilla"
-                    
+
                     versions = get_minecraft_versions_from_database(
                         modloader=selected_modloader
                     )
-                    
+
                     version_options = []
                     version_map = {}
-                    
+
                     for version_data in versions:
                         version_id = version_data.get("version_id", "")
                         display_text = version_id
                         version_options.append(display_text)
                         version_map[display_text] = version_data
-                    
+
                     version_combo['values'] = version_options
                     if version_options:
                         form_vars['minecraft_version'].set(version_options[0])
                     else:
                         form_vars['minecraft_version'].set("")
-                    
+
                     # Store version mapping for later use
                     setattr(dialog, 'version_map', version_map)
-                    
+
                 except Exception as e:
                     logger.error(f"Error updating version list: {e}")
                     version_combo['values'] = []
                     form_vars['minecraft_version'].set("")
-            
+
             form_vars['modloader'].trace('w', update_version_list)
             update_version_list()
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Minecraft support not available: {str(e)}")
             dialog.destroy()
@@ -3259,22 +3267,22 @@ def add_server_dialog(dashboard):
         ttk.Label(scrollable_frame, text="App ID:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
         app_id_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['app_id'], width=25, font=("Segoe UI", 10))
         app_id_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
-        
+
         def browse_appid():
             appid_dialog = tk.Toplevel(dialog)
             appid_dialog.title("Select Dedicated Server")
             appid_dialog.transient(dialog)
             appid_dialog.grab_set()
             appid_dialog.geometry("600x500")
-            
+
             search_frame = ttk.Frame(appid_dialog, padding=10)
             search_frame.pack(fill=tk.X)
-            
+
             ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT)
             search_var = tk.StringVar()
             search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
             search_entry.pack(side=tk.LEFT, padx=(5, 10))
-            
+
             # Load dedicated servers from scanner's AppID list
             try:
                 dedicated_servers_data, metadata = load_appid_scanner_list(dashboard.server_manager_dir)
@@ -3321,10 +3329,10 @@ def add_server_dialog(dashboard):
                 logger.error(error_msg)
                 messagebox.showerror("Database Error", f"{error_msg}\n\nThe database must be available and populated with AppID scanner data.")
                 return
-            
+
             list_frame = ttk.Frame(appid_dialog, padding=10)
             list_frame.pack(fill=tk.BOTH, expand=True)
-            
+
             columns = ("name", "appid", "developer", "type")
             server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
             server_tree.heading("name", text="Server Name")
@@ -3335,58 +3343,41 @@ def add_server_dialog(dashboard):
             server_tree.column("appid", width=80)
             server_tree.column("developer", width=150)
             server_tree.column("type", width=120)
-            
+
             tree_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=server_tree.yview)
             server_tree.configure(yscrollcommand=tree_scrollbar.set)
-            
+
             tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
             server_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            
-            def populate_servers(filter_text: str = ""):
-                server_tree.delete(*server_tree.get_children())
-                for server in dedicated_servers:
-                    server_name = server["name"]
-                    if not filter_text or filter_text.lower() in server_name.lower():
-                        server_tree.insert("", tk.END, values=(
-                            server_name, 
-                            server["appid"],
-                            server.get("developer", "Unknown")[:25] + ("..." if len(server.get("developer", "")) > 25 else ""),
-                            server.get("type", "Dedicated Server")
-                        ))
-            
-            populate_servers()
-            
-            def on_search(*args):
-                populate_servers(search_var.get())
-            
-            search_var.trace('w', on_search)
-            
+
+            populate_server_tree(server_tree, dedicated_servers, search_var)
+
             def show_server_info(event):
                 item = server_tree.selection()
                 if item:
                     item_values = server_tree.item(item[0])['values']
                     selected_server = server_dict.get(str(item_values[1]))
-                    
+
                     if selected_server and selected_server.get("description"):
                         tooltip = tk.Toplevel(appid_dialog)
                         tooltip.wm_overrideredirect(True)
                         tooltip.geometry(f"+{event.x_root+10}+{event.y_root+10}")
-                        
+
                         desc = selected_server["description"][:200] + ("..." if len(selected_server["description"]) > 200 else "")
-                        
-                        label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}", 
+
+                        label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}",
                                        background="lightyellow", relief="solid", borderwidth=1,
                                        wraplength=300, justify=tk.LEFT, font=("Segoe UI", 9))
                         label.pack()
-                        
+
                         # Auto-hide after 3 seconds
                         tooltip.after(3000, tooltip.destroy)
-            
+
             server_tree.bind('<Double-1>', show_server_info)
-            
+
             button_frame = ttk.Frame(appid_dialog, padding=10)
             button_frame.pack(fill=tk.X)
-            
+
             def select_server():
                 selected = server_tree.selection()
                 if selected:
@@ -3396,32 +3387,32 @@ def add_server_dialog(dashboard):
                     appid_dialog.destroy()
                 else:
                     messagebox.showinfo("No Selection", "Please select a server from the list.")
-            
+
             def cancel_selection():
                 appid_dialog.destroy()
-            
+
             ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(button_frame, text="Select Server", command=select_server, width=15).pack(side=tk.RIGHT)
-            
+
             centre_window(appid_dialog, 600, 500, dialog)
-        
+
         ttk.Button(scrollable_frame, text="Browse", command=browse_appid, width=12).grid(row=current_row, column=2, padx=15, pady=10)
         current_row += 1
-        
+
         ttk.Label(scrollable_frame, text="(Enter Steam App ID or use Browse to select from list)", foreground="gray", font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
         current_row += 1
 
     ttk.Label(scrollable_frame, text="Install Directory:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
     install_dir_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['install_dir'], width=25, font=("Segoe UI", 10))
     install_dir_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
-    
+
     def browse_directory():
         directory = filedialog.askdirectory(title="Select Installation Directory")
         if directory:
             form_vars['install_dir'].set(directory)
     ttk.Button(scrollable_frame, text="Browse", command=browse_directory, width=12).grid(row=current_row, column=2, padx=15, pady=10)
     current_row += 1
-    
+
     # Set default installation directory help text based on server type
     if server_type == "Steam":
         help_text = "(Leave blank for SteamCMD default location)"
@@ -3441,42 +3432,42 @@ def add_server_dialog(dashboard):
     current_row += 1
 
     current_row += 1
-    
+
     button_container = ttk.Frame(top_frame)
     button_container.pack(fill=tk.X, pady=(10, 5))
-    
+
     create_button = ttk.Button(button_container, text="Create Server", width=18)
     create_button.pack(side=tk.LEFT, padx=(0, 10))
-    
+
     cancel_button = ttk.Button(button_container, text="Cancel Installation", width=18, state=tk.DISABLED)
     cancel_button.pack(side=tk.LEFT, padx=(0, 10))
-    
+
     close_button = ttk.Button(button_container, text="Close", width=12)
     close_button.pack(side=tk.RIGHT)
 
     status_container = ttk.Frame(top_frame)
     status_container.pack(fill=tk.X, pady=(5, 10))
-    
+
     status_var = tk.StringVar(value="Ready to create server...")
     status_label = ttk.Label(status_container, textvariable=status_var, font=("Segoe UI", 10))
     status_label.pack(anchor=tk.W, pady=(0, 5))
-    
+
     progress = ttk.Progressbar(status_container, mode="indeterminate")
     progress.pack(fill=tk.X)
 
     # Bottom frame for console log (50% of space)
     bottom_frame = ttk.Frame(paned_window)
     paned_window.add(bottom_frame, weight=1)
-    
+
     console_container = ttk.LabelFrame(bottom_frame, text="Installation Log", padding=10)
     console_container.pack(fill=tk.BOTH, expand=True)
-    
-    console_output = scrolledtext.ScrolledText(console_container, width=60, height=12, 
-                                             background="black", foreground="white", 
+
+    console_output = scrolledtext.ScrolledText(console_container, width=60, height=12,
+                                             background="black", foreground="white",
                                              font=("Consolas", 9))
     console_output.pack(fill=tk.BOTH, expand=True)
     console_output.config(state=tk.DISABLED)
-    
+
     def append_console(text):
         try:
             if not dialog.winfo_exists():
@@ -3488,7 +3479,7 @@ def add_server_dialog(dashboard):
         except (tk.TclError, AttributeError):
             # Widget was destroyed, ignore
             pass
-    
+
     append_console(f"[INFO] Ready to create {server_type} server...")
     append_console(f"[INFO] Please fill in the required fields above and click 'Create Server' to begin.")
 
@@ -3497,14 +3488,14 @@ def add_server_dialog(dashboard):
             # Check if dialog still exists before accessing widgets
             if not dialog.winfo_exists():
                 return
-                
+
             server_name = form_vars['name'].get().strip()
             install_dir = form_vars['install_dir'].get().strip()
-            
+
             if not server_name:
                 messagebox.showerror("Validation Error", "Server name is required.")
                 return
-                
+
             # Set default install directory if not provided
             if not install_dir:
                 if server_type == "Steam":
@@ -3519,7 +3510,7 @@ def add_server_dialog(dashboard):
                     else:
                         messagebox.showerror("Validation Error", "Default installation directory not configured. Please set the installation directory manually.")
                         return
-            
+
             # Validate server type specific fields
             if server_type == "Steam":
                 app_id = form_vars.get('app_id', tk.StringVar()).get().strip()
@@ -3529,52 +3520,52 @@ def add_server_dialog(dashboard):
                 if not app_id.isdigit():
                     messagebox.showerror("Validation Error", "Steam App ID must be a number.")
                     return
-                    
+
             elif server_type == "Minecraft":
                 minecraft_version = form_vars['minecraft_version'].get().strip()
                 if not minecraft_version:
                     messagebox.showerror("Validation Error", "Minecraft version must be selected.")
                     return
-            
+
             # Check for invalid characters in server name
             invalid_chars = ['<', '>', ':', '"', '|', '?', '*', '\\', '/']
             if any(char in server_name for char in invalid_chars):
-                messagebox.showerror("Validation Error", 
+                messagebox.showerror("Validation Error",
                                    "Server name contains invalid characters. Please use only letters, numbers, spaces, and underscores.")
                 return
-            
+
             if dashboard.server_manager:
                 existing_config = dashboard.server_manager.get_server_config(server_name)
                 if existing_config:
                     messagebox.showerror("Validation Error", f"A server with the name '{server_name}' already exists.")
                     return
-            
+
             create_button.config(state=tk.DISABLED)
             cancel_button.config(state=tk.NORMAL)
             progress.start(10)
             status_var.set("Starting installation...")
-            
+
             def safe_status_callback(msg):
                 try:
                     if dialog.winfo_exists():
                         status_var.set(msg)
                 except (tk.TclError, AttributeError):
                     pass
-            
+
             def safe_console_callback(msg):
                 try:
                     if dialog.winfo_exists():
                         append_console(msg)
                 except (tk.TclError, AttributeError):
                     pass
-            
+
             # Prepare minecraft version data if applicable
             minecraft_version_data = None
             if server_type == "Minecraft":
                 selected_version = form_vars['minecraft_version'].get()
                 version_map = getattr(dialog, 'version_map', {})
                 minecraft_version_data = version_map.get(selected_version)
-            
+
             # Use the existing installation function from dashboard_functions
             success, message = perform_server_installation(
                 server_type=server_type,
@@ -3602,19 +3593,19 @@ def add_server_dialog(dashboard):
             else:
                 append_console(f"[ERROR] {message}")
                 status_var.set("Installation failed!")
-                
+
                 # Show detailed error dialog for installation failures
                 try:
-                    messagebox.showerror("Installation Failed", 
+                    messagebox.showerror("Installation Failed",
                                        f"Server installation failed:\n\n{message}\n\n"
                                        "Please check the console output for more details.")
                 except tk.TclError:
                     # Dialog might be destroyed
                     pass
-                
+
                 create_button.config(state=tk.NORMAL)
                 cancel_button.config(state=tk.DISABLED)
-                
+
         except tk.TclError:
             # Dialog was destroyed while thread was running - this is normal
             logger.info("Installation dialog was closed while installation was in progress")
@@ -3633,34 +3624,34 @@ def add_server_dialog(dashboard):
             except (tk.TclError, AttributeError):
                 # Widget was destroyed, ignore
                 pass
-    
+
     def start_installation():
         installation_thread = threading.Thread(target=install_server)
         installation_thread.daemon = True
         installation_thread.start()
-        
+
     def cancel_installation():
         dashboard.install_cancelled.set(True)
         cancel_button.config(state=tk.DISABLED)
         status_var.set("Cancelling installation...")
         append_console("[INFO] Cancellation requested, stopping installation process...")
-        
+
     def close_dialog():
         # Cancel any running installation
         if hasattr(dashboard, 'install_cancelled'):
             dashboard.install_cancelled.set(True)
         dialog.destroy()
-        
+
     create_button.config(command=start_installation)
     cancel_button.config(command=cancel_installation)
     close_button.config(command=close_dialog)
-    
+
     def on_close():
         # Handle window close (X button) - check if installation is running
         if hasattr(dashboard, 'install_cancelled') and hasattr(cancel_button, 'instate'):
             try:
                 if cancel_button.instate(['!disabled']):
-                    result = messagebox.askyesno("Confirm Exit", 
+                    result = messagebox.askyesno("Confirm Exit",
                                                "An installation is in progress. Do you want to cancel it?",
                                                icon=messagebox.QUESTION)
                     if result:
@@ -3671,12 +3662,12 @@ def add_server_dialog(dashboard):
             except tk.TclError:
                 # Widget was destroyed, just close
                 pass
-        
+
         # Cancel any running installation and close
         if hasattr(dashboard, 'install_cancelled'):
             dashboard.install_cancelled.set(True)
         dialog.destroy()
-        
+
     dialog.protocol("WM_DELETE_WINDOW", on_close)
-    
+
     centre_window(dialog, dialog_width, dialog_height, dashboard.root)

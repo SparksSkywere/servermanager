@@ -16,8 +16,7 @@ setup_module_path()
 logger: logging.Logger = setup_module_logging("DashboardTracker")
 
 class DashboardTracker:
-    # - Scans for running dashboard/server processes
-    # - Updates status in background thread
+    # Scans for running dashboard/server processes
     def __init__(self, server_manager_dir=None):
         if server_manager_dir is None:
             server_manager_dir = os.environ.get("SERVERMANAGERDIR")
@@ -42,7 +41,7 @@ class DashboardTracker:
                 if fname.name.startswith("dashboard") and fname.name.endswith(".pid"):
                     pid_file = str(fname)
                     try:
-                        with open(pid_file, 'r') as f:
+                        with open(pid_file, 'r', encoding='utf-8') as f:
                             pid_info = json.load(f)
                         pid = pid_info.get("ProcessId")
                         if pid and psutil.pid_exists(pid):
@@ -70,7 +69,7 @@ class DashboardTracker:
             from Modules.Database.server_configs_database import ServerConfigManager
             manager = ServerConfigManager()
             all_servers = manager.get_all_servers()
-            
+
             for config in all_servers:
                 name = config.get("Name", "Unknown")
                 try:
@@ -119,7 +118,7 @@ class DashboardTracker:
         if self._thread:
             self._thread.join(timeout=2)
             self._thread = None  # Clear thread reference to prevent memory leak
-        self._stop_event = threading.Event()  # Reset stop event
+        self._stop_event = threading.Event()
 
     def _auto_refresh_loop(self):
         while not self._stop_event.is_set():
@@ -128,5 +127,3 @@ class DashboardTracker:
 
 # Create a global instance for import
 tracker = DashboardTracker()
-# Optionally start auto-refresh if used as a service
-# tracker.start_auto_refresh()

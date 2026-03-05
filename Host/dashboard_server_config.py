@@ -15,6 +15,7 @@ setup_module_path()
 from Modules.server_logging import get_dashboard_logger
 from Host.dashboard_functions import (
     centre_window, load_appid_scanner_list,
+    make_canvas_width_updater, populate_server_tree,
     rename_server_configuration
 )
 
@@ -68,13 +69,7 @@ class ServerConfigMixin:
         scrollbar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
 
-        def update_canvas_width(event=None):
-            try:
-                if canvas.winfo_width() > 1:
-                    canvas.itemconfig(1, width=canvas.winfo_width())
-            except tk.TclError:
-                pass
-
+        update_canvas_width = make_canvas_width_updater(canvas)
         canvas.bind("<Configure>", update_canvas_width)
 
         scrollable_frame.columnconfigure(0, weight=1, minsize=200)
@@ -177,24 +172,7 @@ class ServerConfigMixin:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         server_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        def populate_servers(filter_text: str = ""):
-            server_tree.delete(*server_tree.get_children())
-            for server in dedicated_servers:
-                server_name = server["name"]
-                if not filter_text or filter_text.lower() in server_name.lower():
-                    server_tree.insert("", tk.END, values=(
-                        server_name,
-                        server["appid"],
-                        server.get("developer", "Unknown")[:25] + ("..." if len(server.get("developer", "")) > 25 else ""),
-                        server.get("type", "Dedicated Server")
-                    ))
-
-        populate_servers()
-
-        def on_search(*args):
-            populate_servers(search_var.get())
-
-        search_var.trace('w', on_search)
+        populate_servers = populate_server_tree(server_tree, dedicated_servers, search_var)
 
         def show_server_info(event):
             item = server_tree.selection()

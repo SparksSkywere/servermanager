@@ -12,18 +12,18 @@ from Modules.Database.user_database import initialise_user_manager
 def reset_admin_2fa():
     # Reset admin 2FA
     print("=== Resetting Admin 2FA ===")
-    
+
     try:
         engine, user_manager = initialise_user_manager()
-        
+
         print("Disabling 2FA for admin...")
         success, message = user_manager.disable_2fa("admin")
-        
+
         if success:
             print("Admin 2FA disabled")
         else:
             print(f"Failed: {message}")
-            
+
     except Exception as e:
         print(f"Error: {e}")
         import traceback

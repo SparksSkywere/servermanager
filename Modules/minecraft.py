@@ -15,6 +15,17 @@ setup_module_path()
 
 logger: logging.Logger = setup_module_logging("Minecraft")
 
+# Common Java installation base directories on Windows used by find_java_installations() to discover available JDK/JRE installs
+WINDOWS_JAVA_SEARCH_PATHS = [
+    r"C:\Program Files\Java",
+    r"C:\Program Files (x86)\Java",
+    r"C:\Program Files\Eclipse Adoptium",
+    r"C:\Program Files\Eclipse Foundation",
+    r"C:\Program Files\Amazon Corretto",
+    r"C:\Program Files\Microsoft",
+    r"C:\Program Files\Zulu",
+]
+
 def get_java_version(java_path="java"):
     # Get Java version from executable
     try:
@@ -27,35 +38,34 @@ def get_java_version(java_path="java"):
             startupinfo.wShowWindow = 0
             creationflags = subprocess.CREATE_NO_WINDOW
             logger.debug(f"[SUBPROCESS_TRACE] CREATE_NO_WINDOW: {creationflags}")
-        
+
         logger.debug("[SUBPROCESS_TRACE] Running java -version")
         result = subprocess.run([java_path, '-version'], capture_output=True, text=True, timeout=10,
                                startupinfo=startupinfo, creationflags=creationflags)
         logger.debug(f"[SUBPROCESS_TRACE] returncode: {result.returncode}")
         version_output = result.stderr
-        
+
         # Parse version-handles "1.8.0_271" and "21.0.1" formats
         version_match = re.search(r'version "([^"]+)"', version_output)
         if version_match:
             version_str = version_match.group(1)
-            
+
             if version_str.startswith('1.'):
                 major_version = int(version_str.split('.')[1])
             else:
                 major_version = int(version_str.split('.')[0])
-            
+
             return major_version, version_str
-            
+
     except Exception as e:
         logger.debug(f"Java version check failed: {java_path} - {str(e)}")
-    
+
     return None, None
 
 def detect_java_installations():
-    # Find all Java installations on system
-    # Returns list of {"path", "version", "major"} dicts
+    # Find all Java installations on system and returns list of {"path", "version", "major"} dicts
     java_installations = []
-    
+
     # Check default Java in PATH
     major, version = get_java_version("java")
     if major is not None:
@@ -65,20 +75,10 @@ def detect_java_installations():
             "major": major,
             "display_name": f"System Default (Java {major})"
         })
-    
-    # Common Java installation paths on Windows
+
+    # Scan common Java installation paths on Windows
     if os.name == 'nt':
-        common_paths = [
-            r"C:\Program Files\Java",
-            r"C:\Program Files (x86)\Java",
-            r"C:\Program Files\Eclipse Adoptium",
-            r"C:\Program Files\Eclipse Foundation",
-            r"C:\Program Files\Amazon Corretto",
-            r"C:\Program Files\Microsoft",
-            r"C:\Program Files\Zulu"
-        ]
-        
-        for base_path in common_paths:
+        for base_path in WINDOWS_JAVA_SEARCH_PATHS:
             if os.path.exists(base_path):
                 try:
                     for item in os.listdir(base_path):
@@ -96,7 +96,7 @@ def detect_java_installations():
                                         display_name = f"JRE {major} ({item})"
                                     else:
                                         display_name = f"Java {major} ({item})"
-                                    
+
                                     java_installations.append({
                                         "path": java_exe,
                                         "version": version,
@@ -105,7 +105,7 @@ def detect_java_installations():
                                     })
                 except Exception as e:
                     logger.debug(f"Error scanning {base_path}: {str(e)}")
-    
+
     # Remove duplicates based on version and path
     unique_installations = []
     seen_versions = set()
@@ -114,57 +114,55 @@ def detect_java_installations():
         if key not in seen_versions:
             seen_versions.add(key)
             unique_installations.append(installation)
-    
+
     # Sort by major version (newest first)
     unique_installations.sort(key=lambda x: x["major"], reverse=True)
-    
+
     return unique_installations
 
 def get_recommended_java_for_minecraft(version_id):
     # Get the recommended Java installation for a specific Minecraft version
-    # Args: version_id (str): Minecraft version ID
-    # Returns: dict: Recommended Java installation info, or None if none suitable
     required_java = get_minecraft_java_requirement(version_id)
     available_javas = detect_java_installations()
-    
+
     # Find the best match - prefer the lowest version that meets requirements
     suitable_javas = [j for j in available_javas if j["major"] >= required_java]
-    
+
     if suitable_javas:
         # Sort by major version (lowest suitable version first)
         suitable_javas.sort(key=lambda x: x["major"])
         return suitable_javas[0]
-    
+
     return None
 
 def get_minecraft_java_requirement(version_id):
     # Get the minimum Java version required for a Minecraft version
-    # Args: version_id (str): Minecraft version ID
-    # Returns: int: Minimum Java version required
     try:
         # Parse version to determine Java requirements
-        # These are based on Minecraft's official requirements
         if version_id.startswith('1.'):
             version_parts = version_id.split('.')
             if len(version_parts) >= 2:
                 major = int(version_parts[1])
                 if major <= 16:
-                    return 8  # MC 1.16 and earlier: Java 8+
+                    # MC 1.16 and earlier: Java 8+
+                    return 8
                 elif major == 17:
-                    return 16 # MC 1.17: Java 16+
+                    # MC 1.17: Java 16+
+                    return 16
                 elif major <= 20:
-                    return 17 # MC 1.18-1.20: Java 17+
+                    # MC 1.18-1.20: Java 17+
+                    return 17
                 else:
-                    return 21 # MC 1.21+: Java 21+
-        
-        # Snapshots (like 25w16a) are typically for the next major version
-        # Most recent snapshots require Java 21+
+                    # MC 1.21+: Java 21+
+                    return 21
+
+        # Snapshots (like 25w16a) are typically for the next major version and most recent snapshots require Java 21+
         if 'w' in version_id:  # Weekly snapshots
             return 21
-        
+
         # Default to Java 21 for unknown versions (future-proofing)
         return 21
-        
+
     except Exception:
         # Default to Java 17 if we can't parse the version
         return 17
@@ -173,17 +171,17 @@ def check_java_compatibility(version_id, java_path="java"):
     # Check if a Java installation is compatible with a Minecraft version
     java_major, java_full = get_java_version(java_path)
     required_java = get_minecraft_java_requirement(version_id)
-    
+
     if java_major is None:
         return False, None, required_java, f"Java is not installed or not accessible at {java_path}"
-    
+
     is_compatible = java_major >= required_java
-    
+
     if is_compatible:
         message = f"Java {java_full} at {java_path} is compatible with Minecraft {version_id}"
     else:
         message = f"Java {java_full} at {java_path} is incompatible with Minecraft {version_id}. Requires Java {required_java} or later."
-    
+
     return is_compatible, java_major, required_java, message
 
 def fetch_minecraft_versions():
@@ -280,74 +278,72 @@ def fetch_neoforge_installer_url(mc_version):
 
 class MinecraftServerManager:
     # Class to manage Minecraft server operations and installations
-    
+
     def __init__(self, server_manager_dir, config=None):
         # Initialise the Minecraft server manager
-        # Args: server_manager_dir (str): Base directory for server manager
-        #       config (dict): Configuration dictionary
         self.server_manager_dir = server_manager_dir
         self.config = config or {}
-    
+
     def create_launch_script(self, install_dir, jar_file, memory_mb=1024, additional_args="", java_path="java"):
         # Create a platform-specific launch script for the Minecraft server
         import os
-        
-        if os.name == 'nt':  # Windows
+
+        # Windows
+        if os.name == 'nt':
             script_path = os.path.join(install_dir, "start_server.bat")
-            with open(script_path, "w") as f:
+            with open(script_path, "w", encoding='utf-8') as f:
                 f.write("@echo off\n")
                 f.write("echo Starting Minecraft Server...\n")
                 f.write(f'"{java_path}" -Xmx{memory_mb}M -Xms{memory_mb}M -jar "{jar_file}" nogui {additional_args}\n')
                 f.write("echo Server stopped.\n")
                 f.write("pause\n")
-        else:  # Unix/Linux
+        # Unix/Linux
+        else:
             script_path = os.path.join(install_dir, "start_server.sh")
-            with open(script_path, "w") as f:
+            with open(script_path, "w", encoding='utf-8') as f:
                 f.write("#!/bin/bash\n")
                 f.write("echo \"Starting Minecraft Server...\"\n")
                 f.write(f'"{java_path}" -Xmx{memory_mb}M -Xms{memory_mb}M -jar "{jar_file}" nogui {additional_args}\n')
                 f.write("echo \"Server stopped.\"\n")
             os.chmod(script_path, 0o755)
-        
+
         logger.info(f"Created launch script at: {script_path}")
         return script_path
-    
+
     def detect_server_executable(self, install_dir):
         # Detect the server executable in an installation directory
-        # Args: install_dir (str): Directory to search for server executables
-        # Returns: tuple: (executable_type, executable_path) where type is 'jar', 'bat', or 'sh'
         import os
-        
+
         if not os.path.exists(install_dir):
             return None, None
-        
+
         # Look for JAR files first (preferred)
         jar_candidates = []
         script_candidates = []
-        
+
         for file in os.listdir(install_dir):
             file_lower = file.lower()
-            
+
             # JAR files
             if file_lower.endswith('.jar'):
                 if any(keyword in file_lower for keyword in [
                     'server', 'minecraft', 'forge', 'fabric', 'spigot', 'paper', 'bukkit', 'neoforge'
                 ]):
                     jar_candidates.append(file)
-            
+
             # Script files
             elif file_lower.endswith(('.bat', '.cmd')) and os.name == 'nt':
                 if any(keyword in file_lower for keyword in [
                     'run', 'start', 'server', 'launch'
                 ]):
                     script_candidates.append(file)
-            
+
             elif file_lower.endswith('.sh') and os.name != 'nt':
                 if any(keyword in file_lower for keyword in [
                     'run', 'start', 'server', 'launch'
                 ]):
                     script_candidates.append(file)
-        
+
         # Prioritize JAR files over scripts
         if jar_candidates:
             # Sort by preference
@@ -358,10 +354,8 @@ class MinecraftServerManager:
                 3
             ))
             return 'jar', os.path.join(install_dir, jar_candidates[0])
-        
+
         elif script_candidates:
             return 'script', os.path.join(install_dir, script_candidates[0])
-        
-        return None, None
-    
 
+        return None, None

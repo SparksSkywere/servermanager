@@ -17,13 +17,13 @@ logger = setup_module_logging("NetworkSecurity")
 DEFAULT_ALLOWED_NETWORKS = [
     "127.0.0.0/8",      # Localhost
     "10.0.0.0/8",       # Private Class A
-    "172.16.0.0/12",    # Private Class B  
+    "172.16.0.0/12",    # Private Class B
     "192.168.0.0/16",   # Private Class C
 ]
 
 class NetworkSecurityManager:
     # Manages network-level security for the Server Manager
-    
+
     def __init__(self, allowed_networks=None):
         self.allowed_networks = []
         if allowed_networks:
@@ -36,11 +36,11 @@ class NetworkSecurityManager:
             # Use defaults
             for network in DEFAULT_ALLOWED_NETWORKS:
                 self.allowed_networks.append(ipaddress.ip_network(network, strict=False))
-                
+
         logger.info(f"Network security initialised with {len(self.allowed_networks)} allowed networks")
-        
+
     def is_ip_allowed(self, ip_address):
-        # - Check if IP address is allowed
+        # Check if IP address is allowed
         try:
             client_ip = ipaddress.ip_address(ip_address)
             for network in self.allowed_networks:
@@ -57,40 +57,39 @@ def require_cluster_network_security(security_manager):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             client_ip = request.environ.get('REMOTE_ADDR', request.remote_addr)
-            
+
             # Handle proxied requests
             forwarded_for = request.headers.get('X-Forwarded-For')
             real_ip = request.headers.get('X-Real-IP')
-            
+
             if forwarded_for:
                 client_ip = forwarded_for.split(',')[0].strip()
             elif real_ip:
                 client_ip = real_ip
-            
+
             # Log all cluster API access attempts
             logger.info(f"Cluster API access attempt from {client_ip} to {request.endpoint}")
-            
+
             # Skip network validation for localhost requests (development/debugging)
             if client_ip in ['127.0.0.1', '::1', 'localhost']:
                 logger.debug(f"Allowing localhost cluster access: {request.endpoint}")
                 return f(*args, **kwargs)
-                
+
             # Check if IP is in allowed networks
             if not security_manager.is_ip_allowed(client_ip):
                 logger.warning(f"Cluster API access denied for IP address: {client_ip} on endpoint: {request.endpoint}")
                 return jsonify({
-                    "error": "Cluster access denied", 
+                    "error": "Cluster access denied",
                     "message": "Your IP address is not authorised for cluster communication",
                     "timestamp": datetime.now().isoformat(),
                     "client_ip": client_ip
                 }), 403
-            
+
             # Additional security checks for cluster endpoints
             user_agent = request.headers.get('User-Agent', '')
             if not user_agent or 'ServerManager' not in user_agent:
                 logger.warning(f"Cluster API access with suspicious User-Agent from {client_ip}: {user_agent}")
                 # Don't block entirely, but log for monitoring
-            
             logger.info(f"Cluster API access granted for IP: {client_ip} to {request.endpoint}")
             return f(*args, **kwargs)
         return decorated_function

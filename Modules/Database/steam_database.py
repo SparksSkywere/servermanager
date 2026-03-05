@@ -48,7 +48,7 @@ def ensure_steam_tables(engine):
                     source TEXT DEFAULT 'steamdb'
                 )
             """))
-            
+
             # Console states table for storing server console output
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS console_states (
@@ -62,10 +62,10 @@ def ensure_steam_tables(engine):
                     UNIQUE(server_name)
                 )
             """))
-            
+
             conn.commit()
             logger.info("Steam apps and console states tables ensured")
-            
+
     except Exception as e:
         logger.error(f"Steam tables creation failed: {e}")
         raise

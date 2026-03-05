@@ -13,22 +13,22 @@ logger = get_component_logger("SQL_Connection")
 # Import specialised DB modules
 try:
     from .user_database import (
-        get_user_engine, get_user_sql_config_from_registry, build_user_db_url, 
+        get_user_engine, get_user_sql_config_from_registry, build_user_db_url,
         ensure_root_admin, initialise_user_manager, sql_login, handle_2fa_login
     )
     from .steam_database import (
-        get_steam_engine, get_steam_sql_config_from_registry, build_steam_db_url, 
+        get_steam_engine, get_steam_sql_config_from_registry, build_steam_db_url,
         ensure_steam_tables, initialise_steam_database
     )
     from .database_utils import get_sql_config_from_registry, build_db_url, get_engine_by_type
 except ImportError:
     try:
         from user_database import (
-            get_user_engine, get_user_sql_config_from_registry, build_user_db_url, 
+            get_user_engine, get_user_sql_config_from_registry, build_user_db_url,
             ensure_root_admin, initialise_user_manager, sql_login, handle_2fa_login
         )
         from steam_database import (
-            get_steam_engine, get_steam_sql_config_from_registry, build_steam_db_url, 
+            get_steam_engine, get_steam_sql_config_from_registry, build_steam_db_url,
             ensure_steam_tables, initialise_steam_database
         )
         from database_utils import get_sql_config_from_registry, build_db_url, get_engine_by_type
@@ -39,14 +39,14 @@ except ImportError:
 # Export interface
 __all__ = [
     # User DB functions
-    'get_user_engine', 'get_user_sql_config_from_registry', 'build_user_db_url', 
-    'ensure_root_admin', 'initialise_user_manager', 
+    'get_user_engine', 'get_user_sql_config_from_registry', 'build_user_db_url',
+    'ensure_root_admin', 'initialise_user_manager',
     'sql_login', 'handle_2fa_login',
-    
-    # Steam DB functions  
-    'get_steam_engine', 'get_steam_sql_config_from_registry', 'build_steam_db_url', 
+
+    # Steam DB functions
+    'get_steam_engine', 'get_steam_sql_config_from_registry', 'build_steam_db_url',
     'ensure_steam_tables', 'initialise_steam_database',
-    
+
     # Shared utilities
     'get_sql_config_from_registry', 'build_db_url', 'get_engine_by_type',
 ]

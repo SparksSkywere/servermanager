@@ -1,6 +1,6 @@
 # Server Manager — Technical Wiki
 
-**Version:** 1.2 
+**Version:** 1.3
 **Platform:** Windows 10/11, Windows Server 2016+ (Linux support in early development)  
 **Developer:** Sparks Skywere 
 **Repository:** [https://github.com/SparksSkywere/servermanager](https://github.com/SparksSkywere/servermanager)
@@ -69,7 +69,7 @@
     - [12.7 Cluster Database](#127-cluster-database)
     - [12.8 Console State Database](#128-console-state-database)
     - [12.9 Database Migration and Schema Updates](#129-database-migration-and-schema-updates)
-    - [12.10 Database Update Script](#1210-database-update-script)
+    - [12.10 Database Population Scripts](#1210-database-population-scripts)
   - [13. User Management and Authentication](#13-user-management-and-authentication)
     - [13.1 User Model](#131-user-model)
     - [13.2 Password Hashing](#132-password-hashing)
@@ -134,7 +134,7 @@ Server Manager is a server management platform developed by Sparks Skywere for m
 
 The application is designed to run on Windows with administrator privileges and offers the following core capabilities:
 
-- **Server Lifecycle Management** — Install, start, stop, restart, and update game servers through a unified interface.
+- **Server Management** — Install, start, stop, restart, and update game servers through a unified interface.
 - **Real-Time Server Console** — Interactive console that connects to running server processes, allowing operators to view output and send commands in real time through multiple input methods including named pipes and file-based command queues.
 - **Automated Operations** — Schedule server restarts with pre-restart warning broadcasts, MOTD (Message of the Day) announcements at configurable intervals, and automatic update checking with seamless update-and-restart workflows.
 - **Multi-Node Clustering** — A Host/Subhost topology that allows a central Host node to manage multiple Subhost nodes across a network. Nodes join via a secure request-and-approval workflow, and the Host can remotely control servers on any connected Subhost.
@@ -199,7 +199,17 @@ All Python dependencies are listed in `requirements.txt` and are installed autom
 
 ### 3.1 Windows Installation
 
+Enabling powershell scripts
+
+1. Go to Settings
+2. Go to System -> Advanced
+3. Enable powershell scripts
+
+> ![Screenshot: Prerequisit — Enable Powershell scripts](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Enable_Powershell_Scripts.png)
+
 The Windows installer is a PowerShell script (`install.ps1`) that provides a WinForms-based GUI wizard. It must be run with Administrator privileges.
+
+> ![Screenshot: Run Windows Installer — showing explorer with run powershell](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Run_Windows_Install.png)
 
 (Owners note: I do plan to make this an EXE in the future, I have Ps2Exe but need to check signing)
 
@@ -216,25 +226,41 @@ The Windows installer is a PowerShell script (`install.ps1`) that provides a Win
    .\install.ps1
    ```
 4. The GUI wizard will guide you through the following steps:
-   - **Python Detection** — The installer scans common paths for Python 3.8+ (`python`, `python3`, `C:\Python\python.exe`, `C:\Python39\python.exe` through `C:\Python312\python.exe`). If Python is not found, you will be prompted to install it.
-   - **Git Installation** — If Git is not found on the system, the installer will automatically download and install the latest 64-bit version of Git for Windows from the official GitHub releases.
-   - **SteamCMD Download** — SteamCMD is downloaded from Valve's CDN (`https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip`), extracted, and run once with `+login anonymous +quit` to initialise itself.
-   - **Repository Clone** — The Server Manager source code is cloned from the GitHub repository. If direct Git access fails, the installer falls back to downloading a ZIP archive from GitHub.
-   - **Python Dependencies** — All packages from `requirements.txt` are installed using `pip install -r requirements.txt`.
-   - **SQL Server Detection** — The installer scans for available database backends. It always includes SQLite (built-in to Python). It also scans for Microsoft SQL Server instances (via registry), MySQL, MariaDB, and PostgreSQL services. You can select which backend to use.
-   - **Database Initialisation** — Three SQLite databases are created in the `db/` directory:
-     - `servermanager_users.db` — User accounts table.
-     - `steam_ID.db` — Steam applications catalogue.
-     - `servermanager.db` — Cluster configuration, nodes, tokens, and communication logs.
-   - **Admin Account Creation** — A root administrator account is created with customisable credentials (default: `admin` / `admin`).
-   - **HTTPS/HTTP Selection** — You choose whether to use HTTPS (recommended) or HTTP. If HTTPS is selected, a self-signed SSL/TLS certificate is generated automatically using the Python `cryptography` library. Security warnings are displayed if HTTP is chosen.
+   - **First page** — The intial installer page, important page to read the general synopsis of this program and check the current version downloaded.
+
+     > ![Screenshot: Installer Page 1 - Initial](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_1.png)
+
+   - **Second Page** — Second page where you can select the installer directory with workspace directory (if you want users to access a different secure storage away from the SteamCMD storage) you can also select the clusters configuration at this stage.
+
+     > ![Screenshot: Installer Page 2 — SteamCMD Selection](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_2.png)
+
+   - **Third Page** — Database Configuration, you can choose what type of database will be used by servermanager, default is SQLite.
    - **Cluster Configuration** — You are asked to select the node role:
      - **Host** — This machine will act as the central management server.
      - **Subhost** — This machine will connect to an existing Host. You will need to provide the Host's IP address.
-   - **Registry Keys** — Installation paths, version, SSL settings, and configuration values are written to `HKLM\Software\SkywereIndustries\Servermanager`.
-   - **Firewall Rules** — Windows Firewall rules are automatically created for the web interface, HTTPS (if enabled), cluster API (port 5001), game servers, and Steam query protocol. See [Section 22: Firewall Configuration](#22-firewall-configuration).
+
+     > ![Screenshot: Installer Page 3 — Database Configuration](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_3.png)
+
+   - **Repository Clone** — The Server Manager source code is cloned from the GitHub repository. If direct Git access fails, the installer falls back to downloading a ZIP archive from GitHub.
+
+     > ![Screenshot: Installer Page 4 — Web Security](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_4.png)
+
+   - **Web Security** — The page to choose if you want to use HTTPS or HTTP for running the webserver, for outside communication HTTPS is recommended.
+
+   - **Installation** - The progress bars! 
+
+     > ![Screenshot: Installer Page 5.1 — Python Installation](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_5_1.png)
+     > ![Screenshot: Installer Page 5.2 — Python Dependencies Installation](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_5_2.png)
+     > ![Screenshot: Installer Page 5.3 — Instaling SteamCMD](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_5_3.png)
+     > ![Screenshot: Installer Page 5.4 — Setup Complete](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_5_4.png)
+
+     > ![Screenshot: Installer Page 6 — Create Admin](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_6.png)
+
+   - **Admin Account Creation** — A root administrator account is created with customisable credentials (default: `admin` / `admin`).
 
 **Reinstallation:** If an existing installation is detected in the registry, the installer will prompt you to confirm whether you want to reinstall. Reinstalling will overwrite previous settings.
+
+> ![Screenshot: Re-Installer Question Page](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Re-Installer_Question.png)
 
 **Service Management via Installer:** The installer also supports service management mode via the `-ServiceAction` parameter:
 ```powershell
@@ -291,7 +317,7 @@ After installation is complete:
 2. **Access the system tray icon.** A tray icon will appear in the Windows taskbar notification area. Right-click it to access the menu.
 3. **Open the desktop dashboard.** Right-click the tray icon and select "Open Server Dashboard" to open the Tkinter-based local management GUI.
 4. **Access the web interface.** Open a browser and navigate to `https://localhost:443` (if HTTPS was enabled during installation) or `http://localhost:8080` (HTTP). From another machine, replace `localhost` with your server's IP address. Log in with the admin credentials configured during installation (default: `admin` / `admin`). If using a self-signed certificate, your browser will show a security warning — this is expected and safe to proceed through.
-5. **Populate the Steam database.** Run `update-database.pyw` to download the Steam and Minecraft application ID databases from GitHub. This provides the searchable list of Steam dedicated servers and Minecraft versions when creating new servers.
+5. **Populate the Steam database.** The Steam and Minecraft application ID databases can be populated using the scanners in `Modules/Database/scanners/`. Run `AppIDScanner.py` to download the Steam dedicated server catalogue, and `MinecraftIDScanner.py` to download Minecraft version information. This provides the searchable server lists when creating new servers.
 
 ---
 
@@ -306,11 +332,10 @@ Servermanager/                      # Project root
 ├── Start-ServerManager.pyw         # Entry point — starts the application
 ├── Stop-ServerManager.pyw          # Entry point — stops all components
 ├── Update-ServerManager.pyw        # GUI tool for database schema updates
-├── update-database.pyw             # Downloads Steam/Minecraft ID databases from GitHub
 ├── install.ps1                     # Windows PowerShell installer (3100+ lines)
 ├── install.sh                      # Linux Bash installer
 ├── uninstaller.ps1                 # Windows uninstaller
-├── uninstall.sh                    # Linux uninstaller
+├── uninstaller.sh                  # Linux uninstaller
 ├── requirements.txt                # Python package dependencies
 ├── README.md                       # Quick-start readme
 │
@@ -353,12 +378,9 @@ Servermanager/                      # Project root
 │   │   ├── minecraft_database.py   # Minecraft database setup
 │   │   ├── cluster_database.py     # Cluster database with 10+ tables
 │   │   ├── console_database.py     # Console state persistence
-│   │   ├── migrate_database_schema.py  # Database migration tool
-│   │   ├── AppIDScanner.py         # Steam AppID scanner and DB builder
-│   │   ├── MinecraftIDScanner.py   # Minecraft version scanner
-│   │   ├── verify_dedicated_servers.py # Post-scan verification utility
-│   │   ├── reset_admin_password.py # Admin password reset utility
-│   │   └── reset_admin_2FA.py      # Admin 2FA reset utility
+│   │   └── scanners/               # Database population scanners
+│   │       ├── AppIDScanner.py     # Steam AppID scanner and DB builder
+│   │       └── MinecraftIDScanner.py # Minecraft version scanner
 │   │
 │   ├── SMNP/                       # Monitoring integrations
 │   │   ├── snmp_manager.py         # SNMP monitoring module
@@ -410,6 +432,7 @@ Servermanager/                      # Project root
 │   ├── cluster.html                # Cluster management page
 │   ├── diagnostics.html            # Authentication diagnostics
 │   ├── css/                        # Stylesheets
+│   │   ├── common.css              # Shared layout styles (header, nav, user menu, themes)
 │   │   ├── dashboard.css
 │   │   ├── login.css
 │   │   ├── normalize.css
@@ -447,9 +470,8 @@ Servermanager/                      # Project root
 │   ├── reset_admin_2FA.py          # Admin 2FA reset utility
 │   ├── verify_database.py          # Database verification tool
 │   └── verify_dedicated_servers.py # Post-scan server verification
-│
-└── Wiki/                           # Documentation
-    └── WIKI.md                     # This file
+└── Wiki/ # Documentation
+└── WIKI.md # This file
 ```
 
 ### 4.2 Module Dependency Map
@@ -458,7 +480,7 @@ The application follows a layered architecture where modules depend on shared ut
 
 **Foundation Layer:**
 - `Modules/server_logging.py` — All logging flows through the centralised `LogManager` singleton. Every module calls `get_component_logger()` or `setup_module_logging()` to get a properly configured logger with rotating file handlers.
-- `Modules/common.py` — Provides `ServerManagerModule` (base class for all major modules), `ServerManagerPaths` (registry-based path resolution), `ProcessManager` (PID file management), `ConfigManager` (application configuration via database), and numerous utility functions.
+- `Modules/common.py` — Provides `ServerManagerModule` (base class for all major modules), `RegistryModule` (lightweight base class for registry-backed modules such as `SecurityManager` and `ServerOperations`), `ServerManagerPaths` (registry-based path resolution), `ProcessManager` (PID file management), `ConfigManager` (application configuration via database), and numerous utility functions including `make_2fa_callbacks()` (shared 2FA dialog logic), `send_command_to_server()` (unified command delivery), and `make_canvas_width_updater()` (shared UI factory).
 
 **Core Layer:**
 - `Modules/server_manager.py` — The engine of the application. Handles SteamCMD-based and Minecraft server installations, server start/stop with multiple fallback strategies, and process monitoring.
@@ -614,9 +636,13 @@ The launcher (`Modules/launcher.py`) is the central process orchestrator. It ext
 
 The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that provides full server management capabilities. It is approximately 1,000 lines of code (with UI logic split across `dashboard_functions.py`, `dashboard_dialogs.py`, `dashboard_server_config.py`, `dashboard_server_ops.py`, and `dashboard_settings.py`) and is the primary local management interface.
 
+> ![Screenshot: Main Dashboard — showing server list, system metrics panel, and action buttons bar](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Dashboard.png)
+
 **Launch:** Right-click the system tray icon and select "Open Server Dashboard", or run `Host/dashboard.py` directly.
 
 **Authentication:** On launch, the dashboard presents a login dialog. Users must authenticate with their username, password, and optionally a 2FA code if two-factor authentication is enabled on their account. Authentication is performed against the user database using bcrypt password hashing.
+
+> ![Screenshot: Main Dashboard Sign in — showing login page](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Dashboard_Sign_In.png)
 
 **Initialisation Sequence:** After successful login, the dashboard performs a 6-step asynchronous initialisation:
 1. Registry configuration loading
@@ -635,9 +661,14 @@ The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that pro
 
 - **Server Configuration Dialog** — A editor for each server's settings. Fields include server name, App ID, installation directory, executable path, launch arguments, stop command, MOTD configuration, update schedule, and automation settings.
 
+> ![Screenshot: Server Configuration Dialog — showing the scrollable form with server name, App ID, install directory, and executable path fields](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Configure_Server.png)
+
 - **Process Details View** — For a running server, shows detailed process information including PID, CPU usage percentage, memory consumption, uptime, number of child processes, open file handles, and network connections. Memory is displayed according to process type: Java/Minecraft servers show JVM heap (VMS) with a "(JVM)" label, while Steam and other servers show RSS. The Resources tab shows both RSS and VMS values along with the detected process type.
 
 - **Settings Dialog** — Application-wide settings organised into 5 tabs:
+
+> ![Screenshot: Server Settings Dialog](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Settings.png)
+
   - **General** — Application theme, log level, auto-start preferences.
   - **Web Server** — Port configuration, SSL toggle.
   - **Database** — Database backend selection and connection parameters.
@@ -646,6 +677,8 @@ The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that pro
 
 - **Import/Export** — Server configurations can be exported to JSON files and imported on other installations for migration or backup purposes.
 
+> ![Screenshot: Import/Export — showing the file dialog for importing or exporting server configurations](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Import_Method.png)
+
 **DPI Awareness:** The dashboard is DPI-aware and adjusts its scaling for high-resolution displays on Windows 10/11. It uses `ctypes.windll.shcore.SetProcessDpiAwareness(1)` to enable per-monitor DPI awareness.
 
 **Singleton Enforcement:** Only one instance of the dashboard can run at a time, enforced through a PID file lock in the `temp/` directory.
@@ -653,6 +686,8 @@ The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that pro
 ### 7.2 Admin Dashboard
 
 The Admin Dashboard (`Host/admin_dashboard.py`) provides user account management and email configuration. It is accessible from the system tray icon menu (Admin Dashboard option) or from within the main dashboard.
+
+> ![Screenshot: Administrator panel for users](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Admin_Panel.png)
 
 **User Management Features:**
 - View all user accounts in a sortable, filterable table showing username, email, role (Admin/User), active status, last login date, and 2FA status.
@@ -671,6 +706,8 @@ The Admin Dashboard (`Host/admin_dashboard.py`) provides user account management
 ### 7.3 Automation Settings Window
 
 The Automation Settings Window (`Modules/automation_ui.py`) provides a per-server configuration interface for automated operations. It can be opened from the tray icon menu or from the dashboard.
+
+> ![Screenshot: Automation Settings — showing MOTD, stop command, and restart warning fields with test buttons](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Schedule_Manager.png)
 
 **Configuration Fields:**
 - **Server Selection** — Dropdown to select which server to configure. Changing the server loads its current settings.
@@ -697,6 +734,8 @@ Settings are persisted to the database via `ServerConfigManager`.
 ### 7.4 Server Console
 
 The Server Console (`Modules/server_console.py`) provides a real-time interactive terminal for communicating with running server processes. It is approximately 3,100 lines of code.
+
+> ![Screenshot: Server Console — showing dark terminal output, command input field, and server output with colour-coded text](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Console_Manager.png)
 
 **Two Main Classes:**
 
@@ -728,6 +767,8 @@ These methods are tried in sequence. If one fails, the next is attempted, ensuri
 ### 7.5 System Tray Icon
 
 The system tray icon (`Modules/trayicon.py`) provides persistent background presence and quick access to all application features. It uses the `pystray` library with `pillow` for icon rendering.
+
+> ![Screenshot: System Tray Icon — showing the right-click context menu with all available options](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Tray_Icon_Windows.png)
 
 **Menu Items:**
 - **Open Server Dashboard** — Launches the main Tkinter dashboard as a detached process.
@@ -762,6 +803,9 @@ All web pages support both light and dark themes, togglable from the user menu. 
 ### 8.2 Login Page
 
 The login page (`www/login.html`) presents a clean authentication form with:
+
+> ![Screenshot: Website dashboard login page - Like Python but web-based](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Login_Page.png)
+
 - Username field
 - Password field with visibility toggle (eye icon)
 - Login button with loading spinner during authentication
@@ -772,6 +816,8 @@ Upon successful login, the session token, username, and admin status are stored 
 ### 8.3 Web Dashboard
 
 The web dashboard (`www/dashboard.html`) is the main management interface for the web UI, featuring:
+
+> ![Screenshot: Website dashboard front page - Like Python but web-based](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Dashboard.png)
 
 **Header:**
 - Application title and branding
@@ -820,6 +866,8 @@ Data is automatically refreshed at a configurable interval (default: 10 seconds)
 
 The Create Server page (`www/create-server.html`) provides a wizard for setting up new game servers:
 
+> ![Screenshot: Website create server page - Like Python but web-based](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Create_Server.png)
+
 **Server Type Selection:**
 - **Steam** — For SteamCMD-based dedicated servers
 - **Minecraft** — For Minecraft Java Edition servers
@@ -843,6 +891,8 @@ Form fields are validated before submission. On success, a notification toast is
 
 The Admin Panel (`www/admin.html`) provides web-based user management for administrators:
 
+> ![Screenshot: Website admin page - Like Python but web-based](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Admin_Panel.png)
+
 **User Management Table:**
 - Displays all users with: username, email, role badge (Admin highlighted), status (Active/Inactive)
 - Edit button per user
@@ -861,6 +911,8 @@ The Admin Panel (`www/admin.html`) provides web-based user management for admini
 ### 8.6 Cluster Management Page
 
 The Cluster Management page (`www/cluster.html`) provides cluster administration for multi-node setups:
+
+> ![Screenshot: Website cluster manager page - Like Python but web-based](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Cluster_Manager.png)
 
 **Stats Grid:**
 - Total Nodes count
@@ -1326,18 +1378,20 @@ Console states older than 1 hour are treated as stale and ignored on load. This 
 - Creating the default admin user if no admin exists.
 - Backend-specific SQL type mapping (e.g., `TEXT` in SQLite vs `NVARCHAR(MAX)` in MSSQL).
 
-**migrate_database_schema.py** — A CLI migration tool that:
-- Adds `requires_subscription` and `anonymous_install` columns to the `steam_apps` table.
-- Populates curated data for well-known free dedicated servers.
-- Supports `--dry-run`, `--populate-data`, and `--stats` flags.
+### 12.10 Database Population Scripts
 
-### 12.10 Database Update Script
+The `Modules/Database/scanners/` directory contains scripts for populating the application ID databases:
 
-**update-database.pyw** — Downloads and updates the Steam and Minecraft application ID databases from GitHub:
-- Downloads `steam_ID.db` and `minecraft_ID.db` from `https://github.com/SparksSkywere/servermanager/raw/main/db/`.
-- Compares MD5 hashes to detect changes before overwriting.
-- Creates backup copies of existing files before updating.
-- Supports `--dry-run`, `--stats`, and `--debug` flags.
+**AppIDScanner.py** — Populates the Steam dedicated server catalogue:
+- Fetches the complete Steam app list from the `ISteamApps/GetAppList/v2/` API endpoint.
+- Queries the Steam Store API for detailed application metadata with rate limiting.
+- Uses keyword matching, regex patterns, and DLC exclusion to identify dedicated servers.
+- Maintains a curated list of well-known free dedicated servers with pre-set flags.
+
+**MinecraftIDScanner.py** — Populates the Minecraft version catalogue:
+- Fetches version information from four sources: Mojang (vanilla), Fabric meta API, Forge promotions, and NeoForge API.
+- Pre-compiles regex patterns for efficient version string parsing.
+- Stores version, modloader, Java requirement, and download URL per entry.
 
 ---
 
@@ -1367,7 +1421,9 @@ Server Manager supports TOTP-based two-factor authentication using the `pyotp` l
 3. The 2FA secret is stored in the `two_factor_secret` column of the user record and `two_factor_enabled` is set to 1.
 
 **Login with 2FA:**
-When 2FA is enabled, after entering the correct username and password, the user is prompted for a 6-digit TOTP code from their authenticator app. The code is verified server-side using `pyotp.TOTP.verify()`.
+When 2FA is enabled, after entering the correct username and password, the user is prompted for a 6-digit TOTP code from their authenticator app. The code is verified server-side using `pyotp.TOTP.verify()`. The 2FA dialog logic is shared between the desktop dashboard (`Host/admin_dashboard.py`) and the user database module (`Modules/Database/user_database.py`) through the `make_2fa_callbacks()` factory function in `Modules/common.py`, which returns reusable `on_verify`, `on_cancel`, and `on_key_press` callbacks.
+
+> ADD SCREENSHOT
 
 **Resetting 2FA:**
 If a user loses access to their authenticator app, an admin can reset their 2FA using the `reset_admin_2FA.py` utility script:
@@ -1932,6 +1988,8 @@ Diagnostic reports are saved as JSON files and can be shared with support for tr
 
 The Debug Center (`debug/debug_manager.py`, `DebugManagerGUI`) provides a Tkinter window for running diagnostics:
 
+> ![Screenshot: Python Debug Manager - Used to do quick debugging for finding issues](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Debug_Manager.png)
+
 **Available Actions:**
 
 | Button | Function | Description |
@@ -2066,7 +2124,7 @@ The uninstaller performs the following steps in order:
 
 Run the uninstaller script:
 ```bash
-sudo sh uninstall.sh
+sudo sh uninstaller.sh
 ```
 
 ---
@@ -2163,7 +2221,7 @@ sudo sh uninstall.sh
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `Servermanagerdir` | REG_SZ | (install path) | Root installation directory |
-| `CurrentVersion` | REG_SZ | "1.2" | Installed version |
+| `CurrentVersion` | REG_SZ | "1.3" | Installed version |
 | `UserWorkspace` | REG_SZ | (auto) | User workspace directory |
 | `InstallDate` | REG_SZ | (auto) | Installation timestamp |
 | `LastUpdate` | REG_SZ | (auto) | Last update timestamp |
@@ -2242,4 +2300,4 @@ Warning Message Template: Server restart in {message} minutes
 
 ---
 
-*This documentation covers Server Manager version 1.2. For the latest updates, check the [GitHub repository](https://github.com/SparksSkywere/servermanager).*
+*This documentation covers Server Manager version 1.3 For the latest updates, check the [GitHub repository](https://github.com/SparksSkywere/servermanager).*

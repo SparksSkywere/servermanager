@@ -47,18 +47,16 @@ def get_stdin_info_file(server_name: str) -> Path:
 
 def send_command_to_stdin_pipe(server_name: str, command: str, timeout: float = 5.0) -> Tuple[bool, str]:
     # Send a command to a server via its persistent stdin pipe
-    # Args: server_name - The name of the server, command - The command to send, timeout - Timeout in seconds
-    # Returns: Tuple of (success, message)
     if not _AVAILABLE:
         return False, "Named pipes not available"
-    
+
     pipe_name = get_stdin_pipe_name(server_name)
-    
+
     # Check if pipe info exists
     info_file = get_stdin_info_file(server_name)
     if not info_file.exists():
         return False, f"No stdin pipe configured for {server_name}"
-    
+
     try:
         # Try to connect to the pipe and write
         handle = win32file.CreateFile(
@@ -70,7 +68,7 @@ def send_command_to_stdin_pipe(server_name: str, command: str, timeout: float = 
             0,
             None
         )
-        
+
         try:
             # Write command with newline
             data = (command + "\n").encode('utf-8')
@@ -79,11 +77,11 @@ def send_command_to_stdin_pipe(server_name: str, command: str, timeout: float = 
             return True, f"Command sent: {command}"
         finally:
             win32file.CloseHandle(handle)
-            
+
     except pywintypes.error as e:
-        if e.winerror == 2:  # ERROR_FILE_NOT_FOUND
+        if e.winerror == 2:
             return False, f"Stdin pipe not available for {server_name}"
-        elif e.winerror == 231:  # ERROR_PIPE_BUSY
+        elif e.winerror == 231:
             return False, f"Stdin pipe is busy for {server_name}"
         else:
             return False, f"Pipe error: {e}"
@@ -95,7 +93,7 @@ def is_stdin_pipe_available(server_name: str) -> bool:
     info_file = get_stdin_info_file(server_name)
     if not info_file.exists():
         return False
-    
+
     # Try to open the pipe briefly to verify it exists
     pipe_name = get_stdin_pipe_name(server_name)
     try:

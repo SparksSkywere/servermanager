@@ -104,7 +104,7 @@ class MinecraftIDScanner:
                 existing = self.db_session.query(MinecraftServer).filter(
                     MinecraftServer.version_id == server_data["version_id"]
                 ).first()
-                
+
                 if existing:
                     # Update existing server
                     for key, value in server_data.items():
@@ -132,7 +132,7 @@ class MinecraftIDScanner:
                     self.db_session.add(server)
                     self.db_session.commit()
                     logger.debug(f"Added new server: {server_data['version_id']}")
-                    
+
         except Exception as e:
             logger.error(f"Failed to save server {server_data.get('version_id', 'unknown')} to database: {e}")
             raise Exception(f"Database save failed: {e}")
@@ -154,12 +154,12 @@ class MinecraftIDScanner:
                 logger.debug(f"Making request to {url} (attempt {attempt + 1}/{retries})")
                 response = self.session_requests.get(url, params=params, timeout=10)
                 response.raise_for_status()
-                
+
                 # Special handling for NeoForge API debugging
                 if "neoforged.net" in url:
                     logger.debug(f"NeoForge API response status: {response.status_code}")
                     logger.debug(f"NeoForge API response length: {len(response.text)}")
-                    
+
                 return response.json()
             except requests.exceptions.HTTPError as e:
                 logger.warning(f"HTTP error on attempt {attempt + 1} for {url}: {e}")
@@ -452,7 +452,7 @@ class MinecraftIDScanner:
 
                 # Get download URLs (skip if this fails to avoid blocking the whole scan)
                 urls = {"download_url": "", "installer_url": ""}
-                
+
                 # Prepare server data
                 server_data = {
                     "version_id": version_data["version_id"],

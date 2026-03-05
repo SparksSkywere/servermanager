@@ -20,8 +20,8 @@ from waitress import serve
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from Modules.common import (
-    setup_module_path, setup_module_logging, REGISTRY_PATH, is_admin, 
-    get_host_type, get_host_address, 
+    setup_module_path, setup_module_logging, REGISTRY_PATH, is_admin,
+    get_host_type, get_host_address,
     is_cluster_enabled, get_registry_value, set_registry_value,
     get_allowed_origins
 )
@@ -31,7 +31,7 @@ try:
     import psutil
 except ImportError:
     psutil = None
-    
+
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
@@ -46,7 +46,6 @@ if TYPE_CHECKING:
 logger: logging.Logger = setup_module_logging("WebServer")
 
 class DummyDashboardTracker:
-    # Stub when real tracker unavailable
     def start_auto_refresh(self): pass
     def stop_auto_refresh(self): pass
     def get_dashboards(self): return []
@@ -72,7 +71,6 @@ try:
     logger.debug("Flask-CORS imported successfully")
 except ImportError:
     logger.warning("Flask-CORS not installed. Running without CORS support.")
-    # Create a dummy CORS class if import fails
     class DummyCORS:
         def __init__(self, app):
             logger.warning("Using dummy CORS implementation")
@@ -111,12 +109,12 @@ class SQLAuthentication:
     def authenticate(self, username, password):
         if self.user_manager is None:
             return None
-        
+
         # Use the same authentication method as the Python dashboard
         user = self.user_manager.authenticate_user(username, password)
         if not user:
             return None
-        
+
         # Check if password was SHA256 and upgrade to bcrypt (same logic as UserManager)
         try:
             bcrypt.checkpw(password.encode(), user.password.encode())
@@ -127,7 +125,7 @@ class SQLAuthentication:
                 logger.debug(f"Upgraded password hash to bcrypt for user: {username}")
             except Exception as e:
                 logger.warning(f"Failed to upgrade password hash: {e}")
-        
+
         token = str(uuid.uuid4())
         self.tokens[token] = {
             "username": username,
@@ -135,7 +133,7 @@ class SQLAuthentication:
             "expires": (datetime.datetime.now() + datetime.timedelta(hours=8)).isoformat()
         }
         return {
-            "token": token, 
+            "token": token,
             "username": username,
             "isAdmin": getattr(user, 'is_admin', False)
         }
@@ -273,12 +271,12 @@ class ServerManager:
         try:
             from Modules.Database.server_configs_database import ServerConfigManager
             manager = ServerConfigManager()
-            
+
             # Check if server already exists
             existing = manager.get_server(server_name)
             if existing:
                 return False, "Server already exists"
-            
+
             server_config = {
                 "Name": server_name,
                 "Type": server_type,
@@ -291,7 +289,7 @@ class ServerManager:
                 "Created": datetime.datetime.now().isoformat(),
                 "LastUpdate": datetime.datetime.now().isoformat()
             }
-            
+
             # Save to database
             result = manager.update_server(server_name, server_config)
             if result:
@@ -321,10 +319,10 @@ class ServerManagerWebServer(ServerManagerModule):
                 self.logger = get_component_logger("ServerManagerWebServer")
             except Exception:
                 self.logger = logging.getLogger("ServerManagerWebServer")
-        
+
         # Initialise all attributes to ensure they exist
         self.auth = None
-        self.sql_auth = None  
+        self.sql_auth = None
         self.engine = None
         self.server_manager = None
         self.app = None
@@ -335,13 +333,12 @@ class ServerManagerWebServer(ServerManagerModule):
         self.cluster_db = None  # Cluster database for host/subhost management
         self.analytics: Optional['AnalyticsCollector'] = None  # Analytics collector for metrics
         self._shutdown_event = threading.Event()  # Event for clean shutdown of background threads
-        # Note: server_manager_dir is inherited from ServerManagerModule base class
-        
+
         # Console monitoring for HTTPS/secured consoles
         self.console_monitor_thread = None
         self.console_monitor_active = False
         self.console_log_positions = {}  # server_name -> log_file -> position
-        
+
         # Read from environment first, fall back to inherited web_port property or default
         try:
             base_port = self.web_port if hasattr(self, 'web_port') else 8080
@@ -349,10 +346,10 @@ class ServerManagerWebServer(ServerManagerModule):
         except Exception as e:
             logger.warning(f"Could not get web_port property, using default: {e}")
             base_port = 8080
-            
+
         self._web_port = int(os.getenv("WEB_PORT", str(base_port)))
         logger.debug(f"Web port set to: {self._web_port}")
-        
+
         # Cluster API port (separate from web port for security)
         self._cluster_port = int(os.getenv("CLUSTER_PORT", "5001"))
         logger.debug(f"Cluster API port set to: {self._cluster_port}")
@@ -363,7 +360,7 @@ class ServerManagerWebServer(ServerManagerModule):
         parser = argparse.ArgumentParser(description='Server Manager Web Server')
         parser.add_argument('--port', type=int, help='Web server port')
         args = parser.parse_args()
-        
+
         self._continue_init(args)
 
     def _get_or_create_secret_key(self):
@@ -372,14 +369,14 @@ class ServerManagerWebServer(ServerManagerModule):
         existing = get_registry_value(REGISTRY_PATH, "FlaskSecretKey")
         if existing:
             return existing.encode() if isinstance(existing, str) else existing
-        
+
         # Generate new secret key
         secret_key = secrets.token_hex(32)
         if set_registry_value(REGISTRY_PATH, "FlaskSecretKey", secret_key):
             logger.debug("Created new persistent Flask secret key")
         else:
             logger.warning("Could not persist Flask secret key to registry")
-        
+
         return secret_key.encode()
 
     def _continue_init(self, args):
@@ -403,23 +400,23 @@ class ServerManagerWebServer(ServerManagerModule):
             __name__,
             static_folder=os.path.join(self.server_manager_dir or "", "www")
         )
-        
+
         # Configure CORS with restricted origins (not wildcard)
         allowed_origins = get_allowed_origins(host='localhost', port=self._web_port)
         CORS(self.app, origins=allowed_origins, supports_credentials=True)  # type: ignore[call-arg]
         self.app.secret_key = self._get_or_create_secret_key()
-        
+
         self.security = init_security_manager({
             'web_port': self._web_port,
             'max_login_attempts': 5,
             'lockout_duration': 900,
             'allowed_origins': allowed_origins
         })
-        
+
         # Path security for static file serving
         www_path = os.path.join(self.server_manager_dir or "", "www")
         self.path_security = PathSecurity(allowed_roots=[www_path])
-        
+
         # Configure secure session settings
         ssl_enabled = os.getenv("SSL_ENABLED", "false").lower() == "true"
         self.app.config.update(
@@ -427,7 +424,7 @@ class ServerManagerWebServer(ServerManagerModule):
             SESSION_COOKIE_HTTPONLY=True,
             SESSION_COOKIE_SAMESITE='Lax'
         )
-        
+
         # Add comprehensive security headers to all responses
         @self.app.after_request
         def add_security_headers(response):
@@ -460,16 +457,16 @@ class ServerManagerWebServer(ServerManagerModule):
         try:
             from Modules.Database.cluster_database import ClusterDatabase
             self.cluster_db = ClusterDatabase()
-            
+
             self.cluster_db.update_host_status(
                 status="online",
                 dashboard_active=True,
                 maintenance_mode=False,
                 status_message="Web server initialised"
             )
-            
+
             self.start_host_heartbeat()
-            
+
             logger.debug("Cluster database initialised successfully")
         except Exception as e:
             logger.error(f"Failed to Initialise cluster database: {e}")
@@ -515,14 +512,14 @@ class ServerManagerWebServer(ServerManagerModule):
     @property
     def web_port(self):
         return self._web_port
-    
+
     @web_port.setter
     def web_port(self, value):
         try:
             self._web_port = int(value) if value else 8080
         except (ValueError, TypeError):
             self._web_port = 8080
-    
+
     @property
     def cluster_port(self):
         return getattr(self, '_cluster_port', 5001)
@@ -621,9 +618,9 @@ class ServerManagerWebServer(ServerManagerModule):
         if not self.app:
             logger.error("Flask app not initialised")
             return
-            
+
         app = self.app
-        
+
         @app.route('/')
         def index():
             try:
@@ -632,7 +629,7 @@ class ServerManagerWebServer(ServerManagerModule):
                     logger.error(f"WWW directory not found: {www_path}")
                     from flask import redirect
                     return redirect('/login.html')
-                
+
                 index_file = os.path.join(www_path, "index.html")
                 if os.path.exists(index_file):
                     return send_from_directory(www_path, "index.html")
@@ -644,7 +641,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 logger.error(f"Error serving index page: {e}")
                 from flask import redirect
                 return redirect('/login.html')
-        
+
         # Register cluster API blueprint on main server
         try:
             import sys
@@ -652,7 +649,7 @@ class ServerManagerWebServer(ServerManagerModule):
             logger.info(f"Cluster API path: {api_path}")
             if api_path not in sys.path:
                 sys.path.insert(0, api_path)
-                
+
             # Import using absolute path to avoid issues
             cluster_module_path = os.path.join(api_path, "cluster.py")
             logger.info(f"Cluster module path: {cluster_module_path}, exists: {os.path.exists(cluster_module_path)}")
@@ -688,7 +685,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 token = args[0] if args else None
                 if not token:
                     return None
-                
+
                 # Unified token verification for verify_token
                 if self.sql_auth:
                     token_data = self.sql_auth.verify_token(token)
@@ -722,7 +719,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 rate_resp = check_rate_limit('api')
                 if rate_resp:
                     return rate_resp
-                
+
                 auth_header = request.headers.get('Authorization')
                 if not auth_header or not auth_header.startswith('Bearer '):
                     return jsonify({"error": "Authentication required"}), 401
@@ -745,7 +742,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 rate_resp = check_rate_limit('api')
                 if rate_resp:
                     return rate_resp
-                
+
                 auth_header = request.headers.get('Authorization')
                 if not auth_header or not auth_header.startswith('Bearer '):
                     return jsonify({"error": "Authentication required"}), 401
@@ -923,11 +920,11 @@ class ServerManagerWebServer(ServerManagerModule):
                 if request.method == 'GET':
                     if self.server_manager is None:
                         return jsonify({"error": "Server manager not available"}), 500
-                        
+
                     # Get all servers with their current status (similar to cluster API)
                     servers = self.server_manager.get_all_servers()
                     result = []
-                    
+
                     for server_name, server_config in servers.items():
                         try:
                             status, pid = self.server_manager.get_server_status(server_name)
@@ -973,7 +970,7 @@ class ServerManagerWebServer(ServerManagerModule):
                                 "last_started": server_config.get("StartTime", "")
                             }
                             result.append(server_info)
-                            
+
                         except Exception as server_error:
                             logger.debug(f"Error getting status for server {server_name}: {str(server_error)}")
                             # Add server with error status if status check fails
@@ -993,7 +990,7 @@ class ServerManagerWebServer(ServerManagerModule):
                                 "last_started": server_config.get("StartTime", "")
                             }
                             result.append(server_info)
-                    
+
                     return jsonify({
                         "success": True,
                         "servers": result,
@@ -1045,12 +1042,12 @@ class ServerManagerWebServer(ServerManagerModule):
                             try:
                                 from Modules.Database.server_configs_database import ServerConfigManager
                                 manager = ServerConfigManager()
-                                
+
                                 # Check if server already exists
                                 existing = manager.get_server(server_name)
                                 if existing:
                                     return jsonify({"error": "Server already exists"}), 409
-                                
+
                                 server_config = {
                                     "Name": server_name,
                                     "Type": server_type,
@@ -1060,7 +1057,7 @@ class ServerManagerWebServer(ServerManagerModule):
                                     "Created": datetime.datetime.now().isoformat(),
                                     "LastUpdate": datetime.datetime.now().isoformat()
                                 }
-                                
+
                                 result = manager.update_server(server_name, server_config)
                                 success, message = result, "Server configuration created successfully" if result else "Failed to save"
                             except Exception as db_err:
@@ -1093,12 +1090,12 @@ class ServerManagerWebServer(ServerManagerModule):
 
                 # Remove server (keep files by default)
                 success, message = self.server_manager.uninstall_server(server_id, remove_files=False)  # type: ignore
-                
+
                 if success:
                     return jsonify({"success": True, "message": message}), 200
                 else:
                     return jsonify({"error": message}), 400
-                    
+
             except Exception as e:
                 logger.error(f"Delete server error: {e}")
                 return jsonify({"error": "Failed to delete server"}), 500
@@ -1109,7 +1106,7 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 if self.server_manager is None:
                     return jsonify({"error": "Server manager not available"}), 500
-                    
+
                 result = self.server_manager.start_server(server_id)
                 if result:
                     return jsonify({"success": True, "message": f"Server {server_id} started successfully"})
@@ -1124,7 +1121,7 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 if self.server_manager is None:
                     return jsonify({"error": "Server manager not available"}), 500
-                    
+
                 result = self.server_manager.stop_server(server_id)
                 if result:
                     return jsonify({"success": True, "message": f"Server {server_id} stopped successfully"})
@@ -1139,7 +1136,7 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 lines = request.args.get('lines', 100, type=int)
                 since = request.args.get('since', 0, type=int)  # Index of last seen entry for incremental updates
-                
+
                 try:
                     from Modules.Database.console_database import load_console_state_db
                     output_buffer, command_history = load_console_state_db(server_id)
@@ -1160,14 +1157,14 @@ class ServerManagerWebServer(ServerManagerModule):
                                     'type': 'stdout',
                                     'timestamp': ''
                                 })
-                        
+
                         # Support incremental updates - only return entries after 'since' index
                         total_entries = len(normalized)
                         if since > 0 and since < total_entries:
                             result_entries = normalized[since:]
                         else:
                             result_entries = normalized[-lines:] if len(normalized) > lines else normalized
-                        
+
                         return jsonify({
                             "success": True,
                             "output": result_entries,
@@ -1182,7 +1179,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 except Exception as e:
                     logger.error(f"Error reading console state from database: {e}")
                     return jsonify({"success": True, "output": [], "total_entries": 0, "server_id": server_id})
-                    
+
             except Exception as e:
                 logger.error(f"Get console error: {e}")
                 return jsonify({"error": "Failed to get console output"}), 500
@@ -1193,7 +1190,7 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 data = request.get_json()
                 command = data.get('command', '').strip() if data else ''
-                
+
                 if not command:
                     return jsonify({"error": "No command provided"}), 400
 
@@ -1202,7 +1199,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 queue_dir = os.path.join(self.server_manager_dir, "temp", "command_queues")
                 os.makedirs(queue_dir, exist_ok=True)
                 queue_file = os.path.join(queue_dir, f"{server_id}.queue")
-                
+
                 try:
                     with open(queue_file, 'a', encoding='utf-8') as f:
                         f.write(command + '\n')
@@ -1211,7 +1208,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 except Exception as e:
                     logger.error(f"Failed to queue command: {e}")
                     return jsonify({"error": "Failed to send command"}), 500
-                    
+
             except Exception as e:
                 logger.error(f"Send command error: {e}")
                 return jsonify({"error": "Failed to send command"}), 500
@@ -1222,7 +1219,7 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 if self.server_manager is None:
                     return jsonify({"error": "Server manager not available"}), 500
-                    
+
                 result = self.server_manager.restart_server(server_id)
                 if result:
                     return jsonify({"success": True, "message": f"Server {server_id} restarted successfully"})
@@ -1244,22 +1241,22 @@ class ServerManagerWebServer(ServerManagerModule):
                     server_config = self.server_manager.get_server_config(server_id)  # type: ignore
                     if not server_config:
                         return jsonify({"error": "Server configuration not found"}), 404
-                    
+
                     settings = load_automation_settings(server_config)
                     motd_cmd = settings.get('motd_command', '')
                     motd_msg = settings.get('motd_message', '')
-                    
+
                     if not motd_cmd or not motd_msg:
                         return jsonify({"error": "MOTD command or message not configured"}), 400
-                    
+
                     from Modules.server_automation import ServerAutomationManager
                     automation = ServerAutomationManager(self.server_manager)
                     result = automation.send_motd(server_id, motd_msg)
-                    
+
                     if result:
                         return jsonify({"success": True, "message": "MOTD sent successfully"})
                     return jsonify({"error": "Failed to send MOTD"}), 400
-                    
+
                 except Exception as e:
                     logger.error(f"Test MOTD error: {e}")
                     return jsonify({"error": "Failed to test MOTD"}), 500
@@ -1280,21 +1277,21 @@ class ServerManagerWebServer(ServerManagerModule):
                     server_config = self.server_manager.get_server_config(server_id)  # type: ignore
                     if not server_config:
                         return jsonify({"error": "Server configuration not found"}), 404
-                    
+
                     settings = load_automation_settings(server_config)
                     save_cmd = settings.get('save_command', '')
-                    
+
                     if not save_cmd:
                         return jsonify({"error": "Save command not configured"}), 400
-                    
+
                     from Modules.server_automation import ServerAutomationManager
                     automation = ServerAutomationManager(self.server_manager)
                     result = automation._send_command_to_server(server_id, save_cmd)
-                    
+
                     if result:
                         return jsonify({"success": True, "message": "Save command sent successfully"})
                     return jsonify({"error": "Failed to send save command"}), 400
-                    
+
                 except Exception as e:
                     logger.error(f"Test save error: {e}")
                     return jsonify({"error": "Failed to test save command"}), 500
@@ -1312,21 +1309,21 @@ class ServerManagerWebServer(ServerManagerModule):
 
                 data = request.get_json() or {}
                 minutes = data.get('minutes', 5)  # Default 5 minutes
-                
+
                 # Get automation settings
                 from Modules.common import load_automation_settings
                 try:
                     server_config = self.server_manager.get_server_config(server_id)  # type: ignore
                     if not server_config:
                         return jsonify({"error": "Server configuration not found"}), 404
-                    
+
                     settings = load_automation_settings(server_config)
                     warning_cmd = settings.get('warning_command', '')
                     warning_msg = settings.get('warning_message_template', 'Server restarting in {message}')
-                    
+
                     if not warning_cmd:
                         return jsonify({"error": "Warning command not configured"}), 400
-                    
+
                     # Replace {message} placeholder if present in command
                     if '{message}' in warning_cmd:
                         message = f"{minutes} minute{'s' if minutes != 1 else ''}"
@@ -1334,15 +1331,15 @@ class ServerManagerWebServer(ServerManagerModule):
                     else:
                         command = warning_cmd
                         message = f"{minutes} minute{'s' if minutes != 1 else ''}"
-                    
+
                     from Modules.server_automation import ServerAutomationManager
                     automation = ServerAutomationManager(self.server_manager)
                     result = automation._send_command_to_server(server_id, command)
-                    
+
                     if result:
                         return jsonify({"success": True, "message": f"Warning command sent successfully: {command}"})
                     return jsonify({"error": "Failed to send warning command"}), 400
-                    
+
                 except Exception as e:
                     logger.error(f"Test warning error: {e}")
                     return jsonify({"error": "Failed to test warning command"}), 500
@@ -1489,7 +1486,7 @@ class ServerManagerWebServer(ServerManagerModule):
         def api_get_profile():
             try:
                 username = request.token_data.get("username")  # type: ignore[attr-defined]
-                
+
                 if self.sql_available and hasattr(self, 'sql_auth') and self.sql_auth and hasattr(self.sql_auth, 'user_manager') and self.sql_auth.user_manager:
                     user_mgr = self.sql_auth.user_manager
                     user = user_mgr.get_user(username)
@@ -1528,14 +1525,14 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 username = request.token_data.get("username")  # type: ignore[attr-defined]
                 data = request.json
-                
+
                 if not data:
                     return jsonify({"error": "No data provided"}), 400
 
                 # Fields users can update (NOT username)
-                allowed_fields = ['email', 'first_name', 'last_name', 'display_name', 
+                allowed_fields = ['email', 'first_name', 'last_name', 'display_name',
                                   'avatar', 'bio', 'timezone', 'theme_preference']
-                
+
                 update_data = {}
                 for field in allowed_fields:
                     if field in data:
@@ -1563,13 +1560,13 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 username = request.token_data.get("username")  # type: ignore[attr-defined]
                 data = request.json
-                
+
                 if not data:
                     return jsonify({"error": "No data provided"}), 400
 
                 current_password = data.get('current_password', '')
                 new_password = data.get('new_password', '')
-                
+
                 if not current_password or not new_password:
                     return jsonify({"error": "Current and new passwords required"}), 400
 
@@ -1584,7 +1581,7 @@ class ServerManagerWebServer(ServerManagerModule):
                     auth_result = self.sql_auth.authenticate(username, current_password)
                     if not auth_result:
                         return jsonify({"error": "Current password is incorrect"}), 401
-                    
+
                     user_mgr = self.sql_auth.user_manager
                     if user_mgr:
                         success = user_mgr.update_user(username, password=new_password)
@@ -1606,12 +1603,12 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 username = request.token_data.get("username")  # type: ignore[attr-defined]
                 data = request.json
-                
+
                 if not data or 'avatar' not in data:
                     return jsonify({"error": "No avatar data provided"}), 400
 
                 avatar_data = data.get('avatar', '')
-                
+
                 # Validate it's a reasonable size (max ~500KB base64)
                 if len(avatar_data) > 700000:
                     return jsonify({"error": "Avatar too large (max 500KB)"}), 400
@@ -1708,19 +1705,19 @@ class ServerManagerWebServer(ServerManagerModule):
                     config = data
                     if not name or not isinstance(name, str):
                         return jsonify({"error": "Missing or invalid server name"}), 400
-                    
+
                     try:
                         from Modules.Database.server_configs_database import ServerConfigManager
                         manager = ServerConfigManager()
-                        
+
                         existing = manager.get_server(name)
                         if existing:
                             return jsonify({"error": "Server already exists"}), 409
-                        
+
                         result = manager.update_server(name, config)
                         if not result:
                             return jsonify({"error": "Failed to save server config"}), 500
-                            
+
                         if self.tracker and hasattr(self.tracker, 'refresh'):
                             self.tracker.refresh()
                         return jsonify({"success": True})
@@ -1735,19 +1732,19 @@ class ServerManagerWebServer(ServerManagerModule):
                     name = data.get("Name")
                     if not name or not isinstance(name, str):
                         return jsonify({"error": "Missing or invalid server name"}), 400
-                    
+
                     try:
                         from Modules.Database.server_configs_database import ServerConfigManager
                         manager = ServerConfigManager()
-                        
+
                         existing = manager.get_server(name)
                         if not existing:
                             return jsonify({"error": "Server not found"}), 404
-                        
+
                         result = manager.delete_server(name)
                         if not result:
                             return jsonify({"error": "Failed to delete server"}), 500
-                            
+
                         if self.tracker and hasattr(self.tracker, 'refresh'):
                             self.tracker.refresh()
                         return jsonify({"success": True})
@@ -1763,15 +1760,15 @@ class ServerManagerWebServer(ServerManagerModule):
                     action = data.get("Action")
                     if not name or not action or not isinstance(name, str) or not isinstance(action, str):
                         return jsonify({"error": "Missing or invalid server name or action"}), 400
-                    
+
                     try:
                         from Modules.Database.server_configs_database import ServerConfigManager
                         manager = ServerConfigManager()
-                        
+
                         config = manager.get_server(name)
                         if not config:
                             return jsonify({"error": "Server not found"}), 404
-                        
+
                         if action == "start":
                             config["Status"] = "Running"
                         elif action == "stop":
@@ -1780,11 +1777,11 @@ class ServerManagerWebServer(ServerManagerModule):
                             config["Status"] = "Restarting"
                         else:
                             return jsonify({"error": "Unknown action"}), 400
-                        
+
                         result = manager.update_server(name, config)
                         if not result:
                             return jsonify({"error": "Failed to update server"}), 500
-                            
+
                         if self.tracker and hasattr(self.tracker, 'refresh'):
                             self.tracker.refresh()
                         return jsonify({"success": True, "status": config["Status"]})
@@ -1803,18 +1800,18 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
-                
+
                 assert self.analytics is not None  # For type checker
-                    
+
                 format_type = request.args.get('format', 'json')
-                
+
                 if format_type == 'prometheus':
                     return self._get_prometheus_metrics(), 200, {'Content-Type': 'text/plain'}
                 elif format_type == 'snmp':
                     return jsonify(self._get_snmp_metrics())
                 else:
                     return jsonify(self.analytics.get_json_metrics())
-                    
+
             except Exception as e:
                 logger.error(f"Analytics metrics error: {e}")
                 return jsonify({"error": "Failed to get metrics"}), 500
@@ -1825,18 +1822,18 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
-                
+
                 assert self.analytics is not None  # For type checker
-                    
+
                 hours = request.args.get('hours', 24, type=int)
                 history = self.analytics.get_metric_history(metric_name, hours)
-                
+
                 return jsonify({
                     'metric_name': metric_name,
                     'hours': hours,
                     'data': history
                 })
-                
+
             except Exception as e:
                 logger.error(f"Analytics metric history error: {e}")
                 return jsonify({"error": "Failed to get metric history"}), 500
@@ -1847,11 +1844,11 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
-                
+
                 assert self.analytics is not None  # For type checker
-                    
+
                 return jsonify(self.analytics.get_server_summary())
-                
+
             except Exception as e:
                 logger.error(f"Analytics servers error: {e}")
                 return jsonify({"error": "Failed to get server analytics"}), 500
@@ -1862,11 +1859,11 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
-                
+
                 assert self.analytics is not None  # For type checker
-                    
+
                 return jsonify(self.analytics.get_system_health())
-                
+
             except Exception as e:
                 logger.error(f"Analytics health error: {e}")
                 return jsonify({"error": "Failed to get system health"}), 500
@@ -1877,22 +1874,22 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 if not self.analytics:
                     return jsonify({"error": "Analytics not available"}), 503
-                
+
                 assert self.analytics is not None  # For type checker
-                    
+
                 snmp_metrics = self._get_snmp_metrics()
                 if not snmp_metrics or not isinstance(snmp_metrics, dict):
                     return jsonify({"error": "No SNMP metrics available"}), 503
-                
+
                 # Format as SNMP walk output if requested
                 if request.args.get('format') == 'walk':
                     output_lines = []
                     for oid, value in dict(snmp_metrics).items():
                         output_lines.append(f"{oid} = {value}")
                     return '\n'.join(output_lines), 200, {'Content-Type': 'text/plain'}
-                
+
                 return jsonify(snmp_metrics)
-                
+
             except Exception as e:
                 logger.error(f"Analytics SNMP error: {e}")
                 return jsonify({"error": "Failed to get SNMP metrics"}), 500
@@ -1904,11 +1901,11 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 if not self.analytics:
                     return "# Analytics not available\n", 503, {'Content-Type': 'text/plain'}
-                
+
                 assert self.analytics is not None  # For type checker
-                    
+
                 return self._get_prometheus_metrics(), 200, {'Content-Type': 'text/plain'}
-                
+
             except Exception as e:
                 logger.error(f"Prometheus metrics error: {e}")
                 return "# Error collecting metrics\n", 500, {'Content-Type': 'text/plain'}
@@ -1932,7 +1929,7 @@ class ServerManagerWebServer(ServerManagerModule):
             # Skip API routes - these should be handled by blueprints
             if filename.startswith('api/'):
                 return jsonify({"error": "API endpoint not found"}), 404
-            
+
             try:
                 # Try multiple possible www directory locations
                 www_paths = [
@@ -1940,18 +1937,18 @@ class ServerManagerWebServer(ServerManagerModule):
                     os.path.join(os.path.dirname(os.path.dirname(__file__)), "www"),  # Development location
                     os.path.join(os.path.dirname(__file__), "..", "www"),  # Relative to Scripts
                 ]
-                
+
                 www_path = None
                 for path in www_paths:
                     if os.path.exists(path):
                         www_path = path
                         logger.debug(f"Using www directory: {www_path}")
                         break
-                
+
                 if not www_path:
                     logger.error(f"WWW directory not found. Tried paths: {www_paths}")
                     return jsonify({"error": "Static files directory not found"}), 404
-                
+
                 file_path = os.path.join(www_path, filename)
                 if os.path.exists(file_path) and os.path.isfile(file_path):
                     logger.debug(f"Serving static file: {filename} from {www_path}")
@@ -1959,7 +1956,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 else:
                     logger.debug(f"Static file not found: {filename} in {www_path}")
                     return jsonify({"error": "File not found"}), 404
-                    
+
             except Exception as e:
                 logger.error(f"Error serving static file {filename}: {e}")
                 return jsonify({"error": "Error serving file"}), 500
@@ -1967,11 +1964,11 @@ class ServerManagerWebServer(ServerManagerModule):
     def run(self):
         try:
             logger.debug(f"Starting web server on port {self.web_port}")
-            
+
             cluster_thread = None
             try:
                 host_type = get_host_type()
-                
+
                 if host_type == "Host":
                     logger.debug("Starting cluster API server on port 5001")
                     cluster_thread = threading.Thread(target=self._run_cluster_server, daemon=True)
@@ -1984,10 +1981,10 @@ class ServerManagerWebServer(ServerManagerModule):
                 logger.error(f"Cluster API startup failed: {e}")
                 import traceback
                 logger.error(f"Cluster API startup traceback: {traceback.format_exc()}")
-            
+
             # Default to localhost only for security
             default_host = "127.0.0.1"
-            
+
             # Load security configuration from database (TODO: implement security_config table)
             security_config = None
 
@@ -1995,11 +1992,11 @@ class ServerManagerWebServer(ServerManagerModule):
             try:
                 host_type = get_host_type()
                 cluster_enabled = is_cluster_enabled()
-                
+
                 if security_config:
                     cluster_enabled = security_config.get("security", {}).get("cluster_enabled", cluster_enabled)
                     bind_localhost_only = security_config.get("security", {}).get("bind_localhost_only", True)
-                    
+
                     if bind_localhost_only:
                         logger.debug("SECURITY: Security config enforcing localhost-only binding")
                     elif host_type == "Host" and cluster_enabled:
@@ -2022,26 +2019,26 @@ class ServerManagerWebServer(ServerManagerModule):
                     logger.debug("SECURITY: Security config enforcing localhost-only binding")
                 else:
                     logger.debug("SECURITY: Using secure default localhost binding (127.0.0.1)")
-            
+
             # Allow override via environment variable (with security warning)
             host = os.getenv("WEB_HOST", default_host)
             if host == "0.0.0.0" and default_host != "0.0.0.0":
                 logger.warning("SECURITY: WEB_HOST environment variable overriding secure default - ensure this is intentional!")
-            
+
             # Prepare server arguments
             server_args = {
                 'host': host,
                 'port': self.web_port,
                 'threads': 8
             }
-            
+
             ssl_cert_path = os.path.join(self.paths["root"], "ssl", "server.crt")
             ssl_key_path = os.path.join(self.paths["root"], "ssl", "server.key")
             ssl_enabled = os.path.exists(ssl_cert_path) and os.path.exists(ssl_key_path)
-            
+
             if ssl_enabled:
                 logger.info(f"SSL enabled with certificate and key files on {host}:{self.web_port}")
-                
+
                 redirect_thread = threading.Thread(
                     target=self._run_http_redirect_server,
                     args=(host, 8081, self.web_port),
@@ -2051,13 +2048,13 @@ class ServerManagerWebServer(ServerManagerModule):
                 logger.info(f"HTTP redirect server started on port 8081 -> HTTPS port {self.web_port}")
             else:
                 logger.debug(f"SSL disabled - running HTTP only on {host}:{self.web_port}")
-            
+
             if not self.app:
                 logger.error("Flask app not initialised - cannot start server")
                 return False
-                
+
             self._start_console_monitoring()
-            
+
             if ssl_enabled:
                 logger.info(f"Starting HTTPS server on {host}:{self.web_port}")
                 # Use Waitress with SSL instead of Flask dev server for production
@@ -2067,7 +2064,7 @@ class ServerManagerWebServer(ServerManagerModule):
                 ssl_context.load_cert_chain(ssl_cert_path, ssl_key_path)
                 # Disable weak ciphers
                 ssl_context.set_ciphers('ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS:!RC4')
-                
+
                 from waitress import create_server  # type: ignore[attr-defined]
                 server = create_server(self.app, host=host, port=self.web_port, threads=8)
                 server.socket = ssl_context.wrap_socket(server.socket, server_side=True)
@@ -2093,67 +2090,67 @@ class ServerManagerWebServer(ServerManagerModule):
             import socketserver
             import urllib.request
             import urllib.parse
-            
+
             class ClusterAPIProxy(http.server.BaseHTTPRequestHandler):
                 def log_message(self, format, *args):
                     # Use the webserver logger instead of default logging
                     logger.debug(f"Cluster API Proxy: {format % args}")
-                
+
                 def do_GET(self):
                     self.proxy_request()
-                
+
                 def do_POST(self):
                     self.proxy_request()
-                
+
                 def proxy_request(self):
                     try:
                         target_url = f"http://127.0.0.1:8080{self.path}"
-                        
+
                         headers = {}
                         for header_name, header_value in self.headers.items():
                             if header_name.lower() not in ['host', 'content-length']:
                                 headers[header_name] = header_value
-                        
+
                         data = None
                         if self.command == 'POST':
                             content_length = int(self.headers.get('Content-Length', 0))
                             if content_length > 0:
                                 data = self.rfile.read(content_length)
                                 headers['Content-Type'] = self.headers.get('Content-Type', 'application/json')
-                        
+
                         req = urllib.request.Request(target_url, data=data, headers=headers, method=self.command)
-                        
+
                         try:
                             with urllib.request.urlopen(req, timeout=30) as response:
                                 self.send_response(response.getcode())
-                                
+
                                 for header_name, header_value in response.headers.items():
                                     if header_name.lower() not in ['server', 'date']:
                                         self.send_header(header_name, header_value)
                                 self.end_headers()
-                                
+
                                 response_data = response.read()
                                 self.wfile.write(response_data)
                         except urllib.request.HTTPError as e:
                             # Handle HTTP error responses (like 304, 404, etc.)
                             self.send_response(e.code)
-                            
+
                             for header_name, header_value in e.headers.items():
                                 if header_name.lower() not in ['server', 'date']:
                                     self.send_header(header_name, header_value)
                             self.end_headers()
-                            
+
                             response_data = e.read()
                             self.wfile.write(response_data)
-                            
+
                     except Exception as e:
                         logger.error(f"Cluster proxy error: {e}")
                         self.send_error(502, "Bad Gateway")
-            
+
             with socketserver.TCPServer(("0.0.0.0", 5001), ClusterAPIProxy) as httpd:
                 logger.info("Cluster API proxy server started on 0.0.0.0:5001 (forwarding to 127.0.0.1:8080)")
                 httpd.serve_forever()
-                
+
         except Exception as e:
             logger.error(f"Cluster proxy server error: {e}")
             import traceback
@@ -2162,44 +2159,44 @@ class ServerManagerWebServer(ServerManagerModule):
     def _run_http_redirect_server(self, host, redirect_port, https_port):
         try:
             from http.server import HTTPServer, BaseHTTPRequestHandler
-            
+
             class RedirectHandler(BaseHTTPRequestHandler):
                 def __init__(self, https_port, *args, **kwargs):
                     self.https_port = https_port
                     super().__init__(*args, **kwargs)
-                
+
                 def do_GET(self):
                     self.redirect_to_https()
-                
+
                 def do_POST(self):
                     self.redirect_to_https()
-                
+
                 def do_PUT(self):
                     self.redirect_to_https()
-                
+
                 def do_DELETE(self):
                     self.redirect_to_https()
-                
+
                 def do_HEAD(self):
                     self.redirect_to_https()
-                
+
                 def redirect_to_https(self):
                     https_url = f"https://{self.headers.get('Host', f'localhost:{self.https_port}')}{self.path}"
                     if ':' in self.headers.get('Host', ''):
                         host_part = self.headers['Host'].split(':')[0]
                         https_url = f"https://{host_part}:{self.https_port}{self.path}"
-                    
+
                     self.send_response(301)
                     self.send_header('Location', https_url)
                     self.send_header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
                     self.end_headers()
-                    
+
                     logger.debug(f"Redirected HTTP request to: {https_url}")
-                
+
                 def log_message(self, format, *args):
                     # Suppress default HTTP server logging
                     return
-            
+
             try:
                 server = HTTPServer((host, redirect_port), lambda *args: RedirectHandler(https_port, *args))
                 logger.info(f"HTTP redirect server listening on {host}:{redirect_port}")
@@ -2209,7 +2206,7 @@ class ServerManagerWebServer(ServerManagerModule):
                     logger.warning(f"Port {redirect_port} already in use, skipping HTTP redirect server")
                 else:
                     logger.error(f"Failed to start HTTP redirect server on port {redirect_port}: {e}")
-                    
+
         except Exception as e:
             logger.error(f"HTTP redirect server error: {e}")
             import traceback
@@ -2219,7 +2216,7 @@ class ServerManagerWebServer(ServerManagerModule):
         try:
             if self.console_monitor_thread and self.console_monitor_thread.is_alive():
                 return  # Already running
-            
+
             self.console_monitor_active = True
             self.console_monitor_thread = threading.Thread(
                 target=self._console_monitor_loop,
@@ -2230,7 +2227,7 @@ class ServerManagerWebServer(ServerManagerModule):
             logger.info("Started HTTPS console monitoring thread")
         except Exception as e:
             logger.error(f"Error starting console monitoring: {e}")
-    
+
     def _console_monitor_loop(self):
         try:
             while self.console_monitor_active:
@@ -2242,33 +2239,33 @@ class ServerManagerWebServer(ServerManagerModule):
                     time.sleep(5)
         except Exception as e:
             logger.error(f"Fatal console monitor error: {e}")
-    
+
     def _update_console_states(self):
         try:
             if not self.server_manager:
                 return
-            
+
             try:
                 servers = self.server_manager.get_all_servers()
             except Exception as e:
                 logger.debug(f"Could not get servers for console monitoring: {e}")
                 return
-            
+
             for server_name, server_config in servers.items():
                 try:
                     self._update_server_console_state(server_name, server_config)
                 except Exception as e:
                     logger.debug(f"Error updating console state for {server_name}: {e}")
-                    
+
         except Exception as e:
             logger.debug(f"Error in console state update: {e}")
-    
+
     def _update_server_console_state(self, server_name, server_config):
         try:
             pid = server_config.get('ProcessId') or server_config.get('PID')
             if not pid:
                 return
-            
+
             try:
                 import psutil
                 if not psutil.pid_exists(pid):
@@ -2278,7 +2275,7 @@ class ServerManagerWebServer(ServerManagerModule):
                     return
             except Exception:
                 return
-            
+
             # Skip if desktop console is actively saving state for this server
             try:
                 from Modules.Database.console_database import load_console_state_db
@@ -2291,7 +2288,7 @@ class ServerManagerWebServer(ServerManagerModule):
                         return
             except Exception:
                 pass  # If check fails, proceed with log file monitoring
-            
+
             log_files = self._discover_server_log_files(server_name, server_config)
             if not log_files:
                 return
@@ -2341,22 +2338,22 @@ class ServerManagerWebServer(ServerManagerModule):
 
             if new_output:
                 self._append_to_console_state(server_name, new_output)
-                
+
         except Exception as e:
             logger.debug(f"Error updating console state for {server_name}: {e}")
-    
+
     def _discover_server_log_files(self, server_name, server_config):
         try:
             log_files = []
-            
+
             stdout_log = server_config.get('LogStdout')
             stderr_log = server_config.get('LogStderr')
-            
+
             if stdout_log and os.path.exists(stdout_log):
                 log_files.append(stdout_log)
             if stderr_log and os.path.exists(stderr_log) and stderr_log != stdout_log:
                 log_files.append(stderr_log)
-            
+
             install_dir = server_config.get('InstallDir', '')
             if install_dir and os.path.exists(install_dir):
                 for pattern in ['*.log', '*.txt', 'logs/*.log', 'logs/*.txt']:
@@ -2364,12 +2361,12 @@ class ServerManagerWebServer(ServerManagerModule):
                     for log_file in glob.glob(full_pattern):
                         if log_file not in log_files:
                             log_files.append(log_file)
-            
+
             return log_files
         except Exception as e:
             logger.debug(f"Error discovering log files for {server_name}: {e}")
             return []
-    
+
     def _is_old_console_entry(self, line):
         try:
             skip_patterns = [
@@ -2384,7 +2381,7 @@ class ServerManagerWebServer(ServerManagerModule):
             return any(pattern in line for pattern in skip_patterns)
         except Exception:
             return False
-    
+
     def _append_to_console_state(self, server_name, new_output):
         try:
             try:
@@ -2421,20 +2418,20 @@ class ServerManagerWebServer(ServerManagerModule):
                 self.console_monitor_thread.join(timeout=5)
                 if self.console_monitor_thread.is_alive():
                     logger.warning("Console monitoring thread did not stop gracefully")
-            
+
             self.shutdown_cluster_status()
-            
+
             if hasattr(self, 'analytics') and self.analytics:
                 logger.info("Stopping analytics collection...")
                 self.analytics.stop_collection()
-                
+
             if hasattr(self, 'tracker') and self.tracker:
                 try:
                     if hasattr(self.tracker, 'stop_auto_refresh'):
                         self.tracker.stop_auto_refresh()
                 except Exception as e:
                     logger.warning(f"Error stopping tracker: {e}")
-                    
+
             logger.info("Cleanup completed")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
@@ -2442,27 +2439,27 @@ class ServerManagerWebServer(ServerManagerModule):
     def test_auth_modules(self):
         try:
             logger.info("Testing authentication modules...")
-            
+
             if self.sql_auth:
                 try:
                     users = self.sql_auth.get_all_users()
                     logger.info(f"SQL authentication available with {len(users)} users")
                 except Exception as e:
                     logger.warning(f"SQL authentication test failed: {e}")
-            
+
             try:
                 if hasattr(self, 'auth') and self.auth:
                     users = self.auth.get_all_users()
                     logger.info(f"File-based authentication available with {len(users)} users")
             except Exception as e:
                 logger.warning(f"File-based authentication test failed: {e}")
-                
+
             logger.info("Authentication module testing completed")
         except Exception as e:
             logger.error(f"Error testing authentication modules: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
-    
+
     def start_host_heartbeat(self):
         def heartbeat_worker():
             shutdown = getattr(self, '_shutdown_event', threading.Event())
@@ -2474,11 +2471,11 @@ class ServerManagerWebServer(ServerManagerModule):
                 except Exception as e:
                     logger.error(f"Host heartbeat error: {e}")
                     shutdown.wait(60)  # Wait longer on error (interruptible)
-        
+
         heartbeat_thread = threading.Thread(target=heartbeat_worker, daemon=True)
         heartbeat_thread.start()
         logger.info("Host heartbeat thread started")
-    
+
     def shutdown_cluster_status(self):
         try:
             if hasattr(self, 'cluster_db') and self.cluster_db:

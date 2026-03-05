@@ -17,9 +17,7 @@ logger = get_component_logger("Notifications")
 from .mailserver import mail_server
 
 class NotificationManager:
-    # - Email notifications with templates
-    # - Automated sending
-
+    # Email notifications with templates
     def __init__(self):
         self.templates = self._load_templates()
         self.automated_notifications = self._load_automated_settings()
@@ -46,30 +44,30 @@ class NotificationManager:
         # Load email templates
         template_dir = os.path.join(os.path.dirname(__file__), 'Mail-Templates')
         templates = {}
-        
+
         template_types = ['welcome', 'password_reset', 'account_locked', 'server_alert', 'maintenance', 'custom']
-        
+
         for template_type in template_types:
             try:
                 subject_file = os.path.join(template_dir, f'{template_type}_subject.txt')
                 text_file = os.path.join(template_dir, f'{template_type}_text.txt')
                 html_file = os.path.join(template_dir, f'{template_type}_html.html')
-                
+
                 with open(subject_file, 'r', encoding='utf-8') as f:
                     subject = f.read().strip()
-                
+
                 with open(text_file, 'r', encoding='utf-8') as f:
                     text_template = f.read()
-                
+
                 with open(html_file, 'r', encoding='utf-8') as f:
                     html_template = f.read()
-                
+
                 templates[template_type] = {
                     'subject': subject,
                     'text_template': text_template,
                     'html_template': html_template
                 }
-                
+
             except FileNotFoundError as e:
                 logger.error(f"Template file not found for {template_type}: {e}")
                 # Fall back to default templates if files are missing
@@ -77,7 +75,7 @@ class NotificationManager:
             except Exception as e:
                 logger.error(f"Error loading template {template_type}: {e}")
                 templates[template_type] = self._get_default_template(template_type)
-        
+
         return templates
 
     def _get_default_template(self, template_type):
@@ -202,7 +200,7 @@ class NotificationManager:
             kwargs['border_color'] = border_color
 
         html_body = template['html_template'].format(**kwargs)
-        
+
         # Embed CSS in HTML for email compatibility
         html_body = self._embed_css_in_html(html_body)
 

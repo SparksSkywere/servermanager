@@ -32,28 +32,28 @@ class ServerManagerStopper(ServerManagerModule):
     def __init__(self):
         super().__init__("StopServerManager")
         self.debug_mode = False
-        
+
         parser = argparse.ArgumentParser(description='Stop Server Manager')
         parser.add_argument('--debug', action='store_true', help='Debug mode')
         parser.add_argument('--force', action='store_true', help='Force stop')
         args = parser.parse_args()
-        
+
         if args.debug:
             logger.setLevel(logging.DEBUG)
             self.debug_mode = True
-            
+
         self.force_stop = args.force
-        
+
     def stop_process_by_pid(self, pid, process_name=None):
         # Kill process by PID
         try:
             if not psutil.pid_exists(pid):
                 logger.debug(f"PID {pid} not running")
                 return True
-                
+
             process = psutil.Process(pid)
             logger.info(f"Stopping process: {process.name()} (PID: {pid})")
-            
+
             # Get child processes first before killing parent
             children = []
             try:
@@ -62,10 +62,10 @@ class ServerManagerStopper(ServerManagerModule):
                     logger.debug(f"Found {len(children)} child processes for PID {pid}")
             except Exception:
                 pass
-            
+
             # Try graceful termination first
             process.terminate()
-            
+
             # Wait for process to terminate
             try:
                 process.wait(timeout=10)  # Increased timeout to 10 seconds
@@ -76,15 +76,15 @@ class ServerManagerStopper(ServerManagerModule):
                 try:
                     if sys.platform == 'win32':
                         # On Windows, use taskkill with /T to kill entire process tree
-                        subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)], 
-                                       stdout=subprocess.DEVNULL, 
+                        subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)],
+                                       stdout=subprocess.DEVNULL,
                                        stderr=subprocess.DEVNULL)
                     else:
                         # On Unix, use SIGKILL
                         os.kill(pid, signal.SIGKILL)
                 except Exception as e:
                     logger.error(f"Error forcefully killing process {pid}: {str(e)}")
-            
+
             # Kill any remaining child processes
             for child in children:
                 try:
@@ -98,7 +98,7 @@ class ServerManagerStopper(ServerManagerModule):
                         logger.debug(f"Killed child process {child.pid}")
                 except Exception:
                     pass
-            
+
             # Verify process is terminated
             time.sleep(0.5)
             if psutil.pid_exists(pid):
@@ -112,16 +112,16 @@ class ServerManagerStopper(ServerManagerModule):
                 if psutil.pid_exists(pid):
                     logger.error(f"Failed to kill process {pid} forcefully")
                     return False
-            
+
             return True
-            
+
         except psutil.NoSuchProcess:
             logger.debug(f"Process {pid} does not exist")
             return True
         except Exception as e:
             logger.error(f"Error stopping process {pid}: {str(e)}")
             return False
-            
+
     def stop_processes_from_pid_files(self):
         # Stop processes using PID files
         pid_files = [
@@ -129,32 +129,32 @@ class ServerManagerStopper(ServerManagerModule):
             "webserver.pid",
             "trayicon.pid"
         ]
-        
+
         stopped_count = 0
-        
+
         for pid_file in pid_files:
             pid_path = os.path.join(self.paths["temp"], pid_file)
             if os.path.exists(pid_path):
                 try:
-                    with open(pid_path, 'r') as f:
+                    with open(pid_path, 'r', encoding='utf-8') as f:
                         pid_data = json.load(f)
-                        
+
                     pid = pid_data.get("ProcessId")
                     process_type = pid_data.get("ProcessType", pid_file.replace(".pid", ""))
-                    
+
                     if pid:
                         logger.info(f"Found PID file for {process_type}: {pid}")
                         if self.stop_process_by_pid(pid, process_type):
                             stopped_count += 1
-                            
+
                     # Remove PID file
                     os.remove(pid_path)
-                    
+
                 except Exception as e:
                     logger.error(f"Error processing PID file {pid_file}: {str(e)}")
-                    
+
         return stopped_count
-            
+
     def stop_processes_by_name(self):
         # Stop Server Manager processes by name
         process_names = [
@@ -164,58 +164,58 @@ class ServerManagerStopper(ServerManagerModule):
             "launcher",
             "dashboard"  # Added dashboard to ensure it's also terminated
         ]
-        
+
         # Add additional Python scripts to check for
         python_scripts = [
-            'launcher.py', 
-            'trayicon.py', 
+            'launcher.py',
+            'trayicon.py',
             'webserver.py',
             'dashboard.py',
-            'stop_servermanager.py', 
+            'stop_servermanager.py',
             'start_servermanager.py',
             'admin_dashboard.py'
         ]
-        
+
         stopped_count = 0
-        
+
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
                 # Skip self
                 if proc.pid == os.getpid():
                     continue
-                    
+
                 # Check if process name matches
                 proc_name = proc.info['name'].lower()
                 proc_match = any(name in proc_name for name in process_names)
-                
+
                 # Check if cmdline contains server manager path
                 cmdline = " ".join(proc.info['cmdline'] or []).lower()
                 cmdline_match = self.server_manager_dir and self.server_manager_dir.lower() in cmdline
-                
+
                 # Check if Python script matches
                 python_script_match = False
                 if 'python' in proc_name and cmdline:
                     python_script_match = any(script in cmdline for script in python_scripts)
-                
+
                 # Stop matching processes
                 if proc_match or cmdline_match or python_script_match:
                     logger.info(f"Found matching process: {proc.info['name']} (PID: {proc.pid}) - cmdline: {cmdline[:100]}...")
                     if self.stop_process_by_pid(proc.pid, proc.info['name']):
                         stopped_count += 1
-            
+
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
             except Exception as e:
                 logger.error(f"Error checking process: {str(e)}")
-                
+
         return stopped_count
-    
+
     def final_cleanup_kill(self):
         # Final aggressive cleanup - kill any remaining Python processes related to Server Manager
         logger.info("Performing final aggressive cleanup")
-        
+
         killed_count = 0
-        
+
         try:
             # Use taskkill to kill any remaining python processes with servermanager in command line
             if sys.platform == 'win32' and self.server_manager_dir:
@@ -225,19 +225,19 @@ class ServerManagerStopper(ServerManagerModule):
                 if result.returncode == 0:
                     killed_count += 1
                     logger.info("Killed remaining python processes with servermanager path")
-                
+
                 # Also kill pythonw.exe processes
                 cmd = ['taskkill', '/F', '/FI', f'IMAGENAME eq pythonw.exe', '/FI', f'COMMANDLINE co {self.server_manager_dir}']
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 if result.returncode == 0:
                     killed_count += 1
                     logger.info("Killed remaining pythonw processes with servermanager path")
-                    
+
         except Exception as e:
             logger.error(f"Error in final cleanup: {str(e)}")
-            
+
         return killed_count
-    
+
     def stop_all_game_servers(self):
         # Stop all running game servers
         try:
@@ -245,15 +245,15 @@ class ServerManagerStopper(ServerManagerModule):
             stop_all_script = os.path.join(self.paths["scripts"], "stop_all_servers.py")
             if os.path.exists(stop_all_script):
                 logger.info("Stopping all game servers using stop_all_servers.py")
-                
+
                 # Run with hidden console
                 if sys.platform == 'win32':
                     startupinfo = subprocess.STARTUPINFO()
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                     startupinfo.wShowWindow = 0  # SW_HIDE
-                    
+
                     subprocess.run(
-                        [sys.executable, stop_all_script], 
+                        [sys.executable, stop_all_script],
                         timeout=30,
                         startupinfo=startupinfo,
                         creationflags=subprocess.CREATE_NO_WINDOW
@@ -261,20 +261,20 @@ class ServerManagerStopper(ServerManagerModule):
                 else:
                     # Unix platforms
                     subprocess.run(
-                        [sys.executable, stop_all_script], 
+                        [sys.executable, stop_all_script],
                         timeout=30,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE
                     )
-                    
+
                 return True
-                
+
             # Alternative method: look for PIDS.txt
             if self.server_manager_dir:
                 pids_file = os.path.join(self.server_manager_dir, "PIDS.txt")
                 if os.path.exists(pids_file):
                     logger.info("Stopping servers listed in PIDS.txt")
-                    with open(pids_file, 'r') as f:
+                    with open(pids_file, 'r', encoding='utf-8') as f:
                         for line in f:
                             parts = line.strip().split(' - ')
                             if len(parts) >= 2:
@@ -282,32 +282,32 @@ class ServerManagerStopper(ServerManagerModule):
                                 server_name = parts[1]
                                 logger.info(f"Stopping server: {server_name} (PID: {pid})")
                                 self.stop_process_by_pid(pid, server_name)
-                
+
                     # Clear the PIDS file
-                    open(pids_file, 'w').close()
+                    open(pids_file, 'w', encoding='utf-8').close()
                 return True
-                
+
             return False
         except Exception as e:
             logger.error(f"Error stopping game servers: {str(e)}")
             return False
-    
+
     def run(self):
         # Main execution method
         try:
             logger.info("Starting Server Manager shutdown process")
-            
+
             # Stop all game servers first
             self.stop_all_game_servers()
-            
+
             # Stop processes from PID files
             count1 = self.stop_processes_from_pid_files()
-            
+
             # Stop processes by name
             count2 = self.stop_processes_by_name()
-            
+
             logger.info(f"Stopped {count1 + count2} Server Manager processes")
-            
+
             # Cleanup temp files
             for filename in os.listdir(self.paths["temp"]):
                 if filename.endswith('.pid') or filename.startswith('relay_') and filename.endswith('.json'):
@@ -316,24 +316,24 @@ class ServerManagerStopper(ServerManagerModule):
                         logger.debug(f"Removed temp file: {filename}")
                     except Exception as e:
                         logger.error(f"Failed to remove temp file {filename}: {str(e)}")
-            
+
             # Final check for any remaining processes
             time.sleep(2)  # Wait longer for processes to terminate
             count3 = self.stop_processes_by_name()  # Run again to catch any stragglers
             if count3 > 0:
                 logger.info(f"Stopped {count3} additional processes in final cleanup")
-            
+
             # Wait a bit more before aggressive cleanup
             time.sleep(1)
-            
+
             # Final aggressive cleanup
             count4 = self.final_cleanup_kill()
             if count4 > 0:
                 logger.info(f"Final cleanup killed {count4} additional processes")
-            
+
             logger.info("Server Manager shutdown complete")
             return 0
-            
+
         except Exception as e:
             logger.error(f"Error stopping Server Manager: {str(e)}")
             return 1
@@ -343,7 +343,7 @@ def main():
     if not is_admin():
         print("Requesting administrative privileges...")
         run_as_admin()
-    
+
     try:
         # Create and run stopper
         stopper = ServerManagerStopper()

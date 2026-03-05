@@ -31,35 +31,35 @@ def install_service():
         if input("Restart with admin privileges? (y/n): ").lower() == 'y':
             return run_as_admin()
         return False
-    
+
     server_manager_dir = get_server_manager_dir()
     if not server_manager_dir:
         print("SM installation not found in registry.")
         return False
-    
+
     service_wrapper_path = os.path.join(server_manager_dir, "Modules", "service_wrapper.py")
     if not os.path.exists(service_wrapper_path):
         print(f"Service wrapper not found: {service_wrapper_path}")
         return False
-    
+
     try:
         print("Installing Server Manager Windows Service...")
-        
+
         # Install pywin32 if needed
         print("Ensuring pywin32 is installed...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "pywin32"], 
+        subprocess.run([sys.executable, "-m", "pip", "install", "pywin32"],
                       check=True, capture_output=True)
-        
-        result = subprocess.run([sys.executable, service_wrapper_path, "install"], 
+
+        result = subprocess.run([sys.executable, service_wrapper_path, "install"],
                                capture_output=True, text=True)
-        
+
         if result.returncode == 0:
             print("Service installed successfully!")
-            
+
             print("Starting service...")
-            start_result = subprocess.run([sys.executable, service_wrapper_path, "start"], 
+            start_result = subprocess.run([sys.executable, service_wrapper_path, "start"],
                                         capture_output=True, text=True)
-            
+
             if start_result.returncode == 0:
                 print("Service started successfully!")
                 print("Server Manager will now start automatically with Windows.")
@@ -70,7 +70,7 @@ def install_service():
         else:
             print(f"Service installation failed: {result.stderr}")
             return False
-            
+
     except subprocess.CalledProcessError as e:
         print(f"Error during service installation: {e}")
         return False
@@ -85,36 +85,36 @@ def uninstall_service():
         if input("Restart with admin privileges? (y/n): ").lower() == 'y':
             return run_as_admin()
         return False
-    
+
     server_manager_dir = get_server_manager_dir()
     if not server_manager_dir:
         print("Server Manager installation not found in registry.")
         return False
-    
+
     service_wrapper_path = os.path.join(server_manager_dir, "Modules", "service_wrapper.py")
     if not os.path.exists(service_wrapper_path):
         print(f"Service wrapper not found: {service_wrapper_path}")
         return False
-    
+
     try:
         print("Uninstalling Server Manager Windows Service...")
-        
+
         # Stop the service first
         print("Stopping service...")
-        subprocess.run([sys.executable, service_wrapper_path, "stop"], 
+        subprocess.run([sys.executable, service_wrapper_path, "stop"],
                       capture_output=True, text=True)
-        
+
         # Uninstall the service
-        result = subprocess.run([sys.executable, service_wrapper_path, "uninstall"], 
+        result = subprocess.run([sys.executable, service_wrapper_path, "uninstall"],
                                capture_output=True, text=True)
-        
+
         if result.returncode == 0:
             print("Service uninstalled successfully!")
             return True
         else:
             print(f"Service uninstallation failed: {result.stderr}")
             return False
-            
+
     except Exception as e:
         print(f"Error during service uninstallation: {e}")
         return False
@@ -122,9 +122,9 @@ def uninstall_service():
 def service_status():
     # Check service status
     try:
-        result = subprocess.run(['sc', 'query', 'ServerManagerService'], 
+        result = subprocess.run(['sc', 'query', 'ServerManagerService'],
                                capture_output=True, text=True)
-        
+
         if result.returncode == 0:
             if "RUNNING" in result.stdout:
                 print("Server Manager Service: RUNNING")
@@ -145,29 +145,29 @@ def start_stop_service(action):
         if input("Restart with admin privileges? (y/n): ").lower() == 'y':
             return run_as_admin()
         return False
-    
+
     server_manager_dir = get_server_manager_dir()
     if not server_manager_dir:
         print("Server Manager installation not found in registry.")
         return False
-    
+
     service_wrapper_path = os.path.join(server_manager_dir, "Modules", "service_wrapper.py")
     if not os.path.exists(service_wrapper_path):
         print(f"Service wrapper not found: {service_wrapper_path}")
         return False
-    
+
     try:
         print(f"{action.capitalize()}ing Server Manager service...")
-        result = subprocess.run([sys.executable, service_wrapper_path, action], 
+        result = subprocess.run([sys.executable, service_wrapper_path, action],
                                capture_output=True, text=True)
-        
+
         if result.returncode == 0:
             print(f"Service {action}ed successfully!")
             return True
         else:
             print(f"Failed to {action} service: {result.stderr}")
             return False
-            
+
     except Exception as e:
         print(f"Error {action}ing service: {e}")
         return False
@@ -176,12 +176,12 @@ def main():
     parser = argparse.ArgumentParser(description='Server Manager Service Helper')
     parser.add_argument('action', choices=['install', 'uninstall', 'start', 'stop', 'restart', 'status'],
                        help='Action to perform')
-    
+
     args = parser.parse_args()
-    
+
     print("Server Manager Service Helper")
     print("=" * 40)
-    
+
     success = False
     if args.action == 'install':
         success = install_service()
@@ -200,10 +200,10 @@ def main():
     elif args.action == 'status':
         service_status()
         success = True
-    
+
     if args.action != 'status':
         input("\nPress Enter to exit...")
-    
+
     return 0 if success else 1
 
 if __name__ == '__main__':

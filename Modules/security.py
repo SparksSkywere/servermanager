@@ -9,75 +9,67 @@ import base64
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from Modules.common import setup_module_path, setup_module_logging, get_server_manager_dir, is_admin as common_is_admin
+from Modules.common import setup_module_path, setup_module_logging, get_server_manager_dir, is_admin as common_is_admin, RegistryModule
 setup_module_path()
 
 logger: logging.Logger = setup_module_logging("Security")
 
-class SecurityManager:
-    # - Auth, password hashing, token gen
-    # - Admin privilege detection
-    def __init__(self):
-        self.registry_path = r"Software\SkywereIndustries\Servermanager"
-        self.server_manager_dir = None
-        self.paths = {}
-        
-        self.initialise_from_registry()
-    
+class SecurityManager(RegistryModule):
+    # Auth, password hashing, token gen
+
     def initialise_from_registry(self):
         # Pull paths from registry
         try:
             self.server_manager_dir = get_server_manager_dir()
-            
+
             self.paths = {
                 "root": self.server_manager_dir,
                 "logs": os.path.join(self.server_manager_dir, "logs")
             }
-            
+
             # Directories are now created in Start-ServerManager.pyw
-                
             logger.info("Security manager ready")
             return True
-            
+
         except Exception as e:
             logger.error(f"Security init failed: {str(e)}")
             return False
-            
+
     def generate_token(self, length=32):
         # Random hex token
         return secrets.token_hex(length)
-        
+
     def hash_password(self, password, salt=None):
         # SHA256 password hash with salt
         if salt is None:
             salt = secrets.token_hex(16)
-            
+
         password_bytes = password.encode('utf-8')
         salt_bytes = salt.encode('utf-8')
-        
+
         hash_obj = hashlib.sha256(password_bytes + salt_bytes)
         password_hash = base64.b64encode(hash_obj.digest()).decode('utf-8')
-        
+
         return {
             "hash": password_hash,
             "salt": salt
         }
-        
+
     def verify_password(self, password, stored_hash, salt):
         # Check password against stored hash
         password_bytes = password.encode('utf-8')
         salt_bytes = salt.encode('utf-8')
-        
+
         hash_obj = hashlib.sha256(password_bytes + salt_bytes)
         calculated_hash = base64.b64encode(hash_obj.digest()).decode('utf-8')
-        
+
         return calculated_hash == stored_hash
-        
+
     def encrypt_data(self, data, key=None):
         # Encrypt data with an optional key
         try:
             from cryptography.fernet import Fernet
-            
+
             if key is None:
                 key = Fernet.generate_key()
             elif isinstance(key, str):
@@ -86,13 +78,13 @@ class SecurityManager:
                     Fernet(key.encode('utf-8'))
                 except (ValueError, Exception):
                     key = Fernet.generate_key()
-            
+
             if isinstance(data, str):
                 data = data.encode('utf-8')
-                
+
             f = Fernet(key)
             encrypted_data = f.encrypt(data)
-            
+
             return {
                 "data": encrypted_data,
                 "key": key
@@ -109,18 +101,18 @@ class SecurityManager:
         except Exception as e:
             logger.error(f"Encryption error: {str(e)}")
             return None
-            
+
     def decrypt_data(self, encrypted_data, key):
         # Decrypt data with the provided key
         try:
             from cryptography.fernet import Fernet
-            
+
             if isinstance(key, str):
                 key = key.encode('utf-8')
-                
+
             f = Fernet(key)
             decrypted_data = f.decrypt(encrypted_data)
-            
+
             return decrypted_data
         except ImportError:
             logger.error("Cryptography module not installed. Using base64 decoding instead.")

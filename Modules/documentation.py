@@ -16,29 +16,29 @@ def show_help_dialog(parent_window, logger=None):
         help_dialog.title("Server Manager Dashboard - Help")
         help_dialog.transient(parent_window)
         help_dialog.grab_set()
-        
+
         main_frame = ttk.Frame(help_dialog, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        title_label = ttk.Label(main_frame, text="Server Manager Dashboard Help", 
+
+        title_label = ttk.Label(main_frame, text="Server Manager Dashboard Help",
                               font=("Segoe UI", 16, "bold"))
         title_label.pack(anchor=tk.W, pady=(0, 20))
-        
+
         notebook = ttk.Notebook(main_frame)
         notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-        
+
         _add_overview_tab(notebook)
         _add_controls_tab(notebook)
         _add_server_management_tab(notebook)
         _add_troubleshooting_tab(notebook)
-        
+
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=(10, 0))
-        
+
         ttk.Button(button_frame, text="Close", command=help_dialog.destroy, width=15).pack(side=tk.RIGHT)
-        
+
         centre_window(help_dialog, 800, 700, parent_window)
-        
+
     except Exception as e:
         error_msg = f"Help dialog error: {str(e)}"
         if logger:
@@ -49,11 +49,11 @@ def _add_overview_tab(notebook):
     # Overview tab content
     overview_frame = ttk.Frame(notebook)
     notebook.add(overview_frame, text="Overview")
-    
-    overview_text = scrolledtext.ScrolledText(overview_frame, wrap=tk.WORD, 
+
+    overview_text = scrolledtext.ScrolledText(overview_frame, wrap=tk.WORD,
                                             width=70, height=20, font=("Segoe UI", 10))
     overview_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-    
+
     overview_content = """Server Manager Dashboard
 
 Overview
@@ -79,7 +79,7 @@ Server Manager Dashboard supports the following server types:
 - Steam Servers: Automated deployment using SteamCMD for games available on the Steam platform.
 - Minecraft Servers: Support for vanilla Minecraft and modded versions using Fabric, Forge, or NeoForge loaders.
 - Other Servers: Custom server executables and scripts for games not covered by the above categories."""
-    
+
     overview_text.insert(tk.END, overview_content)
     overview_text.config(state=tk.DISABLED)
 
@@ -87,11 +87,11 @@ def _add_controls_tab(notebook):
     # Add the Controls & Shortcuts tab to the help notebook
     controls_frame = ttk.Frame(notebook)
     notebook.add(controls_frame, text="Controls & Shortcuts")
-    
-    controls_text = scrolledtext.ScrolledText(controls_frame, wrap=tk.WORD, 
+
+    controls_text = scrolledtext.ScrolledText(controls_frame, wrap=tk.WORD,
                                             width=70, height=20, font=("Segoe UI", 10))
     controls_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-    
+
     controls_content = """Interface Controls and Shortcuts
 
 Main Interface Components
@@ -143,7 +143,7 @@ Web Server Status Indicator
 - Displays the connection status of the web dashboard service.
 - Click the indicator to open the web interface in the default browser (when online).
 - Use the Offline Mode toggle to disable web features if needed."""
-    
+
     controls_text.insert(tk.END, controls_content)
     controls_text.config(state=tk.DISABLED)
 
@@ -151,11 +151,11 @@ def _add_server_management_tab(notebook):
     # Add the Server Management tab to the help notebook
     servers_frame = ttk.Frame(notebook)
     notebook.add(servers_frame, text="Server Management")
-    
-    servers_text = scrolledtext.ScrolledText(servers_frame, wrap=tk.WORD, 
+
+    servers_text = scrolledtext.ScrolledText(servers_frame, wrap=tk.WORD,
                                            width=70, height=20, font=("Segoe UI", 10))
     servers_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-    
+
     servers_content = """Server Management
 
 Adding Servers
@@ -223,7 +223,7 @@ The import and export features allow you to:
 - Import configurations from previously exported files.
 - Scan existing server directories to automatically detect and import servers.
 - Preserve all settings, file paths, and custom configurations during transfers."""
-    
+
     servers_text.insert(tk.END, servers_content)
     servers_text.config(state=tk.DISABLED)
 
@@ -231,11 +231,11 @@ def _add_troubleshooting_tab(notebook):
     # Add the Troubleshooting tab to the help notebook
     troubleshooting_frame = ttk.Frame(notebook)
     notebook.add(troubleshooting_frame, text="Troubleshooting")
-    
-    troubleshooting_text = scrolledtext.ScrolledText(troubleshooting_frame, wrap=tk.WORD, 
+
+    troubleshooting_text = scrolledtext.ScrolledText(troubleshooting_frame, wrap=tk.WORD,
                                                    width=70, height=20, font=("Segoe UI", 10))
     troubleshooting_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-    
+
     troubleshooting_content = """Troubleshooting
 
 Common Issues and Resolutions
@@ -323,19 +323,17 @@ If issues persist after trying the above solutions:
 - Restart the application with administrator privileges.
 - Verify that all required dependencies and prerequisites are properly installed.
 - Contact technical support with specific error messages and system information."""
-    
+
     troubleshooting_text.insert(tk.END, troubleshooting_content)
     troubleshooting_text.config(state=tk.DISABLED)
 
 def get_version_from_registry():
     # Get the current version from Windows registry
-    # Returns: Version string from registry or 'Unknown' if not found
     from Modules.common import get_registry_value
     return get_registry_value(REGISTRY_PATH, "CurrentVersion", "Unknown")
 
 def get_application_info():
     # Get comprehensive application information for display
-    # Returns: Dictionary containing detailed application information
     return {
         "name": "Server Manager Dashboard",
         "description": "A comprehensive game server management application for Windows systems",
@@ -365,33 +363,31 @@ def get_application_info():
 
 def show_about_dialog(parent_window, logger=None):
     # Display a professional about dialog with comprehensive application information
-    # Args: parent_window: The parent tkinter window
-    #       logger: Optional logger instance for error logging
     try:
         app_info = get_application_info()
-        
+
         about_dialog = tk.Toplevel(parent_window)
         about_dialog.title("About Server Manager Dashboard")
         about_dialog.transient(parent_window)
         about_dialog.grab_set()
         about_dialog.resizable(False, False)
-        
+
         # Main frame with padding
         main_frame = ttk.Frame(about_dialog, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
-        
+
         # Application name and version
-        ttk.Label(main_frame, text=app_info["name"], 
+        ttk.Label(main_frame, text=app_info["name"],
                  font=("Segoe UI", 16, "bold")).pack(pady=(0, 5))
-        ttk.Label(main_frame, text=f"Version {app_info['version']}", 
+        ttk.Label(main_frame, text=f"Version {app_info['version']}",
                  font=("Segoe UI", 12)).pack(pady=(0, 15))
-        
+
         # Description
         desc_frame = ttk.LabelFrame(main_frame, text="Description", padding=10)
         desc_frame.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(desc_frame, text=app_info["description"], 
+        ttk.Label(desc_frame, text=app_info["description"],
                  font=("Segoe UI", 10), wraplength=350).pack(anchor=tk.W)
-        
+
         # System Requirements
         req_frame = ttk.LabelFrame(main_frame, text="System Requirements", padding=10)
         req_frame.pack(fill=tk.X, pady=(0, 10))
@@ -400,29 +396,29 @@ Processor: {app_info['system_requirements']['cpu']}
 Memory: {app_info['system_requirements']['ram']}
 Storage: {app_info['system_requirements']['storage']}
 Network: {app_info['system_requirements']['network']}"""
-        ttk.Label(req_frame, text=req_text, font=("Segoe UI", 9), 
+        ttk.Label(req_frame, text=req_text, font=("Segoe UI", 9),
                  justify=tk.LEFT).pack(anchor=tk.W)
-        
+
         # Supported Server Types
         servers_frame = ttk.LabelFrame(main_frame, text="Supported Server Types", padding=10)
         servers_frame.pack(fill=tk.X, pady=(0, 10))
         servers_text = "\n".join(f"• {server}" for server in app_info["supported_servers"])
-        ttk.Label(servers_frame, text=servers_text, font=("Segoe UI", 9), 
+        ttk.Label(servers_frame, text=servers_text, font=("Segoe UI", 9),
                  justify=tk.LEFT).pack(anchor=tk.W)
-        
+
         # Copyright and author
-        ttk.Label(main_frame, text=app_info["copyright"], 
+        ttk.Label(main_frame, text=app_info["copyright"],
                  font=("Segoe UI", 9)).pack(pady=(10, 5))
-        ttk.Label(main_frame, text=app_info["contact"], 
+        ttk.Label(main_frame, text=app_info["contact"],
                  font=("Segoe UI", 9)).pack(pady=(0, 15))
-        
+
         # Close button
-        ttk.Button(main_frame, text="Close", command=about_dialog.destroy, 
+        ttk.Button(main_frame, text="Close", command=about_dialog.destroy,
                   width=15).pack()
-        
+
         # Centre dialog relative to parent
         centre_window(about_dialog, 400, 500, parent_window)
-        
+
     except Exception as e:
         error_msg = f"Error showing about dialog: {str(e)}"
         if logger:
@@ -431,27 +427,27 @@ Network: {app_info['system_requirements']['network']}"""
 
 # Test function for standalone testing
 def test_documentation():
-    # Test function to run the documentation dialogs standalone
+    # Test function to run the documentation dialogs standalone (DEBUG!)
     root = tk.Tk()
     root.title("Documentation Test")
-    
+
     frame = ttk.Frame(root, padding=20)
     frame.pack(fill=tk.BOTH, expand=True)
-    
-    ttk.Label(frame, text="Documentation Module Test", 
+
+    ttk.Label(frame, text="Documentation Module Test",
              font=("Segoe UI", 14, "bold")).pack(pady=10)
-    
-    ttk.Button(frame, text="Show Help", 
+
+    ttk.Button(frame, text="Show Help",
               command=lambda: show_help_dialog(root)).pack(pady=5)
-    
-    ttk.Button(frame, text="Show About", 
+
+    ttk.Button(frame, text="Show About",
               command=lambda: show_about_dialog(root)).pack(pady=5)
-    
+
     ttk.Button(frame, text="Exit", command=root.destroy).pack(pady=10)
-    
+
     # Centre the test window
     centre_window(root, 400, 200)
-    
+
     root.mainloop()
 
 if __name__ == "__main__":

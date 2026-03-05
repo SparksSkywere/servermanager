@@ -19,14 +19,13 @@ logger: logging.Logger = setup_module_logging("ServerAutomation")
 
 class ServerAutomationManager:
     # Manages automated server operations like MOTD, restart warnings, and start commands
-
     def __init__(self, server_manager=None):
         self.server_manager = server_manager
         self.running = False
         self._stop_event = threading.Event()
         self.automation_thread = None
-        self.last_motd_broadcast = {}  # Track last MOTD broadcast per server
-        self.motd_timers = {}  # Track MOTD timers per server
+        self.last_motd_broadcast = {}
+        self.motd_timers = {}
 
     def _automation_loop(self):
         # Main automation loop that runs periodically
@@ -65,11 +64,11 @@ class ServerAutomationManager:
         # Process MOTD for a specific server
         motd_interval = config.get('MotdInterval', 0)
         if motd_interval <= 0:
-            return  # MOTD disabled for this server
+            return
 
         motd_message = config.get('MotdMessage', '').strip()
         if not motd_message:
-            return  # No message configured
+            return
 
         # Check if it's time to send MOTD
         last_broadcast = self.last_motd_broadcast.get(server_name)
@@ -77,11 +76,11 @@ class ServerAutomationManager:
             last_broadcast_time = datetime.datetime.fromisoformat(last_broadcast)
             time_diff = (current_time - last_broadcast_time).total_seconds() / 60  # minutes
             if time_diff < motd_interval:
-                return  # Not time yet
+                return
 
         # Check if server is running
         if not self._is_server_running(server_name):
-            return  # Server not running
+            return
 
         # Send MOTD
         if self.send_motd(server_name, motd_message):
@@ -180,19 +179,19 @@ class ServerAutomationManager:
     def run(self):
         # Main automation loop - runs indefinitely
         logger.info("Server automation manager starting...")
-        
+
         try:
             while True:
                 try:
                     self._automation_loop()
                 except Exception as e:
                     logger.error(f"Error in automation loop: {str(e)}")
-                
+
                 # Sleep for 30 seconds between automation checks (interruptible)
                 self._stop_event.wait(30)
                 if self._stop_event.is_set():
                     break
-                
+
         except KeyboardInterrupt:
             logger.info("Server automation manager stopped")
         except Exception as e:
@@ -203,13 +202,13 @@ def main():
     # Main entry point for running server automation as a standalone process
     try:
         logger.info("Starting Server Automation Manager...")
-        
+
         # Create and start the automation manager
         automation_manager = ServerAutomationManager()
-        
+
         # Run the automation loop indefinitely
         automation_manager.run()
-        
+
     except KeyboardInterrupt:
         logger.info("Server automation stopped by user")
     except Exception as e:
@@ -217,7 +216,7 @@ def main():
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return 1
-    
+
     return 0
 
 if __name__ == "__main__":

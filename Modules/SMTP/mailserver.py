@@ -31,8 +31,7 @@ except ImportError:
     logger.warning("OAuth libs not available. MS OAuth disabled.")
 
 class MailServer:
-    # - SMTP with multiple providers
-    # - OAuth 2.0 support
+    # SMTP with multiple providers
 
     # Provider configs
     SMTP_CONFIGS = {
@@ -73,8 +72,8 @@ class MailServer:
         # Microsoft OAuth configuration with dynamic redirect URI
         web_port = self.config.get('web_port', 8080)
         return {
-            'client_id': 'your-client-id-here',  # Will be configured by user
-            'client_secret': 'your-client-secret-here',  # Will be configured by user
+            'client_id': 'your-client-id-here',
+            'client_secret': 'your-client-secret-here',
             'authority': 'https://login.microsoftonline.com/common',
             'scope': ['https://graph.microsoft.com/Mail.Send', 'https://graph.microsoft.com/Mail.ReadWrite'],
             'redirect_uri': f"{get_base_url(port=web_port)}/callback",

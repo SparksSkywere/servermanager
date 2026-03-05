@@ -100,7 +100,7 @@ logger: logging.Logger = get_dashboard_logger()
 class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogsMixin, DashboardSettingsMixin, ServerManagerModule):
     def __init__(self, debug_mode=False):
         super().__init__("ServerManagerDashboard")
-        
+
         self.steam_cmd_path = None
         self.servers = []
         self.debug_mode = debug_mode
@@ -108,7 +108,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         self.current_user = None
         self.install_process = None
         self._refreshing_server_list = False
-        
+
         # Initialize UI-related attributes (created in setup_ui)
         self.loading_frame: Optional[Any] = None
         self.server_lists: dict = {}
@@ -123,7 +123,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         self.loading_status_label: Optional[Any] = None
         self.loading_progress: Optional[Any] = None
         self.loading_percentage_label: Optional[Any] = None
-        
+
         # Additional UI attributes
         self.top_frame: Optional[Any] = None
         self.add_server_btn: Optional[Any] = None
@@ -152,7 +152,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         self.offline_check: Optional[Any] = None
         self.metrics_frame: Optional[Any] = None
         self.menubar: Optional[Any] = None
-        
+
         # Load dashboard configuration from JSON file (use inherited config from base class)
         dashboard_config = load_dashboard_config(self.server_manager_dir)
 
@@ -161,7 +161,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
 
         # Load AppID/server info from database (not JSON)
         self.dedicated_servers, self.appid_metadata = load_appid_scanner_list(self.server_manager_dir)
-        
+
         # Load Minecraft server info from database
         self.minecraft_servers, self.minecraft_metadata = load_minecraft_scanner_list(self.server_manager_dir)
 
@@ -199,7 +199,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             "verificationInProgress": self.config.get("runtime", {}).get("verificationInProgress", False),
             "webserverStatus": self.config.get("runtime", {}).get("webserverStatus", "Disconnected"),
         }
-        
+
         # Init paths from registry
         success, self.steam_cmd_path, webserver_port, self.registry_values = initialise_registry_values(self.registry_path)
         if success:
@@ -216,7 +216,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         else:
             logger.error("Registry init failed")
             sys.exit(1)
-        
+
         # Initialise user management system
         try:
             engine, self.user_manager = initialise_user_manager()
@@ -224,7 +224,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             logger.error(f"Failed to initialise user management: {e}")
             messagebox.showerror("Database Error", f"Failed to connect to user database:\n{str(e)}")
             sys.exit(1)
-            
+
         # Initialise server manager
         try:
             self.server_manager = ServerManager()
@@ -233,10 +233,10 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             logger.error(f"Failed to initialise server manager: {e}")
             # Continue without server manager but show warning
             self.server_manager = None
-            messagebox.showwarning("Server Manager Warning", 
+            messagebox.showwarning("Server Manager Warning",
                                  f"Server manager failed to initialise:\n{str(e)}\n\n"
                                  "Some server operations may not be available.")
-        
+
         # Initialise server console manager
         try:
             self.console_manager = ConsoleManager(self.server_manager)
@@ -244,17 +244,17 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         except Exception as e:
             logger.error(f"Failed to initialise server console manager: {e}")
             self.console_manager = None
-            
+
         # Configure dashboard logging after paths are initialised
         configure_dashboard_logging(self.debug_mode, self.config)
-        
+
         # Create root window (temporarily hidden for login)
         self.root = tk.Tk()
         self.root.resizable(True, True)
-        
+
         # Calculate DPI scaling factor for proper UI sizing
         self._init_dpi_scaling()
-        
+
         # On Windows, when launched from trayicon (detached process), ensure proper window handling
         if os.name == 'nt' and '--debug' not in sys.argv:
             try:
@@ -265,10 +265,10 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                 logger.warning(f"Window initialisation issue (likely from trayicon launch): {e}")
                 # Continue anyway
         # Pass our existing root window to avoid multiple Tkinter root windows
-        try:            
+        try:
             # Use the version that accepts existing root to avoid conflicts
             user = admin_login_with_root(self.root, self.user_manager)
-                
+
             if not user:
                 logger.info("Login cancelled or failed, exiting application")
                 self.root.destroy()
@@ -279,34 +279,34 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             messagebox.showerror("Login Error", f"Failed to authenticate: {str(e)}\n\nThe application will exit.")
             self.root.destroy()
             sys.exit(1)
-        
+
         # Now configure the UI with user information
         username = getattr(self.current_user, 'username', 'Unknown') if self.current_user else 'Unknown'
         self.root.title(f"Server Manager Dashboard (Logged in as: {username})")
-        
+
         # Set dynamic minimum size based on screen size and DPI scaling
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        
+
         # Calculate DPI-aware minimum sizes
         base_min_width = self.scale_value(800)
         base_min_height = self.scale_value(600)
-        
+
         min_width = min(base_min_width, int(screen_width * 0.6))
         min_height = min(base_min_height, int(screen_height * 0.6))
         self.root.minsize(min_width, min_height)
-        
+
         # Ensure the main window is properly visible
         self.root.deiconify()
         logger.debug("Dashboard window deiconified")
-        
+
         # Bring window to front and give it focus
         self.root.lift()
         self.root.focus_force()
         self.root.attributes('-topmost', True)
         self.root.after(100, lambda: self.root.attributes('-topmost', False))
         logger.debug("Dashboard window brought to front")
-        
+
         # Centre the main window on screen with adaptive sizing
         width = max(min_width, int(screen_width * 0.85))
         height = max(min_height, int(screen_height * 0.85))
@@ -315,23 +315,23 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         height = min(height, int(screen_height * 0.9))
         centre_window(self.root, width, height)
         logger.debug("Dashboard window centered")
-        
+
         setup_ui(self)
-        
+
         # Lift loading overlay to ensure it's on top after all UI is created
         if hasattr(self, 'loading_frame'):
             self.loading_frame.lift() # type: ignore
-        
+
         # Write PID file
         self.write_pid_file("dashboard", os.getpid())
-        
+
         # Initialise timer manager (now using SchedulerManager)
         self.timer_manager = SchedulerManager(self)
-        
+
         # Set agent manager for database syncing
         if hasattr(self, 'agent_manager') and self.agent_manager:
             self.timer_manager.set_agent_manager(self.agent_manager)
-        
+
         # Initialise server update manager
         try:
             self.update_manager = ServerUpdateManager(self.server_manager_dir, self.config)
@@ -342,7 +342,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         except Exception as e:
             logger.error(f"Failed to initialise server update manager: {str(e)}")
             self.update_manager = None
-        
+
         # Initialise cluster manager
         try:
             # Use database-backed cluster management (no longer using JSON)
@@ -352,7 +352,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         except Exception as e:
             logger.error(f"Failed to initialise cluster manager: {str(e)}")
             self.agent_manager = None
-        
+
         # Get supported server types from server manager
         if self.server_manager:
             self.supported_server_types = self.server_manager.get_supported_server_types()
@@ -364,18 +364,18 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         try:
             # Get DPI from the root window
             dpi = self.root.winfo_fpixels('1i')
-            
+
             # Standard DPI is 96 on Windows
             self.dpi_scale = dpi / 96.0
-            
+
             # Clamp scaling factor to reasonable range (avoid extreme values)
             self.dpi_scale = max(1.0, min(self.dpi_scale, 3.0))
-            
+
             logger.debug(f"DPI scaling initialised: DPI={dpi}, scale_factor={self.dpi_scale:.2f}")
         except Exception as e:
             logger.warning(f"Could not calculate DPI scaling: {e}")
             self.dpi_scale = 1.0
-    
+
     def scale_value(self, value):
         # Scale a value according to the current DPI scaling factor
         return int(value * getattr(self, 'dpi_scale', 1.0))
@@ -383,31 +383,31 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
     def expand_all_categories(self):
         # Expand all categories in the current server list
         expand_all_categories(self)
-    
+
     def collapse_all_categories(self):
         # Collapse all categories in the current server list
         collapse_all_categories(self)
-    
+
     def get_current_server_list(self):
         # Get the server list for the currently active tab
         return get_current_server_list(self)
-    
+
     def get_current_subhost(self):
         # Get the name of the currently active subhost
         return get_current_subhost(self)
-    
+
     def update_server_list_for_subhost(self, subhost_name, servers_data):
         # Update the server list for a specific subhost
         update_server_list_for_subhost(subhost_name, servers_data, self.server_lists, self.server_manager_dir, logger)
-    
+
     def refresh_all_subhost_servers(self):
         # Refresh servers for all subhost tabs
         refresh_all_subhost_servers(self.server_lists, self.server_manager, self.server_manager_dir, logger)
-    
+
     def refresh_current_subhost_servers(self):
         # Refresh servers for the currently active subhost tab
         refresh_current_subhost_servers(self.get_current_subhost, self.server_manager, self.server_lists, self.server_manager_dir, logger)
-    
+
     def refresh_subhost_servers(self, subhost_name):
         # Refresh servers for a specific subhost
         refresh_subhost_servers(subhost_name, self.server_manager, self.server_lists, self.server_manager_dir, logger)
@@ -423,7 +423,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
     def on_server_double_click(self, event):
         # Handle double-click on server list - open configuration dialog
         on_server_double_click(self, event)
-            
+
     def _move_server_to_category(self, server_name, new_category):
         # Move a server to a new category by updating its configuration
         try:
@@ -431,22 +431,22 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             if not self.server_manager:
                 logger.error("Server manager not available")
                 return
-                
+
             server_config = self.server_manager.get_server_config(server_name)
             if not server_config:
                 logger.error(f"Server config not found: {server_name}")
                 return
-                
+
             server_config['Category'] = new_category
-            
+
             # Save to database
             self.server_manager.update_server(server_name, server_config)
-            
+
             # Update in-memory cache
             self.server_manager.reload_server(server_name)
-                
+
             logger.info(f"Updated category for server '{server_name}' to '{new_category}'")
-            
+
         except Exception as e:
             logger.error(f"Error updating server category: {str(e)}")
             raise
@@ -459,13 +459,13 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         # Update server list from configuration files
         from Host.dashboard_functions import update_server_list_logic
         update_server_list_logic(self, force_refresh)
-    
+
     def toggle_offline_mode(self):
         # Toggle offline mode
         self.variables["offlineMode"] = self.offline_var.get()  # type: ignore
         self.update_webserver_status()
         logger.info(f"Offline mode set to {self.variables['offlineMode']}")
-    
+
     def _hide_loading_overlay(self):
         # Hide the loading overlay
         try:
@@ -474,11 +474,11 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             logger.debug("Loading overlay hidden")
         except Exception as e:
             logger.debug(f"Error hiding loading overlay: {e}")
-    
+
     def toggle_system_info(self):
         # Toggle visibility of the system information panel
         self.system_info_visible = not self.system_info_visible
-        
+
         if self.system_info_visible:
             # Show the system info panel - add back to pane
             self.main_pane.add(self.system_frame, weight=30)  # type: ignore
@@ -487,7 +487,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             # Hide the system info panel - remove from pane
             self.main_pane.forget(self.system_frame)  # type: ignore
             self.system_toggle_btn.config(text="▶")  # type: ignore
-        
+
         # Save state to database
         self.variables["systemInfoVisible"] = self.system_info_visible
         try:
@@ -497,26 +497,26 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             logger.debug(f"System info visibility saved: {self.system_info_visible}")
         except Exception as e:
             logger.error(f"Error saving system info visibility state: {e}")
-    
+
     def scroll_tabs_left(self):
         # Scroll tabs to the left
         from Host.dashboard_ui import scroll_tabs_left
         scroll_tabs_left(self)
-    
+
     def scroll_tabs_right(self):
         # Scroll tabs to the right
         from Host.dashboard_ui import scroll_tabs_right
         scroll_tabs_right(self)
-    
+
     def update_webserver_status(self):
         # Update the web server status display - non-blocking
         import threading
-        
+
         def _check_status():
             try:
                 from Host.dashboard_functions import check_webserver_status
                 status = check_webserver_status(self.paths, self.variables)
-                
+
                 def _apply_status():
                     try:
                         if self.webserver_status is None:
@@ -532,14 +532,14 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                             self.webserver_status.config(foreground="gray")
                     except Exception as e:
                         logger.error(f"Error applying webserver status to UI: {e}")
-                
+
                 self.root.after(0, _apply_status)
             except Exception as e:
                 logger.error(f"Error checking webserver status: {e}")
-        
+
         thread = threading.Thread(target=_check_status, daemon=True, name="WebserverStatusCheck")
         thread.start()
-    
+
     def update_system_info(self):
         # Update system information using background threading to prevent UI freezing
         def _update():
@@ -552,13 +552,13 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
 
             except Exception as e:
                 logger.error(f"Error in update_system_info: {str(e)}")
-        
+
         # Ensure this runs on the main thread
         if threading.current_thread() == threading.main_thread():
             _update()
         else:
             self.root.after(0, _update)
-    
+
     def periodic_server_list_refresh(self):
         # Periodic refresh of server list to clean up orphaned processes and update status
         try:
@@ -570,7 +570,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                 log_dashboard_event("PERIODIC_REFRESH", "Skipping periodic refresh - update already in progress", "DEBUG")
         except Exception as e:
             logger.error(f"Error in periodic server list refresh: {str(e)}")
-    
+
     def run(self):
         # Run the dashboard application
         logger.info("Starting dashboard run method")
@@ -583,7 +583,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             except Exception:
                 pass
             self.on_close()
-        
+
         # Override Tkinter's exception handling
         import tkinter
         tkinter.Tk.report_callback_exception = tkinter_exception_handler
@@ -601,15 +601,15 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                     self.loading_status_label.config(text="Loading servers...")  # type: ignore
                 except tk.TclError:
                     pass
-            
+
             # Schedule background initialization without blocking UI
             def background_init_thread():
                 # Import once at the start
                 from Host.dashboard_functions import get_servers_display_data, update_server_list_for_subhost
-                
+
                 try:
                     logger.info("Starting background initialisation")
-                    
+
                     # Update loading status and progress
                     def update_loading_status(text, progress_value):
                         try:
@@ -621,7 +621,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                                 self.loading_percentage_label.config(text=f"{progress_value}%")  # type: ignore
                         except tk.TclError:
                             pass
-                    
+
                     # System info (lightweight, UI update only)
                     self.root.after(0, lambda: update_loading_status("Loading system info...", 10))
                     try:
@@ -630,9 +630,9 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                             self.root.after(0, lambda: self._safe_call(self.update_system_info))
                     except Exception as e:
                         logger.error(f"Error in system info init: {str(e)}")
-                    
+
                     logger.debug("Init step 1 complete - system info")
-                    
+
                     # Server list update - do heavy work HERE in background thread
                     self.root.after(0, lambda: update_loading_status("Loading server list...", 15))
                     time.sleep(0.1)
@@ -652,9 +652,9 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                             self.root.after(0, update_ui)
                     except Exception as e:
                         logger.error(f"Error in server list init: {str(e)}")
-                    
+
                     logger.debug("Init step 2 complete - server list")
-                    
+
                     # Only do quick PID-based reattachment
                     self.root.after(0, lambda: update_loading_status("Detecting running servers...", 40))
                     time.sleep(0.1)
@@ -671,7 +671,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                         logger.debug("Init step 3 complete - quick reattach")
                     except Exception as e:
                         logger.error(f"Error in reattach init: {str(e)}")
-                    
+
                     # Final server list refresh to show updated statuses
                     self.root.after(0, lambda: update_loading_status("Finalising...", 80))
                     time.sleep(0.1)
@@ -687,7 +687,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                             self.root.after(0, final_update_ui)
                     except Exception as e:
                         logger.error(f"Error in final refresh: {str(e)}")
-                    
+
                     # Start timers for periodic updates (after initial load is complete)
                     def start_timers():
                         try:
@@ -697,7 +697,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                         except Exception as e:
                             logger.error(f"Error starting timers: {str(e)}")
                     self.root.after(500, start_timers)
-                    
+
                     # Deferred full reattach to running servers (runs after UI is responsive)
                     def deferred_full_reattach():
                         try:
@@ -709,20 +709,20 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                             logger.error(f"Error in deferred reattach: {str(e)}")
                     # Run full reattach after a short delay so it doesn't block UI
                     self.root.after(2000, lambda: threading.Thread(target=deferred_full_reattach, daemon=True).start())
-                    
+
                     # Complete
                     self.root.after(0, lambda: update_loading_status("Complete!", 100))
-                    
+
                     # Hide loading overlay after everything is done
                     time.sleep(0.2)
                     self.root.after(0, self._hide_loading_overlay)
-                    
+
                     logger.info("Background initialisation completed")
                 except Exception as e:
                     logger.error(f"Error in background init thread: {str(e)}")
                     # Still hide overlay on error
                     self.root.after(0, self._hide_loading_overlay)
-            
+
             # Start background init in a daemon thread so it doesn't block
             init_thread = threading.Thread(target=background_init_thread, daemon=True, name="BackgroundInit")
             init_thread.start()
@@ -733,7 +733,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             self.root.lift()
             self.root.focus_force()
             logger.info("Window visibility ensured before mainloop")
-            
+
             # Start main loop immediately - UI is responsive right away
             logger.info("Starting Tkinter mainloop")
             try:
@@ -773,11 +773,11 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                 except tk.TclError:
                     pass
                 self.on_close()
-    
+
     def on_close(self):
         # Handle window close event
         logger.info("Dashboard on_close() called - window is being closed")
-        
+
         # Check if window already destroyed
         try:
             if not self.root or not self.root.winfo_exists():
@@ -786,14 +786,14 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         except tk.TclError:
             logger.debug("TclError checking window - already destroyed")
             return
-        
+
         # Clean up resources
         try:
             # Save all console states first for crash recovery
             if hasattr(self, 'console_manager') and self.console_manager:
                 self.console_manager.save_all_console_states()
                 logger.debug("Saved all console states")
-            
+
             # Close all console windows
             if hasattr(self, 'console_manager') and self.console_manager:
                 self.console_manager.cleanup_all_consoles()
@@ -822,7 +822,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                 self.root.destroy()
         except tk.TclError:
             pass
-    
+
     def _safe_call(self, func, *args, **kwargs):
         # Safely call a function with error handling
         try:
@@ -854,7 +854,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             messagebox.showerror("Error", "Scheduler not available.")
             return
         self.timer_manager.show_schedules_manager()
-    
+
     def show_server_schedule(self):
         # Show schedule manager for the selected server
         if not self.timer_manager:
@@ -866,24 +866,24 @@ def is_dashboard_already_running():
     # Check if another dashboard instance is already running using a lock file with PID
     import tempfile
     import psutil
-    
+
     lock_file = os.path.join(tempfile.gettempdir(), 'servermanager_dashboard.lock')
     current_pid = os.getpid()
-    
+
     try:
         # Check if lock file exists
         if os.path.exists(lock_file):
             try:
-                with open(lock_file, 'r') as f:
+                with open(lock_file, 'r', encoding='utf-8') as f:
                     stored_pid = int(f.read().strip())
-                
+
                 # Check if the stored PID is still running and is a dashboard process
                 if psutil.pid_exists(stored_pid) and stored_pid != current_pid:
                     try:
                         proc = psutil.Process(stored_pid)
                         proc_name = proc.name().lower()
                         cmdline = ' '.join(proc.cmdline()).lower()
-                        
+
                         # Check if it's actually a dashboard process
                         if 'python' in proc_name or 'pythonw' in proc_name:
                             if 'dashboard' in cmdline:
@@ -891,17 +891,17 @@ def is_dashboard_already_running():
                                 return True, stored_pid
                     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                         pass
-                
+
                 # PID doesn't exist or isn't dashboard - stale lock file
             except (ValueError, IOError):
                 pass
-        
+
         # Write our PID to the lock file
-        with open(lock_file, 'w') as f:
+        with open(lock_file, 'w', encoding='utf-8') as f:
             f.write(str(current_pid))
-        
+
         return False, None
-        
+
     except Exception as e:
         early_crash_log("Dashboard", f"Single-instance check failed: {e}")
         return False, None
@@ -909,13 +909,13 @@ def is_dashboard_already_running():
 def cleanup_dashboard_lock():
     # Clean up the lock file when dashboard exits
     import tempfile
-    
+
     lock_file = os.path.join(tempfile.gettempdir(), 'servermanager_dashboard.lock')
     try:
         if os.path.exists(lock_file):
-            with open(lock_file, 'r') as f:
+            with open(lock_file, 'r', encoding='utf-8') as f:
                 stored_pid = int(f.read().strip())
-            
+
             # Only remove if it's our lock file
             if stored_pid == os.getpid():
                 os.remove(lock_file)
@@ -926,84 +926,84 @@ def bring_existing_dashboard_to_front(pid):
     # Try to bring the existing dashboard window to the front (Windows only)
     if sys.platform != 'win32':
         return False
-    
+
     try:
         import ctypes
         from ctypes import wintypes
-        
+
         # Windows API functions
         user32 = ctypes.windll.user32
-        
+
         EnumWindows = user32.EnumWindows
         EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         GetWindowThreadProcessId = user32.GetWindowThreadProcessId
         SetForegroundWindow = user32.SetForegroundWindow
         ShowWindow = user32.ShowWindow
         IsWindowVisible = user32.IsWindowVisible
-        
+
         SW_RESTORE = 9
         target_hwnd = None
-        
+
         def enum_callback(hwnd, lparam):
             nonlocal target_hwnd
             window_pid = wintypes.DWORD()
             GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
-            
+
             if window_pid.value == pid and IsWindowVisible(hwnd):
                 target_hwnd = hwnd
                 return False
             return True
-        
+
         EnumWindows(EnumWindowsProc(enum_callback), 0)
-        
+
         if target_hwnd:
             ShowWindow(target_hwnd, SW_RESTORE)
             SetForegroundWindow(target_hwnd)
             return True
-            
+
     except Exception as e:
         early_crash_log("Dashboard", f"Could not bring existing window to front: {e}")
-    
+
     return False
 
 def main():
     import traceback as tb
     import atexit
     from Modules.server_logging import early_crash_log
-    
+
     early_crash_log("Dashboard", "Startup initiated")
-    
+
     # Check for existing dashboard instance
     already_running, existing_pid = is_dashboard_already_running()
     if already_running:
         early_crash_log("Dashboard", f"Another dashboard instance is already running (PID: {existing_pid})")
-        
+
         # Try to bring the existing window to front
         brought_to_front = bring_existing_dashboard_to_front(existing_pid)
-        
+
         try:
             import tkinter as tk
             from tkinter import messagebox
             root = tk.Tk()
             root.withdraw()
-            
+
             if brought_to_front:
-                messagebox.showinfo("Dashboard Already Running", 
+                messagebox.showinfo("Dashboard Already Running",
                                    f"The Server Manager Dashboard is already running.\n\n"
                                    f"The existing window has been brought to the front.")
             else:
-                messagebox.showwarning("Dashboard Already Running", 
+                messagebox.showwarning("Dashboard Already Running",
                                       f"The Server Manager Dashboard is already running (PID: {existing_pid}).\n\n"
                                       f"Please use the existing instance.")
             root.destroy()
         except Exception:
             pass
-        
+
         return
-    
+
     # Register cleanup on exit
     atexit.register(cleanup_dashboard_lock)
-    
+
     try:
         parser = argparse.ArgumentParser(description='Server Manager Dashboard')
         parser.add_argument('--debug', action='store_true', help='Enable debug logging')
@@ -1011,14 +1011,14 @@ def main():
 
         dashboard = ServerManagerDashboard(debug_mode=args.debug)
         early_crash_log("Dashboard", "Started successfully")
-        
+
         dashboard.run()
         early_crash_log("Dashboard", "Closed normally")
-        
+
     except Exception as e:
         early_crash_log("Dashboard", f"FATAL ERROR: {e}")
         early_crash_log("Dashboard", f"Traceback: {tb.format_exc()}")
-        
+
         try:
             import tkinter as tk
             from tkinter import messagebox
@@ -1028,7 +1028,7 @@ def main():
             root.destroy()
         except Exception:
             pass
-        
+
         raise
     finally:
         # Ensure lock is cleaned up
