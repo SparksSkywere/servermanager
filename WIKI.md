@@ -3,7 +3,7 @@
 **Version:** 1.3
 **Platform:** Windows 10/11, Windows Server 2016+ (Linux support in early development)  
 **Developer:** Sparks Skywere 
-**Repository:** [https://github.com/SparksSkywere/servermanager](https://github.com/SparksSkywere/servermanager)
+**Repository:** [https://raw.githubusercontent.com/SparksSkywere/servermanager](https://raw.githubusercontent.com/SparksSkywere/servermanager)
 
 ---
 
@@ -205,11 +205,11 @@ Enabling powershell scripts
 2. Go to System -> Advanced
 3. Enable powershell scripts
 
-> ![Screenshot: Prerequisit — Enable Powershell scripts](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Enable_Powershell_Scripts.png)
+> ![Screenshot: Prerequisit — Enable Powershell scripts](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Enable_Powershell_Scripts.png)
 
 The Windows installer is a PowerShell script (`install.ps1`) that provides a WinForms-based GUI wizard. It must be run with Administrator privileges.
 
-> ![Screenshot: Run Windows Installer — showing explorer with run powershell](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Run_Windows_Install.png)
+> ![Screenshot: Run Windows Installer — showing explorer with run powershell](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Run_Windows_Install.png)
 
 (Owners note: I do plan to make this an EXE in the future, I have Ps2Exe but need to check signing)
 
@@ -218,7 +218,7 @@ The Windows installer is a PowerShell script (`install.ps1`) that provides a Win
 1. Open PowerShell as Administrator.
 2. Navigate to the directory containing the installer or clone the repository first:
    ```powershell
-   git clone https://github.com/SparksSkywere/servermanager.git
+   git clone https://raw.githubusercontent.com/SparksSkywere/servermanager.git
    cd servermanager
    ```
 3. Run the installer:
@@ -228,39 +228,39 @@ The Windows installer is a PowerShell script (`install.ps1`) that provides a Win
 4. The GUI wizard will guide you through the following steps:
    - **First page** — The intial installer page, important page to read the general synopsis of this program and check the current version downloaded.
 
-     > ![Screenshot: Installer Page 1 - Initial](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_1.png)
+     > ![Screenshot: Installer Page 1 - Initial](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_1.png)
 
    - **Second Page** — Second page where you can select the installer directory with workspace directory (if you want users to access a different secure storage away from the SteamCMD storage) you can also select the clusters configuration at this stage.
 
-     > ![Screenshot: Installer Page 2 — SteamCMD Selection](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_2.png)
+     > ![Screenshot: Installer Page 2 — SteamCMD Selection](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_2.png)
 
    - **Third Page** — Database Configuration, you can choose what type of database will be used by servermanager, default is SQLite.
    - **Cluster Configuration** — You are asked to select the node role:
      - **Host** — This machine will act as the central management server.
      - **Subhost** — This machine will connect to an existing Host. You will need to provide the Host's IP address.
 
-     > ![Screenshot: Installer Page 3 — Database Configuration](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_3.png)
+     > ![Screenshot: Installer Page 3 — Database Configuration](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_3.png)
 
    - **Repository Clone** — The Server Manager source code is cloned from the GitHub repository. If direct Git access fails, the installer falls back to downloading a ZIP archive from GitHub.
 
-     > ![Screenshot: Installer Page 4 — Web Security](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_4.png)
+     > ![Screenshot: Installer Page 4 — Web Security](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_4.png)
 
    - **Web Security** — The page to choose if you want to use HTTPS or HTTP for running the webserver, for outside communication HTTPS is recommended.
 
    - **Installation** - The progress bars! 
 
-     > ![Screenshot: Installer Page 5.1 — Python Installation](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_5_1.png)
-     > ![Screenshot: Installer Page 5.2 — Python Dependencies Installation](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_5_2.png)
-     > ![Screenshot: Installer Page 5.3 — Instaling SteamCMD](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_5_3.png)
-     > ![Screenshot: Installer Page 5.4 — Setup Complete](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_5_4.png)
+     > ![Screenshot: Installer Page 5.1 — Python Installation](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_5_1.png)
+     > ![Screenshot: Installer Page 5.2 — Python Dependencies Installation](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_5_2.png)
+     > ![Screenshot: Installer Page 5.3 — Instaling SteamCMD](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_5_3.png)
+     > ![Screenshot: Installer Page 5.4 — Setup Complete](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_5_4.png)
 
-     > ![Screenshot: Installer Page 6 — Create Admin](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_6.png)
+     > ![Screenshot: Installer Page 6 — Create Admin](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Installer_Page_6.png)
 
    - **Admin Account Creation** — A root administrator account is created with customisable credentials (default: `admin` / `admin`).
 
 **Reinstallation:** If an existing installation is detected in the registry, the installer will prompt you to confirm whether you want to reinstall. Reinstalling will overwrite previous settings.
 
-> ![Screenshot: Re-Installer Question Page](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Re-Installer_Question.png)
+> ![Screenshot: Re-Installer Question Page](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Re-Installer_Question.png)
 
 **Service Management via Installer:** The installer also supports service management mode via the `-ServiceAction` parameter:
 ```powershell
@@ -299,7 +299,7 @@ The Linux installer:
 If you prefer a manual setup:
 
 ```bash
-git clone https://github.com/SparksSkywere/servermanager.git
+git clone https://raw.githubusercontent.com/SparksSkywere/servermanager.git
 cd servermanager
 pip install -r requirements.txt
 ```
@@ -636,13 +636,13 @@ The launcher (`Modules/launcher.py`) is the central process orchestrator. It ext
 
 The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that provides full server management capabilities. It is approximately 1,000 lines of code (with UI logic split across `dashboard_functions.py`, `dashboard_dialogs.py`, `dashboard_server_config.py`, `dashboard_server_ops.py`, and `dashboard_settings.py`) and is the primary local management interface.
 
-> ![Screenshot: Main Dashboard — showing server list, system metrics panel, and action buttons bar](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Dashboard.png)
+> ![Screenshot: Main Dashboard — showing server list, system metrics panel, and action buttons bar](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Dashboard.png)
 
 **Launch:** Right-click the system tray icon and select "Open Server Dashboard", or run `Host/dashboard.py` directly.
 
 **Authentication:** On launch, the dashboard presents a login dialog. Users must authenticate with their username, password, and optionally a 2FA code if two-factor authentication is enabled on their account. Authentication is performed against the user database using bcrypt password hashing.
 
-> ![Screenshot: Main Dashboard Sign in — showing login page](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Dashboard_Sign_In.png)
+> ![Screenshot: Main Dashboard Sign in — showing login page](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Dashboard_Sign_In.png)
 
 **Initialisation Sequence:** After successful login, the dashboard performs a 6-step asynchronous initialisation:
 1. Registry configuration loading
@@ -661,13 +661,13 @@ The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that pro
 
 - **Server Configuration Dialog** — A editor for each server's settings. Fields include server name, App ID, installation directory, executable path, launch arguments, stop command, MOTD configuration, update schedule, and automation settings.
 
-> ![Screenshot: Server Configuration Dialog — showing the scrollable form with server name, App ID, install directory, and executable path fields](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Configure_Server.png)
+> ![Screenshot: Server Configuration Dialog — showing the scrollable form with server name, App ID, install directory, and executable path fields](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Configure_Server.png)
 
 - **Process Details View** — For a running server, shows detailed process information including PID, CPU usage percentage, memory consumption, uptime, number of child processes, open file handles, and network connections. Memory is displayed according to process type: Java/Minecraft servers show JVM heap (VMS) with a "(JVM)" label, while Steam and other servers show RSS. The Resources tab shows both RSS and VMS values along with the detected process type.
 
 - **Settings Dialog** — Application-wide settings organised into 5 tabs:
 
-> ![Screenshot: Server Settings Dialog](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Settings.png)
+> ![Screenshot: Server Settings Dialog](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Settings.png)
 
   - **General** — Application theme, log level, auto-start preferences.
   - **Web Server** — Port configuration, SSL toggle.
@@ -677,7 +677,7 @@ The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that pro
 
 - **Import/Export** — Server configurations can be exported to JSON files and imported on other installations for migration or backup purposes.
 
-> ![Screenshot: Import/Export — showing the file dialog for importing or exporting server configurations](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Import_Method.png)
+> ![Screenshot: Import/Export — showing the file dialog for importing or exporting server configurations](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Import_Method.png)
 
 **DPI Awareness:** The dashboard is DPI-aware and adjusts its scaling for high-resolution displays on Windows 10/11. It uses `ctypes.windll.shcore.SetProcessDpiAwareness(1)` to enable per-monitor DPI awareness.
 
@@ -687,7 +687,7 @@ The main desktop dashboard (`Host/dashboard.py`) is a Tkinter-based GUI that pro
 
 The Admin Dashboard (`Host/admin_dashboard.py`) provides user account management and email configuration. It is accessible from the system tray icon menu (Admin Dashboard option) or from within the main dashboard.
 
-> ![Screenshot: Administrator panel for users](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Admin_Panel.png)
+> ![Screenshot: Administrator panel for users](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Admin_Panel.png)
 
 **User Management Features:**
 - View all user accounts in a sortable, filterable table showing username, email, role (Admin/User), active status, last login date, and 2FA status.
@@ -707,7 +707,7 @@ The Admin Dashboard (`Host/admin_dashboard.py`) provides user account management
 
 The Automation Settings Window (`Modules/automation_ui.py`) provides a per-server configuration interface for automated operations. It can be opened from the tray icon menu or from the dashboard.
 
-> ![Screenshot: Automation Settings — showing MOTD, stop command, and restart warning fields with test buttons](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Schedule_Manager.png)
+> ![Screenshot: Automation Settings — showing MOTD, stop command, and restart warning fields with test buttons](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Schedule_Manager.png)
 
 **Configuration Fields:**
 - **Server Selection** — Dropdown to select which server to configure. Changing the server loads its current settings.
@@ -735,7 +735,7 @@ Settings are persisted to the database via `ServerConfigManager`.
 
 The Server Console (`Modules/server_console.py`) provides a real-time interactive terminal for communicating with running server processes. It is approximately 3,100 lines of code.
 
-> ![Screenshot: Server Console — showing dark terminal output, command input field, and server output with colour-coded text](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Console_Manager.png)
+> ![Screenshot: Server Console — showing dark terminal output, command input field, and server output with colour-coded text](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Console_Manager.png)
 
 **Two Main Classes:**
 
@@ -768,7 +768,7 @@ These methods are tried in sequence. If one fails, the next is attempted, ensuri
 
 The system tray icon (`Modules/trayicon.py`) provides persistent background presence and quick access to all application features. It uses the `pystray` library with `pillow` for icon rendering.
 
-> ![Screenshot: System Tray Icon — showing the right-click context menu with all available options](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Tray_Icon_Windows.png)
+> ![Screenshot: System Tray Icon — showing the right-click context menu with all available options](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Tray_Icon_Windows.png)
 
 **Menu Items:**
 - **Open Server Dashboard** — Launches the main Tkinter dashboard as a detached process.
@@ -804,7 +804,7 @@ All web pages support both light and dark themes, togglable from the user menu. 
 
 The login page (`www/login.html`) presents a clean authentication form with:
 
-> ![Screenshot: Website dashboard login page - Like Python but web-based](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Login_Page.png)
+> ![Screenshot: Website dashboard login page - Like Python but web-based](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Login_Page.png)
 
 - Username field
 - Password field with visibility toggle (eye icon)
@@ -817,7 +817,7 @@ Upon successful login, the session token, username, and admin status are stored 
 
 The web dashboard (`www/dashboard.html`) is the main management interface for the web UI, featuring:
 
-> ![Screenshot: Website dashboard front page - Like Python but web-based](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Dashboard.png)
+> ![Screenshot: Website dashboard front page - Like Python but web-based](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Dashboard.png)
 
 **Header:**
 - Application title and branding
@@ -866,7 +866,7 @@ Data is automatically refreshed at a configurable interval (default: 10 seconds)
 
 The Create Server page (`www/create-server.html`) provides a wizard for setting up new game servers:
 
-> ![Screenshot: Website create server page - Like Python but web-based](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Create_Server.png)
+> ![Screenshot: Website create server page - Like Python but web-based](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Create_Server.png)
 
 **Server Type Selection:**
 - **Steam** — For SteamCMD-based dedicated servers
@@ -891,7 +891,7 @@ Form fields are validated before submission. On success, a notification toast is
 
 The Admin Panel (`www/admin.html`) provides web-based user management for administrators:
 
-> ![Screenshot: Website admin page - Like Python but web-based](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Admin_Panel.png)
+> ![Screenshot: Website admin page - Like Python but web-based](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Admin_Panel.png)
 
 **User Management Table:**
 - Displays all users with: username, email, role badge (Admin highlighted), status (Active/Inactive)
@@ -912,7 +912,7 @@ The Admin Panel (`www/admin.html`) provides web-based user management for admini
 
 The Cluster Management page (`www/cluster.html`) provides cluster administration for multi-node setups:
 
-> ![Screenshot: Website cluster manager page - Like Python but web-based](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Cluster_Manager.png)
+> ![Screenshot: Website cluster manager page - Like Python but web-based](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Website_Cluster_Manager.png)
 
 **Stats Grid:**
 - Total Nodes count
@@ -1988,7 +1988,7 @@ Diagnostic reports are saved as JSON files and can be shared with support for tr
 
 The Debug Center (`debug/debug_manager.py`, `DebugManagerGUI`) provides a Tkinter window for running diagnostics:
 
-> ![Screenshot: Python Debug Manager - Used to do quick debugging for finding issues](https://github.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Debug_Manager.png)
+> ![Screenshot: Python Debug Manager - Used to do quick debugging for finding issues](https://raw.githubusercontent.com/SparksSkywere/servermanager/docs/images/screenshots/Python_Debug_Manager.png)
 
 **Available Actions:**
 
@@ -2300,4 +2300,4 @@ Warning Message Template: Server restart in {message} minutes
 
 ---
 
-*This documentation covers Server Manager version 1.3 For the latest updates, check the [GitHub repository](https://github.com/SparksSkywere/servermanager).*
+*This documentation covers Server Manager version 1.3 For the latest updates, check the [GitHub repository](https://raw.githubusercontent.com/SparksSkywere/servermanager).*
