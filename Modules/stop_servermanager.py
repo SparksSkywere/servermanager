@@ -127,7 +127,9 @@ class ServerManagerStopper(ServerManagerModule):
         pid_files = [
             "launcher.pid",
             "webserver.pid",
-            "trayicon.pid"
+            "trayicon.pid",
+            "dashboard.pid",
+            "server_automation.pid"
         ]
 
         stopped_count = 0
@@ -171,6 +173,9 @@ class ServerManagerStopper(ServerManagerModule):
             'trayicon.py',
             'webserver.py',
             'dashboard.py',
+            'server_automation.py',
+            'stdin_relay.py',
+            'persistent_stdin.py',
             'stop_servermanager.py',
             'start_servermanager.py',
             'admin_dashboard.py'
@@ -317,11 +322,20 @@ class ServerManagerStopper(ServerManagerModule):
                     except Exception as e:
                         logger.error(f"Failed to remove temp file {filename}: {str(e)}")
 
-            # Final check for any remaining processes
-            time.sleep(2)  # Wait longer for processes to terminate
-            count3 = self.stop_processes_by_name()  # Run again to catch any stragglers
-            if count3 > 0:
-                logger.info(f"Stopped {count3} additional processes in final cleanup")
+            # Final checks for any remaining processes. Some components spawn/exit asynchronously,
+            # so perform a few bounded cleanup passes in a single stop invocation.
+            total_additional = 0
+            for pass_index in range(1, 4):
+                time.sleep(2)
+                pass_count = self.stop_processes_by_name()
+                if pass_count > 0:
+                    total_additional += pass_count
+                    logger.info(f"Stopped {pass_count} additional processes in cleanup pass {pass_index}")
+                else:
+                    break
+
+            if total_additional > 0:
+                logger.info(f"Stopped {total_additional} additional processes in final cleanup passes")
 
             # Wait a bit more before aggressive cleanup
             time.sleep(1)

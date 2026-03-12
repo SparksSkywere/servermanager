@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3]
 
+  Console Stability Fixes:
+  - Fixed stale PID console-attach behaviour in `server_console.py`: console now refuses unvalidated PID reattach and clears stale process metadata instead of attaching to a potentially unrelated process
+  - Fixed command relay error storm in `command_queue.py`: relay now stops cleanly when target process has exited or stdin is invalid/closed, preventing repeated `[Errno 22] Invalid argument` loops during stop operations
+
+  Shutdown Reliability Fixes:
+  - Improved `stop_servermanager.py` PID-file shutdown coverage to include `dashboard.pid` and `server_automation.pid`
+  - Expanded Python process detection for shutdown to include `server_automation.py`, `stdin_relay.py`, and `persistent_stdin.py`
+  - Added bounded multi-pass final cleanup in `stop_servermanager.py` so asynchronous stragglers are stopped within a single stop run instead of requiring a second manual stop
+
   Dead Code / Placeholder Cleanup:
   - Removed dead placeholder `install_server()` and `check_for_updates()` from `server_operations.py` (real implementations exist in `server_manager.py` and `server_updates.py`)
   - Fixed misleading "Additional placeholder functions" comment in `dashboard_functions.py` (functions were fully implemented)

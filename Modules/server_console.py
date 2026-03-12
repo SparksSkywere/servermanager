@@ -2799,22 +2799,16 @@ class ConsoleManager:
                                 if not console._quick_attach_to_process(process):
                                     logger.warning(f"Failed to attach console to process for {server_name} (PID: {pid})")
                             elif not is_valid:
-                                # PID is stale or belongs to different process - try to attach anyway with warning
-                                logger.warning(f"PID {pid} for {server_name} failed validation, but attempting attach anyway")
-                                try:
-                                    if psutil.pid_exists(pid):
-                                        process = psutil.Process(pid)
-                                        if process.is_running():
-                                            logger.debug(f"Attaching console to unvalidated running process for {server_name} (PID: {pid})")
-                                            console._add_output(f"[WARN] Attached to server process, but PID validation failed. Commands may not work.", "warning")
-                                            if not console._quick_attach_to_process(process):
-                                                logger.warning(f"Failed to attach console to unvalidated process for {server_name} (PID: {pid})")
-                                        else:
-                                            logger.debug(f"PID {pid} for {server_name} exists but process not running")
-                                except Exception as e:
-                                    logger.debug(f"Error checking unvalidated process for {server_name}: {e}")
+                                # PID is stale or belongs to a different process. Do not attach to an
+                                # unvalidated PID, as that can bind the console to the wrong process.
+                                logger.warning(f"PID {pid} for {server_name} failed validation; clearing stale process metadata")
+                                console._add_output(
+                                    "[WARN] Stored process ID was stale and has been cleared. "
+                                    "Start the server again from the dashboard to enable live console attach.",
+                                    "warning"
+                                )
 
-                                # Clear stale PID
+                                # Clear stale PID metadata
                                 server_config.pop('ProcessId', None)
                                 server_config.pop('PID', None)
                                 server_config.pop('StartTime', None)

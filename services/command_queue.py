@@ -230,12 +230,25 @@ def start_command_relay(server_name: str, process: subprocess.Popen) -> Optional
     def stdin_writer(command: str) -> bool:
         # Write command to the process stdin
         try:
+            # Stop retry loops for exited processes.
+            if process.poll() is not None:
+                raise RuntimeError("stdin closed: process has exited")
+
             if process.stdin and not process.stdin.closed:
                 process.stdin.write(command + '\n')
                 process.stdin.flush()
                 return True
         except Exception as e:
             logger.error(f"Error writing to stdin: {e}")
+            # Bubble up terminal stdin failures so the relay loop can stop cleanly.
+            error_text = str(e).lower()
+            if (
+                "closed" in error_text
+                or "broken" in error_text
+                or "invalid argument" in error_text
+                or "bad file descriptor" in error_text
+            ):
+                raise RuntimeError("stdin closed") from e
         return False
 
     relay = CommandQueueRelay(server_name, stdin_writer)
