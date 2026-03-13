@@ -1024,17 +1024,29 @@ class RealTimeConsole:
                 self._start_api_poll_thread()
                 return
 
-            # Direct pipe monitoring (for non-HTTPS mode)
-            self.output_thread = threading.Thread(
-                target=self._monitor_stdout,
-                daemon=True,
-                name=f"Console-{self.server_name}-Stdout"
+            # Direct stream monitoring is only valid for live subprocess.Popen objects
+            # that expose stdio streams. Reattached psutil processes should rely on
+            # log monitoring / API polling instead.
+            has_stdout_stream = (
+                self.process and hasattr(self.process, 'stdout') and self.process.stdout is not None
             )
-            self.output_thread.start()
+            has_stderr_stream = (
+                self.process and hasattr(self.process, 'stderr') and self.process.stderr is not None
+            )
+            has_stdin_stream = (
+                self.process and hasattr(self.process, 'stdin') and self.process.stdin is not None
+            )
+
+            if has_stdout_stream:
+                self.output_thread = threading.Thread(
+                    target=self._monitor_stdout,
+                    daemon=True,
+                    name=f"Console-{self.server_name}-Stdout"
+                )
+                self.output_thread.start()
 
             # Start stderr monitoring (only if not redirected to stdout and has stderr)
-            if (self.process and hasattr(self.process, 'stderr') and self.process.stderr and
-                self.process.stderr != self.process.stdout):
+            if has_stderr_stream and has_stdout_stream and self.process.stderr != self.process.stdout:
                 self.error_thread = threading.Thread(
                     target=self._monitor_stderr,
                     daemon=True,
@@ -1043,7 +1055,7 @@ class RealTimeConsole:
                 self.error_thread.start()
 
             # Start command input handler (only if process has stdin)
-            if self.process and hasattr(self.process, 'stdin') and self.process.stdin:
+            if has_stdin_stream:
                 self.input_thread = threading.Thread(
                     target=self._handle_commands,
                     daemon=True,
@@ -1118,7 +1130,7 @@ class RealTimeConsole:
                     else:
                         # Unix systems - use select for non-blocking reads
                         try:
-                            if self.process and self.process.stdout:
+                            if self.process and hasattr(self.process, 'stdout') and self.process.stdout:
                                 ready, _, _ = select.select([self.process.stdout], [], [], 0.1)
                                 if ready:
                                     line = self.process.stdout.readline()
@@ -1132,15 +1144,19 @@ class RealTimeConsole:
 
                                             lines_processed += 1
                             else:
-                                # Check if process ended
+                                # No stdout stream available; only treat as ended when the process is
+                                # actually no longer running.
                                 if not self._is_process_running():
                                     self._handle_process_termination()
                                     break
+                                time.sleep(0.1)
                         except (OSError, ValueError, AttributeError, select.error) as e:
                             # Process stdout became invalid or select failed
                             logger.debug(f"Stdout monitoring failed for {self.server_name}: {e}")
-                            self._handle_process_termination()
-                            break
+                            if not self._is_process_running():
+                                self._handle_process_termination()
+                                break
+                            time.sleep(0.1)
 
                 except Exception as e:
                     logger.debug(f"Stdout monitoring error for {self.server_name}: {e}")
