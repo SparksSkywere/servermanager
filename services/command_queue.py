@@ -84,7 +84,7 @@ class CommandQueueRelay:
     def stop(self):
         # Stop the relay thread
         self.stop_event.set()
-        if self.thread:
+        if self.thread and self.thread.is_alive():
             self.thread.join(timeout=2.0)
 
         # Clean up info file
@@ -92,6 +92,12 @@ class CommandQueueRelay:
             get_relay_info_file(self.server_name).unlink()
         except OSError:
             pass
+
+        # Remove from active relay registry
+        with _relays_lock:
+            active = _active_relays.get(self.server_name)
+            if active is self:
+                _active_relays.pop(self.server_name, None)
 
         logger.info(f"Stopped command queue relay for {self.server_name}")
 
@@ -133,6 +139,17 @@ class CommandQueueRelay:
 
             # Poll every 100ms
             self.stop_event.wait(0.1)
+
+        # Ensure stale relays don't remain registered after natural thread exit.
+        with _relays_lock:
+            active = _active_relays.get(self.server_name)
+            if active is self:
+                _active_relays.pop(self.server_name, None)
+
+        try:
+            get_relay_info_file(self.server_name).unlink()
+        except OSError:
+            pass
 
         logger.debug(f"Relay loop ended for {self.server_name}")
 
@@ -226,6 +243,17 @@ def start_command_relay(server_name: str, process: subprocess.Popen) -> Optional
     if not hasattr(process, 'stdin') or process.stdin is None:
         logger.error(f"Process for {server_name} has no stdin")
         return None
+
+    # Ensure only one relay exists per server to avoid duplicate command consumers.
+    with _relays_lock:
+        existing = _active_relays.get(server_name)
+
+    if existing:
+        try:
+            logger.info(f"Replacing existing command queue relay for {server_name}")
+            existing.stop()
+        except Exception as e:
+            logger.debug(f"Error stopping existing relay for {server_name}: {e}")
 
     def stdin_writer(command: str) -> bool:
         # Write command to the process stdin

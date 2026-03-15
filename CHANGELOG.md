@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed stale PID console-attach behaviour in `server_console.py`: console now refuses unvalidated PID reattach and clears stale process metadata instead of attaching to a potentially unrelated process
   - Fixed command relay error storm in `command_queue.py`: relay now stops cleanly when target process has exited or stdin is invalid/closed, preventing repeated `[Errno 22] Invalid argument` loops during stop operations
   - Fixed console freeze/false-stop regression for reattached servers in `server_console.py`: stream monitor threads now start only when real stdio streams exist, and missing/invalid stdout no longer marks a still-running process as terminated
+  - Fixed duplicate command relay worker issue in `command_queue.py`: server relays are now single-instance per server (existing relay is replaced cleanly), preventing duplicate command consumers and intermittent console non-responsiveness
 
   Shutdown Reliability Fixes:
   - Improved `stop_servermanager.py` PID-file shutdown coverage to include `dashboard.pid` and `server_automation.pid`
