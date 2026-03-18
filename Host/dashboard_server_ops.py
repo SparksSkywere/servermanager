@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path
+from Modules.core.common import setup_module_path
 setup_module_path()
 
-from Modules.server_logging import get_dashboard_logger
+from Modules.core.server_logging import get_dashboard_logger
 from Host.dashboard_functions import (
     centre_window, update_server_status_in_treeview, open_directory_in_explorer,
     import_server_from_directory_dialog, import_server_from_export_dialog,
@@ -22,9 +22,9 @@ from Host.dashboard_functions import (
 from debug.debug import get_server_process_details, log_exception, monitor_process_resources
 
 if TYPE_CHECKING:
-    from Modules.server_manager import ServerManager
-    from Modules.server_console import ConsoleManager
-    from Modules.server_updates import ServerUpdateManager
+    from Modules.server.server_manager import ServerManager
+    from Modules.server.server_console import ConsoleManager
+    from Modules.updates.server_updates import ServerUpdateManager
 
 logger = get_dashboard_logger()
 
@@ -232,6 +232,7 @@ class ServerOpsMixin:
             dialog.title(f"Process Details: {server_name} (PID: {process_details['pid']})")
             dialog.transient(self.root)
             dialog.grab_set()
+            dialog.minsize(760, 620)
 
             main_frame = ttk.Frame(dialog, padding=10)
             main_frame.pack(fill=tk.BOTH, expand=True)
@@ -245,6 +246,8 @@ class ServerOpsMixin:
 
             info_grid = ttk.Frame(basic_frame)
             info_grid.pack(fill=tk.X, padx=10, pady=10)
+            info_grid.columnconfigure(1, weight=1)
+            info_grid.columnconfigure(3, weight=1)
 
             info_items = [
                 ("PID:", str(process_details["pid"])),
@@ -356,6 +359,7 @@ Working Directory: {process_details.get('cwd', 'N/A')}
 
                 log_grid = ttk.Frame(logs_frame)
                 log_grid.pack(fill=tk.X, padx=10, pady=10)
+                log_grid.columnconfigure(1, weight=1)
 
                 row = 0
                 if server_config.get("LogStdout"):

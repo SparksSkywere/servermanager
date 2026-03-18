@@ -10,7 +10,7 @@ from typing import Optional, Tuple, List, Callable
 import subprocess
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_logging
+from Modules.core.common import setup_module_logging
 
 logger = setup_module_logging("CommandQueue")
 

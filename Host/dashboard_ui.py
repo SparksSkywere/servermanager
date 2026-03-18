@@ -7,10 +7,10 @@ from tkinter import ttk, messagebox
 import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path
+from Modules.core.common import setup_module_path
 setup_module_path()
 
-from Modules.server_logging import get_dashboard_logger
+from Modules.core.server_logging import get_dashboard_logger
 from Host.dashboard_functions import get_current_server_list  # type: ignore[attr-defined]
 
 logger: logging.Logger = get_dashboard_logger()
@@ -29,9 +29,8 @@ def setup_ui(dashboard):
     loading_content = ttk.Frame(dashboard.loading_frame)
     loading_content.place(relx=0.5, rely=0.5, anchor="center")
 
-    # Loading label with icon
-    ttk.Label(loading_content, text="⏳", font=("Segoe UI", 32)).pack(pady=(0, 10))
-    ttk.Label(loading_content, text="Loading Dashboard...", font=("Segoe UI", 14, "bold")).pack()
+    # Loading label
+    ttk.Label(loading_content, text="Loading Dashboard...", font=("Segoe UI", 14, "bold")).pack(pady=(0, 10))
     dashboard.loading_status_label = ttk.Label(loading_content, text="Initialising...", font=("Segoe UI", 10), foreground="gray")
     dashboard.loading_status_label.pack(pady=(5, 10))
 
@@ -397,7 +396,7 @@ def load_subhost_tabs(dashboard):
     # Load tabs for all available subhosts
     try:
         # Import agent manager
-        from Modules.agents import AgentManager
+        from Modules.ui.agents import AgentManager
         agent_manager = AgentManager()
 
         # Add tabs for each cluster node
@@ -696,7 +695,7 @@ def _create_drag_indicator(dashboard, parent, server_name):
         inner_frame.pack(fill=tk.BOTH, expand=True)
 
         # Server name label
-        dashboard._drag_label = tk.Label(inner_frame, text=f"📦 {server_name}",
+        dashboard._drag_label = tk.Label(inner_frame, text=server_name,
                                         bg='#f0f0f0', fg='#333333',
                                         font=('Segoe UI', 9, 'bold'))
         dashboard._drag_label.pack(side=tk.LEFT)
@@ -717,7 +716,7 @@ def _update_drag_indicator(dashboard, valid, category_name):
             if valid and category_name:
                 dashboard._drag_target_label.config(text=f'→ {category_name}', fg='#2e7d32')
             elif not valid:
-                dashboard._drag_target_label.config(text='✗ Invalid target', fg='#c62828')
+                dashboard._drag_target_label.config(text='Invalid target', fg='#c62828')
             else:
                 dashboard._drag_target_label.config(text='')
     except (tk.TclError, AttributeError):
@@ -847,3 +846,4 @@ def on_drag_release(dashboard, event):
         dashboard._drag_data = None
         dashboard._drag_active = False
         dashboard._highlighted_category = None
+

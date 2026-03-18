@@ -9,26 +9,24 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path
+from Modules.core.common import setup_module_path
 setup_module_path()
 
-from Modules.server_logging import get_dashboard_logger
+from Modules.core.server_logging import get_dashboard_logger
 from Host.dashboard_functions import (
     centre_window, batch_update_server_types, load_categories
 )
-from Modules.documentation import show_help_dialog, show_about_dialog
+from Modules.ui.documentation import show_help_dialog, show_about_dialog
 from debug.debug import log_exception
 
 if TYPE_CHECKING:
-    from Modules.server_manager import ServerManager
-    from Modules.server_console import ConsoleManager
+    from Modules.server.server_manager import ServerManager
+    from Modules.server.server_console import ConsoleManager
 
 logger = get_dashboard_logger()
 
 class DashboardDialogsMixin:
     # Dialog methods - console manager, automation, categories, verification, database tools, help/about
-
-    # Type stubs for attributes provided by ServerManagerDashboard at runtime
     if TYPE_CHECKING:
         root: tk.Tk
         server_manager: Optional[ServerManager]
@@ -60,7 +58,7 @@ class DashboardDialogsMixin:
     def open_automation_settings(self):
         # Open the automation settings window
         try:
-            from Modules.automation_ui import open_automation_settings
+            from Modules.ui.automation_ui import open_automation_settings
             open_automation_settings(self.root, self.server_manager)
         except Exception as e:
             log_exception(e, "Error opening automation settings")
@@ -468,8 +466,12 @@ class DashboardDialogsMixin:
             for server_name, server_config in all_servers.items():
                 missing_info = []
 
+                # Some datasets key the name externally (dict key), so use server_name fallback.
+                effective_name = server_config.get('Name') or server_config.get('name') or server_name
+                if not effective_name or (isinstance(effective_name, str) and effective_name.strip() == ''):
+                    missing_info.append("Missing server name")
+
                 required_fields = {
-                    'Name': 'Server name',
                     'Type': 'Server type (Steam/Minecraft/Other)',
                     'InstallDir': 'Installation directory'
                 }
@@ -480,19 +482,10 @@ class DashboardDialogsMixin:
 
                 server_type = server_config.get('Type', '')
                 if server_type == 'Steam':
-                    if not server_config.get('AppID'):
+                    if not (server_config.get('AppID') or server_config.get('appid')):
                         missing_info.append("Missing Steam AppID")
                     if not server_config.get('ExecutablePath'):
                         missing_info.append("Missing executable path")
-
-                recommended_fields = {
-                    'Category': 'Server category',
-                    'Description': 'Server description',
-                    'MaxPlayers': 'Maximum players setting'
-                }
-                for field, description in recommended_fields.items():
-                    if not server_config.get(field):
-                        missing_info.append(f"Recommended: {description}")
 
                 install_dir = server_config.get('InstallDir', '')
                 if install_dir and os.path.exists(install_dir):
@@ -537,16 +530,14 @@ class DashboardDialogsMixin:
                         f"Type: {server['config'].get('Type', 'Unknown')}\n")
                     text_widget.insert(tk.END,
                         f"Directory: {server['config'].get('InstallDir', 'Not set')}\n")
-                    text_widget.insert(tk.END, "Missing/Recommended Information:\n")
+                    text_widget.insert(tk.END, "Missing Information:\n")
                     for info in server['missing_info']:
-                        tag = "missing" if info.startswith("Missing") else "recommended"
-                        text_widget.insert(tk.END, f"  • {info}\n", tag)
+                        text_widget.insert(tk.END, f"  • {info}\n", "missing")
                     text_widget.insert(tk.END, "\n" + "=" * 50 + "\n\n")
 
                 text_widget.tag_config("server_name", foreground="blue",
                                        font=("Consolas", 10, "bold"))
                 text_widget.tag_config("missing", foreground="red")
-                text_widget.tag_config("recommended", foreground="orange")
                 text_widget.config(state=tk.DISABLED)
 
                 ttk.Button(main_frame, text="Close",
@@ -568,10 +559,11 @@ class DashboardDialogsMixin:
         # Run AppID and Minecraft scanners to refresh database content
         dialog = tk.Toplevel(self.root)
         dialog.title("Update Databases")
-        dialog.geometry("700x500")
+        dialog.geometry("760x560")
+        dialog.minsize(700, 520)
         dialog.resizable(True, True)
         dialog.transient(self.root)
-        centre_window(dialog, 700, 500, self.root)
+        centre_window(dialog, 760, 560, self.root)
 
         main_frame = ttk.Frame(dialog, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -588,13 +580,13 @@ class DashboardDialogsMixin:
 
         text_widget = scrolledtext.ScrolledText(
             main_frame, wrap=tk.WORD, font=("Consolas", 10), state=tk.DISABLED)
-        text_widget.pack(fill=tk.BOTH, expand=True)
+        text_widget.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
 
         button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
+        button_frame.pack(fill=tk.X, pady=(8, 0))
         close_btn = ttk.Button(button_frame, text="Close",
                                command=dialog.destroy, state=tk.DISABLED)
-        close_btn.pack(side=tk.RIGHT)
+        close_btn.pack(side=tk.RIGHT, padx=(0, 4), pady=(2, 2))
 
         def _log(msg):
             def _append():
@@ -606,8 +598,6 @@ class DashboardDialogsMixin:
 
         def _run_scanners():
             try:
-                progress.start(15)
-
                 dialog.after(0, lambda: status_var.set("Scanning Steam dedicated servers..."))
                 _log("Starting Steam AppID scan...")
                 try:
@@ -650,6 +640,7 @@ class DashboardDialogsMixin:
                 dialog.after(0, lambda: progress.stop())
                 dialog.after(0, lambda: close_btn.config(state=tk.NORMAL))
 
+        progress.start(15)
         threading.Thread(target=_run_scanners, daemon=True,
                          name="UpdateDatabases").start()
 
@@ -657,10 +648,11 @@ class DashboardDialogsMixin:
         # Verify database schema and data integrity
         dialog = tk.Toplevel(self.root)
         dialog.title("Verify Databases")
-        dialog.geometry("700x500")
+        dialog.geometry("760x560")
+        dialog.minsize(700, 520)
         dialog.resizable(True, True)
         dialog.transient(self.root)
-        centre_window(dialog, 700, 500, self.root)
+        centre_window(dialog, 760, 560, self.root)
 
         main_frame = ttk.Frame(dialog, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -677,13 +669,13 @@ class DashboardDialogsMixin:
 
         text_widget = scrolledtext.ScrolledText(
             main_frame, wrap=tk.WORD, font=("Consolas", 10), state=tk.DISABLED)
-        text_widget.pack(fill=tk.BOTH, expand=True)
+        text_widget.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
 
         button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
+        button_frame.pack(fill=tk.X, pady=(8, 0))
         close_btn = ttk.Button(button_frame, text="Close",
                                command=dialog.destroy, state=tk.DISABLED)
-        close_btn.pack(side=tk.RIGHT)
+        close_btn.pack(side=tk.RIGHT, padx=(0, 4), pady=(2, 2))
 
         def _set_text(content):
             text_widget.config(state=tk.NORMAL)
@@ -693,7 +685,6 @@ class DashboardDialogsMixin:
 
         def _run_verify():
             try:
-                progress.start(15)
                 from tools.verify_database import DatabaseVerifier
                 verifier = DatabaseVerifier(use_database=True, dry_run=False)
                 verifier.verify_all()
@@ -714,6 +705,7 @@ class DashboardDialogsMixin:
                 dialog.after(0, lambda: progress.stop())
                 dialog.after(0, lambda: close_btn.config(state=tk.NORMAL))
 
+        progress.start(15)
         threading.Thread(target=_run_verify, daemon=True,
                          name="VerifyDatabases").start()
 

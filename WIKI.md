@@ -317,7 +317,7 @@ After installation is complete:
 2. **Access the system tray icon.** A tray icon will appear in the Windows taskbar notification area. Right-click it to access the menu.
 3. **Open the desktop dashboard.** Right-click the tray icon and select "Open Server Dashboard" to open the Tkinter-based local management GUI.
 4. **Access the web interface.** Open a browser and navigate to `https://localhost:443` (if HTTPS was enabled during installation) or `http://localhost:8080` (HTTP). From another machine, replace `localhost` with your server's IP address. Log in with the admin credentials configured during installation (default: `admin` / `admin`). If using a self-signed certificate, your browser will show a security warning — this is expected and safe to proceed through.
-5. **Populate the Steam database.** The Steam and Minecraft application ID databases can be populated using the scanners in `Modules/Database/scanners/`. Run `AppIDScanner.py` to download the Steam dedicated server catalogue, and `MinecraftIDScanner.py` to download Minecraft version information. This provides the searchable server lists when creating new servers.
+5. **Populate the Steam database.** The Steam and Minecraft application ID databases can be populated using the scanners in `Modules/Database/scanners/`. Run `Modules/Database/scanners/AppIDScanner.py` to download the Steam dedicated server catalogue, and `Modules/Database/scanners/MinecraftIDScanner.py` to download Minecraft version information. This provides the searchable server lists when creating new servers.
 
 ---
 
@@ -339,34 +339,48 @@ Servermanager/                      # Project root
 ├── requirements.txt                # Python package dependencies
 ├── README.md                       # Quick-start readme
 │
-├── Modules/                        # Core application modules
-│   ├── common.py                   # Shared utilities, registry access, base classes
-│   ├── server_logging.py           # Centralised logging management
-│   ├── launcher.py                 # Process launcher and child process manager
-│   ├── server_manager.py           # Core server lifecycle (start/stop/install/update)
-│   ├── server_console.py           # Real-time interactive server console
-│   ├── server_operations.py        # Simplified server operations facade
-│   ├── server_updates.py           # Scheduled update checking and execution
-│   ├── server_automation.py        # MOTD broadcasting and restart warnings
-│   ├── automation_ui.py            # Tkinter GUI for automation settings
-│   ├── scheduler.py                # Task scheduling and timer management
-│   ├── timer.py                    # Dashboard periodic update timers
-│   ├── webserver.py                # Flask web server with REST API
-│   ├── trayicon.py                 # System tray icon (pystray)
-│   ├── minecraft.py                # Minecraft server management utilities
-│   ├── java_configurator.py        # CLI tool for Java version management
-│   ├── network.py                  # Network operations (ping, port scan, firewall)
-│   ├── security.py                 # Core cryptographic security primitives
-│   ├── web_security.py             # Web application security (rate limit, CSRF, etc.)
-│   ├── network_security.py         # Network-level access control decorators
-│   ├── cluster_security.py         # Cluster membership management
-│   ├── ssl_utils.py                # SSL/TLS certificate generation and management
-│   ├── user_management.py          # User CRUD with 2FA support
-│   ├── agents.py                   # Cluster agent management with GUI
-│   ├── analytics.py                # Real-time analytics and metrics collection
-│   ├── documentation.py            # Help and About dialog boxes
-│   ├── service_wrapper.py          # Windows service wrapper (pywin32)
-│   ├── stop_servermanager.py       # shutdown utility
+├── Modules/                        # Core application modules (split by domain)
+│   ├── core/                       # Core framework and startup components
+│   │   ├── common.py               # Shared utilities, registry access, base classes
+│   │   ├── server_logging.py       # Centralised logging management
+│   │   ├── launcher.py             # Process launcher and child process manager
+│   │   └── timer.py                # Dashboard periodic update timers
+│   │
+│   ├── server/                     # Server runtime and console components
+│   │   ├── server_manager.py       # Core server lifecycle (start/stop/install/update)
+│   │   ├── server_console.py       # Real-time interactive server console
+│   │   ├── server_operations.py    # Simplified server operations facade
+│   │   └── minecraft.py            # Minecraft server management utilities
+│   │
+│   ├── services/                   # Background service and process-control components
+│   │   ├── webserver.py            # Flask web server with REST API
+│   │   ├── trayicon.py             # System tray icon (pystray)
+│   │   ├── server_automation.py    # MOTD broadcasting and restart warnings
+│   │   ├── scheduler.py            # Task scheduling and timer management
+│   │   ├── service_wrapper.py      # Windows service wrapper (pywin32)
+│   │   └── stop_servermanager.py   # Shutdown utility
+│   │
+│   ├── updates/                    # Update and Java tooling
+│   │   ├── server_updates.py       # Scheduled update checking and execution
+│   │   ├── java_configurator.py    # CLI tool for Java version management
+│   │   └── auto_app_update.py      # Application self-update helper
+│   │
+│   ├── ui/                         # UI helpers and dialogs
+│   │   ├── automation_ui.py        # Tkinter GUI for automation settings
+│   │   ├── documentation.py        # Help and About dialog boxes
+│   │   ├── analytics.py            # Real-time analytics and metrics collection
+│   │   └── agents.py               # Cluster agent management with GUI
+│   │
+│   ├── security/                   # Security and identity modules
+│   │   ├── security.py             # Core cryptographic security primitives
+│   │   ├── web_security.py         # Web application security (rate limit, CSRF, etc.)
+│   │   ├── network_security.py     # Network-level access control decorators
+│   │   ├── cluster_security.py     # Cluster membership management
+│   │   ├── ssl_utils.py            # SSL/TLS certificate generation and management
+│   │   └── user_management.py      # User CRUD with 2FA support
+│   │
+│   ├── network/                    # Network operations
+│   │   └── network.py              # Ping, port scan, and firewall helpers
 │   │
 │   ├── Database/                   # Database modules
 │   │   ├── database_utils.py       # Shared DB connection utilities
@@ -470,8 +484,8 @@ Servermanager/                      # Project root
 │   ├── reset_admin_2FA.py          # Admin 2FA reset utility
 │   ├── verify_database.py          # Database verification tool
 │   └── verify_dedicated_servers.py # Post-scan server verification
-└── Wiki/ # Documentation
-└── WIKI.md # This file
+├── docs/                           # Documentation and screenshots
+└── WIKI.md                         # This file
 ```
 
 ### 4.2 Module Dependency Map
@@ -479,13 +493,13 @@ Servermanager/                      # Project root
 The application follows a layered architecture where modules depend on shared utilities and communicate through well-defined interfaces:
 
 **Foundation Layer:**
-- `Modules/server_logging.py` — All logging flows through the centralised `LogManager` singleton. Every module calls `get_component_logger()` or `setup_module_logging()` to get a properly configured logger with rotating file handlers.
-- `Modules/common.py` — Provides `ServerManagerModule` (base class for all major modules), `RegistryModule` (lightweight base class for registry-backed modules such as `SecurityManager` and `ServerOperations`), `ServerManagerPaths` (registry-based path resolution), `ProcessManager` (PID file management), `ConfigManager` (application configuration via database), and numerous utility functions including `make_2fa_callbacks()` (shared 2FA dialog logic), `send_command_to_server()` (unified command delivery), and `make_canvas_width_updater()` (shared UI factory).
+- `Modules/core/server_logging.py` — All logging flows through the centralised `LogManager` singleton. Every module calls `get_component_logger()` or `setup_module_logging()` to get a properly configured logger with rotating file handlers.
+- `Modules/core/common.py` — Provides `ServerManagerModule` (base class for all major modules), `RegistryModule` (lightweight base class for registry-backed modules such as `SecurityManager` and `ServerOperations`), `ServerManagerPaths` (registry-based path resolution), `ProcessManager` (PID file management), `ConfigManager` (application configuration via database), and numerous utility functions including `make_2fa_callbacks()` (shared 2FA dialog logic), `send_command_to_server()` (unified command delivery), and `make_canvas_width_updater()` (shared UI factory).
 
 **Core Layer:**
-- `Modules/server_manager.py` — The engine of the application. Handles SteamCMD-based and Minecraft server installations, server start/stop with multiple fallback strategies, and process monitoring.
-- `Modules/launcher.py` — Orchestrates the application startup by launching child processes (tray icon, web server, automation) based on the cluster role.
-- `Modules/webserver.py` — The Flask web server that serves the web interface and exposes the REST API.
+- `Modules/server/server_manager.py` — The engine of the application. Handles SteamCMD-based and Minecraft server installations, server start/stop with multiple fallback strategies, and process monitoring.
+- `Modules/core/launcher.py` — Orchestrates the application startup by launching child processes (tray icon, web server, automation) based on the cluster role.
+- `Modules/services/webserver.py` — The Flask web server that serves the web interface and exposes the REST API.
 
 **Database Layer:**
 - `Modules/Database/` — All database operations are isolated here. `database_utils.py` provides shared connection factory functions. Each domain has its own module (server configs, users, steam apps, minecraft, cluster, console states).
@@ -536,9 +550,9 @@ To start Server Manager in desktop mode, run the `Start-ServerManager.pyw` scrip
 2. **Singleton Check** — Reads PID files from the `temp/` directory. If another instance of Server Manager is already running (launcher, tray icon, or web server PID exists and the process is alive), it prompts the user about whether to restart.
 3. **Orphaned PID Cleanup** — Scans all PID files and removes any that reference processes which are no longer running. This handles cases where the application did not shut down cleanly.
 4. **Directory Verification** — Ensures required directories exist (`logs/`, `temp/`, `logs/components/`, `logs/debug/`, `logs/services/`).
-5. **Launcher Start** — Launches `Modules/launcher.py` using `pythonw.exe` (windowless Python) with `CREATE_NO_WINDOW` and `DETACHED_PROCESS` flags so it runs in the background.
+5. **Launcher Start** — Launches `Modules/core/launcher.py` using `pythonw.exe` (windowless Python) with `CREATE_NO_WINDOW` and `DETACHED_PROCESS` flags so it runs in the background.
 
-The launcher (`Modules/launcher.py`) then takes over and starts the appropriate child processes based on the cluster role:
+The launcher (`Modules/core/launcher.py`) then takes over and starts the appropriate child processes based on the cluster role:
 
 - **Host Role:** Starts the system tray icon, web server, and server automation process.
 - **Subhost Role:** Starts the system tray icon and a subhost dashboard process (on port 5002).
@@ -546,7 +560,7 @@ The launcher (`Modules/launcher.py`) then takes over and starts the appropriate 
 
 ### 5.2 Windows Service Mode
 
-Server Manager can run as a Windows service for unattended operation. The service is managed through `Modules/service_wrapper.py` which implements `win32serviceutil.ServiceFramework`.
+Server Manager can run as a Windows service for unattended operation. The service is managed through `Modules/services/service_wrapper.py` which implements `win32serviceutil.ServiceFramework`.
 
 **Service Details:**
 - **Service Name:** `ServerManagerService`
@@ -581,13 +595,13 @@ Or manage it through standard Windows service management tools (`services.msc`, 
 
 ### 5.3 Shutdown Procedure
 
-To stop Server Manager, run `Stop-ServerManager.pyw` or use the "Exit" option from the system tray icon menu. The `Stop-ServerManager.pyw` script launches `Modules/stop_servermanager.py`.
+To stop Server Manager, run `Stop-ServerManager.pyw` or use the "Exit" option from the system tray icon menu. The `Stop-ServerManager.pyw` script launches `Modules/services/stop_servermanager.py`.
 
 The shutdown utility (`ServerManagerStopper`) executes a carefully ordered shutdown sequence to prevent data loss and orphaned processes:
 
 1. **Stop All Game Servers** — Attempts to gracefully stop all managed game servers using their configured stop commands.
-2. **Stop Processes from PID Files** — Reads PID files for the launcher, web server, tray icon, dashboard, and automation processes. For each: sends `terminate()`, waits up to 10 seconds, then uses `taskkill /F /T` (force kill with child processes).
-3. **Stop Processes by Name** — Scans all running processes to find any that match Server Manager module names or have command lines referencing the Server Manager directory. This catches any processes not tracked by PID files.
+2. **Stop Processes from PID Files** — Reads PID files for launcher, web server, tray icon, dashboard, automation, and debug-center processes (including `debug.pid`). For each: sends `terminate()`, waits up to 10 seconds, then uses `taskkill /F /T` (force kill with child processes).
+3. **Stop Processes by Name/Path** — Scans running processes for Server Manager targets using command line plus executable-path validation to catch missed processes while avoiding false-positive system processes.
 4. **Wait and Re-Scan** — Waits briefly, then re-scans to ensure all processes have exited.
 5. **Final Cleanup Kill** — As a last resort, uses `taskkill` with `COMMANDLINE` filters to forcefully kill any remaining `python.exe` or `pythonw.exe` processes associated with Server Manager.
 6. **PID File Removal** — Removes all PID files from the `temp/` directory.
@@ -600,7 +614,7 @@ The shutdown utility (`ServerManagerStopper`) executes a carefully ordered shutd
 
 ## 6. The Launcher and Process Management
 
-The launcher (`Modules/launcher.py`) is the central process orchestrator. It extends `ServerManagerModule` (inheriting path resolution, config management, and PID file handling) and manages the lifecycle of all child processes.
+The launcher (`Modules/core/launcher.py`) is the central process orchestrator. It extends `ServerManagerModule` (inheriting path resolution, config management, and PID file handling) and manages the lifecycle of all child processes.
 
 **Key Behaviours:**
 
@@ -705,7 +719,7 @@ The Admin Dashboard (`Host/admin_dashboard.py`) provides user account management
 
 ### 7.3 Automation Settings Window
 
-The Automation Settings Window (`Modules/automation_ui.py`) provides a per-server configuration interface for automated operations. It can be opened from the tray icon menu or from the dashboard.
+The Automation Settings Window (`Modules/ui/automation_ui.py`) provides a per-server configuration interface for automated operations. It can be opened from the tray icon menu or from the dashboard.
 
 > ![Screenshot: Automation Settings — showing MOTD, stop command, and restart warning fields with test buttons](https://raw.githubusercontent.com/SparksSkywere/servermanager/main/docs/images/screenshots/Python_Schedule_Manager.png)
 
@@ -733,7 +747,7 @@ Settings are persisted to the database via `ServerConfigManager`.
 
 ### 7.4 Server Console
 
-The Server Console (`Modules/server_console.py`) provides a real-time interactive terminal for communicating with running server processes. It is approximately 3,100 lines of code.
+The Server Console (`Modules/server/server_console.py`) provides a real-time interactive terminal for communicating with running server processes. It is approximately 3,100 lines of code.
 
 > ![Screenshot: Server Console — showing dark terminal output, command input field, and server output with colour-coded text](https://raw.githubusercontent.com/SparksSkywere/servermanager/main/docs/images/screenshots/Python_Console_Manager.png)
 
@@ -766,7 +780,7 @@ These methods are tried in sequence. If one fails, the next is attempted, ensuri
 
 ### 7.5 System Tray Icon
 
-The system tray icon (`Modules/trayicon.py`) provides persistent background presence and quick access to all application features. It uses the `pystray` library with `pillow` for icon rendering.
+The system tray icon (`Modules/services/trayicon.py`) provides persistent background presence and quick access to all application features. It uses the `pystray` library with `pillow` for icon rendering.
 
 > ![Screenshot: System Tray Icon — showing the right-click context menu with all available options](https://raw.githubusercontent.com/SparksSkywere/servermanager/main/docs/images/screenshots/Tray_Icon_Windows.png)
 
@@ -778,7 +792,7 @@ The system tray icon (`Modules/trayicon.py`) provides persistent background pres
 - **Open Console** — Opens the server console selector.
 - **Debug Center** — Opens the diagnostics and debugging GUI.
 - **About** — Shows version and system information.
-- **Exit** — Initiates the full shutdown sequence and exits.
+- **Exit** — Calls the centralized shutdown utility and then exits, ensuring tray/launcher/debug/web processes are all closed consistently.
 
 **Tooltip:** The tray icon tooltip dynamically displays the number of currently running servers.
 
@@ -940,7 +954,7 @@ Lists all cluster nodes with:
 
 ### 9.1 Flask Web Server
 
-The web server (`Modules/webserver.py`) is a Flask application served through the Waitress WSGI server (a production-grade server, unlike Flask's built-in development server). It is approximately 2,800 lines of code.
+The web server (`Modules/services/webserver.py`) is a Flask application served through the Waitress WSGI server (a production-grade server, unlike Flask's built-in development server). It is approximately 2,800 lines of code.
 
 **Key Configuration:**
 - **Port:** Configurable via registry `WebPort` value (default: 8080)
@@ -1095,7 +1109,7 @@ If pre-restart warnings are configured, the restart operation first sends countd
 
 ### 10.5 Server Updates
 
-The update system (`Modules/server_updates.py`, `ServerUpdateManager`) provides both on-demand and scheduled update checking:
+The update system (`Modules/updates/server_updates.py`, `ServerUpdateManager`) provides both on-demand and scheduled update checking:
 
 **Manual Update Check:**
 For Steam servers, the update checker queries SteamCMD's `app_info_print` command with a 2-minute timeout to compare the installed build ID against the latest available build ID. If a newer version is available, the server can be updated.
@@ -1123,7 +1137,7 @@ See [Section 7.4: Server Console](#74-server-console) for the full description o
 
 ### 10.7 Server Automation (MOTD, Warnings, Schedules)
 
-The Server Automation system (`Modules/server_automation.py`, `ServerAutomationManager`) runs as a background process and handles:
+The Server Automation system (`Modules/services/server_automation.py`, `ServerAutomationManager`) runs as a background process and handles:
 
 **MOTD Broadcasting:**
 - A background thread checks all server configurations every 60 seconds.
@@ -1182,20 +1196,20 @@ For each detected installation, the function extracts the version string and val
 
 ### 11.3 Java Configurator CLI
 
-The Java Configurator (`Modules/java_configurator.py`) is a command-line tool for managing Java installations:
+The Java Configurator (`Modules/updates/java_configurator.py`) is a command-line tool for managing Java installations:
 
 ```bash
 # List all detected Java installations
-python Modules/java_configurator.py list-java
+python Modules/updates/java_configurator.py list-java
 
 # List all Minecraft servers from the database
-python Modules/java_configurator.py list-servers
+python Modules/updates/java_configurator.py list-servers
 
 # Check Java compatibility for a server
-python Modules/java_configurator.py check --server "My Minecraft Server"
+python Modules/updates/java_configurator.py check --server "My Minecraft Server"
 
 # Configure Java for a server (auto-selects if not specified)
-python Modules/java_configurator.py configure --server "My Minecraft Server" --java "C:\Program Files\Java\jdk-21\bin\java.exe"
+python Modules/updates/java_configurator.py configure --server "My Minecraft Server" --java "C:\Program Files\Java\jdk-21\bin\java.exe"
 ```
 
 ---
@@ -1306,7 +1320,7 @@ The `steam_apps` table catalogues Steam dedicated servers:
 | `last_updated` | DateTime | Last update timestamp |
 | `source` | String | Data source identifier |
 
-This database is populated by the `AppIDScanner` (`Modules/Database/AppIDScanner.py`) which:
+This database is populated by the `AppIDScanner` (`Modules/Database/scanners/AppIDScanner.py`) which:
 - Fetches the complete Steam app list from the `ISteamApps/GetAppList/v2/` API endpoint.
 - Queries the Steam Store API for detailed information on each application, with rate limiting (2-second general delay, 3-second API delay).
 - Uses enhanced server detection with keyword matching, regex patterns, and DLC exclusion to identify dedicated server applications.
@@ -1327,7 +1341,7 @@ The `minecraft_servers` table catalogues Minecraft server versions:
 | `release_date` | String | Release date |
 | `last_updated` | DateTime | Last database update |
 
-The `MinecraftIDScanner` (`Modules/Database/MinecraftIDScanner.py`) populates this table by fetching version information from four sources: Mojang (vanilla), Fabric meta API, Forge promotions, and NeoForge API.
+The `MinecraftIDScanner` (`Modules/Database/scanners/MinecraftIDScanner.py`) populates this table by fetching version information from four sources: Mojang (vanilla), Fabric meta API, Forge promotions, and NeoForge API.
 
 ### 12.7 Cluster Database
 
@@ -1421,7 +1435,7 @@ Server Manager supports TOTP-based two-factor authentication using the `pyotp` l
 3. The 2FA secret is stored in the `two_factor_secret` column of the user record and `two_factor_enabled` is set to 1.
 
 **Login with 2FA:**
-When 2FA is enabled, after entering the correct username and password, the user is prompted for a 6-digit TOTP code from their authenticator app. The code is verified server-side using `pyotp.TOTP.verify()`. The 2FA dialog logic is shared between the desktop dashboard (`Host/admin_dashboard.py`) and the user database module (`Modules/Database/user_database.py`) through the `make_2fa_callbacks()` factory function in `Modules/common.py`, which returns reusable `on_verify`, `on_cancel`, and `on_key_press` callbacks.
+When 2FA is enabled, after entering the correct username and password, the user is prompted for a 6-digit TOTP code from their authenticator app. The code is verified server-side using `pyotp.TOTP.verify()`. The 2FA dialog logic is shared between the desktop dashboard (`Host/admin_dashboard.py`) and the user database module (`Modules/Database/user_database.py`) through the `make_2fa_callbacks()` factory function in `Modules/core/common.py`, which returns reusable `on_verify`, `on_cancel`, and `on_key_press` callbacks.
 
 > ADD SCREENSHOT
 
@@ -1463,7 +1477,7 @@ This script:
 
 ### 14.1 Web Security
 
-The `WebSecurityManager` (`Modules/web_security.py`) provides web application security through multiple integrated components:
+The `WebSecurityManager` (`Modules/security/web_security.py`) provides web application security through multiple integrated components:
 
 **Rate Limiting:**
 - The `RateLimiter` class implements sliding window rate limiting.
@@ -1507,7 +1521,7 @@ The web server applies standard security headers to all responses:
 
 ### 14.2 Network Security
 
-The network security module (`Modules/network_security.py`) provides Flask decorators for network-level access control:
+The network security module (`Modules/security/network_security.py`) provides Flask decorators for network-level access control:
 
 **`@require_allowed_network()`** — Restricts access to requests from allowed network ranges. Default allowed networks include:
 - `127.0.0.0/8` — Localhost (always allowed)
@@ -1519,7 +1533,7 @@ The network security module (`Modules/network_security.py`) provides Flask decor
 
 ### 14.3 SSL/TLS Certificate Management
 
-The SSL utilities module (`Modules/ssl_utils.py`) manages SSL/TLS certificates for secure HTTPS communication:
+The SSL utilities module (`Modules/security/ssl_utils.py`) manages SSL/TLS certificates for secure HTTPS communication:
 
 **Self-Signed Certificate Generation:**
 - Generates RSA 2048-bit key pairs.
@@ -1537,14 +1551,14 @@ The SSL utilities module (`Modules/ssl_utils.py`) manages SSL/TLS certificates f
 
 **CLI Interface:**
 ```bash
-python Modules/ssl_utils.py generate   # Generate a new self-signed certificate
-python Modules/ssl_utils.py verify     # Verify the existing certificate
-python Modules/ssl_utils.py info       # Display certificate details
+python Modules/security/ssl_utils.py generate   # Generate a new self-signed certificate
+python Modules/security/ssl_utils.py verify     # Verify the existing certificate
+python Modules/security/ssl_utils.py info       # Display certificate details
 ```
 
 ### 14.4 Cluster Security
 
-The cluster security module (`Modules/cluster_security.py`, `SimpleClusterManager`) manages cluster membership:
+The cluster security module (`Modules/security/cluster_security.py`, `SimpleClusterManager`) manages cluster membership:
 
 - **Master/Node Topology** — A single Host acts as the cluster master, with Subhost nodes joining as members.
 - **Join Request Workflow** — Nodes must request to join, and the Host admin must approve each request. This prevents unauthorized nodes from joining the cluster.
@@ -1645,7 +1659,7 @@ All remote server operations are forwarded to the target Subhost's API via `_for
 
 ### 15.4 Agent Management GUI
 
-The Agent Manager (`Modules/agents.py`) provides a Tkinter GUI for cluster administration:
+The Agent Manager (`Modules/ui/agents.py`) provides a Tkinter GUI for cluster administration:
 
 **The GUI includes:**
 - **Cluster Status Panel** — Shows the current cluster role, number of registered nodes, and overall cluster health.
@@ -1711,7 +1725,7 @@ The dashboard tracker (`services/dashboard_tracker.py`, `DashboardTracker`) moni
 The dashboard tracker is used by the web server to provide real-time status information to the web interface.
 
 **Command Delivery Wrapper:**
-The `send_command_to_server()` function in `Modules/common.py` provides a unified high-level interface for sending commands to server processes. It is used by `ServerAutomationManager` (MOTD, warnings) and `ServerUpdateManager` (pre-restart warnings). The function:
+The `send_command_to_server()` function in `Modules/core/common.py` provides a unified high-level interface for sending commands to server processes. It is used by `ServerAutomationManager` (MOTD, warnings) and `ServerUpdateManager` (pre-restart warnings). The function:
 1. Attempts delivery via the persistent stdin pipe first.
 2. Falls back to the file-based command queue if the pipe is not available.
 3. Returns a boolean indicating success or failure.
@@ -1722,7 +1736,7 @@ The `send_command_to_server()` function in `Modules/common.py` provides a unifie
 
 ### 17.1 Log Manager
 
-The logging system is centralised in `Modules/server_logging.py` through the `LogManager` singleton class. All application modules use this system rather than configuring their own logging handlers.
+The logging system is centralised in `Modules/core/server_logging.py` through the `LogManager` singleton class. All application modules use this system rather than configuring their own logging handlers.
 
 **Three Log Formatters:**
 1. **Default:** `%(asctime)s - %(name)s - %(levelname)s - %(message)s`
@@ -1776,7 +1790,7 @@ The LogManager tracks error and warning counts since the last reset. These stati
 
 ### 18.1 Analytics Collector
 
-The analytics module (`Modules/analytics.py`, `AnalyticsCollector`) collects real-time metrics and provides health scoring:
+The analytics module (`Modules/ui/analytics.py`, `AnalyticsCollector`) collects real-time metrics and provides health scoring:
 
 **Data Collection:**
 - Metrics are stored in memory using `collections.deque` with a maximum of 1440 entries (representing 24 hours of data at 1-minute intervals).
@@ -2011,7 +2025,7 @@ Diagnostic results are colour-coded in the output display:
 
 ## 21. Network Management
 
-The network module (`Modules/network.py`, `NetworkManager`) provides network operations and diagnostics:
+The network module (`Modules/network/network.py`, `NetworkManager`) provides network operations and diagnostics:
 
 **IP Discovery:**
 - Detects all local IP addresses across all network interfaces.
@@ -2301,3 +2315,4 @@ Warning Message Template: Server restart in {message} minutes
 ---
 
 *This documentation covers Server Manager version 1.3 For the latest updates, check the [GitHub repository](https://raw.githubusercontent.com/SparksSkywere/servermanager).*
+

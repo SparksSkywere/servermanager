@@ -9,14 +9,16 @@ from tkinter import ttk, scrolledtext, messagebox
 import traceback
 import ctypes
 import psutil
+import json
+import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path, setup_module_logging, is_admin
+from Modules.core.common import setup_module_path, setup_module_logging, is_admin
 setup_module_path()
 
 try:
     from debug.debug import DebugManager as CoreDebugManager
-    from Modules.server_logging import get_debug_logger
+    from Modules.core.server_logging import get_debug_logger
     debug_manager = CoreDebugManager()
     logger = get_debug_logger("debug-manager")
 except Exception:
@@ -36,12 +38,16 @@ class DebugManagerGUI:
         self.root.geometry("600x400")
         self.root.minsize(600, 400)
 
-        from Modules.common import REGISTRY_PATH
+        from Modules.core.common import REGISTRY_PATH
         self.registry_path = REGISTRY_PATH
         self.server_manager_dir = None
         self.paths = {}
+        self.pid_file = None
 
         self.initialise()
+
+        # Ensure window close uses the same cleanup path.
+        self.root.protocol("WM_DELETE_WINDOW", self.shutdown)
 
         # Set up UI
         self.create_ui()
@@ -49,7 +55,7 @@ class DebugManagerGUI:
     def initialise(self):
         # Init paths/config from registry
         try:
-            from Modules.common import get_server_manager_dir
+            from Modules.core.common import get_server_manager_dir
             self.server_manager_dir = get_server_manager_dir()
 
             self.paths = {
@@ -69,12 +75,45 @@ class DebugManagerGUI:
             if debug_manager:
                 debug_manager.set_debug_mode(True)
 
+            self.pid_file = os.path.join(self.paths["temp"], "debug.pid")
+            self._write_pid_file()
+
             return True
 
         except Exception as e:
             logger.error(f"Init failed: {str(e)}")
             messagebox.showerror("Init Error", f"Failed to initialise: {str(e)}")
             return False
+
+    def _write_pid_file(self):
+        # Write PID file so stop scripts can terminate debug cleanly.
+        try:
+            if not self.pid_file:
+                return
+            pid_info = {
+                "ProcessId": os.getpid(),
+                "ProcessType": "debug",
+                "StartTime": time.strftime("%Y-%m-%dT%H:%M:%S")
+            }
+            with open(self.pid_file, 'w', encoding='utf-8') as f:
+                json.dump(pid_info, f)
+        except Exception as e:
+            logger.error(f"Failed to write debug PID file: {e}")
+
+    def _remove_pid_file(self):
+        try:
+            if self.pid_file and os.path.exists(self.pid_file):
+                os.remove(self.pid_file)
+        except Exception as e:
+            logger.error(f"Failed to remove debug PID file: {e}")
+
+    def shutdown(self):
+        # Close debug window and release logging handlers.
+        try:
+            self._remove_pid_file()
+            self.root.destroy()
+        finally:
+            logging.shutdown()
 
     def create_ui(self):
         # Create the UI elements
@@ -119,7 +158,7 @@ class DebugManagerGUI:
 
         # Close button
         close_btn = ttk.Button(misc_frame, text="Close Debug Center",
-                              command=self.root.destroy)
+                      command=self.shutdown)
         close_btn.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
 
         # Configure grid weights
@@ -531,3 +570,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

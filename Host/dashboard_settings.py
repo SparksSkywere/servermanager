@@ -5,18 +5,22 @@ import json
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import TYPE_CHECKING, Any, Dict, Optional
+import threading
+import subprocess
+import urllib.request
+import urllib.error
 
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path
+from Modules.core.common import setup_module_path
 setup_module_path()
 
-from Modules.server_logging import get_dashboard_logger
+from Modules.core.server_logging import get_dashboard_logger
 from Host.dashboard_functions import centre_window
 
 if TYPE_CHECKING:
-    from Modules.server_manager import ServerManager
+    from Modules.server.server_manager import ServerManager
 
 logger = get_dashboard_logger()
 
@@ -29,20 +33,27 @@ class DashboardSettingsMixin:
 
     def show_settings_dialog(self):
         # Show settings dialog for editing configuration
+        if hasattr(self, 'settings_window') and self.settings_window and self.settings_window.winfo_exists():
+            self.settings_window.deiconify()
+            self.settings_window.lift()
+            self.settings_window.focus_force()
+            return
+
         settings_window = tk.Toplevel(self.root)
         settings_window.title("Settings")
         settings_window.geometry("800x600")
         settings_window.resizable(True, True)
+        settings_window.transient(self.root)
+        settings_window.grab_set()
         centre_window(settings_window, 800, 600, self.root)
+        settings_window.lift()
+        settings_window.focus_force()
 
         notebook = ttk.Notebook(settings_window)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         dashboard_frame = ttk.Frame(notebook)
         notebook.add(dashboard_frame, text="Dashboard")
-
-        cluster_frame = ttk.Frame(notebook)
-        notebook.add(cluster_frame, text="Cluster")
 
         update_frame = ttk.Frame(notebook)
         notebook.add(update_frame, text="Updates")
@@ -65,8 +76,7 @@ class DashboardSettingsMixin:
             return
 
         self._create_dashboard_settings_tab(dashboard_frame, dashboard_config, db)
-        self._create_cluster_settings_tab(cluster_frame, db)
-        self._create_update_settings_tab(update_frame, update_config, db)
+        self._create_update_settings_tab(update_frame, update_config, main_config, db)
         self._create_steam_settings_tab(steam_frame, db)
         self._create_system_settings_tab(system_frame, main_config, db)
 
@@ -119,7 +129,7 @@ class DashboardSettingsMixin:
 
     def _create_cluster_settings_tab(self, parent, db):
         # Create cluster settings controls
-        from Modules.common import REGISTRY_PATH, get_registry_value, set_registry_value
+        from Modules.core.common import REGISTRY_PATH, get_registry_value, set_registry_value
 
         main_frame = ttk.Frame(parent, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -310,48 +320,344 @@ class DashboardSettingsMixin:
 
         requests_frame.after(10000, _auto)
 
-    def _create_update_settings_tab(self, parent, config, db):
-        # Create update settings controls
-        canvas = tk.Canvas(parent)
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
+    def _create_update_settings_tab(self, parent, config, main_config, db):
+        # Create ServerManager update controls
+        main_frame = ttk.Frame(parent, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-        scrollable_frame.bind("<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        ttk.Label(main_frame, text="ServerManager Updates",
+                  font=("Segoe UI", 14, "bold")).pack(anchor=tk.W, pady=(0, 8))
 
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        ttk.Label(main_frame,
+                  text="Check GitHub releases for a newer ServerManager version and launch the updater tool.",
+                  wraplength=700, foreground="gray").pack(anchor=tk.W, pady=(0, 15))
 
-        ttk.Label(scrollable_frame, text="Update Configuration (JSON):",
-                  font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(10, 5))
+        configured_version = str(main_config.get("version", "")).strip()
+        if configured_version and configured_version.lower() not in {"0.1", "unknown", "none"}:
+            current_version = configured_version
+        else:
+            current_version = "Detecting local build..."
+        self.sm_current_version = current_version
+        self.sm_current_build_var = tk.StringVar(value=f"Current build: {current_version}")
+        ttk.Label(main_frame, textvariable=self.sm_current_build_var,
+                  font=("Segoe UI", 10)).pack(anchor=tk.W, pady=(0, 4))
 
-        text_frame = ttk.Frame(scrollable_frame)
-        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        source_frame = ttk.Frame(main_frame)
+        source_frame.pack(fill=tk.X, pady=(2, 8))
+        ttk.Label(source_frame, text="Update source:").pack(side=tk.LEFT)
+        self.sm_update_source_var = tk.StringVar(value="Stable Releases")
+        self.sm_update_source_combo = ttk.Combobox(
+            source_frame,
+            textvariable=self.sm_update_source_var,
+            state="readonly",
+            values=["Stable Releases", "Development Branch"],
+            width=22
+        )
+        self.sm_update_source_combo.pack(side=tk.LEFT, padx=(8, 0))
 
-        text_widget = tk.Text(text_frame, height=20, wrap=tk.WORD)
-        text_scrollbar = ttk.Scrollbar(text_frame, command=text_widget.yview)
-        text_widget.configure(yscrollcommand=text_scrollbar.set)
-        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        ttk.Label(source_frame, text="Branch:").pack(side=tk.LEFT, padx=(16, 0))
+        default_branch = "main"
+        self.sm_dev_branch_var = tk.StringVar(value=default_branch)
+        self.sm_dev_branch_entry = ttk.Entry(source_frame, textvariable=self.sm_dev_branch_var, width=16)
+        self.sm_dev_branch_entry.pack(side=tk.LEFT, padx=(8, 0))
 
-        full_config = config.get("full_config", {})
-        if isinstance(full_config, str):
+        def _on_source_changed(*_args):
+            state = "normal" if self.sm_update_source_var.get() == "Development Branch" else "disabled"
+            self.sm_dev_branch_entry.config(state=state)
+
+        self.sm_update_source_var.trace_add("write", _on_source_changed)
+        _on_source_changed()
+
+        self.sm_update_status_var = tk.StringVar(value="Click 'Check for Updates' to check the selected source.")
+        status_label = ttk.Label(main_frame, textvariable=self.sm_update_status_var,
+                                 font=("Segoe UI", 10, "bold"))
+        status_label.pack(anchor=tk.W, pady=(0, 12))
+
+        details_frame = ttk.LabelFrame(main_frame, text="Release Details", padding=10)
+        details_frame.pack(fill=tk.X, pady=(0, 12))
+        self.sm_latest_version_var = tk.StringVar(value="Latest release: Unknown")
+        self.sm_release_url_var = tk.StringVar(value="Release URL: N/A")
+        ttk.Label(details_frame, textvariable=self.sm_latest_version_var).pack(anchor=tk.W, pady=(0, 4))
+        ttk.Label(details_frame, textvariable=self.sm_release_url_var, foreground="gray").pack(anchor=tk.W)
+
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(5, 0))
+
+        self.sm_check_updates_btn = ttk.Button(button_frame, text="Check for Updates",
+                                               command=self._check_servermanager_updates_async)
+        self.sm_check_updates_btn.pack(side=tk.LEFT)
+
+        ttk.Button(button_frame, text="Run ServerManager Updater",
+                   command=self._launch_servermanager_updater).pack(side=tk.LEFT, padx=(8, 0))
+
+        # Resolve local git branch/build without blocking settings dialog creation
+        parent.after(50, self._populate_local_build_info_async)
+
+    def _populate_local_build_info_async(self):
+        # Fill local branch and build label in a background thread to keep settings opening responsive
+        def _worker():
+            branch = self._get_local_git_branch()
+            short_sha = self._get_local_git_short_sha()
+
+            if branch and short_sha:
+                build_label = f"{branch}@{short_sha}"
+            elif short_sha:
+                build_label = short_sha
+            else:
+                build_label = None
+
+            def _update_ui():
+                if branch and hasattr(self, 'sm_dev_branch_var'):
+                    # Keep user-entered value if they already changed it.
+                    current = self.sm_dev_branch_var.get().strip()
+                    if current in {"", "main"}:
+                        self.sm_dev_branch_var.set(branch)
+
+                if build_label and hasattr(self, 'sm_current_build_var'):
+                    self.sm_current_version = build_label
+                    self.sm_current_build_var.set(f"Current build: {build_label}")
+                elif hasattr(self, 'sm_current_build_var') and self.sm_current_version == "Detecting local build...":
+                    self.sm_current_version = "Unknown"
+                    self.sm_current_build_var.set("Current build: Unknown")
+
+            self.root.after(0, _update_ui)
+
+        threading.Thread(target=_worker, daemon=True, name="SMBuildInfo").start()
+
+    def _get_current_build_label(self, main_config: Dict[str, Any]) -> str:
+        # Prefer configured version, fall back to git branch + commit for dev builds
+        configured = str(main_config.get("version", "")).strip()
+        if configured and configured.lower() not in {"0.1", "unknown", "none"}:
+            return configured
+
+        branch = self._get_local_git_branch()
+        short_sha = self._get_local_git_short_sha()
+        if branch and short_sha:
+            return f"{branch}@{short_sha}"
+        if short_sha:
+            return short_sha
+        return configured or "Unknown"
+
+    def _run_git_command(self, args):
+        # Execute git command in repository and return stdout text, or None on failure
+        try:
+            output = subprocess.check_output(
+                ["git"] + args,
+                cwd=self.server_manager_dir,
+                stderr=subprocess.DEVNULL,
+                text=True
+            )
+            return output.strip()
+        except Exception:
+            return None
+
+    def _get_local_git_branch(self) -> Optional[str]:
+        return self._run_git_command(["rev-parse", "--abbrev-ref", "HEAD"])
+
+    def _get_local_git_sha(self) -> Optional[str]:
+        return self._run_git_command(["rev-parse", "HEAD"])
+
+    def _get_local_git_short_sha(self) -> Optional[str]:
+        return self._run_git_command(["rev-parse", "--short", "HEAD"])
+
+    def _github_json(self, api_url: str) -> Dict[str, Any]:
+        req = urllib.request.Request(
+            api_url,
+            headers={
+                "User-Agent": "ServerManagerDashboard/1.0",
+                "Accept": "application/vnd.github+json"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+    def _parse_version_tuple(self, version_text: str):
+        # Convert a version string like v1.2.3 into a tuple of ints for comparison
+        clean = (version_text or "").strip().lower().lstrip("v")
+        numeric_part = clean.split("-")[0]
+        pieces = []
+        for part in numeric_part.split('.'):
+            digits = ''.join(ch for ch in part if ch.isdigit())
+            if digits == "":
+                pieces.append(0)
+            else:
+                pieces.append(int(digits))
+        while len(pieces) < 3:
+            pieces.append(0)
+        return tuple(pieces[:3])
+
+    def _check_servermanager_updates_async(self):
+        # Check selected update source without blocking the UI
+        selected_source = self.sm_update_source_var.get()
+        branch_name = (self.sm_dev_branch_var.get().strip() or "main")
+        self.sm_check_updates_btn.config(state=tk.DISABLED)
+        if selected_source == "Development Branch":
+            self.sm_update_status_var.set(f"Checking branch '{branch_name}'...")
+        else:
+            self.sm_update_status_var.set("Checking stable releases...")
+
+        def _worker():
+            latest_label = "Unknown"
+            release_url = ""
             try:
-                full_config = json.loads(full_config)
-            except (json.JSONDecodeError, ValueError):
-                full_config = {}
+                if selected_source == "Stable Releases":
+                    payload = self._github_json(
+                        "https://api.github.com/repos/SparksSkywere/servermanager/releases/latest"
+                    )
+                    latest_label = str(payload.get("tag_name") or payload.get("name") or "Unknown").strip()
+                    release_url = str(payload.get("html_url") or "").strip()
 
-        text_widget.insert(tk.END, json.dumps(full_config, indent=2))
-        self.update_config_text = text_widget
+                    try:
+                        current_tuple = self._parse_version_tuple(self.sm_current_version)
+                        latest_tuple = self._parse_version_tuple(latest_label)
+                        has_update = latest_tuple > current_tuple
+                    except Exception:
+                        has_update = False
+
+                    def _update_ui_success():
+                        self.sm_latest_version_var.set(f"Latest release: {latest_label}")
+                        self.sm_release_url_var.set(f"Release URL: {release_url or 'N/A'}")
+                        if has_update:
+                            self.sm_update_status_var.set("Updates available")
+                        else:
+                            self.sm_update_status_var.set("ServerManager is up to date")
+                        self.sm_check_updates_btn.config(state=tk.NORMAL)
+
+                    self.root.after(0, _update_ui_success)
+                else:
+                    commit_payload = self._github_json(
+                        f"https://api.github.com/repos/SparksSkywere/servermanager/commits/{branch_name}"
+                    )
+                    remote_sha = str(commit_payload.get("sha") or "").strip()
+                    latest_label = remote_sha[:7] if remote_sha else "Unknown"
+                    release_url = f"https://github.com/SparksSkywere/servermanager/archive/refs/heads/{branch_name}.zip"
+
+                    local_sha = self._get_local_git_sha()
+                    has_update = bool(local_sha and remote_sha and local_sha != remote_sha)
+                    behind_count = None
+
+                    if local_sha and remote_sha and local_sha != remote_sha:
+                        try:
+                            compare_payload = self._github_json(
+                                f"https://api.github.com/repos/SparksSkywere/servermanager/compare/{local_sha}...{branch_name}"
+                            )
+                            behind_count = int(compare_payload.get("behind_by", 0))
+                        except Exception:
+                            behind_count = None
+
+                    def _update_ui_dev_success():
+                        self.sm_latest_version_var.set(
+                            f"Latest commit ({branch_name}): {latest_label}"
+                        )
+                        self.sm_release_url_var.set(f"Download URL: {release_url}")
+                        if not local_sha:
+                            self.sm_update_status_var.set(
+                                "Could not determine local git commit; dev update status unavailable"
+                            )
+                        elif has_update:
+                            if behind_count is not None and behind_count > 0:
+                                self.sm_update_status_var.set(
+                                    f"Updates available ({behind_count} commit(s) ahead on {branch_name})"
+                                )
+                            else:
+                                self.sm_update_status_var.set("Updates available")
+                        else:
+                            self.sm_update_status_var.set("Development branch is up to date")
+                        self.sm_check_updates_btn.config(state=tk.NORMAL)
+
+                    self.root.after(0, _update_ui_dev_success)
+            except urllib.error.HTTPError as e:
+                error_code = getattr(e, "code", None)
+
+                if selected_source == "Stable Releases" and error_code == 404:
+                    def _update_ui_no_releases():
+                        self.sm_latest_version_var.set("Latest release: None published")
+                        self.sm_release_url_var.set(
+                            "Release URL: https://github.com/SparksSkywere/servermanager/releases"
+                        )
+                        self.sm_update_status_var.set("No stable releases published yet")
+                        self.sm_check_updates_btn.config(state=tk.NORMAL)
+
+                    self.root.after(0, _update_ui_no_releases)
+                    return
+
+                error_text = f"HTTP {error_code}" if error_code else str(e)
+
+                def _update_ui_http_error():
+                    self.sm_latest_version_var.set(f"Latest release: {latest_label}")
+                    self.sm_release_url_var.set(f"Release URL: {release_url or 'N/A'}")
+                    self.sm_update_status_var.set(f"Update check failed: {error_text}")
+                    self.sm_check_updates_btn.config(state=tk.NORMAL)
+
+                self.root.after(0, _update_ui_http_error)
+            except urllib.error.URLError as e:
+                error_text = getattr(e, "reason", str(e))
+
+                def _update_ui_network_error():
+                    self.sm_latest_version_var.set(f"Latest release: {latest_label}")
+                    self.sm_release_url_var.set(f"Release URL: {release_url or 'N/A'}")
+                    self.sm_update_status_var.set(f"Update check failed: {error_text}")
+                    self.sm_check_updates_btn.config(state=tk.NORMAL)
+
+                self.root.after(0, _update_ui_network_error)
+            except Exception as e:
+                error_text = str(e)
+
+                def _update_ui_error():
+                    self.sm_latest_version_var.set(f"Latest release: {latest_label}")
+                    self.sm_release_url_var.set(f"Release URL: {release_url or 'N/A'}")
+                    self.sm_update_status_var.set(f"Update check failed: {error_text}")
+                    self.sm_check_updates_btn.config(state=tk.NORMAL)
+
+                self.root.after(0, _update_ui_error)
+
+        threading.Thread(target=_worker, daemon=True, name="SMUpdateCheck").start()
+
+    def _launch_servermanager_updater(self):
+        # Launch the existing updater script
+        updater_path = os.path.join(self.server_manager_dir, "Update-ServerManager.pyw")
+        if not os.path.exists(updater_path):
+            messagebox.showerror("Updater Not Found",
+                                 f"Could not find updater script:\n{updater_path}")
+            return
+
+        try:
+            if os.name == 'nt':
+                python_exe = sys.executable
+                if python_exe.lower().endswith("python.exe"):
+                    pythonw_exe = python_exe[:-4] + "w.exe"
+                    if os.path.exists(pythonw_exe):
+                        python_exe = pythonw_exe
+
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0
+
+                subprocess.Popen(
+                    [python_exe, updater_path],
+                    cwd=self.server_manager_dir,
+                    startupinfo=startupinfo,
+                    creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    shell=False
+                )
+            else:
+                subprocess.Popen([sys.executable, updater_path], start_new_session=True)
+            self.sm_update_status_var.set("Updater launched")
+            if hasattr(self, 'settings_window') and self.settings_window and self.settings_window.winfo_exists():
+                self.settings_window.lift()
+                self.settings_window.focus_force()
+        except Exception as e:
+            messagebox.showerror("Launch Error", f"Failed to launch updater: {e}")
 
     def _create_steam_settings_tab(self, parent, db):
         # Create Steam credentials settings tab
         main_frame = ttk.Frame(parent, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(main_frame, text="\U0001F3AE Steam Credentials",
+        ttk.Label(main_frame, text="Steam Credentials",
                   font=("Segoe UI", 14, "bold")).pack(anchor=tk.W, pady=(0, 5))
 
         ttk.Label(main_frame,
@@ -367,12 +673,12 @@ class DashboardSettingsMixin:
         status_frame.pack(fill=tk.X, pady=(0, 15))
 
         if stored_creds.get('use_anonymous'):
-            status_text, status_color = "\u2713 Using Anonymous Login", "blue"
+            status_text, status_color = "Using Anonymous Login", "blue"
         elif stored_creds.get('username'):
-            status_text = f"\u2713 Credentials saved for: {stored_creds['username']}"
+            status_text = f"Credentials saved for: {stored_creds['username']}"
             status_color = "green"
         else:
-            status_text, status_color = "\u25CB No credentials configured", "gray"
+            status_text, status_color = "No credentials configured", "gray"
 
         self.steam_status_label = ttk.Label(status_frame, text=status_text,
                                             foreground=status_color,
@@ -380,7 +686,7 @@ class DashboardSettingsMixin:
         self.steam_status_label.pack(anchor=tk.W)
 
         if stored_creds.get('steam_guard_secret'):
-            ttk.Label(status_frame, text="\u2713 Steam Guard (2FA) configured",
+            ttk.Label(status_frame, text="Steam Guard (2FA) configured",
                       foreground="green").pack(anchor=tk.W)
 
         # Credentials frame
@@ -477,7 +783,7 @@ class DashboardSettingsMixin:
                 use_anonymous=self.steam_anon_var.get())
             if success:
                 self.steam_status_label.config(
-                    text="\u2713 Credentials saved successfully!", foreground="green")
+                    text="Credentials saved successfully", foreground="green")
                 messagebox.showinfo("Success", "Steam credentials saved successfully!")
             else:
                 messagebox.showerror("Error", "Failed to save Steam credentials.")
@@ -491,7 +797,7 @@ class DashboardSettingsMixin:
                 self.steam_guard_var.set("")
                 self.steam_anon_var.set(False)
                 self.steam_status_label.config(
-                    text="\u25CB No credentials configured", foreground="gray")
+                    text="No credentials configured", foreground="gray")
 
         ttk.Button(button_frame, text="Save Steam Credentials",
                    command=save_steam_credentials).pack(side=tk.RIGHT, padx=(5, 0))
@@ -513,7 +819,6 @@ class DashboardSettingsMixin:
         scrollbar.pack(side="right", fill="y")
 
         settings = [
-            ("Version", "version", config.get("version", "0.1"), "string"),
             ("Web Port", "web_port", config.get("web_port", 8080), "integer"),
             ("Enable Auto Updates", "enable_auto_updates",
              config.get("enable_auto_updates", True), "boolean"),

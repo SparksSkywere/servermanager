@@ -8,7 +8,7 @@ import logging
 
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from Modules.common import setup_module_path, setup_module_logging
+from Modules.core.common import setup_module_path, setup_module_logging
 setup_module_path()
 
 from .database_utils import get_sql_config_from_registry, build_db_url, get_engine_by_type
@@ -78,7 +78,7 @@ def initialise_user_manager():
     # Init user management, return engine + user_manager
     try:
         engine = get_user_engine()
-        from Modules.user_management import UserManager
+        from Modules.security.user_management import UserManager
         user_manager = UserManager(engine)
         logger.debug("User management initialised")
         return engine, user_manager
@@ -259,7 +259,7 @@ def handle_2fa_login(user_manager, username, parent_window=None):
         # Result variable
         result = [False]
 
-        from Modules.common import make_2fa_callbacks
+        from Modules.core.common import make_2fa_callbacks
         on_verify, on_cancel, on_key_press = make_2fa_callbacks(
             user_manager, username, code_var, status_var, result, twofa_dialog
         )
@@ -287,3 +287,4 @@ def handle_2fa_login(user_manager, username, parent_window=None):
     except Exception as e:
         logger.error(f"Error in 2FA login: {e}")
         return False
+

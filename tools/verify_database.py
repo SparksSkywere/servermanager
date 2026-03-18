@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path, get_database_connection
+from Modules.core.common import setup_module_path, get_database_connection
 setup_module_path()
 
 SQLALCHEMY_AVAILABLE = False
@@ -31,7 +31,7 @@ except ImportError:
 
 import sqlite3
 
-from Modules.server_logging import get_component_logger
+from Modules.core.server_logging import get_component_logger
 logger = get_component_logger("DatabaseVerifier")
 
 class DatabaseVerifier:
@@ -345,7 +345,7 @@ class DatabaseVerifier:
                 lines.append(f"    • {issue}")
         else:
             lines.append("")
-            lines.append("  ✓ No issues found")
+            lines.append("  No issues found")
 
         lines.append("")
 
@@ -370,7 +370,7 @@ class DatabaseVerifier:
                 lines.append(f"    • {issue}")
         else:
             lines.append("")
-            lines.append("  ✓ No issues found")
+            lines.append("  No issues found")
 
         lines.append("")
         lines.append("═" * 55)

@@ -972,7 +972,7 @@
                     </div>
                     <div class="activity-list" id="activityList">
                         <div class="activity-item">
-                            <div class="activity-icon">📊</div>
+                            <div class="activity-icon"></div>
                             <div class="activity-content">
                                 <div class="activity-message">Dashboard initialised</div>
                                 <div class="activity-time" id="initTime">Just now</div>
@@ -993,32 +993,32 @@
                     <div class="system-metrics">
                         <div class="metrics-grid">
                             <div class="metric-card">
-                                <div class="metric-icon">🖥️</div>
+                                <div class="metric-icon"></div>
                                 <div class="metric-title">CPU</div>
                                 <div class="metric-value" id="cpuMetric">-</div>
                             </div>
                             <div class="metric-card">
-                                <div class="metric-icon">💾</div>
+                                <div class="metric-icon"></div>
                                 <div class="metric-title">Memory</div>
                                 <div class="metric-value" id="memoryMetric">-</div>
                             </div>
                             <div class="metric-card">
-                                <div class="metric-icon">💿</div>
+                                <div class="metric-icon"></div>
                                 <div class="metric-title">Disk Space</div>
                                 <div class="metric-value" id="diskMetric">-</div>
                             </div>
                             <div class="metric-card">
-                                <div class="metric-icon">🌐</div>
+                                <div class="metric-icon"></div>
                                 <div class="metric-title">Network</div>
                                 <div class="metric-value" id="networkMetric">-</div>
                             </div>
                             <div class="metric-card">
-                                <div class="metric-icon">🎮</div>
+                                <div class="metric-icon"></div>
                                 <div class="metric-title">GPU</div>
                                 <div class="metric-value" id="gpuMetric">-</div>
                             </div>
                             <div class="metric-card">
-                                <div class="metric-icon">⏱️</div>
+                                <div class="metric-icon"></div>
                                 <div class="metric-title">System Uptime</div>
                                 <div class="metric-value" id="uptimeMetric">-</div>
                             </div>
@@ -1321,7 +1321,7 @@
         }
 
         // Add activity log entry
-        function addActivityLog(message, icon = '📊') {
+        function addActivityLog(message, icon = '') {
             const now = new Date();
             const timeString = now.toLocaleTimeString();
             
@@ -1679,7 +1679,7 @@
                 updateStats();
                 updateConsoleSelect();
                 
-                addActivityLog(`Refreshed server list (${servers.length} servers)`, '🔄');
+                addActivityLog(`Refreshed server list (${servers.length} servers)`);
             } catch (e) {
                 console.error('Error fetching servers:', e);
                 document.getElementById('serverList').textContent = '';
@@ -1824,11 +1824,11 @@
                 
                 if (response.ok) {
                     showNotification(result.message || `Server ${action} initiated`, 'success');
-                    addActivityLog(`Server "${serverId}" ${action} command sent`, action === 'start' ? '▶️' : action === 'stop' ? '⏹️' : '🔄');
+                    addActivityLog(`Server "${serverId}" ${action} command sent`);
                     setTimeout(refreshServers, 1500);
                 } else {
                     showNotification(result.error || `Failed to ${action} server`, 'error');
-                    addActivityLog(`Failed to ${action} server "${serverId}"`, '❌');
+                    addActivityLog(`Failed to ${action} server "${serverId}"`);
                 }
             } catch {
                 showNotification(`Failed to ${action} server`, 'error');
@@ -1851,11 +1851,11 @@
                 
                 if (response.ok) {
                     showNotification(result.message || `Server ${serverId} removed successfully`, 'success');
-                    addActivityLog(`Server "${serverId}" removed`, '🗑️');
+                    addActivityLog(`Server "${serverId}" removed`);
                     setTimeout(refreshServers, 1500);
                 } else {
                     showNotification(result.error || `Failed to remove server`, 'error');
-                    addActivityLog(`Failed to remove server "${serverId}"`, '❌');
+                    addActivityLog(`Failed to remove server "${serverId}"`);
                 }
             } catch {
                 showNotification(`Failed to remove server`, 'error');
@@ -2078,7 +2078,7 @@
             initCharts();
 
             // Add initial activity log entry
-            addActivityLog('Dashboard initialised', '🚀');
+            addActivityLog('Dashboard initialised');
 
             await loadProfile();
             await refreshServers();

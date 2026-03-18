@@ -12,7 +12,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 
 # Setup module path and logging
-from Modules.common import setup_module_path, setup_module_logging, handle_generic_error
+from Modules.core.common import setup_module_path, setup_module_logging, handle_generic_error
 setup_module_path()
 logger: logging.Logger = setup_module_logging("DatabaseUpdate")
 

@@ -14,7 +14,7 @@ os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 
 # Import centralized registry constants
-from Modules.common import REGISTRY_ROOT, REGISTRY_PATH, is_admin, get_server_manager_dir
+from Modules.core.common import REGISTRY_ROOT, REGISTRY_PATH, is_admin, get_server_manager_dir
 
 def check_process_running(pid):
     # Check if a process with given PID is still running
@@ -229,7 +229,7 @@ if is_already_running():
     sys.exit(0)
 
 # Launch the Python launcher script
-launcher_path = os.path.join(script_dir, "Modules", "launcher.py")
+launcher_path = os.path.join(script_dir, "Modules", "core", "launcher.py")
 
 # Check if the launcher script exists
 if not os.path.exists(launcher_path):

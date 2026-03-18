@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path, setup_module_logging, get_database_connection
+from Modules.core.common import setup_module_path, setup_module_logging, get_database_connection
 setup_module_path()
 
 try:
@@ -110,7 +110,7 @@ class DedicatedServerVerifier:
         # Initialise SQLite fallback database using centralised db directory
         try:
             # Use centralised db directory
-            db_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'db')
+            db_dir = os.path.join(os.path.dirname(__file__), '..', 'db')
             db_path = os.path.join(db_dir, 'steam_ID.db')
             self.sqlite_conn = get_database_connection(db_path)
             logger.info(f"Connected to SQLite database: {db_path}")

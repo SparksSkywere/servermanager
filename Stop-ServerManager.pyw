@@ -7,7 +7,7 @@ import sys
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Path to the stop script
-stop_script_path = os.path.join(script_dir, "Modules", "stop_servermanager.py")
+stop_script_path = os.path.join(script_dir, "Modules", "services", "stop_servermanager.py")
 
 # Use subprocess with CREATE_NO_WINDOW flag to hide console
 startupinfo = subprocess.STARTUPINFO()

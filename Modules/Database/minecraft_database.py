@@ -5,7 +5,7 @@ import logging
 
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from Modules.common import setup_module_path, setup_module_logging
+from Modules.core.common import setup_module_path, setup_module_logging
 setup_module_path()
 
 from .database_utils import get_engine_by_type

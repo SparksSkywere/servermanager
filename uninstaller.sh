@@ -82,10 +82,10 @@ stop_service() {
     fi
     
     # Try stopping via Python script
-    if [[ -f "$SERVER_MANAGER_DIR/Modules/stop_servermanager.py" ]]; then
+    if [[ -f "$SERVER_MANAGER_DIR/Modules/services/stop_servermanager.py" ]]; then
         local python_cmd=$(find_python)
         if [[ -n "$python_cmd" ]]; then
-            "$python_cmd" "$SERVER_MANAGER_DIR/Modules/stop_servermanager.py" 2>/dev/null || true
+            "$python_cmd" "$SERVER_MANAGER_DIR/Modules/services/stop_servermanager.py" 2>/dev/null || true
             log_info "Executed stop script"
         fi
     fi

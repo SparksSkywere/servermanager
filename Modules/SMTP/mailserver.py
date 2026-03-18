@@ -13,10 +13,10 @@ import http.server
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from Modules.common import setup_module_path, get_base_url
+from Modules.core.common import setup_module_path, get_base_url
 setup_module_path()
 
-from Modules.server_logging import get_component_logger
+from Modules.core.server_logging import get_component_logger
 logger = get_component_logger("MailServer")
 
 # OAuth libs
@@ -93,7 +93,7 @@ class MailServer:
         # Load mail server configuration from registry
         try:
             import winreg
-            from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+            from Modules.core.common import REGISTRY_ROOT, REGISTRY_PATH
 
             key = winreg.OpenKey(REGISTRY_ROOT, REGISTRY_PATH + r"\MailServer")
 
@@ -170,7 +170,7 @@ class MailServer:
         # Save mail server configuration to registry
         try:
             import winreg
-            from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+            from Modules.core.common import REGISTRY_ROOT, REGISTRY_PATH
 
             key_path = REGISTRY_PATH + r"\MailServer"
             key = winreg.CreateKey(REGISTRY_ROOT, key_path)

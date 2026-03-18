@@ -6,9 +6,9 @@ from typing import Optional, Any
 
 # Early crash logging
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path
+from Modules.core.common import setup_module_path
 setup_module_path()
-from Modules.server_logging import early_crash_log
+from Modules.core.server_logging import early_crash_log
 
 early_crash_log("Dashboard", f"Module loading - Python {sys.version}")
 
@@ -34,16 +34,16 @@ try:
     import datetime
 
     import tkinter as tk
-    from tkinter import messagebox
+    from tkinter import messagebox, ttk
     early_crash_log("Dashboard", "Standard library imports successful")
 
     from Modules.Database.user_database import initialise_user_manager
     early_crash_log("Dashboard", "User database import successful")
 
-    from Modules.server_manager import ServerManager
+    from Modules.server.server_manager import ServerManager
     early_crash_log("Dashboard", "Server management imports successful")
 
-    from Modules.server_logging import (
+    from Modules.core.server_logging import (
         get_dashboard_logger, configure_dashboard_logging,
         log_dashboard_event
     )
@@ -56,13 +56,13 @@ except Exception as e:
     raise
 
 # Import scheduling components
-from Modules.scheduler import SchedulerManager
+from Modules.services.scheduler import SchedulerManager
 
 # Import update management
-from Modules.server_updates import ServerUpdateManager
+from Modules.updates.server_updates import ServerUpdateManager
 
 # Import core infrastructure
-from Modules.common import ServerManagerModule, initialise_registry_values
+from Modules.core.common import ServerManagerModule, initialise_registry_values
 
 # Import UI components
 from Host.dashboard_ui import setup_ui, expand_all_categories, collapse_all_categories, show_server_context_menu, on_server_list_click, on_server_double_click
@@ -78,7 +78,7 @@ from Host.dashboard_functions import (
 )
 
 # Import cluster management
-from Modules.agents import AgentManager, show_agent_management_dialog
+from Modules.ui.agents import AgentManager, show_agent_management_dialog
 
 # Import mixin modules for dashboard functionality
 from Host.dashboard_server_config import ServerConfigMixin
@@ -87,7 +87,7 @@ from Host.dashboard_dialogs import DashboardDialogsMixin
 from Host.dashboard_settings import DashboardSettingsMixin
 
 # Import console management
-from Modules.server_console import ConsoleManager
+from Modules.server.server_console import ConsoleManager
 
 # Import authentication
 from Host.admin_dashboard import admin_login_with_root
@@ -254,6 +254,15 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
 
         # Calculate DPI scaling factor for proper UI sizing
         self._init_dpi_scaling()
+
+        # Apply global ttk style padding to reduce clipped button/text issues on high-DPI displays.
+        try:
+            style = ttk.Style(self.root)
+            style.configure("TButton", padding=(10, 6))
+            style.configure("TCombobox", padding=(6, 4))
+            style.configure("Treeview", rowheight=max(24, int(self.scale_value(24))))
+        except Exception as e:
+            logger.debug(f"Could not apply global ttk style adjustments: {e}")
 
         # On Windows, when launched from trayicon (detached process), ensure proper window handling
         if os.name == 'nt' and '--debug' not in sys.argv:
@@ -584,9 +593,8 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                 pass
             self.on_close()
 
-        # Override Tkinter's exception handling
-        import tkinter
-        tkinter.Tk.report_callback_exception = tkinter_exception_handler
+        # Override Tkinter's exception handling for this root instance.
+        self.root.report_callback_exception = tkinter_exception_handler
 
         try:
             # Show the window first
@@ -969,7 +977,7 @@ def bring_existing_dashboard_to_front(pid):
 def main():
     import traceback as tb
     import atexit
-    from Modules.server_logging import early_crash_log
+    from Modules.core.server_logging import early_crash_log
 
     early_crash_log("Dashboard", "Startup initiated")
 

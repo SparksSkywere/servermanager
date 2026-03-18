@@ -40,15 +40,13 @@ dev-requirements.txt
 db/servermanager_users.db
 db/servermanager_servers.db
 db/servermanager.db
+db/console_states.db
 data/update_config.json
 ssl/server.crt
 ssl/server.key
 __Scanner__/
 
 # PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as long as the script is run
-#  from the same directory as the spec file, you should be fine.
 *.manifest
 *.spec
 

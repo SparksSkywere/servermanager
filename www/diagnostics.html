@@ -240,12 +240,12 @@
             try {
                 const response = await fetch('/api/auth/login', { method: 'OPTIONS' });
                 if (response.status === 200 || response.status === 404) {
-                    setResultHtml(result, '<span class="success">✓ Server is responding</span>');
+                    setResultHtml(result, '<span class="success">Server is responding</span>');
                 } else {
-                    setResultHtml(result, `<span class="warning">⚠ Status ${escapeHtml(String(response.status))}</span>`);
+                    setResultHtml(result, `<span class="warning">Status ${escapeHtml(String(response.status))}</span>`);
                 }
             } catch (error) {
-                setResultHtml(result, `<span class="error">✗ Cannot connect: ${escapeHtml(error.message)}</span>`);
+                setResultHtml(result, `<span class="error">Cannot connect: ${escapeHtml(error.message)}</span>`);
             }
         }
 
@@ -266,17 +266,17 @@
                 const data = await response.json();
 
                 if (response.ok && data.token) {
-                    setResultHtml(result, `<span class="success">✓ Authentication successful</span><br><br>
+                    setResultHtml(result, `<span class="success">Authentication successful</span><br><br>
                         <strong>Username:</strong> ${escapeHtml(String(data.username))}<br>
                         <strong>Admin:</strong> ${escapeHtml(String(data.isAdmin))}<br>
                         <strong>Token:</strong> ${escapeHtml(data.token.substring(0, 20))}...`);
                 } else {
-                    setResultHtml(result, `<span class="error">✗ Authentication failed</span><br><br>
+                    setResultHtml(result, `<span class="error">Authentication failed</span><br><br>
                         <strong>Status:</strong> ${escapeHtml(String(response.status))}<br>
                         <strong>Error:</strong> ${escapeHtml(String(data.error || 'Unknown'))}`);
                 }
             } catch (error) {
-                setResultHtml(result, `<span class="error">✗ Error: ${escapeHtml(error.message)}</span>`);
+                setResultHtml(result, `<span class="error">Error: ${escapeHtml(error.message)}</span>`);
             }
         }
 
@@ -287,12 +287,12 @@
             const isAdmin = sessionStorage.getItem('isAdmin');
 
             if (token || username) {
-                setResultHtml(result, `<span class="success">✓ Session data found</span><br><br>
+                    setResultHtml(result, `<span class="success">Session data found</span><br><br>
                     <strong>Token:</strong> ${token ? escapeHtml(token.substring(0, 20)) + '...' : 'Not set'}<br>
                     <strong>Username:</strong> ${escapeHtml(username || 'Not set')}<br>
                     <strong>Is Admin:</strong> ${escapeHtml(isAdmin || 'Not set')}`);
             } else {
-                setResultHtml(result, '<span class="warning">⚠ No session data. Please log in first.</span>');
+                setResultHtml(result, '<span class="warning">No session data. Please log in first.</span>');
             }
         }
 
@@ -301,7 +301,7 @@
             const token = sessionStorage.getItem('auth_token');
 
             if (!token) {
-                setResultHtml(result, '<span class="error">✗ No token. Log in first.</span>');
+                setResultHtml(result, '<span class="error">No token. Log in first.</span>');
                 return;
             }
 
@@ -315,17 +315,17 @@
                 const data = await response.json();
 
                 if (response.ok && data.authenticated) {
-                    setResultHtml(result, `<span class="success">✓ API working</span><br><br>
+                    setResultHtml(result, `<span class="success">API working</span><br><br>
                         <strong>Authenticated:</strong> ${escapeHtml(String(data.authenticated))}<br>
                         <strong>Username:</strong> ${escapeHtml(String(data.username))}<br>
                         <strong>Admin:</strong> ${escapeHtml(String(data.isAdmin))}`);
                 } else {
-                    setResultHtml(result, `<span class="error">✗ API failed</span><br><br>
+                    setResultHtml(result, `<span class="error">API failed</span><br><br>
                         <strong>Status:</strong> ${escapeHtml(String(response.status))}<br>
                         <strong>Error:</strong> ${escapeHtml(String(data.error || 'Unknown'))}`);
                 }
             } catch (error) {
-                setResultHtml(result, `<span class="error">✗ Error: ${escapeHtml(error.message)}</span>`);
+                setResultHtml(result, `<span class="error">Error: ${escapeHtml(error.message)}</span>`);
             }
         }
 

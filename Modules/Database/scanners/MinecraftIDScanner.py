@@ -14,7 +14,7 @@ _MC_VERSION_PATTERN = re.compile(r'^1\.\d+(\.\d+)?$')
 
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
-from Modules.common import setup_module_path
+from Modules.core.common import setup_module_path
 setup_module_path()
 
 try:
@@ -26,7 +26,7 @@ except ImportError:
     SQLALCHEMY_AVAILABLE = False
     print("Warning: SQLAlchemy not available, SQLite fallback")
 
-from Modules.server_logging import get_component_logger
+from Modules.core.server_logging import get_component_logger
 logger = get_component_logger("MinecraftIDScanner")
 
 if os.environ.get("SERVERMANAGER_DEBUG") in ("1", "true", "True"):
@@ -767,3 +767,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

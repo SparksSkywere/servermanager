@@ -11,11 +11,11 @@ import winreg
 import socket
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path, setup_module_logging, REGISTRY_PATH, get_server_manager_dir
+from Modules.core.common import setup_module_path, setup_module_logging, REGISTRY_PATH, get_server_manager_dir
 setup_module_path()
 
 try:
-    from Modules.server_logging import get_debug_logger
+    from Modules.core.server_logging import get_debug_logger
     logger = get_debug_logger("debug")
 except Exception:
     logger = setup_module_logging("Debug")
@@ -485,7 +485,7 @@ class DebugManager:
 
             # Add basic registry information
             try:
-                from Modules.common import REGISTRY_ROOT
+                from Modules.core.common import REGISTRY_ROOT
                 registry_info = {}
                 key = winreg.OpenKey(REGISTRY_ROOT, self.registry_path)
                 i = 0
@@ -678,3 +678,4 @@ def get_server_process_details(server_name):
 def log_exception(e, message="An exception occurred"):
     # Log an exception with traceback
     debug_manager.log_exception(e, message)
+

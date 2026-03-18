@@ -8,10 +8,10 @@ from datetime import datetime
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from Modules.common import setup_module_path
+from Modules.core.common import setup_module_path
 setup_module_path()
 
-from Modules.server_logging import get_component_logger
+from Modules.core.server_logging import get_component_logger
 logger = get_component_logger("Notifications")
 
 from .mailserver import mail_server
@@ -118,7 +118,7 @@ class NotificationManager:
         # Load automated notification settings from registry
         try:
             import winreg
-            from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+            from Modules.core.common import REGISTRY_ROOT, REGISTRY_PATH
 
             key_path = REGISTRY_PATH + r"\Notifications"
             key = winreg.OpenKey(REGISTRY_ROOT, key_path)
@@ -155,7 +155,7 @@ class NotificationManager:
         # Save automated notification settings to registry
         try:
             import winreg
-            from Modules.common import REGISTRY_ROOT, REGISTRY_PATH
+            from Modules.core.common import REGISTRY_ROOT, REGISTRY_PATH
 
             key_path = REGISTRY_PATH + r"\Notifications"
             key = winreg.CreateKey(REGISTRY_ROOT, key_path)

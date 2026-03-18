@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path
+from Modules.core.common import setup_module_path
 setup_module_path()
 
-from Modules.server_logging import get_dashboard_logger
+from Modules.core.server_logging import get_dashboard_logger
 from Host.dashboard_functions import (
     centre_window, load_appid_scanner_list,
     make_canvas_width_updater, populate_server_tree,
@@ -20,7 +20,7 @@ from Host.dashboard_functions import (
 )
 
 if TYPE_CHECKING:
-    from Modules.server_manager import ServerManager
+    from Modules.server.server_manager import ServerManager
 
 logger = get_dashboard_logger()
 
@@ -602,7 +602,7 @@ class ServerConfigMixin:
 
             def auto_detect_java():
                 try:
-                    from Modules.minecraft import get_recommended_java_for_minecraft
+                    from Modules.server.minecraft import get_recommended_java_for_minecraft
                     version = server_config.get("Version", "")
                     if version:
                         recommended = get_recommended_java_for_minecraft(version)

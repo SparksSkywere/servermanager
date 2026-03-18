@@ -2380,7 +2380,7 @@ sys.path.insert(0, r'$ServerManagerDir')
 os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 
 try:
-    from Modules.ssl_utils import generate_self_signed_certificate, verify_certificate
+    from Modules.security.ssl_utils import generate_self_signed_certificate, verify_certificate
     
     ssl_dir = r'$sslDir'
     cert_path = os.path.join(ssl_dir, 'server.crt')
@@ -2495,7 +2495,7 @@ except Exception as e:
                 }
             } else {
                 Write-Log "SSL/HTTPS is disabled - skipping certificate generation"
-                Write-Log "You can enable HTTPS later via the dashboard settings or by running: python Modules/ssl_utils.py --enable"
+                Write-Log "You can enable HTTPS later via the dashboard settings or by running: python Modules/security/ssl_utils.py --enable"
             }
         } catch {
             Write-Log "Warning: SSL configuration failed: $($_.Exception.Message)"
@@ -2666,7 +2666,7 @@ Provide this token to subhost administrators during their installation process.
                 Write-Log "Installing Server Manager as Windows Service..."
                 
                 # Path to the service wrapper script
-                $serviceWrapperPath = Join-Path $ServerManagerDir "Modules\service_wrapper.py"
+                $serviceWrapperPath = Join-Path $ServerManagerDir "Modules\services\service_wrapper.py"
                 
                 # Check if service wrapper exists
                 if (-not (Test-Path $serviceWrapperPath)) {

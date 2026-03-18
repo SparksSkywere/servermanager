@@ -11,14 +11,14 @@ from flask import Blueprint, jsonify, request
 import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path, REGISTRY_PATH, get_registry_values
+from Modules.core.common import setup_module_path, REGISTRY_PATH, get_registry_values
 setup_module_path()
-from Modules.network_security import NetworkSecurityManager, require_cluster_network_security
+from Modules.security.network_security import NetworkSecurityManager, require_cluster_network_security
 from Modules.Database.cluster_database import ClusterDatabase
-from Modules.server_manager import ServerManager
+from Modules.server.server_manager import ServerManager
 from Modules.Database.user_database import initialise_user_manager
 
-from Modules.server_logging import get_component_logger
+from Modules.core.server_logging import get_component_logger
 logger: logging.Logger = get_component_logger("ClusterAPI")
 
 cluster_api = Blueprint("cluster_api", __name__)
@@ -1247,3 +1247,4 @@ def api_restart_server(server_name):
     except Exception as e:
         logger.error(f"Error restarting server {server_name}: {str(e)}")
         return jsonify({"success": False, "error": "An internal error occurred"}), 500
+

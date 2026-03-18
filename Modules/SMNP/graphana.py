@@ -8,10 +8,10 @@ from typing import Optional, TYPE_CHECKING
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 if TYPE_CHECKING:
-    from Modules.analytics import AnalyticsCollector
+    from Modules.ui.analytics import AnalyticsCollector
 
-from Modules.common import ServerManagerModule
-from Modules.server_logging import get_component_logger
+from Modules.core.common import ServerManagerModule
+from Modules.core.server_logging import get_component_logger
 logger = get_component_logger("Grafana")
 _HAS_SERVER_MANAGER_MODULE = True
 

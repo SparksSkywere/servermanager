@@ -18,12 +18,12 @@ from sqlalchemy.orm import sessionmaker, relationship
 
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from Modules.common import setup_module_path
+from Modules.core.common import setup_module_path
 setup_module_path()
 
 from Modules.Database.database_utils import get_engine, get_engine_by_type
 
-from Modules.server_logging import get_component_logger
+from Modules.core.server_logging import get_component_logger
 logger = get_component_logger("ServerConfigsDB")
 
 Base = declarative_base()
@@ -142,7 +142,7 @@ def get_server_configs_engine():
 
 def get_engine_by_type(db_type="server_configs"):
     # Get engine by database type with fallback to default location
-    from Modules.common import REGISTRY_PATH, get_server_manager_dir, get_registry_value, get_registry_values
+    from Modules.core.common import REGISTRY_PATH, get_server_manager_dir, get_registry_value, get_registry_values
 
     try:
         sql_type = get_registry_value(REGISTRY_PATH, "SQLType", "SQLite")
@@ -680,7 +680,7 @@ def get_server_config_manager(auto_migrate: bool = True) -> ServerConfigManager:
             existing_servers = _config_manager_instance.get_all_servers()
             if len(existing_servers) == 0:
                 # No servers in DB - try to import from JSON files
-                from Modules.common import get_server_manager_dir
+                from Modules.core.common import get_server_manager_dir
 
                 try:
                     server_manager_dir = get_server_manager_dir()

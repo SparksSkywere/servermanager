@@ -7,11 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3]
 
+  Modules Consolidation (Structure Refactor):
+  - Reorganised legacy root module files into domain-based subpackages to simplify maintenance and navigation:
+    - `Modules/core/`
+    - `Modules/server/`
+    - `Modules/services/`
+    - `Modules/updates/`
+    - `Modules/security/`
+    - `Modules/network/`
+    - `Modules/ui/`
+  - Moved major modules into the new domain folders (including launcher, webserver, trayicon, server manager/console/operations, update services, security modules, and UI modules).
+  - Updated imports across the codebase to use consolidated module paths (for example `Modules.core.common`, `Modules.server.server_manager`, `Modules.services.webserver`, `Modules.ui.documentation`).
+  - Added compatibility shim modules at legacy paths in `Modules/` so existing references continue to work during transition.
+  - Shim modules now forward `__main__` execution with `runpy.run_module(...)` to preserve script-entry behavior for components launched directly by file path.
+  - Phase 2 completed: removed temporary top-level shim duplicates after updating runtime launch paths and service/installer script references to consolidated module locations.
+  - Updated launcher/runtime script-path references to use consolidated targets (including tray icon, web server, automation manager, stop helper, and service wrapper).
+  - Updated installation/uninstallation script references and SSL utility import paths to consolidated module locations.
+
+  UI/UX and Layout Improvements:
+  - Removed emoji/symbol glyphs from application UI text across Tkinter and web dashboard files to avoid inconsistent rendering and clipped icon boxes on some systems
+  - Following this I had a user mention that the UI was too small so consistency has been setup for all menu's for
+  domain Dashboard (Python)
+  - Hardened Tkinter dialog layout and spacing in key views to reduce clipped controls on mixed DPI/scaling setups:
+    - Added global `ttk` style padding and `Treeview` row-height tuning in `dashboard.py`
+    - Added missing `columnconfigure()` expansion rules in `automation_ui.py` so entry fields/buttons resize correctly
+    - Added minimum-size and grid expansion improvements in `dashboard_server_ops.py` process-details dialogs
+    - Expanded import/export/progress dialog sizes and minimums in `dashboard_functions.py`
+    - Made About dialog resizable with sensible minimum size in `documentation.py`
+  - Fixed settings-window z-order/focus behaviour in `dashboard_settings.py`:
+    - Settings now opens as a proper transient modal window (stays in front of dashboard)
+    - Re-opening settings brings the existing settings window to foreground instead of spawning hidden duplicates
+
+  Dashboard Settings / Update Panel Overhaul:
+  - Reworked Settings tabs in `dashboard_settings.py`:
+    - Removed `Cluster` tab from settings (cluster control remains available elsewhere)
+    - Replaced old server-update JSON editor in `Updates` tab with ServerManager update controls
+    - Removed editable `Version` field from `System` tab
+  - Added ServerManager update source selector in settings:
+    - `Stable Releases` checks GitHub releases API
+    - `Development Branch` checks remote branch commit state vs local git HEAD (with ahead/behind reporting when available)
+  - Added robust no-release handling for repositories without published releases (`404` now shown as "No stable releases published yet" instead of generic failure)
+  - Improved current build display in settings:
+    - Replaced placeholder `0.1` fallback with local git-derived build label (`branch@shortsha`) when appropriate
+  - Fixed asynchronous update-check callback scoping bug in settings (`free variable 'e' referenced before assignment`)
+  - Reduced settings open-time lag by moving local git build/branch detection off the UI thread and removing expensive auto-check-at-open behaviour
+
+  Updater Launch and Seamless Flow:
+  - Updated ServerManager updater launch path in `dashboard_settings.py` to avoid console popups on Windows:
+    - Uses `pythonw.exe` when available
+    - Uses hidden detached process flags (`CREATE_NO_WINDOW | DETACHED_PROCESS`)
+  - After updater launch, settings window is re-focused/lifted to keep UX seamless
+
+  Database Tools UX Fixes:
+  - Fixed `Update Databases` / `Verify Databases` progress bars in `dashboard_dialogs.py` by moving `Progressbar.start()` calls back to the Tk main thread (prevents stalled/never-animating bars)
+  - Fixed button clipping in `Update Databases` / `Verify Databases` dialogs on scaled displays by increasing base geometry, adding minimum window sizes, and adjusting button-row spacing/padding in `dashboard_dialogs.py`
+
+  Updated gitnore:
+  - Added volatile local DB files to `.gitignore` and stopped tracking them to prevent constant modified-state noise from normal scanner operation:
+    - `db/console_states.db`
+
   Console Stability Fixes:
   - Fixed stale PID console-attach behaviour in `server_console.py`: console now refuses unvalidated PID reattach and clears stale process metadata instead of attaching to a potentially unrelated process
   - Fixed command relay error storm in `command_queue.py`: relay now stops cleanly when target process has exited or stdin is invalid/closed, preventing repeated `[Errno 22] Invalid argument` loops during stop operations
   - Fixed console freeze/false-stop regression for reattached servers in `server_console.py`: stream monitor threads now start only when real stdio streams exist, and missing/invalid stdout no longer marks a still-running process as terminated
   - Fixed duplicate command relay worker issue in `command_queue.py`: server relays are now single-instance per server (existing relay is replaced cleanly), preventing duplicate command consumers and intermittent console non-responsiveness
+  - Fixed tray icon freeze in `trayicon.py` and `launcher.py`: web dashboard launch now runs off the tray event thread, periodic status refresh no longer mutates pystray UI objects from background timers, and the detached tray process no longer inherits unread stdio pipes that could block it
+  - Fixed wrapper-launched server hangs in `server_manager.py`: `.bat/.cmd/.ps1/.sh` server launches now write stdout/stderr directly to `server_stdout/server_stderr` logs instead of using unread pipes, preventing startup stalls and dashboard instability when console output is not actively consumed
+  - Fixed blank console output for wrapper-launched servers in `server_console.py`: log-file monitoring now starts for wrapper script launches and streamless processes, restoring live output visibility for servers like Project Zomboid
 
   Shutdown Reliability Fixes:
   - Improved `stop_servermanager.py` PID-file shutdown coverage to include `dashboard.pid` and `server_automation.pid`
@@ -129,9 +191,9 @@ Maintenance update!
   - Replace 17 raw winreg.OpenKey/QueryValueEx/SetValueEx/CreateKeyEx call sites with centralised get_registry_value/set_registry_value/ get_registry_values helpers across 7 files:
     - api/cluster.py
     - Host/dashboard.py
-    - Modules/cluster_security.py
-    - Modules/launcher.py
-    - Modules/ssl_utils.py
+    - Modules/security/cluster_security.py
+    - Modules/core/launcher.py
+    - Modules/security/ssl_utils.py
     - Modules/Database/database_utils.py
     - Modules/Database/server_configs_database.py
 

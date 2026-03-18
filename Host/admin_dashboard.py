@@ -7,11 +7,11 @@ from datetime import datetime
 from typing import Any
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path, setup_module_logging, make_2fa_callbacks
+from Modules.core.common import setup_module_path, setup_module_logging, make_2fa_callbacks
 setup_module_path()
 logger = setup_module_logging("AdminDashboard")
 from tkinter import messagebox, simpledialog
-from Modules.user_management import UserManager
+from Modules.security.user_management import UserManager
 from Modules.Database.user_database import get_user_engine, ensure_root_admin
 
 # Module-level placeholder for type checker
@@ -1704,3 +1704,4 @@ class AdminDashboard(tk.Tk):
 
 if __name__ == "__main__":
     main()
+

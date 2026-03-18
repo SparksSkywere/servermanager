@@ -16,9 +16,9 @@ import subprocess
 import threading
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path, centre_window
+from Modules.core.common import setup_module_path, centre_window
 setup_module_path()
-from Modules.server_logging import get_dashboard_logger, log_dashboard_event
+from Modules.core.server_logging import get_dashboard_logger, log_dashboard_event
 
 logger: logging.Logger = get_dashboard_logger()
 
@@ -710,7 +710,7 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
 
         # Get SteamCMD path if not provided and server type is Steam
         if server_type == "Steam" and not steam_cmd_path:
-            from Modules.common import get_registry_value
+            from Modules.core.common import get_registry_value
             steam_cmd_path = get_registry_value("HKEY_CURRENT_USER\\Software\\SkywereIndustries\\ServerManager", "SteamCmdPath")
             if not steam_cmd_path:
                 steam_cmd_path = os.path.join(os.environ.get('ProgramFiles', 'C:\\Program Files'), "SteamCMD")
@@ -1315,7 +1315,8 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
     try:
         dialog = tk.Toplevel(root)
         dialog.title("Import Server from Directory")
-        dialog.geometry("600x550")
+        dialog.geometry("700x620")
+        dialog.minsize(640, 560)
         centre_window(dialog, parent=root)
         dialog.transient(root)
         dialog.grab_set()
@@ -1350,7 +1351,7 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
         ttk.Label(main_frame, text="Server Type:").grid(row=4, column=0, sticky="w", pady=(0, 5))
 
         try:
-            from Modules.server_manager import ServerManager
+            from Modules.server.server_manager import ServerManager
             temp_manager = ServerManager()
             supported_types = temp_manager.get_supported_server_types()
         except Exception:
@@ -1452,7 +1453,7 @@ def import_server_from_directory_dialog(root, paths, server_manager_dir, update_
 
             try:
                 if dashboard_server_manager is None:
-                    from Modules.server_manager import ServerManager
+                    from Modules.server.server_manager import ServerManager
                     server_manager = ServerManager()
                 else:
                     server_manager = dashboard_server_manager
@@ -1575,7 +1576,8 @@ def export_server_dialog(root, current_list, paths):
 
         dialog = tk.Toplevel(root)
         dialog.title(f"Export Server: {server_name}")
-        dialog.geometry("550x350")
+        dialog.geometry("620x420")
+        dialog.minsize(580, 380)
         centre_window(dialog, parent=root)
         dialog.transient(root)
         dialog.grab_set()
@@ -1672,7 +1674,8 @@ def create_progress_dialog_with_console(parent, title="Progress"):
         def __init__(self, parent, title):
             self.dialog = tk.Toplevel(parent)
             self.dialog.title(title)
-            self.dialog.geometry("600x400")
+            self.dialog.geometry("720x500")
+            self.dialog.minsize(640, 440)
             centre_window(self.dialog, parent=parent)
             self.dialog.transient(parent)
             self.dialog.grab_set()
@@ -1782,7 +1785,7 @@ def rename_server_configuration(server_name, new_name, server_manager):
 def batch_update_server_types(paths):
     # Iterate all server configs, detect actual type, and update mismatches
     try:
-        from Modules.server_manager import ServerManager
+        from Modules.server.server_manager import ServerManager
         server_manager = ServerManager()
 
         updated_count = 0
@@ -2529,6 +2532,75 @@ def get_servers_display_data(server_manager, logger):
         # Periodically cleanup stale CPU cache entries
         cleanup_cpu_cache()
 
+        def _clear_stale_process_fields(server_name, server_config):
+            try:
+                server_config.pop('ProcessId', None)
+                server_config.pop('PID', None)
+                server_config.pop('StartTime', None)
+                server_config.pop('ProcessCreateTime', None)
+                server_config['LastUpdate'] = datetime.datetime.now().isoformat()
+                server_manager.update_server(server_name, server_config)
+            except Exception as e:
+                logger.debug(f"Failed to clear stale process fields for {server_name}: {e}")
+
+        def _get_pid_health_status(server_name, server_config):
+            pid = server_config.get('ProcessId') or server_config.get('PID')
+            if not pid:
+                return 'Stopped', None
+
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                _clear_stale_process_fields(server_name, server_config)
+                return 'Stopped', None
+
+            # Validation path prevents PID reuse from being shown as a running server.
+            try:
+                if hasattr(server_manager, 'is_server_process_valid'):
+                    is_valid, _ = server_manager.is_server_process_valid(server_name, pid, server_config)
+                    if not is_valid:
+                        _clear_stale_process_fields(server_name, server_config)
+                        return 'Stopped', None
+            except Exception as e:
+                logger.debug(f"PID validation fallback for {server_name} ({pid}): {e}")
+
+            is_alive = False
+            responsive = False
+            try:
+                proc = psutil.Process(pid)
+                is_alive = proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
+                if is_alive:
+                    # A lightweight probe that commonly fails for dead/zombie/unreachable processes.
+                    _ = proc.create_time()
+                    _ = proc.cpu_times()
+                    responsive = True
+            except (psutil.NoSuchProcess, psutil.ZombieProcess):
+                is_alive = False
+            except (psutil.AccessDenied, OSError, ValueError):
+                # Treat inaccessible process as not responsive and perform a second liveness check.
+                responsive = False
+            except Exception as e:
+                logger.debug(f"Process probe failed for {server_name} ({pid}): {e}")
+
+            if is_alive and responsive:
+                return 'Running', pid
+
+            # Second check: only mark as stopped once we can confirm it is no longer alive.
+            still_alive = False
+            try:
+                if hasattr(server_manager, 'is_server_process_valid'):
+                    still_alive, _ = server_manager.is_server_process_valid(server_name, pid, server_config)
+                else:
+                    still_alive = psutil.pid_exists(pid) and psutil.Process(pid).is_running()
+            except Exception:
+                still_alive = False
+
+            if still_alive:
+                return 'Not Responding', pid
+
+            _clear_stale_process_fields(server_name, server_config)
+            return 'Stopped', None
+
         for server_name, server_config in raw_servers.items():
             try:
                 server_config = raw_servers.get(server_name)
@@ -2536,20 +2608,7 @@ def get_servers_display_data(server_manager, logger):
                     display_status = 'Not Found'
                     pid = None
                 else:
-                    # Check if server has ProcessId and is running
-                    if 'ProcessId' in server_config:
-                        pid = server_config['ProcessId']
-                        try:
-                            if server_manager.is_process_running(pid):
-                                display_status = 'Running'
-                            else:
-                                display_status = 'Stopped'
-                        except Exception as e:
-                            logger.debug(f"Error checking if process {pid} is running: {e}")
-                            display_status = 'Stopped'
-                    else:
-                        display_status = 'Stopped'
-                        pid = None
+                    display_status, pid = _get_pid_health_status(server_name, server_config)
 
                 display_data = {
                     'status': display_status,
@@ -2749,7 +2808,7 @@ def _refresh_remote_subhost_async(subhost_name, server_lists, server_manager_dir
 
     def async_refresh():
         try:
-            from Modules.agents import AgentManager
+            from Modules.ui.agents import AgentManager
             agent_manager = AgentManager()
 
             if subhost_name not in agent_manager.nodes:

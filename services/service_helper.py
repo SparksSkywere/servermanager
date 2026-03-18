@@ -8,7 +8,7 @@ import argparse
 
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Modules.common import setup_module_path, get_server_manager_dir, is_admin
+from Modules.core.common import setup_module_path, get_server_manager_dir, is_admin
 setup_module_path()
 
 def check_admin():
@@ -37,7 +37,7 @@ def install_service():
         print("SM installation not found in registry.")
         return False
 
-    service_wrapper_path = os.path.join(server_manager_dir, "Modules", "service_wrapper.py")
+    service_wrapper_path = os.path.join(server_manager_dir, "Modules", "services", "service_wrapper.py")
     if not os.path.exists(service_wrapper_path):
         print(f"Service wrapper not found: {service_wrapper_path}")
         return False
@@ -91,7 +91,7 @@ def uninstall_service():
         print("Server Manager installation not found in registry.")
         return False
 
-    service_wrapper_path = os.path.join(server_manager_dir, "Modules", "service_wrapper.py")
+    service_wrapper_path = os.path.join(server_manager_dir, "Modules", "services", "service_wrapper.py")
     if not os.path.exists(service_wrapper_path):
         print(f"Service wrapper not found: {service_wrapper_path}")
         return False
@@ -151,7 +151,7 @@ def start_stop_service(action):
         print("Server Manager installation not found in registry.")
         return False
 
-    service_wrapper_path = os.path.join(server_manager_dir, "Modules", "service_wrapper.py")
+    service_wrapper_path = os.path.join(server_manager_dir, "Modules", "services", "service_wrapper.py")
     if not os.path.exists(service_wrapper_path):
         print(f"Service wrapper not found: {service_wrapper_path}")
         return False

@@ -30,7 +30,7 @@ if sys.platform == 'win32':
     except ImportError:
         pass
 
-from Modules.server_logging import get_component_logger
+from Modules.core.server_logging import get_component_logger
 logger = get_component_logger("PersistentStdin")
 
 def get_stdin_pipe_name(server_name: str) -> str:

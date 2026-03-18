@@ -6,17 +6,17 @@ import logging
 
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from Modules.common import setup_module_path
+from Modules.core.common import setup_module_path
 setup_module_path()
 
-from Modules.server_logging import get_component_logger
+from Modules.core.server_logging import get_component_logger
 
 logger: logging.Logger = get_component_logger("DatabaseUtils")
 
 def get_sql_config_from_registry(db_type="user"):
     # SQL config from registry for user/steam/minecraft databases
     try:
-        from Modules.common import REGISTRY_PATH, get_server_manager_dir, get_registry_value, get_registry_values
+        from Modules.core.common import REGISTRY_PATH, get_server_manager_dir, get_registry_value, get_registry_values
 
         sql_type = get_registry_value(REGISTRY_PATH, "SQLType", "SQLite")
 
