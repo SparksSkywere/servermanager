@@ -13,6 +13,9 @@ logger = setup_module_logging("AdminDashboard")
 from tkinter import messagebox, simpledialog
 from Modules.security.user_management import UserManager
 from Modules.Database.user_database import get_user_engine, ensure_root_admin
+from Modules.core.theme import apply_theme as apply_shared_theme, get_theme_preference, persist_theme_preference
+from Modules.core.color_palettes import get_palette, list_themes
+from Host.dashboard_ui import setup_custom_menu_strip
 
 # Module-level placeholder for type checker
 pyotp: Any = None
@@ -28,6 +31,7 @@ except ImportError:
 def handle_2fa_login_admin(user_manager, username, parent_window=None):
     # 2FA verification dialog for admin login
     try:
+        palette = _get_active_palette()
         twofa_dialog = tk.Toplevel() if parent_window else tk.Tk()
         if parent_window:
             twofa_dialog.transient(parent_window)
@@ -36,7 +40,7 @@ def handle_2fa_login_admin(user_manager, username, parent_window=None):
         twofa_dialog.geometry("380x200")
         twofa_dialog.resizable(False, False)
         twofa_dialog.grab_set()
-        twofa_dialog.configure(bg='white')
+        twofa_dialog.configure(bg=palette.get("bg"))
 
         # Centre the dialog
         twofa_dialog.update_idletasks()
@@ -45,17 +49,17 @@ def handle_2fa_login_admin(user_manager, username, parent_window=None):
         twofa_dialog.geometry(f"+{x}+{y}")
 
         # Main frame
-        main_frame = tk.Frame(twofa_dialog, bg='white', padx=20, pady=20)
+        main_frame = tk.Frame(twofa_dialog, bg=palette.get("bg"), padx=20, pady=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         # Title
         title_label = tk.Label(main_frame, text="Administrator Verification",
-                              font=("Segoe UI", 14, "bold"), fg="darkred", bg='white')
+                              font=("Segoe UI", 14, "bold"), fg=palette.get("error_fg"), bg=palette.get("bg"))
         title_label.pack(pady=(0, 15))
 
         # Instructions
         instructions = tk.Label(main_frame, text="Enter the 6-digit code from your authenticator app:",
-                               font=("Segoe UI", 10), bg='white')
+                               font=("Segoe UI", 10), fg=palette.get("fg"), bg=palette.get("bg"))
         instructions.pack(pady=(0, 15))
 
         # Code entry
@@ -66,8 +70,8 @@ def handle_2fa_login_admin(user_manager, username, parent_window=None):
 
         # Status label
         status_var = tk.StringVar()
-        status_label = tk.Label(main_frame, textvariable=status_var, foreground="red",
-                               font=("Segoe UI", 9), bg='white')
+        status_label = tk.Label(main_frame, textvariable=status_var, foreground=palette.get("error_fg"),
+                       font=("Segoe UI", 9), bg=palette.get("bg"))
         status_label.pack(pady=(0, 15))
 
         # Result variable
@@ -78,7 +82,7 @@ def handle_2fa_login_admin(user_manager, username, parent_window=None):
         )
 
         # Buttons
-        button_frame = tk.Frame(main_frame, bg='white')
+        button_frame = tk.Frame(main_frame, bg=palette.get("bg"))
         button_frame.pack(fill=tk.X, pady=(10, 0))
 
         verify_button = tk.Button(button_frame, text="Verify", command=on_verify,
@@ -88,6 +92,12 @@ def handle_2fa_login_admin(user_manager, username, parent_window=None):
         cancel_button = tk.Button(button_frame, text="Cancel", command=on_cancel,
                                  font=("Segoe UI", 10, "bold"), width=12)
         cancel_button.pack(side=tk.RIGHT)
+
+        _apply_admin_dialog_theme(
+            twofa_dialog,
+            title_label=title_label,
+            status_label=status_label,
+        )
 
         # Bind keyboard events
         twofa_dialog.bind('<Key>', on_key_press)
@@ -103,9 +113,108 @@ def handle_2fa_login_admin(user_manager, username, parent_window=None):
         print(f"Error in admin 2FA login: {e}")
         return False
 
+def _apply_admin_dialog_theme(dialog, title_label=None, status_label=None, warning_label=None):
+    # Apply the shared light/dark theme to admin dialogs and restore accent label colours.
+    try:
+        theme_name = get_theme_preference("light")
+        applied_theme = apply_shared_theme(dialog, theme_name)
+        palette = get_palette(applied_theme)
+        dialog.configure(bg=palette.get("bg"))
+        _theme_classic_widget_tree(dialog, palette)
+
+        if title_label is not None:
+            title_label.configure(bg=palette.get("bg"), fg=palette.get("error_fg"))
+        if status_label is not None:
+            status_label.configure(bg=palette.get("bg"), fg=palette.get("error_fg"))
+        if warning_label is not None:
+            warning_label.configure(bg=palette.get("bg"), fg=palette.get("warning_fg"))
+    except Exception as e:
+        logger.debug(f"Could not apply admin dialog theme: {e}")
+
+
+def _get_active_palette():
+    theme_name = get_theme_preference("light")
+    return get_palette(theme_name)
+
+
+def _theme_classic_widget_tree(widget, palette):
+    # Apply palette colours to classic tk widgets that ttk theme passes do not cover.
+    try:
+        widget_class = str(widget.winfo_class())
+
+        if widget_class in {"Tk", "Toplevel", "Frame"}:
+            widget.configure(bg=palette.get("bg"))
+        elif widget_class == "LabelFrame":
+            widget.configure(bg=palette.get("bg"), fg=palette.get("heading_fg"))
+        elif widget_class == "Label":
+            widget.configure(bg=palette.get("bg"), fg=palette.get("fg"))
+        elif widget_class == "Button":
+            widget.configure(
+                bg=palette.get("button_bg"),
+                fg=palette.get("button_fg"),
+                activebackground=palette.get("button_active_bg"),
+                activeforeground=palette.get("button_active_fg"),
+                highlightbackground=palette.get("border"),
+                highlightcolor=palette.get("border"),
+            )
+        elif widget_class in {"Entry", "Text", "Listbox"}:
+            widget.configure(
+                bg=palette.get("text_bg"),
+                fg=palette.get("text_fg"),
+                insertbackground=palette.get("text_fg"),
+                selectbackground=palette.get("text_selection_bg"),
+                selectforeground=palette.get("text_selection_fg"),
+                disabledbackground=palette.get("panel_bg"),
+                disabledforeground=palette.get("text_disabled_fg"),
+                highlightbackground=palette.get("border"),
+                highlightcolor=palette.get("accent"),
+            )
+        elif widget_class in {"Checkbutton", "Radiobutton"}:
+            widget.configure(
+                bg=palette.get("bg"),
+                fg=palette.get("fg"),
+                activebackground=palette.get("bg"),
+                activeforeground=palette.get("fg"),
+                selectcolor=palette.get("panel_bg"),
+                highlightbackground=palette.get("bg"),
+            )
+        elif widget_class in {"Menubutton", "OptionMenu"}:
+            widget.configure(
+                bg=palette.get("button_bg"),
+                fg=palette.get("button_fg"),
+                activebackground=palette.get("button_active_bg"),
+                activeforeground=palette.get("button_active_fg"),
+                highlightbackground=palette.get("border"),
+                highlightcolor=palette.get("border"),
+            )
+            try:
+                widget["menu"].configure(
+                    bg=palette.get("menu_bg"),
+                    fg=palette.get("menu_fg"),
+                    activebackground=palette.get("menu_active_bg"),
+                    activeforeground=palette.get("menu_active_fg"),
+                )
+            except Exception:
+                pass
+        elif widget_class == "Menu":
+            widget.configure(
+                bg=palette.get("menu_bg"),
+                fg=palette.get("menu_fg"),
+                activebackground=palette.get("menu_active_bg"),
+                activeforeground=palette.get("menu_active_fg"),
+            )
+        elif widget_class == "Canvas":
+            widget.configure(bg=palette.get("panel_bg"), highlightbackground=palette.get("border"))
+    except Exception:
+        pass
+
+    for child in widget.winfo_children():
+        _theme_classic_widget_tree(child, palette)
+
 def admin_login(user_manager, parent=None):
     max_attempts = 3
     attempts = 0
+    palette = _get_active_palette()
 
     while attempts < max_attempts:
         # Create login dialog
@@ -114,14 +223,14 @@ def admin_login(user_manager, parent=None):
             login_dialog = tk.Toplevel(parent)
         else:
             login_root = tk.Tk()
-            login_root.withdraw()  # Hide the root window
+            login_root.withdraw()
             login_dialog = tk.Toplevel(login_root)
 
         login_dialog.title("Admin Dashboard - Authentication Required")
         login_dialog.geometry("400x300")
         login_dialog.resizable(False, False)
         login_dialog.grab_set()
-        login_dialog.configure(bg='white')
+        login_dialog.configure(bg=palette.get("bg"))
 
         # Centre the dialog
         login_dialog.update_idletasks()
@@ -136,41 +245,43 @@ def admin_login(user_manager, parent=None):
         login_dialog.after(100, lambda: login_dialog.attributes('-topmost', False))
 
         # Main container frame
-        container = tk.Frame(login_dialog, bg='white', padx=20, pady=20)
+        container = tk.Frame(login_dialog, bg=palette.get("bg"), padx=20, pady=20)
         container.pack(fill=tk.BOTH, expand=True)
 
         # Title (modified for admin)
         title_label = tk.Label(container, text="Administrator Access Required",
-                              font=("Segoe UI", 14, "bold"), fg="darkred", bg='white')
+                              font=("Segoe UI", 14, "bold"), fg=palette.get("error_fg"), bg=palette.get("bg"))
         title_label.pack(pady=(0, 15))
 
         # Username field
-        tk.Label(container, text="Username:", font=("Segoe UI", 10, "bold"), bg='white').pack(anchor=tk.W, pady=(10, 5))
+        tk.Label(container, text="Username:", font=("Segoe UI", 10, "bold"), fg=palette.get("fg"), bg=palette.get("bg")).pack(anchor=tk.W, pady=(10, 5))
         username_var = tk.StringVar()
         username_entry = tk.Entry(container, textvariable=username_var, width=25, font=("Segoe UI", 10))
         username_entry.pack(fill=tk.X, pady=(0, 15))
 
         # Password field
-        tk.Label(container, text="Password:", font=("Segoe UI", 10, "bold"), bg='white').pack(anchor=tk.W, pady=(0, 5))
+        tk.Label(container, text="Password:", font=("Segoe UI", 10, "bold"), fg=palette.get("fg"), bg=palette.get("bg")).pack(anchor=tk.W, pady=(0, 5))
         password_var = tk.StringVar()
         password_entry = tk.Entry(container, textvariable=password_var, show="*", width=25, font=("Segoe UI", 10))
         password_entry.pack(fill=tk.X, pady=(0, 15))
 
         # Status label for errors
         status_var = tk.StringVar()
-        status_label = tk.Label(container, textvariable=status_var, foreground="red",
-                               font=("Segoe UI", 9), bg='white', wraplength=350)
+        status_label = tk.Label(container, textvariable=status_var, foreground=palette.get("error_fg"),
+                       font=("Segoe UI", 9), bg=palette.get("bg"), wraplength=350)
         status_label.pack(pady=(0, 15))
 
         # Show attempt counter if not first attempt
         if attempts > 0:
             attempts_label = tk.Label(container,
                                     text=f"Login attempt {attempts + 1} of {max_attempts}",
-                                    font=("Segoe UI", 8), fg="orange", bg='white')
+                                    font=("Segoe UI", 8), fg=palette.get("warning_fg"), bg=palette.get("bg"))
             attempts_label.pack(pady=(0, 15))
+        else:
+            attempts_label = None
 
         # Result variables
-        login_result = [False, None]  # [success, user]
+        login_result = [False, None]
         dialog_closed = [False]
 
         def on_login():
@@ -235,7 +346,7 @@ def admin_login(user_manager, parent=None):
                 login_root.destroy()
 
         # Button frame at the bottom
-        button_frame = tk.Frame(container, bg='white')
+        button_frame = tk.Frame(container, bg=palette.get("bg"))
         button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(20, 0))
 
         # Simple, visible buttons
@@ -246,6 +357,13 @@ def admin_login(user_manager, parent=None):
         login_btn = tk.Button(button_frame, text="Sign In", command=on_login,
                              font=("Segoe UI", 10, "bold"), width=12)
         login_btn.pack(side=tk.RIGHT)
+
+        _apply_admin_dialog_theme(
+            login_dialog,
+            title_label=title_label,
+            status_label=status_label,
+            warning_label=attempts_label,
+        )
 
         # Bind Enter key to both fields
         def on_enter(event):
@@ -279,10 +397,10 @@ def admin_login(user_manager, parent=None):
 
         # Check results
         if dialog_closed[0]:
-            return None  # User cancelled
+            return None
 
         if login_result[0]:
-            return login_result[1]  # Successful login
+            return login_result[1]
 
         # Failed attempt
         attempts += 1
@@ -302,6 +420,7 @@ def admin_login_with_root(login_root, user_manager):
 
     max_attempts = 3
     attempts = 0
+    palette = _get_active_palette()
 
     while attempts < max_attempts:
         logger.debug(f"Login attempt loop iteration {attempts + 1}")
@@ -318,7 +437,7 @@ def admin_login_with_root(login_root, user_manager):
         login_dialog.geometry("400x300")
         login_dialog.resizable(False, False)
         login_dialog.grab_set()
-        login_dialog.configure(bg='white')
+        login_dialog.configure(bg=palette.get("bg"))
 
         # Centre the dialog
         login_dialog.update_idletasks()
@@ -334,38 +453,40 @@ def admin_login_with_root(login_root, user_manager):
         logger.debug(f"Login dialog positioned at {x},{y}")
 
         # Main container frame
-        container = tk.Frame(login_dialog, bg='white', padx=20, pady=20)
+        container = tk.Frame(login_dialog, bg=palette.get("bg"), padx=20, pady=20)
         container.pack(fill=tk.BOTH, expand=True)
 
         # Title
         title_label = tk.Label(container, text="Administrator Access Required",
-                              font=("Segoe UI", 14, "bold"), fg="darkred", bg='white')
+                              font=("Segoe UI", 14, "bold"), fg=palette.get("error_fg"), bg=palette.get("bg"))
         title_label.pack(pady=(0, 15))
 
         # Username field
-        tk.Label(container, text="Username:", font=("Segoe UI", 10, "bold"), bg='white').pack(anchor=tk.W, pady=(10, 5))
+        tk.Label(container, text="Username:", font=("Segoe UI", 10, "bold"), fg=palette.get("fg"), bg=palette.get("bg")).pack(anchor=tk.W, pady=(10, 5))
         username_var = tk.StringVar()
         username_entry = tk.Entry(container, textvariable=username_var, width=25, font=("Segoe UI", 10))
         username_entry.pack(fill=tk.X, pady=(0, 15))
 
         # Password field
-        tk.Label(container, text="Password:", font=("Segoe UI", 10, "bold"), bg='white').pack(anchor=tk.W, pady=(0, 5))
+        tk.Label(container, text="Password:", font=("Segoe UI", 10, "bold"), fg=palette.get("fg"), bg=palette.get("bg")).pack(anchor=tk.W, pady=(0, 5))
         password_var = tk.StringVar()
         password_entry = tk.Entry(container, textvariable=password_var, show="*", width=25, font=("Segoe UI", 10))
         password_entry.pack(fill=tk.X, pady=(0, 15))
 
         # Status label for errors
         status_var = tk.StringVar()
-        status_label = tk.Label(container, textvariable=status_var, foreground="red",
-                               font=("Segoe UI", 9), bg='white', wraplength=350)
+        status_label = tk.Label(container, textvariable=status_var, foreground=palette.get("error_fg"),
+                       font=("Segoe UI", 9), bg=palette.get("bg"), wraplength=350)
         status_label.pack(pady=(0, 15))
 
         # Show attempt counter if not first attempt
         if attempts > 0:
             attempts_label = tk.Label(container,
                                     text=f"Login attempt {attempts + 1} of {max_attempts}",
-                                    font=("Segoe UI", 8), fg="orange", bg='white')
+                                    font=("Segoe UI", 8), fg=palette.get("warning_fg"), bg=palette.get("bg"))
             attempts_label.pack(pady=(0, 15))
+        else:
+            attempts_label = None
 
         # Result variables
         login_result = [False, None]  # [success, user]
@@ -420,7 +541,7 @@ def admin_login_with_root(login_root, user_manager):
             login_dialog.destroy()
 
         # Button frame at the bottom
-        button_frame = tk.Frame(container, bg='white')
+        button_frame = tk.Frame(container, bg=palette.get("bg"))
         button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(20, 0))
 
         # Simple, visible buttons
@@ -431,6 +552,13 @@ def admin_login_with_root(login_root, user_manager):
         login_btn = tk.Button(button_frame, text="Sign In", command=on_login,
                              font=("Segoe UI", 10, "bold"), width=12)
         login_btn.pack(side=tk.RIGHT)
+
+        _apply_admin_dialog_theme(
+            login_dialog,
+            title_label=title_label,
+            status_label=status_label,
+            warning_label=attempts_label,
+        )
 
         # Bind Enter key to both fields
         def on_enter(event):
@@ -467,10 +595,10 @@ def admin_login_with_root(login_root, user_manager):
 
         # Check results
         if dialog_closed[0]:
-            return None  # User cancelled
+            return None
 
         if login_result[0]:
-            return login_result[1]  # Successful login
+            return login_result[1]
 
         # Failed attempt
         attempts += 1
@@ -482,7 +610,7 @@ def admin_login_with_root(login_root, user_manager):
                                    "Admin dashboard access denied.")
             except tk.TclError:
                 print("Failed to show error message")
-            login_root.deiconify()  # Show main window again
+            login_root.deiconify()
             return None
 
     return None
@@ -513,11 +641,19 @@ class AdminDashboard(tk.Tk):
         super().__init__()
         self.user_manager = user_manager
         self.authenticated_user = authenticated_user
+        self.current_theme = get_theme_preference("light")
+        self.palette = get_palette(self.current_theme)
         self.title(f"Admin Dashboard - User Management (Logged in as: {authenticated_user.username})")
-        self.geometry("1000x600")
+        self.geometry("1180x720")
+        self.minsize(980, 620)
         self.all_users = []
         self.current_filter = {"column": "account_number", "text": "", "sort_order": "asc"}
         self.header_buttons = {}
+
+        try:
+            self.dpi_scale = max(float(self.tk.call("tk", "scaling")) / 1.3333333333, 1.0)
+        except Exception:
+            self.dpi_scale = 1.0
 
         self.column_widths = {
             "account_number": 9,
@@ -531,9 +667,120 @@ class AdminDashboard(tk.Tk):
 
         self.create_widgets()
         self.refresh_user_list()
+        self.apply_admin_theme(force=True)
 
         # Handle window close event
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def scale_value(self, value):
+        return max(int(round(value * getattr(self, "dpi_scale", 1.0))), 1)
+
+    def apply_admin_theme(self, force=False):
+        theme_name = get_theme_preference("light")
+        if not force and theme_name == getattr(self, "current_theme", None):
+            return
+
+        applied_theme = apply_shared_theme(self, theme_name)
+        self.current_theme = applied_theme
+        self.palette = get_palette(applied_theme)
+        self.configure(bg=self.palette.get("bg"))
+        _theme_classic_widget_tree(self, self.palette)
+
+        if hasattr(self, "status_label") and self.status_label.winfo_exists():
+            self.status_label.configure(bg=self.palette.get("panel_bg"), fg=self.palette.get("fg"))
+        if hasattr(self, "user_listbox") and self.user_listbox.winfo_exists():
+            self.user_listbox.configure(
+                bg=self.palette.get("text_bg"),
+                fg=self.palette.get("text_fg"),
+                selectbackground=self.palette.get("accent"),
+                selectforeground=self.palette.get("button_active_fg"),
+            )
+        if hasattr(self, "top_frame"):
+            self.setup_admin_menu_bar()
+        self.update_header_appearance()
+
+    def setup_admin_menu_bar(self):
+        menu_specs = [
+            {
+                "label": "File",
+                "items": [
+                    {"label": "Settings", "command": self.show_settings_dialog},
+                    {"type": "separator"},
+                    {"label": "Exit", "command": self.on_closing},
+                ],
+            },
+            {
+                "label": "Help",
+                "items": [
+                    {"label": "About", "command": self.show_about},
+                ],
+            },
+        ]
+        setup_custom_menu_strip(self, menu_specs)
+
+    def show_settings_dialog(self):
+        if hasattr(self, "settings_window") and self.settings_window and self.settings_window.winfo_exists():
+            self.settings_window.deiconify()
+            self.settings_window.lift()
+            self.settings_window.focus_force()
+            return
+
+        settings_window = tk.Toplevel(self)
+        settings_window.title("Admin Settings")
+        settings_window.geometry("420x180")
+        settings_window.resizable(False, False)
+        settings_window.transient(self)
+        settings_window.grab_set()
+
+        palette = get_palette(get_theme_preference("light"))
+        settings_frame = ttk.Frame(settings_window, padding=16)
+        settings_frame.pack(fill=tk.BOTH, expand=True)
+        settings_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(settings_frame, text="Theme", font=("Segoe UI", 11, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ttk.Label(settings_frame, text="Color theme:").grid(row=1, column=0, sticky="w", pady=(0, 12))
+
+        theme_var = tk.StringVar(value=get_theme_preference("light"))
+        theme_combo = ttk.Combobox(
+            settings_frame,
+            textvariable=theme_var,
+            values=list_themes(),
+            state="readonly",
+            width=22,
+        )
+        theme_combo.grid(row=1, column=1, sticky="ew", pady=(0, 12))
+
+        info_label = ttk.Label(
+            settings_frame,
+            text="Theme changes are saved to the same shared preference store used by the main dashboard.",
+            wraplength=360,
+            foreground=palette.get("text_disabled_fg"),
+            justify=tk.LEFT,
+        )
+        info_label.grid(row=2, column=0, columnspan=2, sticky="w")
+
+        def _save_settings():
+            selected_theme = theme_var.get().strip().lower()
+            persist_theme_preference(selected_theme)
+            self.apply_admin_theme(force=True)
+            self.status_label.config(text=f"Theme updated to {selected_theme}")
+            settings_window.destroy()
+
+        button_frame = ttk.Frame(settings_window, padding=(16, 0, 16, 16))
+        button_frame.pack(fill=tk.X)
+        settings_button_width = self.scale_value(14)
+        ttk.Button(button_frame, text="Save", command=_save_settings, width=settings_button_width).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(button_frame, text="Cancel", command=settings_window.destroy, width=settings_button_width).pack(side=tk.RIGHT)
+
+        _apply_admin_dialog_theme(settings_window)
+        self.settings_window = settings_window
+
+    def show_about(self):
+        messagebox.showinfo(
+            "About Admin Dashboard",
+            "Server Manager Admin Dashboard\n\nUses the same shared theme system and custom menu-bar implementation as the main dashboard.",
+            parent=self,
+        )
 
     def logout(self):
         if messagebox.askyesno("Logout",
@@ -550,16 +797,22 @@ class AdminDashboard(tk.Tk):
             self.destroy()
 
     def create_widgets(self):
-        main_frame = tk.Frame(self)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.palette = _get_active_palette()
+        self.configure(bg=self.palette.get("bg"))
 
-        title_label = tk.Label(main_frame, text="Server Manager - User Administration",
-                              font=("Arial", 14, "bold"))
-        title_label.pack(pady=(0, 5))
+        main_frame = ttk.Frame(self, padding=(10, 8, 10, 10))
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(2, weight=1)
 
-        # User info and logout
-        user_info_frame = tk.Frame(main_frame)
-        user_info_frame.pack(fill=tk.X, pady=(0, 15))
+        header_frame = ttk.Frame(main_frame)
+        header_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        header_frame.columnconfigure(0, weight=1)
+
+        heading_block = ttk.Frame(header_frame)
+        heading_block.grid(row=0, column=0, sticky="w")
+
+        ttk.Label(heading_block, text="Server Manager - User Administration", font=("Segoe UI", 16, "bold")).pack(anchor=tk.W)
 
         user_info_text = f"Logged in as: {self.authenticated_user.username}"
         if getattr(self.authenticated_user, 'display_name', None):
@@ -579,66 +832,101 @@ class AdminDashboard(tk.Tk):
                 last_login_text = last_login.strftime("%m/%d/%Y at %I:%M %p")
             user_info_text += f" | Last login: {last_login_text}"
 
-        user_info_label = tk.Label(user_info_frame, text=user_info_text,
-                                  font=("Arial", 10), fg="blue")
-        user_info_label.pack(side=tk.LEFT)
+        ttk.Label(
+            heading_block,
+            text=user_info_text,
+            foreground=self.palette.get("text_disabled_fg"),
+            font=("Segoe UI", 9),
+        ).pack(anchor=tk.W, pady=(2, 0))
 
-        logout_btn = tk.Button(user_info_frame, text="Logout", command=self.logout,
-                              width=10, font=("Arial", 9), fg="red")
-        logout_btn.pack(side=tk.RIGHT)
+        ttk.Button(header_frame, text="Logout", command=self.logout, width=self.scale_value(12)).grid(row=0, column=1, sticky="e")
 
-        filter_frame = tk.LabelFrame(main_frame, text="Filter & Sort Options", font=("Arial", 10, "bold"), padx=10, pady=10)
-        filter_frame.pack(fill=tk.X, pady=(0, 15))
+        self.top_frame = ttk.Frame(main_frame)
+        self.top_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self.setup_admin_menu_bar()
 
-        filter_top_row = tk.Frame(filter_frame)
+        button_width = self.scale_value(14)
+        button_spacing = self.scale_value(4)
+        for text, command in [
+            ("Add User", self.add_user),
+            ("Edit User", self.edit_user),
+            ("Delete User", self.delete_user),
+            ("Refresh", self.refresh_user_list),
+            ("Reset Password", self.reset_password),
+            ("Reset 2FA", self.reset_2fa),
+            ("Setup 2FA", self.setup_user_2fa),
+            ("Email Settings", self.manage_email_settings),
+            ("Send Bulk Email", self.send_bulk_email),
+        ]:
+            ttk.Button(self.top_frame, text=text, command=command, width=button_width).pack(side=tk.LEFT, padx=(0, button_spacing))
+
+        self.container_frame = ttk.Frame(main_frame)
+        self.container_frame.grid(row=2, column=0, sticky="nsew")
+        self.container_frame.columnconfigure(0, weight=1)
+        self.container_frame.rowconfigure(0, weight=1)
+
+        users_frame = ttk.LabelFrame(self.container_frame, text="User Directory", padding=10)
+        users_frame.grid(row=0, column=0, sticky="nsew")
+        users_frame.columnconfigure(0, weight=1)
+        users_frame.rowconfigure(1, weight=1)
+
+        filter_frame = ttk.LabelFrame(users_frame, text="Filter & Sort", padding=10)
+        filter_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+
+        filter_top_row = ttk.Frame(filter_frame)
         filter_top_row.pack(fill=tk.X, pady=(0, 8))
 
-        tk.Label(filter_top_row, text="Filter by:", font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(filter_top_row, text="Filter by:").pack(side=tk.LEFT, padx=(0, 5))
 
         self.filter_column = tk.StringVar(value="account_number")
-        filter_dropdown = tk.OptionMenu(filter_top_row, self.filter_column,
-                                       "none", "account_number", "username", "name", "email", "type", "status", "last_login")
-        filter_dropdown.config(width=12, font=("Arial", 9))
-        filter_dropdown.pack(side=tk.LEFT, padx=(0, 15))
+        self.filter_dropdown = ttk.Combobox(
+            filter_top_row,
+            textvariable=self.filter_column,
+            values=["none", "account_number", "username", "name", "email", "type", "status", "last_login"],
+            state="readonly",
+            width=18,
+        )
+        self.filter_dropdown.pack(side=tk.LEFT, padx=(0, 15))
 
-        tk.Label(filter_top_row, text="Search:", font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(filter_top_row, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
 
         self.filter_text = tk.StringVar()
-        self.filter_text.trace("w", self.on_filter_change)
-        filter_entry = tk.Entry(filter_top_row, textvariable=self.filter_text, width=25, font=("Arial", 9))
-        filter_entry.pack(side=tk.LEFT, padx=(0, 15))
+        self.filter_text.trace_add("write", self.on_filter_change)
+        self.filter_entry = ttk.Entry(filter_top_row, textvariable=self.filter_text, width=28)
+        self.filter_entry.pack(side=tk.LEFT, padx=(0, 15))
 
-        clear_btn = tk.Button(filter_top_row, text="Clear All", command=self.clear_filter,
-                             width=10, font=("Arial", 9))
+        clear_btn = ttk.Button(filter_top_row, text="Clear All", command=self.clear_filter, width=self.scale_value(12))
         clear_btn.pack(side=tk.LEFT)
 
-        filter_bottom_row = tk.Frame(filter_frame)
+        filter_bottom_row = ttk.Frame(filter_frame)
         filter_bottom_row.pack(fill=tk.X)
 
-        tk.Label(filter_bottom_row, text="Sort order:", font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(filter_bottom_row, text="Sort order:").pack(side=tk.LEFT, padx=(0, 10))
 
         self.sort_order = tk.StringVar(value="asc")
-        sort_frame = tk.Frame(filter_bottom_row)
+        sort_frame = ttk.Frame(filter_bottom_row)
         sort_frame.pack(side=tk.LEFT)
 
-        sort_asc_btn = tk.Radiobutton(sort_frame, text="Ascending (A-Z)", variable=self.sort_order,
-                                     value="asc", command=self.apply_filter, font=("Arial", 9))
+        sort_asc_btn = ttk.Radiobutton(sort_frame, text="Ascending (A-Z)", variable=self.sort_order,
+                                     value="asc", command=self.apply_filter)
         sort_asc_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        sort_desc_btn = tk.Radiobutton(sort_frame, text="Descending (Z-A)", variable=self.sort_order,
-                                      value="desc", command=self.apply_filter, font=("Arial", 9))
+        sort_desc_btn = ttk.Radiobutton(sort_frame, text="Descending (Z-A)", variable=self.sort_order,
+                                      value="desc", command=self.apply_filter)
         sort_desc_btn.pack(side=tk.LEFT)
 
-        self.filter_column.trace("w", self.on_filter_change)
+        self.filter_column.trace_add("write", self.on_filter_change)
 
-        list_frame = tk.LabelFrame(main_frame, text="User List", font=("Arial", 10, "bold"), padx=5, pady=5)
-        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        list_frame = ttk.LabelFrame(users_frame, text="Users", padding=6)
+        list_frame.grid(row=1, column=0, sticky="nsew")
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(1, weight=1)
 
-        headers_frame = tk.Frame(list_frame)
+        headers_frame = tk.Frame(list_frame, bg=self.palette.get("panel_bg"), highlightthickness=0, bd=0)
         headers_frame.pack(fill=tk.X, pady=(0, 2))
 
-        header_font = ("Arial", 9, "bold")
-        header_bg = "#f0f0f0"
+        header_font = ("Segoe UI", 9, "bold")
+        header_bg = self.palette.get("heading_bg")
 
         # Create clickable header buttons
         self.header_buttons["account_number"] = tk.Button(headers_frame, text="Account #", font=header_font,
@@ -685,44 +973,21 @@ class AdminDashboard(tk.Tk):
 
         self.update_header_appearance()
 
-        listbox_frame = tk.Frame(list_frame)
+        listbox_frame = tk.Frame(list_frame, bg=self.palette.get("bg"), highlightthickness=0, bd=0)
         listbox_frame.pack(fill=tk.BOTH, expand=True)
 
         scrollbar = tk.Scrollbar(listbox_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.user_listbox = tk.Listbox(listbox_frame, width=100, yscrollcommand=scrollbar.set,
-                                      font=("Consolas", 9), selectmode=tk.SINGLE)
+                                      font=("Consolas", self.scale_value(9)), selectmode=tk.SINGLE,
+                                      borderwidth=0, relief=tk.FLAT)
         self.user_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.user_listbox.yview)
 
-        actions_frame = tk.LabelFrame(main_frame, text="Admin Actions", font=("Arial", 10, "bold"), padx=10, pady=10)
-        actions_frame.pack(fill=tk.X, pady=(0, 10))
-
-        btn_row1 = tk.Frame(actions_frame)
-        btn_row1.pack(fill=tk.X, pady=(0, 5))
-
-        tk.Button(btn_row1, text="Add User", command=self.add_user, width=15, font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 10))
-        tk.Button(btn_row1, text="Edit User", command=self.edit_user, width=15, font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 10))
-        tk.Button(btn_row1, text="Delete User", command=self.delete_user, width=15, font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 10))
-        tk.Button(btn_row1, text="Refresh List", command=self.refresh_user_list, width=15, font=("Arial", 9)).pack(side=tk.LEFT)
-
-        btn_row2 = tk.Frame(actions_frame)
-        btn_row2.pack(fill=tk.X)
-
-        tk.Button(btn_row2, text="Reset Password", command=self.reset_password, width=15, font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 10))
-        tk.Button(btn_row2, text="Reset 2FA", command=self.reset_2fa, width=15, font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 10))
-        tk.Button(btn_row2, text="Setup 2FA", command=self.setup_user_2fa, width=15, font=("Arial", 9)).pack(side=tk.LEFT)
-
-        btn_row3 = tk.Frame(actions_frame)
-        btn_row3.pack(fill=tk.X, pady=(5, 0))
-
-        tk.Button(btn_row3, text="Email Settings", command=self.manage_email_settings, width=15, font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 10))
-        tk.Button(btn_row3, text="Send Bulk Email", command=self.send_bulk_email, width=15, font=("Arial", 9)).pack(side=tk.LEFT)
-
         self.status_label = tk.Label(main_frame, text="Ready", relief=tk.SUNKEN, anchor=tk.W,
-                                    font=("Arial", 9), bg="white")
-        self.status_label.pack(fill=tk.X)
+                                    font=("Segoe UI", 9), bg=self.palette.get("panel_bg"), fg=self.palette.get("fg"))
+        self.status_label.grid(row=3, column=0, sticky="ew", pady=(8, 0))
 
     def on_filter_change(self, *args):
         #Called when filter settings change
@@ -806,9 +1071,11 @@ class AdminDashboard(tk.Tk):
         selected_column = self.filter_column.get()
         sort_order = self.sort_order.get()
 
+        palette = getattr(self, "palette", _get_active_palette())
+
         for column, button in self.header_buttons.items():
             if column == selected_column:
-                button.config(relief=tk.SUNKEN, bg="#d0d0ff", font=("Arial", 9, "bold"))
+                button.config(relief=tk.SUNKEN, bg=palette.get("accent"), fg=palette.get("button_active_fg"), font=("Segoe UI", 9, "bold"))
                 base_text = button.cget("text").split(" ")[0]
                 if base_text == "Account":
                     base_text = "Account #"
@@ -817,7 +1084,7 @@ class AdminDashboard(tk.Tk):
                 sort_indicator = " ▲" if sort_order == "asc" else " ▼"
                 button.config(text=base_text + sort_indicator)
             else:
-                button.config(relief=tk.RIDGE, bg="#f0f0f0", font=("Arial", 9, "bold"))
+                button.config(relief=tk.RIDGE, bg=palette.get("heading_bg"), fg=palette.get("button_fg"), font=("Segoe UI", 9, "bold"))
                 base_text = button.cget("text").split(" ")[0]
                 if base_text == "Account":
                     base_text = "Account #"
@@ -829,6 +1096,10 @@ class AdminDashboard(tk.Tk):
         #Apply current filter and sort settings
         try:
             if not self.all_users:
+                if hasattr(self, "user_listbox"):
+                    self.user_listbox.delete(0, tk.END)
+                if hasattr(self, "status_label"):
+                    self.status_label.config(text="No users available")
                 return
 
             filtered_users = []
@@ -952,7 +1223,8 @@ class AdminDashboard(tk.Tk):
 
             tk.Label(info_frame, text="Account Number:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="w", pady=5)
             account_number = f"USR{getattr(user, 'id', 0):05d}" if hasattr(user, 'id') else "N/A"
-            tk.Label(info_frame, text=account_number, bg="lightgray", relief="sunken", width=30).grid(row=0, column=1, pady=5, padx=(10, 0))
+            palette = _get_active_palette()
+            tk.Label(info_frame, text=account_number, bg=palette.get("heading_bg"), fg=palette.get("fg"), relief="sunken", width=30).grid(row=0, column=1, pady=5, padx=(10, 0))
 
             tk.Label(info_frame, text="Email:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky="w", pady=5)
             email_var = tk.StringVar(value=user.email or "")
@@ -1034,6 +1306,8 @@ class AdminDashboard(tk.Tk):
 
             tk.Button(btn_frame, text="Save", command=save_changes, width=12).pack(side=tk.LEFT, padx=5)
             tk.Button(btn_frame, text="Cancel", command=edit_window.destroy, width=12).pack(side=tk.LEFT, padx=5)
+
+            _apply_admin_dialog_theme(edit_window)
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to edit user: {str(e)}")
@@ -1253,6 +1527,8 @@ class AdminDashboard(tk.Tk):
             tk.Button(btn_frame, text="Create", command=create_user, width=12).pack(side=tk.LEFT, padx=5)
             tk.Button(btn_frame, text="Cancel", command=add_window.destroy, width=12).pack(side=tk.LEFT, padx=5)
 
+            _apply_admin_dialog_theme(add_window)
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open add user dialog: {str(e)}")
 
@@ -1461,6 +1737,7 @@ class AdminDashboard(tk.Tk):
 
             # Initialise SMTP fields based on provider
             self._update_smtp_fields(provider_var.get(), entries)
+            _apply_admin_dialog_theme(settings_window)
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open email settings: {str(e)}")
@@ -1558,6 +1835,8 @@ class AdminDashboard(tk.Tk):
             ttk.Button(btn_frame, text="Send to All", command=send_bulk).pack(side=tk.RIGHT, padx=(5, 0))
             ttk.Button(btn_frame, text="Cancel", command=bulk_window.destroy).pack(side=tk.RIGHT)
 
+            _apply_admin_dialog_theme(bulk_window)
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open bulk email dialog: {str(e)}")
 
@@ -1590,6 +1869,7 @@ class AdminDashboard(tk.Tk):
     def show_2fa_qr_dialog(self, username, secret, provisioning_uri):
         # Show QR code dialog for 2FA setup
         try:
+            palette = _get_active_palette()
             qr_dialog = tk.Toplevel(self)
             qr_dialog.title(f"2FA Setup - {username}")
             qr_dialog.geometry("500x400")
@@ -1629,12 +1909,12 @@ class AdminDashboard(tk.Tk):
                                    font=("Courier", 10), state="readonly", width=40)
             secret_entry.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
 
-            qr_frame = tk.Frame(main_frame, bg='white', relief=tk.SUNKEN, bd=1)
+            qr_frame = tk.Frame(main_frame, bg=palette.get("panel_bg"), relief=tk.SUNKEN, bd=1)
             qr_frame.pack(fill=tk.X, pady=(10, 15))
 
             qr_label = tk.Label(qr_frame, text="QR Code:\n\n[Scan with authenticator app]\n\n" +
                                f"URI: {provisioning_uri}",
-                               font=("Courier", 10), bg='white', justify=tk.LEFT)
+                               font=("Courier", 10), bg=palette.get("panel_bg"), fg=palette.get("fg"), justify=tk.LEFT)
             qr_label.pack(pady=20, padx=20)
 
             # Copy URI button
@@ -1658,7 +1938,7 @@ class AdminDashboard(tk.Tk):
             # Status label
             status_var = tk.StringVar()
             status_label = tk.Label(verify_frame, textvariable=status_var,
-                                   foreground="red", font=("Segoe UI", 9))
+                                   foreground=palette.get("error_fg"), font=("Segoe UI", 9))
             status_label.pack(pady=(0, 10))
 
             def verify_and_enable():
@@ -1698,6 +1978,12 @@ class AdminDashboard(tk.Tk):
             # Bind Enter key
             code_entry.bind('<Return>', lambda e: verify_and_enable())
             code_entry.focus_set()
+
+            _apply_admin_dialog_theme(
+                qr_dialog,
+                title_label=title_label,
+                status_label=status_label,
+            )
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to show 2FA setup dialog: {str(e)}")

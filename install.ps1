@@ -37,7 +37,7 @@ $env:PYTHONDONTWRITEBYTECODE = "1"
 # Define global variables
 $global:logMemory = @()
 $global:logFilePath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Install-Log.txt"
-$CurrentVersion = "1.3"
+$CurrentVersion = "1.4"
 $steamCmdUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 $registryPath = "HKLM:\Software\SkywereIndustries\Servermanager"
 $gitRepoUrl = "https://github.com/SparksSkywere/servermanager.git"
@@ -2225,6 +2225,7 @@ function Start-Installation {
                 'InstallDate' = (Get-Date).ToString('o')
                 'LastUpdate' = (Get-Date).ToString('o')
                 'WebPort' = '8080'
+                'Theme' = 'light'
                 'ModulePath' = "$ServerManagerDir\Modules"
                 'LogPath' = "$ServerManagerDir\logs"
                 'HostType' = $Settings.HostType

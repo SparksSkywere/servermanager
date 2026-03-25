@@ -13,6 +13,7 @@ logs/
 servers/
 temp/
 build/
+builds/
 develop-eggs/
 dist/
 downloads/

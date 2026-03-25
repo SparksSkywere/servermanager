@@ -63,9 +63,12 @@ from Modules.updates.server_updates import ServerUpdateManager
 
 # Import core infrastructure
 from Modules.core.common import ServerManagerModule, initialise_registry_values
+from Modules.core.theme import get_theme_preference, apply_theme as apply_shared_theme
+from Modules.core.color_palettes import get_palette
+from Modules.Database.cluster_database import get_cluster_database
 
 # Import UI components
-from Host.dashboard_ui import setup_ui, expand_all_categories, collapse_all_categories, show_server_context_menu, on_server_list_click, on_server_double_click
+from Host.dashboard_ui import setup_ui, setup_menu_bar, expand_all_categories, collapse_all_categories, show_server_context_menu, on_server_list_click, on_server_double_click
 
 # Dashboard utility functions
 from Host.dashboard_functions import (
@@ -74,7 +77,7 @@ from Host.dashboard_functions import (
     get_current_server_list, get_current_subhost, reattach_to_running_servers,
     update_server_list_for_subhost, refresh_all_subhost_servers,
     refresh_current_subhost_servers, refresh_subhost_servers,
-    add_server_dialog
+    add_server_dialog, init_temperature_service, stop_temperature_service
 )
 
 # Import cluster management
@@ -118,8 +121,10 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         self.system_toggle_btn: Optional[Any] = None
         self.webserver_status: Optional[Any] = None
         self.metric_labels: dict = {}
+        self.metric_frames: dict = {}
         self.system_name: Optional[Any] = None
         self.os_info: Optional[Any] = None
+        self.system_uptime_label: Optional[Any] = None
         self.loading_status_label: Optional[Any] = None
         self.loading_progress: Optional[Any] = None
         self.loading_percentage_label: Optional[Any] = None
@@ -148,6 +153,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         self.system_info_visible: Optional[bool] = None
         self.collapse_frame: Optional[Any] = None
         self.system_header: Optional[Any] = None
+        self.system_title_row: Optional[Any] = None
         self.webserver_frame: Optional[Any] = None
         self.offline_check: Optional[Any] = None
         self.metrics_frame: Optional[Any] = None
@@ -166,6 +172,12 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         self.minecraft_servers, self.minecraft_metadata = load_minecraft_scanner_list(self.server_manager_dir)
 
         # Initialise runtime variables from config
+        try:
+            main_config = get_cluster_database().get_main_config()
+        except Exception as e:
+            logger.debug(f"Failed loading main_config for temperature settings: {e}")
+            main_config = {}
+
         self.variables = {
             "previousNetworkStats": {},
             "previousNetworkTime": datetime.datetime.now(),
@@ -192,6 +204,19 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             "processMonitorUpdateInterval": self.config.get("configuration", {}).get("processMonitorUpdateInterval", 15),
             "webserverStatusUpdateInterval": self.config.get("configuration", {}).get("webserverStatusUpdateInterval", 30),
             "updateCheckInterval": self.config.get("configuration", {}).get("updateCheckInterval", 300),
+            # Temperature collection settings (stored in DB main_config)
+            "temperatureMode": main_config.get("temperatureMode", self.config.get("temperature", {}).get("mode", "auto")),
+            "temperaturePollInterval": main_config.get("temperaturePollInterval", self.config.get("temperature", {}).get("pollInterval", 10)),
+            "iloHost": main_config.get("iloHost", self.config.get("temperature", {}).get("iloHost", "")),
+            "iloUsername": main_config.get("iloUsername", self.config.get("temperature", {}).get("iloUsername", "")),
+            "iloPassword": main_config.get("iloPassword", self.config.get("temperature", {}).get("iloPassword", "")),
+            "iloVerifyTLS": main_config.get("iloVerifyTLS", self.config.get("temperature", {}).get("iloVerifyTLS", False)),
+            "iloTimeout": main_config.get("iloTimeout", self.config.get("temperature", {}).get("iloTimeout", 4)),
+            "idracHost": main_config.get("idracHost", self.config.get("temperature", {}).get("idracHost", "")),
+            "idracUsername": main_config.get("idracUsername", self.config.get("temperature", {}).get("idracUsername", "")),
+            "idracPassword": main_config.get("idracPassword", self.config.get("temperature", {}).get("idracPassword", "")),
+            "idracVerifyTLS": main_config.get("idracVerifyTLS", self.config.get("temperature", {}).get("idracVerifyTLS", False)),
+            "idracTimeout": main_config.get("idracTimeout", self.config.get("temperature", {}).get("idracTimeout", 4)),
             # UI state
             "systemInfoVisible": self.config.get("ui", {}).get("systemInfoVisible", True),
             # Runtime vars
@@ -216,6 +241,12 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         else:
             logger.error("Registry init failed")
             sys.exit(1)
+
+        # Start dedicated temperature collection service during boot.
+        try:
+            init_temperature_service(self.variables)
+        except Exception as e:
+            logger.debug(f"Could not initialise temperature service at boot: {e}")
 
         # Initialise user management system
         try:
@@ -263,6 +294,12 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             style.configure("Treeview", rowheight=max(24, int(self.scale_value(24))))
         except Exception as e:
             logger.debug(f"Could not apply global ttk style adjustments: {e}")
+
+        # Apply saved dashboard theme before UI construction.
+        try:
+            self.apply_theme(self.get_saved_theme())
+        except Exception as e:
+            logger.debug(f"Could not apply saved theme: {e}")
 
         # On Windows, when launched from trayicon (detached process), ensure proper window handling
         if os.name == 'nt' and '--debug' not in sys.argv:
@@ -327,6 +364,14 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
 
         setup_ui(self)
 
+        # Re-apply theme now that all widgets exist – force=True ensures the
+        # walker runs even though current_theme is already set (the Text/Canvas
+        # widgets inside the system panel were just created and need styling).
+        try:
+            self.apply_theme(getattr(self, "current_theme", self.get_saved_theme()), force=True)
+        except Exception as e:
+            logger.debug(f"Could not re-apply theme after UI setup: {e}")
+
         # Lift loading overlay to ensure it's on top after all UI is created
         if hasattr(self, 'loading_frame'):
             self.loading_frame.lift() # type: ignore
@@ -388,6 +433,110 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
     def scale_value(self, value):
         # Scale a value according to the current DPI scaling factor
         return int(value * getattr(self, 'dpi_scale', 1.0))
+
+    def get_saved_theme(self) -> str:
+        # Load persisted theme preference from shared theme module.
+        try:
+            return get_theme_preference("light")
+        except Exception as e:
+            logger.debug(f"Failed loading saved theme preference: {e}")
+            return "light"
+
+    def apply_theme(self, theme_name: str, force: bool = False):
+        # Apply shared style and store current selection.
+        if not hasattr(self, 'root') or self.root is None:
+            return
+
+        normalised = str(theme_name or "").strip().lower()
+        if not force and getattr(self, "current_theme", None) == normalised:
+            return
+
+        applied = apply_shared_theme(self.root, theme_name, getattr(self, 'dpi_scale', 1.0))
+        self.current_theme = applied
+
+        # Rebuild themed custom menu strip after palette changes.
+        try:
+            setup_menu_bar(self)
+        except Exception as e:
+            logger.debug(f"Could not refresh custom menu strip: {e}")
+
+        # tk.Text widgets (CPU/Memory/Disk/Temperature panels)
+        try:
+            self._retheme_metric_text_widgets()
+            self.root.after(150, self._retheme_metric_text_widgets)
+            self.root.after(350, self._retheme_metric_text_widgets)
+        except Exception:
+            pass
+
+    def _retheme_metric_text_widgets(self):
+        # Explicitly recolour tk.Text metric widgets and their plain tk.Frame
+        try:
+            from Modules.core.color_palettes import get_palette
+            palette = get_palette(getattr(self, "current_theme", "light"))
+            text_bg = palette.get("text_bg")
+            text_fg = palette.get("text_fg")
+            border = palette.get("border")
+            bg = palette.get("bg")
+            canvas_bg = palette.get("canvas_bg")
+
+            # Re-style each metric panel LabelFrame, its plain-Frame containers,
+            # and the Text/Canvas widgets inside them.
+            for name, frame in getattr(self, "metric_frames", {}).items():
+                try:
+                    if not frame.winfo_exists():
+                        continue
+                    frame.configure(style="TLabelframe")
+                    for child in frame.winfo_children():
+                        try:
+                            if not child.winfo_exists():
+                                continue
+                            klass = str(child.winfo_class())
+                            # Plain tk.Frame containers (disk_container/network_container)
+                            if klass == "Frame":
+                                child.configure(bg=bg)
+                                # Also re-theme grandchildren (Text, Canvas inside)
+                                for grandchild in child.winfo_children():
+                                    try:
+                                        if not grandchild.winfo_exists():
+                                            continue
+                                        gklass = str(grandchild.winfo_class())
+                                        if gklass == "Text":
+                                            grandchild.configure(
+                                                bg=text_bg, fg=text_fg,
+                                                insertbackground=text_fg,
+                                                highlightbackground=border,
+                                                highlightcolor=border,
+                                            )
+                                        elif gklass == "Canvas":
+                                            grandchild.configure(bg=canvas_bg)
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            # Also directly re-style metric_labels entries (belt + suspenders).
+            for widget in getattr(self, "metric_labels", {}).values():
+                try:
+                    if isinstance(widget, dict):
+                        canvas = widget.get("canvas")
+                        if canvas is not None and canvas.winfo_exists():
+                            canvas.configure(bg=canvas_bg)
+                        continue
+                    if not widget.winfo_exists():
+                        continue
+                    if str(widget.winfo_class()) == "Text":
+                        widget.configure(
+                            bg=text_bg, fg=text_fg,
+                            insertbackground=text_fg,
+                            highlightbackground=border,
+                            highlightcolor=border,
+                        )
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"_retheme_metric_text_widgets error: {e}")
 
     def expand_all_categories(self):
         # Expand all categories in the current server list
@@ -470,10 +619,8 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         update_server_list_logic(self, force_refresh)
 
     def toggle_offline_mode(self):
-        # Toggle offline mode
-        self.variables["offlineMode"] = self.offline_var.get()  # type: ignore
-        self.update_webserver_status()
-        logger.info(f"Offline mode set to {self.variables['offlineMode']}")
+        # Offline mode was a temporary debug control and is no longer used.
+        return
 
     def _hide_loading_overlay(self):
         # Hide the loading overlay
@@ -490,7 +637,8 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
 
         if self.system_info_visible:
             # Show the system info panel - add back to pane
-            self.main_pane.add(self.system_frame, weight=30)  # type: ignore
+            pane_weight = int(getattr(self, 'system_pane_weight', 20))
+            self.main_pane.add(self.system_frame, weight=pane_weight)  # type: ignore
             self.system_toggle_btn.config(text="◀")  # type: ignore
         else:
             # Hide the system info panel - remove from pane
@@ -530,15 +678,14 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                     try:
                         if self.webserver_status is None:
                             return
+                        palette = get_palette(getattr(self, "current_theme", self.get_saved_theme()))
                         self.webserver_status.config(text=status)
                         if status == "Running":
-                            self.webserver_status.config(foreground="green")
+                            self.webserver_status.config(foreground=palette.get("success_fg"))
                         elif status == "Stopped":
-                            self.webserver_status.config(foreground="red")
-                        elif status == "Offline Mode":
-                            self.webserver_status.config(foreground="orange")
+                            self.webserver_status.config(foreground=palette.get("error_fg"))
                         else:
-                            self.webserver_status.config(foreground="gray")
+                            self.webserver_status.config(foreground=palette.get("text_disabled_fg"))
                     except Exception as e:
                         logger.error(f"Error applying webserver status to UI: {e}")
 
@@ -557,7 +704,13 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                 self.update_webserver_status()
 
                 # Use the threaded version from dashboard_functions for heavy system monitoring
-                update_system_info_threaded(self.metric_labels, self.system_name, self.os_info)
+                update_system_info_threaded(
+                    self.metric_labels,
+                    self.system_name,
+                    self.os_info,
+                    self.system_uptime_label,
+                    temperature_settings=self.variables,
+                )
 
             except Exception as e:
                 logger.error(f"Error in update_system_info: {str(e)}")
@@ -821,6 +974,9 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                     logger.debug("Terminated installation process")
                 except (OSError, ProcessLookupError):
                     pass
+
+            # Stop background temperature service.
+            stop_temperature_service()
         except Exception as e:
             logger.error(f"Error during cleanup: {str(e)}")
 

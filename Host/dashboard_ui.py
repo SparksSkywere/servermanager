@@ -15,6 +15,25 @@ from Host.dashboard_functions import get_current_server_list  # type: ignore[att
 
 logger: logging.Logger = get_dashboard_logger()
 
+
+def setup_custom_menu_strip(owner, menu_specs):
+    # Shared menu builder for dashboard/admin windows.
+    root_widget = getattr(owner, "root", owner)
+    menubar = tk.Menu(root_widget)
+    root_widget.config(menu=menubar)
+    setattr(owner, "menubar", menubar)
+
+    for menu_spec in menu_specs:
+        menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label=menu_spec.get("label", "Menu"), menu=menu)
+        for item in menu_spec.get("items", []):
+            if item.get("type") == "separator":
+                menu.add_separator()
+            else:
+                menu.add_command(label=item.get("label", ""), command=item.get("command"))
+
+    return menubar
+
 def setup_ui(dashboard):
     # Create and configure the main dashboard user interface
     # Setup the menu bar first
@@ -290,30 +309,36 @@ def setup_ui(dashboard):
 
 def setup_menu_bar(dashboard):
     # Setup the menu bar
-    dashboard.menubar = tk.Menu(dashboard.root)
-    dashboard.root.config(menu=dashboard.menubar)
-
-    # File Menu
-    file_menu = tk.Menu(dashboard.menubar, tearoff=0)
-    dashboard.menubar.add_cascade(label="File", menu=file_menu)
-    file_menu.add_command(label="Settings", command=dashboard.show_settings_dialog)
-    file_menu.add_separator()
-    file_menu.add_command(label="Exit", command=dashboard.on_close)
-
-    # Tools Menu
-    tools_menu = tk.Menu(dashboard.menubar, tearoff=0)
-    dashboard.menubar.add_cascade(label="Tools", menu=tools_menu)
-    tools_menu.add_command(label="Find Broken Servers", command=dashboard.find_broken_servers)
-    tools_menu.add_command(label="Verify Server Information", command=dashboard.verify_servers)
-    tools_menu.add_separator()
-    tools_menu.add_command(label="Update Databases", command=dashboard.update_databases)
-    tools_menu.add_command(label="Verify Databases", command=dashboard.verify_databases)
-
-    # Help Menu
-    help_menu = tk.Menu(dashboard.menubar, tearoff=0)
-    dashboard.menubar.add_cascade(label="Help", menu=help_menu)
-    help_menu.add_command(label="About", command=dashboard.show_about)
-    help_menu.add_command(label="Help", command=dashboard.show_help)
+    setup_custom_menu_strip(
+        dashboard,
+        [
+            {
+                "label": "File",
+                "items": [
+                    {"label": "Settings", "command": dashboard.show_settings_dialog},
+                    {"type": "separator"},
+                    {"label": "Exit", "command": dashboard.on_close},
+                ],
+            },
+            {
+                "label": "Tools",
+                "items": [
+                    {"label": "Find Broken Servers", "command": dashboard.find_broken_servers},
+                    {"label": "Verify Server Information", "command": dashboard.verify_servers},
+                    {"type": "separator"},
+                    {"label": "Update Databases", "command": dashboard.update_databases},
+                    {"label": "Verify Databases", "command": dashboard.verify_databases},
+                ],
+            },
+            {
+                "label": "Help",
+                "items": [
+                    {"label": "About", "command": dashboard.show_about},
+                    {"label": "Help", "command": dashboard.show_help},
+                ],
+            },
+        ],
+    )
 
 def add_subhost_tab(dashboard, subhost_name, is_local=False):
     # Add a new tab for a subhost

@@ -17,34 +17,25 @@
 
         .user-dropdown { min-width: 240px; }
 
-        body.theme-light .user-dropdown {
-            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
-        }
-
         .user-dropdown-header {
             padding: 20px;
             text-align: center;
-            background: #252540;
-            border-bottom: 1px solid #2a2a45;
-        }
-
-        body.theme-light .user-dropdown-header {
-            background: #f5f6fa;
-            border-color: #e0e0e8;
+            background: var(--sm-subtle-bg);
+            border-bottom: 1px solid var(--sm-panel-border);
         }
 
         .dropdown-avatar {
             width: 60px;
             height: 60px;
             border-radius: 50%;
-            background: #667eea;
+            background: var(--sm-accent);
             margin: 0 auto 12px;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 1.5rem;
             font-weight: 600;
-            color: white;
+            color: var(--sm-on-color);
             overflow: hidden;
         }
 
@@ -61,7 +52,7 @@
 
         .dropdown-username {
             font-size: 0.85rem;
-            color: #686888;
+            color: var(--sm-subtle-fg);
         }
 
         /* Main Container */
@@ -80,21 +71,16 @@
         }
 
         .stat-card {
-            background: #1a1a2e;
-            border: 1px solid #2a2a45;
+            background: var(--sm-panel-bg);
+            border: 1px solid var(--sm-panel-border);
             border-radius: 12px;
             padding: 20px;
             text-align: center;
         }
 
-        body.theme-light .stat-card {
-            background: #ffffff;
-            border-color: #e0e0e8;
-        }
-
         .stat-card h3 {
             font-size: 0.85rem;
-            color: #686888;
+            color: var(--sm-subtle-fg);
             font-weight: 500;
             margin-bottom: 8px;
         }
@@ -102,16 +88,12 @@
         .stat-value {
             font-size: 2rem;
             font-weight: 700;
-            color: #e8e8f0;
+            color: var(--sm-body-fg);
         }
 
-        body.theme-light .stat-value {
-            color: #1a1a2e;
-        }
-
-        .stat-value.success { color: #22c55e; }
-        .stat-value.danger { color: #ef4444; }
-        .stat-value.warning { color: #f59e0b; }
+        .stat-value.success { color: var(--sm-success); }
+        .stat-value.danger { color: var(--sm-danger); }
+        .stat-value.warning { color: var(--sm-warning); }
 
         /* Dashboard Grid - Updated for system info panel */
         .dashboard-grid {
@@ -122,26 +104,16 @@
 
         /* System Info Panel */
         .system-info-panel {
-            background: #1a1a2e;
-            border: 1px solid #2a2a45;
+            background: var(--sm-panel-bg);
+            border: 1px solid var(--sm-panel-border);
             border-radius: 12px;
             overflow: hidden;
         }
 
-        body.theme-light .system-info-panel {
-            background: #ffffff;
-            border-color: #e0e0e8;
-        }
-
         .system-info-header {
             padding: 16px 20px;
-            background: #252540;
-            border-bottom: 1px solid #2a2a45;
-        }
-
-        body.theme-light .system-info-header {
-            background: #f5f6fa;
-            border-color: #e0e0e8;
+            background: var(--sm-subtle-bg);
+            border-bottom: 1px solid var(--sm-panel-border);
         }
 
         .system-info-header h2 {
@@ -152,11 +124,7 @@
 
         .system-info-header .system-name {
             font-size: 0.9rem;
-            color: #a8a8c0;
-        }
-
-        body.theme-light .system-info-header .system-name {
-            color: #4a4a68;
+            color: var(--sm-muted-fg);
         }
 
         .system-metrics {
@@ -170,16 +138,11 @@
         }
 
         .metric-card {
-            background: #252540;
-            border: 1px solid #3a3a55;
+            background: var(--sm-subtle-bg);
+            border: 1px solid var(--sm-input-border);
             border-radius: 8px;
             padding: 12px;
             text-align: center;
-        }
-
-        body.theme-light .metric-card {
-            background: #f0f0f5;
-            border-color: #d0d0d8;
         }
 
         .metric-icon {
@@ -189,23 +152,15 @@
 
         .metric-title {
             font-size: 0.8rem;
-            color: #686888;
+            color: var(--sm-subtle-fg);
             font-weight: 500;
             margin-bottom: 4px;
-        }
-
-        body.theme-light .metric-title {
-            color: #4a4a68;
         }
 
         .metric-value {
             font-size: 1rem;
             font-weight: 600;
-            color: #e8e8f0;
-        }
-
-        body.theme-light .metric-value {
-            color: #1a1a2e;
+            color: var(--sm-body-fg);
         }
 
         /* Charts Section */
@@ -220,15 +175,10 @@
         }
 
         .chart-card {
-            background: #1a1a2e;
-            border: 1px solid #2a2a45;
+            background: var(--sm-panel-bg);
+            border: 1px solid var(--sm-panel-border);
             border-radius: 12px;
             padding: 16px;
-        }
-
-        body.theme-light .chart-card {
-            background: #ffffff;
-            border-color: #e0e0e8;
         }
 
         .chart-card h3 {
@@ -257,11 +207,7 @@
             align-items: flex-start;
             gap: 12px;
             padding: 12px;
-            border-bottom: 1px solid #2a2a45;
-        }
-
-        body.theme-light .activity-item {
-            border-color: #e0e0e8;
+            border-bottom: 1px solid var(--sm-panel-border);
         }
 
         .activity-item:last-child {
@@ -272,7 +218,7 @@
             width: 32px;
             height: 32px;
             border-radius: 50%;
-            background: #252540;
+            background: var(--sm-subtle-bg);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -291,7 +237,7 @@
 
         .activity-time {
             font-size: 0.75rem;
-            color: #686888;
+            color: var(--sm-subtle-fg);
         }
 
         /* Enhanced Server List */
@@ -304,41 +250,23 @@
         .server-table td {
             padding: 8px 12px;
             text-align: left;
-            border-bottom: 1px solid #2a2a45;
-        }
-
-        body.theme-light .server-table th,
-        body.theme-light .server-table td {
-            border-color: #e0e0e8;
+            border-bottom: 1px solid var(--sm-panel-border);
         }
 
         .server-table th {
-            background: #252540;
+            background: var(--sm-subtle-bg);
             font-weight: 600;
             font-size: 0.8rem;
-            color: #a8a8c0;
-        }
-
-        body.theme-light .server-table th {
-            background: #f0f0f5;
-            color: #4a4a68;
+            color: var(--sm-muted-fg);
         }
 
         .server-table tbody tr:hover {
-            background: #252540;
-        }
-
-        body.theme-light .server-table tbody tr:hover {
-            background: #f5f6fa;
+            background: var(--sm-hover-bg);
         }
 
         .server-name {
             font-weight: 600;
-            color: #e8e8f0;
-        }
-
-        body.theme-light .server-name {
-            color: #1a1a2e;
+            color: var(--sm-body-fg);
         }
 
         .server-status {
@@ -352,24 +280,24 @@
         }
 
         .server-status.running {
-            background: #22c55e;
-            color: white;
+            background: var(--sm-success);
+            color: var(--sm-on-color);
         }
 
         .server-status.stopped {
-            background: #ef4444;
-            color: white;
+            background: var(--sm-danger);
+            color: var(--sm-on-color);
         }
 
         .server-status.starting {
-            background: #f59e0b;
-            color: white;
+            background: var(--sm-warning);
+            color: var(--sm-on-color);
         }
 
         .server-pid {
             font-family: 'Consolas', monospace;
             font-size: 0.8rem;
-            color: #686888;
+            color: var(--sm-subtle-fg);
         }
 
         .server-cpu, .server-memory {
@@ -379,34 +307,24 @@
 
         .server-uptime {
             font-size: 0.8rem;
-            color: #686888;
+            color: var(--sm-subtle-fg);
         }
 
         /* Panels */
         .panel {
-            background: #1a1a2e;
-            border: 1px solid #2a2a45;
+            background: var(--sm-panel-bg);
+            border: 1px solid var(--sm-panel-border);
             border-radius: 12px;
             overflow: hidden;
         }
 
-        body.theme-light .panel {
-            background: #ffffff;
-            border-color: #e0e0e8;
-        }
-
         .panel-header {
             padding: 16px 20px;
-            background: #252540;
-            border-bottom: 1px solid #2a2a45;
+            background: var(--sm-subtle-bg);
+            border-bottom: 1px solid var(--sm-panel-border);
             display: flex;
             justify-content: space-between;
             align-items: center;
-        }
-
-        body.theme-light .panel-header {
-            background: #f5f6fa;
-            border-color: #e0e0e8;
         }
 
         .panel-header h2 {
@@ -429,22 +347,14 @@
             align-items: center;
             justify-content: space-between;
             padding: 14px 16px;
-            border-bottom: 1px solid #2a2a45;
+            border-bottom: 1px solid var(--sm-panel-border);
             transition: background 0.15s;
-        }
-
-        body.theme-light .server-item {
-            border-color: #e0e0e8;
         }
 
         .server-item:last-child { border-bottom: none; }
 
         .server-item:hover {
-            background: #252540;
-        }
-
-        body.theme-light .server-item:hover {
-            background: #f5f6fa;
+            background: var(--sm-hover-bg);
         }
 
         .server-info h3 {
@@ -455,7 +365,7 @@
 
         .server-meta {
             font-size: 0.8rem;
-            color: #686888;
+            color: var(--sm-subtle-fg);
             display: flex;
             align-items: center;
             gap: 10px;
@@ -468,9 +378,9 @@
             display: inline-block;
         }
 
-        .status-dot.running { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
-        .status-dot.stopped { background: #ef4444; }
-        .status-dot.starting { background: #f59e0b; animation: pulse 1.5s infinite; }
+        .status-dot.running { background: var(--sm-success); box-shadow: 0 0 8px var(--sm-success); }
+        .status-dot.stopped { background: var(--sm-danger); }
+        .status-dot.starting { background: var(--sm-warning); animation: pulse 1.5s infinite; }
 
         @keyframes pulse {
             0%, 100% { opacity: 1; }
@@ -482,49 +392,7 @@
             gap: 6px;
         }
 
-        /* Buttons */
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            padding: 8px 14px;
-            font-size: 0.85rem;
-            font-weight: 500;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-decoration: none;
-        }
-
-        .btn:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-        }
-
-        .btn-sm { padding: 6px 10px; font-size: 0.8rem; }
-
-        .btn-primary { background: #667eea; color: white; }
-        .btn-primary:hover:not(:disabled) { background: #5a6fd6; }
-
-        .btn-secondary { background: #252540; color: #a8a8c0; border: 1px solid #3a3a55; }
-        .btn-secondary:hover:not(:disabled) { background: #2a2a48; color: #e8e8f0; }
-
-        body.theme-light .btn-secondary {
-            background: #f0f0f5;
-            color: #4a4a68;
-            border-color: #d0d0d8;
-        }
-
-        .btn-success { background: #22c55e; color: white; }
-        .btn-success:hover:not(:disabled) { background: #1db954; }
-
-        .btn-danger { background: #ef4444; color: white; }
-        .btn-danger:hover:not(:disabled) { background: #dc2626; }
-
-        .btn-warning { background: #f59e0b; color: white; }
-        .btn-warning:hover:not(:disabled) { background: #d97706; }
+        .btn { border-radius: 6px; }
 
         /* Console */
         .console-panel {
@@ -536,29 +404,23 @@
         .console-select {
             width: 100%;
             padding: 10px 14px;
-            background: #252540;
-            border: 1px solid #3a3a55;
+            background: var(--sm-input-bg);
+            border: 1px solid var(--sm-input-border);
             border-radius: 8px;
-            color: #e8e8f0;
+            color: var(--sm-input-fg);
             font-size: 0.9rem;
             margin-bottom: 12px;
         }
 
-        body.theme-light .console-select {
-            background: #f0f0f5;
-            border-color: #d0d0d8;
-            color: #1a1a2e;
-        }
-
         .console-output {
             flex: 1;
-            background: #0a0a12;
-            border: 1px solid #2a2a45;
+            background: var(--sm-input-bg);
+            border: 1px solid var(--sm-input-border);
             border-radius: 8px;
             padding: 12px;
             font-family: 'Consolas', 'Monaco', monospace;
             font-size: 0.8rem;
-            color: #cdd6f4;
+            color: var(--sm-input-fg);
             overflow-y: auto;
             line-height: 1.5;
             margin-bottom: 12px;
@@ -572,147 +434,53 @@
         .console-input {
             flex: 1;
             padding: 10px 14px;
-            background: #252540;
-            border: 1px solid #3a3a55;
+            background: var(--sm-input-bg);
+            border: 1px solid var(--sm-input-border);
             border-radius: 8px;
-            color: #e8e8f0;
+            color: var(--sm-input-fg);
             font-family: 'Consolas', monospace;
             font-size: 0.85rem;
         }
 
-        body.theme-light .console-input {
-            background: #f0f0f5;
-            border-color: #d0d0d8;
-            color: #1a1a2e;
+        .console-input:focus { outline: none; border-color: var(--sm-accent); }
+        .console-input:disabled { opacity: 0.5; }
+
+        .table-empty,
+        .server-type-meta,
+        .avatar-hint {
+            color: var(--sm-subtle-fg);
         }
 
-        .console-input:focus { outline: none; border-color: #667eea; }
-        .console-input:disabled { opacity: 0.5; }
+        .server-actions-inline {
+            display: flex;
+            gap: 4px;
+        }
+
+        .console-line-error { color: var(--sm-danger); }
+        .console-line-command { color: var(--sm-success); }
+        .console-line-system { color: var(--sm-info); }
+        .console-line-warning { color: var(--sm-warning); }
 
         /* Empty State */
         .empty-state {
             text-align: center;
             padding: 40px 20px;
-            color: #686888;
+            color: var(--sm-subtle-fg);
         }
 
         .empty-state h3 {
             margin-bottom: 8px;
-            color: #a8a8c0;
+            color: var(--sm-muted-fg);
         }
 
         .empty-state .btn {
             margin-top: 16px;
         }
 
-        /* Modal */
-        .modal {
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.7);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            padding: 20px;
-        }
-
-        .modal.show { display: flex; }
-
         .modal-content {
-            background: #1a1a2e;
-            border: 1px solid #2a2a45;
-            border-radius: 16px;
-            width: 100%;
             max-width: 480px;
             max-height: 90vh;
             overflow-y: auto;
-        }
-
-        body.theme-light .modal-content {
-            background: #ffffff;
-            border-color: #e0e0e8;
-        }
-
-        .modal-header {
-            padding: 20px 24px;
-            border-bottom: 1px solid #2a2a45;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        body.theme-light .modal-header {
-            border-color: #e0e0e8;
-        }
-
-        .modal-header h2 {
-            font-size: 1.1rem;
-        }
-
-        .modal-close {
-            background: none;
-            border: none;
-            color: #686888;
-            font-size: 1.5rem;
-            cursor: pointer;
-            padding: 0;
-            line-height: 1;
-        }
-
-        .modal-close:hover { color: #e8e8f0; }
-
-        .modal-body {
-            padding: 24px;
-        }
-
-        /* Forms */
-        .form-group {
-            margin-bottom: 18px;
-        }
-
-        .form-group label {
-            display: block;
-            font-size: 0.85rem;
-            color: #a8a8c0;
-            margin-bottom: 8px;
-            font-weight: 500;
-        }
-
-        body.theme-light .form-group label {
-            color: #4a4a68;
-        }
-
-        .form-group input,
-        .form-group select,
-        .form-group textarea {
-            width: 100%;
-            padding: 12px 14px;
-            background: #252540;
-            border: 1px solid #3a3a55;
-            border-radius: 8px;
-            color: #e8e8f0;
-            font-size: 0.95rem;
-        }
-
-        body.theme-light .form-group input,
-        body.theme-light .form-group select,
-        body.theme-light .form-group textarea {
-            background: #f0f0f5;
-            border-color: #d0d0d8;
-            color: #1a1a2e;
-        }
-
-        .form-group input:focus,
-        .form-group select:focus,
-        .form-group textarea:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-
-        .form-group input:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
         }
 
         .form-row {
@@ -731,16 +499,16 @@
             width: 100px;
             height: 100px;
             border-radius: 50%;
-            background: #667eea;
+            background: var(--sm-accent);
             margin: 0 auto 12px;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 2.5rem;
-            color: white;
+            color: var(--sm-on-color);
             cursor: pointer;
             overflow: hidden;
-            border: 3px solid #2a2a45;
+            border: 3px solid var(--sm-panel-border);
             transition: opacity 0.2s;
         }
 
@@ -752,29 +520,7 @@
             object-fit: cover;
         }
 
-        .avatar-hint {
-            font-size: 0.8rem;
-            color: #686888;
-        }
-
-        /* Notification */
-        .notification {
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            padding: 14px 20px;
-            border-radius: 10px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            display: none;
-            z-index: 2000;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-        }
-
-        .notification.show { display: block; }
-        .notification.success { background: #22c55e; color: white; }
-        .notification.error { background: #ef4444; color: white; }
-        .notification.info { background: #3b82f6; color: white; }
+        .avatar-hint { font-size: 0.8rem; }
 
         /* Responsive */
         @media (max-width: 1100px) {
@@ -841,12 +587,12 @@
                     </svg>
                     Change Password
                 </a>
-                <a href="#" onclick="toggleTheme(); return false;">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="themeIcon">
-                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-                    </svg>
-                    <span id="themeText">Dark Mode</span>
-                </a>
+                <div class="theme-control">
+                    <label class="theme-control-label" for="headerThemeSelect">Theme</label>
+                    <select id="headerThemeSelect" class="theme-select" data-theme-select onchange="selectTheme(this.value)">
+                        <option value="dark">Dark</option>
+                    </select>
+                </div>
                 <div class="divider"></div>
                 <a href="#" class="danger" onclick="logout(); return false;">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -925,7 +671,7 @@
                                 </thead>
                                 <tbody id="serverTableBody">
                                     <tr>
-                                        <td colspan="7" style="text-align: center; padding: 40px; color: #686888;">
+                                        <td colspan="7" class="table-empty" style="text-align: center; padding: 40px;">
                                             Loading servers...
                                         </td>
                                     </tr>
@@ -1108,9 +854,8 @@
                         </div>
                         <div class="form-group">
                             <label>Theme</label>
-                            <select id="profileTheme" onchange="previewTheme(this.value)">
+                            <select id="profileTheme" data-theme-select onchange="previewTheme(this.value)">
                                 <option value="dark">Dark</option>
-                                <option value="light">Light</option>
                             </select>
                         </div>
                     </div>
@@ -1150,6 +895,8 @@
     <!-- Notification -->
     <div class="notification" id="notification"></div>
 
+    <script src="js/theme.js"></script>
+    <script src="js/site-shell.js"></script>
     <script>
         // State
         let servers = [];
@@ -1158,7 +905,7 @@
         let consoleTotalEntries = 0;  // Track total entries for incremental updates
         let consoleAutoScroll = true;  // Auto-scroll to bottom of console
         let userProfile = {};
-        let currentTheme = localStorage.getItem('theme_preference') || 'dark';
+        let currentTheme = ThemeManager.get();
         
         // System monitoring
         let systemInfo = {};
@@ -1172,6 +919,33 @@
         };
         const maxDataPoints = 20;
 
+        function getThemeColor(variableName) {
+            return getComputedStyle(document.body).getPropertyValue(variableName).trim();
+        }
+
+        function toRgba(color, alpha = 0.1) {
+            if (!color) return `rgba(0, 0, 0, ${alpha})`;
+
+            if (color.startsWith('#')) {
+                let hex = color.slice(1);
+                if (hex.length === 3) {
+                    hex = hex.split('').map(ch => ch + ch).join('');
+                }
+                if (hex.length === 6) {
+                    const r = parseInt(hex.slice(0, 2), 16);
+                    const g = parseInt(hex.slice(2, 4), 16);
+                    const b = parseInt(hex.slice(4, 6), 16);
+                    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+                }
+            }
+
+            if (color.startsWith('rgb(')) {
+                return color.replace('rgb(', 'rgba(').replace(')', `, ${alpha})`);
+            }
+
+            return color;
+        }
+
         // Initialise charts
         function initCharts() {
             const chartOptions = {
@@ -1184,10 +958,10 @@
                     y: {
                         beginAtZero: true,
                         grid: {
-                            color: currentTheme === 'dark' ? '#2a2a45' : '#e0e0e8'
+                            color: getThemeColor('--sm-input-border')
                         },
                         ticks: {
-                            color: currentTheme === 'dark' ? '#a8a8c0' : '#4a4a68'
+                            color: getThemeColor('--sm-muted-fg')
                         }
                     }
                 },
@@ -1213,8 +987,8 @@
                     labels: Array(maxDataPoints).fill(''),
                     datasets: [{
                         data: chartData.cpu,
-                        borderColor: '#667eea',
-                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        borderColor: getThemeColor('--sm-accent'),
+                        backgroundColor: toRgba(getThemeColor('--sm-accent'), 0.1),
                         fill: true
                     }]
                 },
@@ -1228,8 +1002,8 @@
                     labels: Array(maxDataPoints).fill(''),
                     datasets: [{
                         data: chartData.memory,
-                        borderColor: '#22c55e',
-                        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                        borderColor: getThemeColor('--sm-success'),
+                        backgroundColor: toRgba(getThemeColor('--sm-success'), 0.1),
                         fill: true
                     }]
                 },
@@ -1243,8 +1017,8 @@
                     labels: Array(maxDataPoints).fill(''),
                     datasets: [{
                         data: chartData.disk,
-                        borderColor: '#f59e0b',
-                        backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                        borderColor: getThemeColor('--sm-warning'),
+                        backgroundColor: toRgba(getThemeColor('--sm-warning'), 0.1),
                         fill: true
                     }]
                 },
@@ -1258,8 +1032,8 @@
                     labels: Array(maxDataPoints).fill(''),
                     datasets: [{
                         data: chartData.network,
-                        borderColor: '#ef4444',
-                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        borderColor: getThemeColor('--sm-danger'),
+                        backgroundColor: toRgba(getThemeColor('--sm-danger'), 0.1),
                         fill: true
                     }]
                 },
@@ -1367,51 +1141,27 @@
 
         // Apply theme
         function applyTheme(theme) {
-            currentTheme = theme;
-            document.body.classList.remove('theme-light', 'theme-dark');
-            if (theme === 'light') {
-                document.body.classList.add('theme-light');
-            }
-            localStorage.setItem('theme_preference', theme);
+            currentTheme = ThemeManager.set(theme);
             updateThemeUI();
         }
 
         function updateThemeUI() {
-            const icon = document.getElementById('themeIcon');
-            const text = document.getElementById('themeText');
-            if (currentTheme === 'dark') {
-                icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>';
-                text.textContent = 'Dark Mode';
-            } else {
-                icon.innerHTML = '<circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>';
-                text.textContent = 'Light Mode';
-            }
+            ThemeManager.updateThemeUI();
+        }
+
+        async function selectTheme(theme) {
+            currentTheme = await ThemeManager.setAndSave(theme);
+            updateThemeUI();
         }
 
         async function toggleTheme() {
-            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-            applyTheme(newTheme);
-            
-            // Save to profile
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                if (token) {
-                    await fetch('/api/profile', {
-                        method: 'PUT',
-                        headers: {
-                            'Authorization': `Bearer ${token}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ theme_preference: newTheme })
-                    });
-                }
-            } catch (e) {
-                console.warn('Failed to save theme preference');
-            }
+            currentTheme = await ThemeManager.toggleAndSave();
+            updateThemeUI();
         }
 
         function previewTheme(theme) {
-            applyTheme(theme);
+            currentTheme = ThemeManager.set(theme);
+            updateThemeUI();
         }
 
         // Auth check
@@ -1431,20 +1181,20 @@
 
         // Notification
         function showNotification(message, type = 'info') {
-            const el = document.getElementById('notification');
-            el.textContent = message;
-            el.className = `notification show ${type}`;
-            setTimeout(() => el.classList.remove('show'), 4000);
+            ServerManagerWeb.showNotification(message, type);
         }
 
         // User dropdown
         function toggleUserDropdown(e) {
-            e.stopPropagation();
-            document.getElementById('userDropdown').classList.toggle('show');
+            ServerManagerWeb.toggleUserDropdown(e);
         }
 
-        document.addEventListener('click', () => {
-            document.getElementById('userDropdown').classList.remove('show');
+        document.addEventListener('click', (event) => {
+            if (event.target.closest('.user-menu') || event.target.closest('.user-dropdown')) {
+                return;
+            }
+
+            ServerManagerWeb.closeUserDropdown();
         });
 
         // Profile functions
@@ -1718,7 +1468,7 @@
             if (servers.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="7" style="text-align: center; padding: 40px; color: #686888;">
+                        <td colspan="7" class="table-empty" style="text-align: center; padding: 40px;">
                             No servers configured
                         </td>
                     </tr>`;
@@ -1745,7 +1495,7 @@
                     <tr>
                         <td>
                             <div class="server-name">${escapeHtml(name)}</div>
-                            <div style="font-size: 0.75rem; color: #686888;">${escapeHtml(type)}</div>
+                            <div class="server-type-meta" style="font-size: 0.75rem;">${escapeHtml(type)}</div>
                         </td>
                         <td>
                             <span class="server-status ${statusClass}">
@@ -1758,7 +1508,7 @@
                         <td class="server-memory">${escapeHtml(String(memory))}</td>
                         <td class="server-uptime">${escapeHtml(String(uptime))}</td>
                         <td>
-                            <div style="display: flex; gap: 4px;">
+                            <div class="server-actions-inline">
                                 <button class="btn btn-sm btn-success" onclick="controlServer('${escapeHtml(name)}', 'start')" 
                                         ${status === 'running' ? 'disabled' : ''}>Start</button>
                                 <button class="btn btn-sm btn-danger" onclick="controlServer('${escapeHtml(name)}', 'stop')"
@@ -1898,7 +1648,7 @@
             const consoleOut = document.getElementById('consoleOutput');
             consoleOut.textContent = '';
             const loadingDiv = document.createElement('div');
-            loadingDiv.style.color = '#4ecdc4';
+            loadingDiv.className = 'console-line-system';
             loadingDiv.textContent = 'Loading console output...';
             consoleOut.appendChild(loadingDiv);
             
@@ -1977,22 +1727,22 @@
             
             // Color based on entry type from the server
             if (entryType === 'error' || entryType === 'stderr') {
-                return `<div style="color: #f87171;">${escaped}</div>`;
+                return `<div class="console-line-error">${escaped}</div>`;
             }
             if (entryType === 'command') {
-                return `<div style="color: #6bcf7f;">${escaped}</div>`;
+                return `<div class="console-line-command">${escaped}</div>`;
             }
             if (entryType === 'system') {
-                return `<div style="color: #4ecdc4;">${escaped}</div>`;
+                return `<div class="console-line-system">${escaped}</div>`;
             }
             if (entryType === 'warning') {
-                return `<div style="color: #fbbf24;">${escaped}</div>`;
+                return `<div class="console-line-warning">${escaped}</div>`;
             }
             
             // Fallback: check text content for color hints
-            if (text.match(/error|exception|failed/i)) return `<div style="color: #f87171;">${escaped}</div>`;
-            if (text.match(/warn|warning/i)) return `<div style="color: #fbbf24;">${escaped}</div>`;
-            if (text.match(/info|started|loaded/i)) return `<div style="color: #58a6ff;">${escaped}</div>`;
+            if (text.match(/error|exception|failed/i)) return `<div class="console-line-error">${escaped}</div>`;
+            if (text.match(/warn|warning/i)) return `<div class="console-line-warning">${escaped}</div>`;
+            if (text.match(/info|started|loaded/i)) return `<div class="console-line-system">${escaped}</div>`;
             
             return `<div>${escaped}</div>`;
         }
@@ -2021,7 +1771,7 @@
                 if (response.ok) {
                     input.value = '';
                     const output = document.getElementById('consoleOutput');
-                    output.innerHTML += `<div style="color: #6bcf7f;">&gt; ${escapeHtml(command)}</div>`;
+                    output.innerHTML += `<div class="console-line-command">&gt; ${escapeHtml(command)}</div>`;
                     output.scrollTop = output.scrollHeight;
                     
                     // Force a quick refresh to pick up any immediate response
@@ -2064,6 +1814,8 @@
                 return;
             }
 
+            ThemeManager.populateThemeSelects();
+
             // Apply saved theme immediately
             applyTheme(currentTheme);
 
@@ -2101,3 +1853,4 @@
     </script>
 </body>
 </html>
+

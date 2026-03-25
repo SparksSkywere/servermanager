@@ -51,12 +51,8 @@ class ServerOpsMixin:
         def update_webserver_status(self) -> None: ...
 
     def _make_server_op_callback(self, error_as_info=False):
-        """Create a standard server operation completion callback.
-
-        Args:
-            error_as_info: If True, show failures via showinfo instead of showerror
-                          (used for stop operations where failure is informational).
-        """
+        # Create a standard server operation completion callback.
+        # error_as_info=True routes failure messages to info dialogs for non-critical operations.
         def on_completion(success, message):
             def update_ui():
                 if not success:
@@ -70,12 +66,8 @@ class ServerOpsMixin:
 
     @staticmethod
     def _make_progress_callback(progress_dialog, scheduled=False):
-        """Create a progress callback for server update/restart operations.
-
-        Args:
-            progress_dialog: Dialog with update_console method, or None for scheduled ops.
-            scheduled: If True, also log messages via logger and handle None dialog.
-        """
+        # Create a progress callback for update/restart operations.
+        # scheduled=True enables logger output and supports a missing progress dialog.
         def progress_callback(message):
             try:
                 if progress_dialog and hasattr(progress_dialog, 'update_console'):

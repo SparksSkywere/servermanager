@@ -13,6 +13,7 @@ from Modules.core.common import setup_module_path
 setup_module_path()
 
 from Modules.core.server_logging import get_dashboard_logger
+from Modules.core.color_palettes import get_palette
 from Host.dashboard_functions import (
     centre_window, batch_update_server_types, load_categories
 )
@@ -42,6 +43,16 @@ class DashboardDialogsMixin:
 
         def get_current_server_list(self) -> Optional[ttk.Treeview]: ...
         def update_server_list(self, force_refresh: bool = False) -> None: ...
+
+    def _get_active_palette(self):
+        # Resolve active palette for dialog-specific tk widgets.
+        theme_name = getattr(self, "current_theme", None)
+        if not theme_name and hasattr(self, "get_saved_theme"):
+            try:
+                theme_name = self.get_saved_theme()
+            except Exception:
+                theme_name = "light"
+        return get_palette(theme_name or "light")
 
     def show_console_manager(self):
         # Show console manager dialog with active consoles
@@ -422,6 +433,15 @@ class DashboardDialogsMixin:
                     main_frame, wrap=tk.WORD, font=("Consolas", 10))
                 text_widget.pack(fill=tk.BOTH, expand=True)
 
+                palette = self._get_active_palette()
+                text_widget.configure(
+                    bg=palette.get("text_bg"),
+                    fg=palette.get("text_fg"),
+                    insertbackground=palette.get("text_fg"),
+                    selectbackground=palette.get("text_selection_bg"),
+                    selectforeground=palette.get("text_selection_fg"),
+                )
+
                 for server in broken_servers:
                     text_widget.insert(tk.END, f"Server: {server['name']}\n", "server_name")
                     text_widget.insert(tk.END,
@@ -433,9 +453,9 @@ class DashboardDialogsMixin:
                         text_widget.insert(tk.END, f"  • {issue}\n", "issue")
                     text_widget.insert(tk.END, "\n" + "=" * 50 + "\n\n")
 
-                text_widget.tag_config("server_name", foreground="blue",
+                text_widget.tag_config("server_name", foreground=palette.get("accent"),
                                        font=("Consolas", 10, "bold"))
-                text_widget.tag_config("issue", foreground="red")
+                text_widget.tag_config("issue", foreground=palette.get("error_fg"))
                 text_widget.config(state=tk.DISABLED)
 
                 ttk.Button(main_frame, text="Close",
@@ -524,6 +544,15 @@ class DashboardDialogsMixin:
                     main_frame, wrap=tk.WORD, font=("Consolas", 10))
                 text_widget.pack(fill=tk.BOTH, expand=True)
 
+                palette = self._get_active_palette()
+                text_widget.configure(
+                    bg=palette.get("text_bg"),
+                    fg=palette.get("text_fg"),
+                    insertbackground=palette.get("text_fg"),
+                    selectbackground=palette.get("text_selection_bg"),
+                    selectforeground=palette.get("text_selection_fg"),
+                )
+
                 for server in incomplete_servers:
                     text_widget.insert(tk.END, f"Server: {server['name']}\n", "server_name")
                     text_widget.insert(tk.END,
@@ -535,9 +564,9 @@ class DashboardDialogsMixin:
                         text_widget.insert(tk.END, f"  • {info}\n", "missing")
                     text_widget.insert(tk.END, "\n" + "=" * 50 + "\n\n")
 
-                text_widget.tag_config("server_name", foreground="blue",
+                text_widget.tag_config("server_name", foreground=palette.get("accent"),
                                        font=("Consolas", 10, "bold"))
-                text_widget.tag_config("missing", foreground="red")
+                text_widget.tag_config("missing", foreground=palette.get("error_fg"))
                 text_widget.config(state=tk.DISABLED)
 
                 ttk.Button(main_frame, text="Close",

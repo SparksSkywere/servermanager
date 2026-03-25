@@ -14,13 +14,43 @@ import psutil
 import requests
 import subprocess
 import threading
+from collections import deque
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Modules.core.common import setup_module_path, centre_window
 setup_module_path()
 from Modules.core.server_logging import get_dashboard_logger, log_dashboard_event
+from Modules.core.theme import get_theme_preference
+from Modules.core.color_palettes import get_palette
+from Modules.services.temperatures import create_temperature_service
 
 logger: logging.Logger = get_dashboard_logger()
+
+def _resolve_theme_name(context_widget=None):
+    # Resolve the active theme
+    try:
+        if context_widget is not None and hasattr(context_widget, "current_theme"):
+            theme_name = getattr(context_widget, "current_theme", None)
+            if theme_name:
+                return str(theme_name)
+    except Exception:
+        pass
+
+    try:
+        if context_widget is not None and hasattr(context_widget, "winfo_toplevel"):
+            top = context_widget.winfo_toplevel()
+            if hasattr(top, "current_theme"):
+                theme_name = getattr(top, "current_theme", None)
+                if theme_name:
+                    return str(theme_name)
+    except Exception:
+        pass
+
+    return get_theme_preference("light")
+
+def _get_active_palette(context_widget=None):
+    # Return the palette for the currently active theme.
+    return get_palette(_resolve_theme_name(context_widget))
 
 def make_canvas_width_updater(canvas):
     # Create a callback that updates canvas window width on resize.
@@ -64,6 +94,28 @@ def format_speed(bytes_per_sec):
         return f"{bytes_per_sec / 1024:.1f}KB/s"
     else:
         return f"{bytes_per_sec:.1f}B/s"
+
+def set_metric_widget_text(widget, text):
+    # Set metric text for either label-like widgets or read-only Text widgets.
+    try:
+        if isinstance(widget, dict):
+            text_widget = widget.get("text")
+            if text_widget is not None:
+                set_metric_widget_text(text_widget, text)
+            return
+        if hasattr(widget, "delete") and hasattr(widget, "insert"):
+            # tk.Text path (used for long disk output)
+            widget.configure(state=tk.NORMAL)
+            widget.delete("1.0", tk.END)
+            widget.insert("1.0", text)
+            widget.configure(state=tk.DISABLED)
+            return
+        widget.config(text=text)
+    except Exception:
+        try:
+            widget.config(text=text)
+        except Exception:
+            pass
 
 # CPU process cache for accurate non-blocking readings
 _cpu_process_cache: Dict[int, psutil.Process] = {}
@@ -507,7 +559,7 @@ def create_minecraft_version_browser_dialog(parent, modloader="Vanilla"):
 def create_steam_appid_browser_dialog(parent, server_manager_dir):
     dialog = tk.Toplevel(parent)
     dialog.title("Select Steam Dedicated Server")
-    dialog.geometry("700x500")
+    dialog.geometry("700x540")
     dialog.transient(parent)
     dialog.grab_set()
 
@@ -550,17 +602,19 @@ def create_steam_appid_browser_dialog(parent, server_manager_dir):
         ]
 
         logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner (last updated: {metadata.get('last_updated', 'Unknown')})")
+        palette = _get_active_palette(parent)
+        muted_fg = palette.get("text_disabled_fg")
 
         # Add refresh info to dialog
         if metadata.get('last_updated'):
             last_updated = metadata['last_updated']
-            if 'T' in last_updated:  # ISO format
+            if 'T' in last_updated:
                 try:
                     from datetime import datetime
                     dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
                     formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
                     ttk.Label(search_frame, text=f"Data last updated: {formatted_date}",
-                            foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
+                            foreground=muted_fg, font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
                 except (ValueError, TypeError):
                     pass
 
@@ -575,7 +629,7 @@ def create_steam_appid_browser_dialog(parent, server_manager_dir):
     list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
 
     columns = ("name", "appid", "developer", "type")
-    server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
+    server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=12)
 
     server_tree.heading("name", text="Server Name")
     server_tree.heading("appid", text="App ID")
@@ -612,9 +666,20 @@ def create_steam_appid_browser_dialog(parent, server_manager_dir):
 
                 desc = selected_server["description"][:200] + ("..." if len(selected_server["description"]) > 200 else "")
 
-                label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}",
-                               background="lightyellow", relief="solid", borderwidth=1,
-                               wraplength=300, justify=tk.LEFT, font=("Segoe UI", 9))
+                palette = _get_active_palette(dialog)
+                label = tk.Label(
+                    tooltip,
+                    text=f"{selected_server['name']}\n\n{desc}",
+                    background=palette.get("panel_bg"),
+                    foreground=palette.get("text_fg"),
+                    highlightbackground=palette.get("border"),
+                    highlightcolor=palette.get("border"),
+                    relief="solid",
+                    borderwidth=1,
+                    wraplength=300,
+                    justify=tk.LEFT,
+                    font=("Segoe UI", 9),
+                )
                 label.pack()
 
                 # Auto-hide after 3 seconds
@@ -637,13 +702,34 @@ def create_steam_appid_browser_dialog(parent, server_manager_dir):
     def on_cancel():
         dialog.destroy()
 
-    button_frame = ttk.Frame(main_frame)
+    button_frame = ttk.Frame(main_frame, padding=(0, 6, 0, 2))
     button_frame.pack(fill=tk.X)
 
     ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT)
     ttk.Button(button_frame, text="Select Server", command=on_select).pack(side=tk.RIGHT)
 
-    centre_window(dialog, 700, 500, parent)
+    # Size to actual content and DPI so action buttons are never clipped.
+    try:
+        tk_scaling = float(dialog.tk.call('tk', 'scaling'))
+    except Exception:
+        tk_scaling = 1.0
+    dpi_scale = max(1.0, min(tk_scaling / 1.3333, 3.0))
+
+    dialog.update_idletasks()
+    required_w = dialog.winfo_reqwidth() + 24
+    required_h = dialog.winfo_reqheight() + 24
+
+    target_w = max(int(700 * dpi_scale), required_w)
+    target_h = max(int(540 * dpi_scale), required_h)
+
+    max_w = int(dialog.winfo_screenwidth() * 0.95)
+    max_h = int(dialog.winfo_screenheight() * 0.92)
+    target_w = min(target_w, max_w)
+    target_h = min(target_h, max_h)
+
+    dialog.geometry(f"{target_w}x{target_h}")
+    dialog.minsize(min(target_w, max_w), min(target_h, max_h))
+    centre_window(dialog, target_w, target_h, parent)
 
     parent.wait_window(dialog)
 
@@ -793,26 +879,304 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
 
 def update_webserver_status(webserver_status_label, offline_var, paths, variables):
     try:
+        palette = _get_active_palette(webserver_status_label)
         status = check_webserver_status(paths, variables)
         webserver_status_label.config(text=status)
 
         if status == "Running":
-            webserver_status_label.config(foreground="green")
+            webserver_status_label.config(foreground=palette.get("success_fg"))
         elif status == "Stopped":
-            webserver_status_label.config(foreground="red")
-        elif status == "Offline Mode":
-            webserver_status_label.config(foreground="orange")
+            webserver_status_label.config(foreground=palette.get("error_fg"))
         else:
-            webserver_status_label.config(foreground="gray")
+            webserver_status_label.config(foreground=palette.get("text_disabled_fg"))
     except Exception as e:
         logger.error(f"Error updating webserver status: {e}")
-        webserver_status_label.config(text="Unknown", foreground="gray")
+        palette = _get_active_palette(webserver_status_label)
+        webserver_status_label.config(text="Unknown", foreground=palette.get("text_disabled_fg"))
 
 # Global variables for network monitoring
 _previous_network_stats = None
 _previous_network_time = None
+_network_up_history = deque(maxlen=90)
+_network_down_history = deque(maxlen=90)
+_network_history_last_reset = 0.0
+_memory_sticks_cache = None
+_memory_sticks_cache_time = 0.0
+_temperature_service = None
+_temperature_service_lock = threading.Lock()
 
-def update_system_info(metric_labels, system_name, os_info, variables):
+def _format_frequency_ghz(mhz_value):
+    # Convert a MHz numeric value to a compact GHz display string.
+    try:
+        mhz = float(mhz_value)
+        if mhz <= 0:
+            return "N/A"
+        return f"{mhz / 1000.0:.2f}GHz"
+    except Exception:
+        return "N/A"
+
+def _collect_memory_sticks_info():
+    # Collect physical memory module details, cached to avoid frequent WMI calls.
+    global _memory_sticks_cache, _memory_sticks_cache_time
+
+    now = time.time()
+    if _memory_sticks_cache is not None and (now - _memory_sticks_cache_time) < 300:
+        return _memory_sticks_cache
+
+    summary_only = "Physical RAM sticks: details unavailable"
+
+    if platform.system() != "Windows":
+        _memory_sticks_cache = summary_only
+        _memory_sticks_cache_time = now
+        return _memory_sticks_cache
+
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+
+        result = subprocess.run(
+            [
+                "wmic",
+                "memorychip",
+                "get",
+                "BankLabel,Capacity,ConfiguredClockSpeed,Manufacturer,PartNumber",
+                "/format:csv",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            startupinfo=startupinfo,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+
+        if result.returncode != 0 or not result.stdout.strip():
+            _memory_sticks_cache = summary_only
+            _memory_sticks_cache_time = now
+            return _memory_sticks_cache
+
+        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        if len(lines) <= 1:
+            _memory_sticks_cache = summary_only
+            _memory_sticks_cache_time = now
+            return _memory_sticks_cache
+
+        stick_lines = []
+        # CSV order: Node,BankLabel,Capacity,ConfiguredClockSpeed,Manufacturer,PartNumber
+        for line in lines[1:]:
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 6:
+                continue
+
+            bank = parts[1] or "Slot"
+            capacity_gb = "N/A"
+            try:
+                capacity_gb = f"{int(parts[2]) / (1024 ** 3):.1f}GB"
+            except Exception:
+                pass
+
+            speed = _format_frequency_ghz(parts[3])
+            manufacturer = parts[4] or "Unknown"
+            part_number = parts[5] or "Unknown"
+
+            stick_lines.append(f"{bank}: {capacity_gb} @ {speed} ({manufacturer} {part_number})")
+
+        if not stick_lines:
+            _memory_sticks_cache = summary_only
+        else:
+            _memory_sticks_cache = "\n".join(stick_lines)
+
+        _memory_sticks_cache_time = now
+        return _memory_sticks_cache
+
+    except Exception as e:
+        logger.debug(f"Failed to collect RAM module details: {e}")
+        _memory_sticks_cache = summary_only
+        _memory_sticks_cache_time = now
+        return _memory_sticks_cache
+
+def _extract_temperature_settings(variables: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    # Build temperature service settings from runtime variables/config values.
+    source = variables or {}
+    result: Dict[str, Any] = {}
+
+    direct_keys = [
+        "temperatureMode", "temperature_mode",
+        "temperaturePollInterval", "temperature_poll_interval",
+        "iloHost", "ilo_host", "iloUsername", "ilo_username", "iloPassword", "ilo_password", "iloVerifyTLS", "ilo_verify_tls", "iloTimeout", "ilo_timeout",
+        "idracHost", "idrac_host", "idracUsername", "idrac_username", "idracPassword", "idrac_password", "idracVerifyTLS", "idrac_verify_tls", "idracTimeout", "idrac_timeout",
+    ]
+    for key in direct_keys:
+        if key in source:
+            result[key] = source.get(key)
+
+    nested = source.get("temperature")
+    if isinstance(nested, dict):
+        for key, value in nested.items():
+            result[key] = value
+
+    return result
+
+
+def init_temperature_service(variables: Optional[Dict[str, Any]] = None):
+    # Start the dedicated background temperature service (safe to call multiple times).
+    global _temperature_service
+
+    settings = _extract_temperature_settings(variables)
+
+    with _temperature_service_lock:
+        should_replace = False
+        if _temperature_service is None:
+            should_replace = True
+        else:
+            try:
+                current_settings = getattr(_temperature_service, "settings", {})
+                if current_settings != settings:
+                    _temperature_service.stop()
+                    should_replace = True
+            except Exception:
+                should_replace = True
+
+        if should_replace:
+            _temperature_service = create_temperature_service(settings)
+            _temperature_service.start()
+
+    return _temperature_service
+
+
+def stop_temperature_service():
+    # Stop the dedicated temperature background service.
+    global _temperature_service
+    with _temperature_service_lock:
+        if _temperature_service is not None:
+            try:
+                _temperature_service.stop()
+            except Exception as e:
+                logger.debug(f"Failed stopping temperature service: {e}")
+            _temperature_service = None
+
+
+def _get_temperature_info_text(variables: Optional[Dict[str, Any]] = None) -> str:
+    # Read the most recent temperature snapshot from the background service.
+    try:
+        service = init_temperature_service(variables)
+        if service is None:
+            return "Temperature sensors not available"
+        return service.get_latest_text()
+    except Exception as e:
+        logger.error(f"Error reading temperature service snapshot: {e}")
+        return "Temperature sensors not available"
+
+def _get_network_palette(canvas):
+    # Build graph colours from central theme palette only.
+    palette = _get_active_palette(canvas)
+    return {
+        "bg": palette.get("field_bg"),
+        "grid": palette.get("border"),
+        "upload": palette.get("warning_fg"),
+        "download": palette.get("info_fg"),
+        "legend": palette.get("text_fg"),
+    }
+
+def update_network_graph(metric_widget, sent_bps, recv_bps):
+    # Draw task-manager style upload/download line graph and update text summary.
+    try:
+        global _network_history_last_reset
+
+        if not isinstance(metric_widget, dict):
+            set_metric_widget_text(metric_widget, f"Network: Up {format_speed(sent_bps)} Down {format_speed(recv_bps)}")
+            return
+
+        canvas = metric_widget.get("canvas")
+        text_widget = metric_widget.get("text")
+
+        if canvas is None:
+            if text_widget is not None:
+                set_metric_widget_text(text_widget, f"Network: Up {format_speed(sent_bps)} Down {format_speed(recv_bps)}")
+            return
+
+        now = time.time()
+        # Periodically clear graph history so old spikes do not flatten the signal over long sessions.
+        if _network_history_last_reset == 0.0:
+            _network_history_last_reset = now
+        elif (now - _network_history_last_reset) >= 900:
+            _network_up_history.clear()
+            _network_down_history.clear()
+            _network_history_last_reset = now
+
+        # Prime with a flat baseline so first visible draw starts as a straight line.
+        if not _network_up_history and not _network_down_history:
+            _network_up_history.extend([0.0] * (_network_up_history.maxlen - 1))
+            _network_down_history.extend([0.0] * (_network_down_history.maxlen - 1))
+
+        _network_up_history.append(max(0.0, float(sent_bps)))
+        _network_down_history.append(max(0.0, float(recv_bps)))
+
+        try:
+            width = max(10, int(canvas.winfo_width()))
+            height = max(10, int(canvas.winfo_height()))
+        except Exception:
+            width, height = 120, 72
+
+        palette = _get_network_palette(canvas)
+        canvas.configure(background=palette["bg"])
+        canvas.delete("all")
+
+        if len(_network_up_history) < 2 or len(_network_down_history) < 2:
+            if text_widget is not None:
+                set_metric_widget_text(text_widget, "Network: Initialising...")
+            return
+
+        max_rate = max(max(_network_up_history), max(_network_down_history), 1.0)
+        points_count = min(len(_network_up_history), len(_network_down_history))
+
+        if points_count <= 1:
+            return
+
+        x_step = width / (points_count - 1)
+
+        def make_points(series):
+            points = []
+            plot_top = 16
+            plot_bottom = 8
+            plot_height = max(4, height - (plot_top + plot_bottom))
+            for i in range(points_count):
+                value = series[-points_count + i]
+                x = i * x_step
+                y = plot_top + (plot_height - ((value / max_rate) * plot_height))
+                points.extend([x, y])
+            return points
+
+        up_points = make_points(list(_network_up_history))
+        down_points = make_points(list(_network_down_history))
+
+        canvas.create_line(0, height - 8, width, height - 8, fill=palette["grid"])
+        canvas.create_line(*up_points, fill=palette["upload"], width=2)
+        canvas.create_line(*down_points, fill=palette["download"], width=2)
+
+        # Legend (top-left) so Upload/Download colours are always clear.
+        canvas.create_line(6, 7, 22, 7, fill=palette["upload"], width=2)
+        canvas.create_text(26, 7, text="Upload", anchor="w", fill=palette["legend"], font=("Segoe UI", 8))
+        canvas.create_line(76, 7, 92, 7, fill=palette["download"], width=2)
+        canvas.create_text(96, 7, text="Download", anchor="w", fill=palette["legend"], font=("Segoe UI", 8))
+
+        latest_up = _network_up_history[-1]
+        latest_down = _network_down_history[-1]
+
+        if text_widget is not None:
+            set_metric_widget_text(
+                text_widget,
+                f"Up {format_speed(latest_up)} | Down {format_speed(latest_down)} | Peak {format_speed(max_rate)}"
+            )
+
+    except Exception as e:
+        logger.debug(f"Error updating network graph: {e}")
+        try:
+            set_metric_widget_text(metric_widget, f"Network: Up {format_speed(sent_bps)} Down {format_speed(recv_bps)}")
+        except Exception:
+            pass
+
+def update_system_info(metric_labels, system_name, os_info, variables, uptime_label=None):
     global _previous_network_stats, _previous_network_time
 
     try:
@@ -835,30 +1199,30 @@ def update_system_info(metric_labels, system_name, os_info, variables):
 
         try:
             cpu_percent = psutil.cpu_percent(interval=1)
-            metric_labels["cpu"].config(text=f"CPU: {cpu_percent:.1f}%")
+            set_metric_widget_text(metric_labels["cpu"], f"CPU: {cpu_percent:.1f}%")
         except Exception as e:
             logger.error(f"Error getting CPU info: {e}")
-            metric_labels["cpu"].config(text="CPU: N/A")
+            set_metric_widget_text(metric_labels["cpu"], "CPU: N/A")
 
         try:
             memory = psutil.virtual_memory()
             memory_percent = memory.percent
             memory_used_gb = memory.used / (1024**3)
             memory_total_gb = memory.total / (1024**3)
-            metric_labels["memory"].config(text=f"Memory: {memory_used_gb:.1f}GB / {memory_total_gb:.1f}GB ({memory_percent:.1f}%)")
+            set_metric_widget_text(metric_labels["memory"], f"Memory: {memory_used_gb:.1f}GB / {memory_total_gb:.1f}GB ({memory_percent:.1f}%)")
         except Exception as e:
             logger.error(f"Error getting memory info: {e}")
-            metric_labels["memory"].config(text="Memory: N/A")
+            set_metric_widget_text(metric_labels["memory"], "Memory: N/A")
 
         try:
             disk = psutil.disk_usage('/')
             disk_percent = disk.percent
             disk_used_gb = disk.used / (1024**3)
             disk_total_gb = disk.total / (1024**3)
-            metric_labels["disk"].config(text=f"Disk: {disk_used_gb:.1f}GB / {disk_total_gb:.1f}GB ({disk_percent:.1f}%)")
+            set_metric_widget_text(metric_labels["disk"], f"Disk: {disk_used_gb:.1f}GB / {disk_total_gb:.1f}GB ({disk_percent:.1f}%)")
         except Exception as e:
             logger.error(f"Error getting disk info: {e}")
-            metric_labels["disk"].config(text="Disk: N/A")
+            set_metric_widget_text(metric_labels["disk"], "Disk: N/A")
 
         try:
             current_time = time.time()
@@ -877,19 +1241,19 @@ def update_system_info(metric_labels, system_name, os_info, variables):
                         sent_display = format_speed(bytes_sent_per_sec)
                         recv_display = format_speed(bytes_recv_per_sec)
 
-                        metric_labels["network"].config(text=f"Network: ↑{sent_display} ↓{recv_display}")
+                        set_metric_widget_text(metric_labels["network"], f"Network: ↑{sent_display} ↓{recv_display}")
                     else:
-                        metric_labels["network"].config(text="Network: Calculating...")
+                        set_metric_widget_text(metric_labels["network"], "Network: Calculating...")
                 else:
-                    metric_labels["network"].config(text="Network: Initialising...")
+                    set_metric_widget_text(metric_labels["network"], "Network: Initialising...")
 
                 _previous_network_stats = network_stats
                 _previous_network_time = current_time
             else:
-                metric_labels["network"].config(text="Network: N/A")
+                set_metric_widget_text(metric_labels["network"], "Network: N/A")
         except Exception as e:
             logger.error(f"Error getting network info: {e}")
-            metric_labels["network"].config(text="Network: N/A")
+            set_metric_widget_text(metric_labels["network"], "Network: N/A")
 
         # Update GPU info - use direct nvidia-smi with CREATE_NO_WINDOW to prevent console popup
         try:
@@ -936,26 +1300,34 @@ def update_system_info(metric_labels, system_name, os_info, variables):
             except Exception:
                 gpu_info = "GPU: Not detected"
 
-            metric_labels["gpu"].config(text=gpu_info)
+            set_metric_widget_text(metric_labels["gpu"], gpu_info)
         except Exception as e:
             logger.error(f"Error getting GPU info: {e}")
-            metric_labels["gpu"].config(text="GPU: Error")
+            set_metric_widget_text(metric_labels["gpu"], "GPU: Error")
 
         try:
             uptime_seconds = time.time() - psutil.boot_time()
             uptime_str = format_uptime_from_start_time(uptime_seconds)
-            metric_labels["uptime"].config(text=f"Uptime: {uptime_str}")
+            if uptime_label is not None:
+                uptime_label.config(text=f"Uptime: {uptime_str}")
         except Exception as e:
             logger.error(f"Error getting uptime info: {e}")
-            metric_labels["uptime"].config(text="Uptime: N/A")
+            if uptime_label is not None:
+                uptime_label.config(text="Uptime: N/A")
+
+        try:
+            set_metric_widget_text(metric_labels["temperature"], _get_temperature_info_text(variables))
+        except Exception as e:
+            logger.error(f"Error getting temperature info: {e}")
+            set_metric_widget_text(metric_labels["temperature"], "Temperature: N/A")
 
     except Exception as e:
         logger.error(f"Error updating system info: {e}")
         # Set all labels to error state
         for label_name in metric_labels:
-            metric_labels[label_name].config(text=f"{label_name.title()}: Error")
+            set_metric_widget_text(metric_labels[label_name], f"{label_name.title()}: Error")
 
-def collect_system_info_data():
+def collect_system_info_data(temperature_settings: Optional[Dict[str, Any]] = None):
     # Collect system information data in a thread-safe manner (no UI updates)
     global _previous_network_stats, _previous_network_time
 
@@ -977,21 +1349,28 @@ def collect_system_info_data():
             logger.error(f"Error getting OS info: {e}")
             data['os_info'] = "Unknown OS"
 
-        # CPU usage (per-core and overall)
+        # CPU usage and per-core frequencies
         try:
-            # Get per-core CPU usage (includes overall calculation)
             per_core_cpu = psutil.cpu_percent(percpu=True, interval=0.5)
             overall_cpu = sum(per_core_cpu) / len(per_core_cpu) if per_core_cpu else 0
 
-            if len(per_core_cpu) <= 8:  # Show per-core for systems with 8 or fewer cores
-                core_usage = ", ".join([f"{i}:{usage:.0f}%" for i, usage in enumerate(per_core_cpu)])
-                data['cpu_percent'] = f"Overall: {overall_cpu:.1f}%\nCores: {core_usage}"
-            else:  # For systems with many cores, show overall + summary
-                high_usage_cores = [i for i, usage in enumerate(per_core_cpu) if usage > 50]
-                if high_usage_cores:
-                    data['cpu_percent'] = f"Overall: {overall_cpu:.1f}%\nHigh usage cores: {len(high_usage_cores)}/{len(per_core_cpu)}"
-                else:
-                    data['cpu_percent'] = f"Overall: {overall_cpu:.1f}%\nAll cores: <50% usage"
+            overall_freq = psutil.cpu_freq()
+            overall_freq_text = _format_frequency_ghz(overall_freq.current) if overall_freq else "N/A"
+
+            per_core_freq = []
+            try:
+                per_core_freq = psutil.cpu_freq(percpu=True) or []
+            except Exception:
+                per_core_freq = []
+
+            cpu_lines = [f"Overall: {overall_cpu:.1f}% @ {overall_freq_text}"]
+            for index, usage in enumerate(per_core_cpu):
+                freq_text = "N/A"
+                if index < len(per_core_freq) and per_core_freq[index] is not None:
+                    freq_text = _format_frequency_ghz(per_core_freq[index].current)
+                cpu_lines.append(f"Core {index:02d}: {usage:5.1f}% @ {freq_text}")
+
+            data['cpu_percent'] = "\n".join(cpu_lines)
 
         except Exception as e:
             logger.error(f"Error getting CPU info: {e}")
@@ -1002,11 +1381,13 @@ def collect_system_info_data():
             data['memory_percent'] = memory.percent
             data['memory_used_gb'] = memory.used / (1024**3)
             data['memory_total_gb'] = memory.total / (1024**3)
+            data['memory_modules'] = _collect_memory_sticks_info()
         except Exception as e:
             logger.error(f"Error getting memory info: {e}")
             data['memory_percent'] = None
             data['memory_used_gb'] = None
             data['memory_total_gb'] = None
+            data['memory_modules'] = "Physical RAM sticks: unavailable"
 
         # Disk usage - detect all drive letters on Windows
         try:
@@ -1058,18 +1439,28 @@ def collect_system_info_data():
 
                         data['network_sent_display'] = format_speed(bytes_sent_per_sec)
                         data['network_recv_display'] = format_speed(bytes_recv_per_sec)
+                        data['network_sent_bps'] = max(0.0, bytes_sent_per_sec)
+                        data['network_recv_bps'] = max(0.0, bytes_recv_per_sec)
                     else:
                         data['network_display'] = "Network: Calculating..."
+                        data['network_sent_bps'] = 0.0
+                        data['network_recv_bps'] = 0.0
                 else:
                     data['network_display'] = "Network: Initialising..."
+                    data['network_sent_bps'] = 0.0
+                    data['network_recv_bps'] = 0.0
 
                 _previous_network_stats = network_stats
                 _previous_network_time = current_time
             else:
                 data['network_display'] = "Network: N/A"
+                data['network_sent_bps'] = 0.0
+                data['network_recv_bps'] = 0.0
         except Exception as e:
             logger.error(f"Error getting network info: {e}")
             data['network_display'] = "Network: N/A"
+            data['network_sent_bps'] = 0.0
+            data['network_recv_bps'] = 0.0
 
         # GPU info (this is the heavy operation that needs threading)
         try:
@@ -1142,19 +1533,25 @@ def collect_system_info_data():
             logger.error(f"Error getting uptime info: {e}")
             data['uptime_seconds'] = None
 
+        try:
+            data['temperature_info'] = _get_temperature_info_text(temperature_settings)
+        except Exception as e:
+            logger.error(f"Error getting temperature info: {e}")
+            data['temperature_info'] = "Temperature sensors not available"
+
     except Exception as e:
         logger.error(f"Error collecting system info data: {e}")
         data['error'] = str(e)
 
     return data
 
-def update_system_info_threaded(metric_labels, system_name, os_info, callback=None):
+def update_system_info_threaded(metric_labels, system_name, os_info, uptime_label=None, callback=None, temperature_settings: Optional[Dict[str, Any]] = None):
     # Update system information using background threading to prevent UI freezing
     import threading
 
     def background_update():
         try:
-            data = collect_system_info_data()
+            data = collect_system_info_data(temperature_settings)
 
             def update_ui():
                 try:
@@ -1164,44 +1561,46 @@ def update_system_info_threaded(metric_labels, system_name, os_info, callback=No
                         os_info.config(text=data['os_info'])
 
                     if data.get('cpu_percent') is not None:
-                        if isinstance(data['cpu_percent'], str) and '\n' in data['cpu_percent']:
-                            # Multi-line CPU display (per-core)
-                            metric_labels["cpu"].config(text=data['cpu_percent'])
-                        else:
-                            # Single line CPU display
-                            metric_labels["cpu"].config(text=f"CPU: {data['cpu_percent']:.1f}%")
+                        set_metric_widget_text(metric_labels["cpu"], data['cpu_percent'])
                     else:
-                        metric_labels["cpu"].config(text="CPU: N/A")
+                        set_metric_widget_text(metric_labels["cpu"], "CPU: N/A")
 
                     if all(k in data for k in ['memory_used_gb', 'memory_total_gb', 'memory_percent']):
-                        metric_labels["memory"].config(
-                            text=f"Memory: {data['memory_used_gb']:.1f}GB / {data['memory_total_gb']:.1f}GB ({data['memory_percent']:.1f}%)"
+                        memory_lines = [
+                            f"Total Usage: {data['memory_used_gb']:.1f}GB / {data['memory_total_gb']:.1f}GB ({data['memory_percent']:.1f}%)",
+                            "",
+                            "RAM Sticks:",
+                            data.get('memory_modules', "Physical RAM sticks: unavailable")
+                        ]
+                        set_metric_widget_text(
+                            metric_labels["memory"],
+                            "\n".join(memory_lines)
                         )
                     else:
-                        metric_labels["memory"].config(text="Memory: N/A")
+                        set_metric_widget_text(metric_labels["memory"], "Memory: N/A")
 
                     if 'disk_info' in data:
-                        metric_labels["disk"].config(text=data['disk_info'])
+                        set_metric_widget_text(metric_labels["disk"], data['disk_info'])
                     else:
-                        metric_labels["disk"].config(text="Disk: N/A")
+                        set_metric_widget_text(metric_labels["disk"], "Disk: N/A")
 
-                    if 'network_display' in data:
-                        metric_labels["network"].config(text=data['network_display'])
-                    elif 'network_sent_display' in data and 'network_recv_display' in data:
-                        metric_labels["network"].config(text=f"Network: ↑{data['network_sent_display']} ↓{data['network_recv_display']}")
-                    else:
-                        metric_labels["network"].config(text="Network: N/A")
+                    sent_bps = data.get('network_sent_bps', 0.0)
+                    recv_bps = data.get('network_recv_bps', 0.0)
+                    update_network_graph(metric_labels["network"], sent_bps, recv_bps)
 
                     if 'gpu_info' in data:
-                        metric_labels["gpu"].config(text=data['gpu_info'])
+                        set_metric_widget_text(metric_labels["gpu"], data['gpu_info'])
                     else:
-                        metric_labels["gpu"].config(text="GPU: Error")
+                        set_metric_widget_text(metric_labels["gpu"], "GPU: Error")
+
+                    set_metric_widget_text(metric_labels["temperature"], data.get('temperature_info', "Temperature sensors not available"))
 
                     if data.get('uptime_seconds') is not None:
                         uptime_str = format_uptime_from_start_time(data['uptime_seconds'])
-                        metric_labels["uptime"].config(text=f"Uptime: {uptime_str}")
-                    else:
-                        metric_labels["uptime"].config(text="Uptime: N/A")
+                        if uptime_label is not None:
+                            uptime_label.config(text=f"Uptime: {uptime_str}")
+                    elif uptime_label is not None:
+                        uptime_label.config(text="Uptime: N/A")
 
                     if callback:
                         callback()
@@ -1210,7 +1609,7 @@ def update_system_info_threaded(metric_labels, system_name, os_info, callback=No
                     logger.error(f"Error updating UI with system data: {e}")
                     # Set all labels to error state
                     for label_name in metric_labels:
-                        metric_labels[label_name].config(text=f"{label_name.title()}: Error")
+                        set_metric_widget_text(metric_labels[label_name], f"{label_name.title()}: Error")
 
             if hasattr(system_name, 'after'):
                 system_name.after(0, update_ui)
@@ -1285,14 +1684,19 @@ def update_server_status_in_treeview(server_list, server_name, status):
         for item in server_list.get_children():
             item_values = server_list.item(item, 'values')
             if item_values and len(item_values) > 0 and item_values[0] == server_name:
-                # Update the status (index 1) while preserving other values
+                status_text = str(status or "").strip().lower()
+                reset_metrics = status_text in {
+                    "stopped", "stop", "stopping", "not running", "offline", "error", "killed"
+                }
+
+                # Update the status (index 1); clear live metrics for stopped-like states.
                 updated_values = (
-                    item_values[0],  # server_name
-                    status,          # new status
-                    item_values[2] if len(item_values) > 2 else '',  # pid
-                    item_values[3] if len(item_values) > 3 else '0%',  # cpu
-                    item_values[4] if len(item_values) > 4 else '0 MB',  # memory
-                    item_values[5] if len(item_values) > 5 else '00:00:00'  # uptime
+                    item_values[0],
+                    status,
+                    '' if reset_metrics else (item_values[2] if len(item_values) > 2 else ''),
+                    '0%' if reset_metrics else (item_values[3] if len(item_values) > 3 else '0%'),
+                    '0 MB' if reset_metrics else (item_values[4] if len(item_values) > 4 else '0 MB'),
+                    '00:00:00' if reset_metrics else (item_values[5] if len(item_values) > 5 else '00:00:00')
                 )
                 server_list.item(item, values=updated_values)
                 break
@@ -1865,9 +2269,6 @@ def is_port_open(host, port, timeout=1):
         return False
 
 def check_webserver_status(paths, variables):
-    if variables.get("offlineMode", False):
-        return "Offline Mode"
-
     try:
         webserver_port = variables.get("webserverPort", 8080)
         if is_port_open("localhost", webserver_port):
@@ -2534,12 +2935,21 @@ def get_servers_display_data(server_manager, logger):
 
         def _clear_stale_process_fields(server_name, server_config):
             try:
+                pid_value = server_config.get('ProcessId') or server_config.get('PID')
+                try:
+                    stale_pid = int(pid_value) if pid_value else None
+                except (TypeError, ValueError):
+                    stale_pid = None
+
                 server_config.pop('ProcessId', None)
                 server_config.pop('PID', None)
                 server_config.pop('StartTime', None)
                 server_config.pop('ProcessCreateTime', None)
                 server_config['LastUpdate'] = datetime.datetime.now().isoformat()
                 server_manager.update_server(server_name, server_config)
+
+                if stale_pid:
+                    _cpu_process_cache.pop(stale_pid, None)
             except Exception as e:
                 logger.debug(f"Failed to clear stale process fields for {server_name}: {e}")
 
@@ -2900,7 +3310,12 @@ def update_server_list_logic(dashboard, force_refresh=False):
     # Update server list from configuration files - runs heavy work in background thread to prevent freezing the Tkinter main thread
     try:
         if hasattr(dashboard, '_refreshing_server_list') and dashboard._refreshing_server_list:
-            log_dashboard_event("SERVER_LIST_UPDATE", "Skipping update - refresh already in progress", "DEBUG")
+            if force_refresh:
+                # Queue one follow-up refresh after the current pass completes.
+                dashboard._pending_force_refresh = True
+                log_dashboard_event("SERVER_LIST_UPDATE", "Queued force refresh while update in progress", "DEBUG")
+            else:
+                log_dashboard_event("SERVER_LIST_UPDATE", "Skipping update - refresh already in progress", "DEBUG")
             return
 
         # Skip update if it's been less than configured interval since the last update and force_refresh isn't specified
@@ -2958,6 +3373,12 @@ def update_server_list_logic(dashboard, force_refresh=False):
                         logger.error(f"Error updating server list UI: {e}")
                     finally:
                         dashboard._refreshing_server_list = False
+                        if getattr(dashboard, '_pending_force_refresh', False):
+                            dashboard._pending_force_refresh = False
+                            try:
+                                dashboard.root.after(100, lambda: update_server_list_logic(dashboard, force_refresh=True))
+                            except Exception as e:
+                                logger.debug(f"Could not run queued force refresh: {e}")
 
                 if hasattr(dashboard, 'root') and dashboard.root:
                     dashboard.root.after(0, _update_ui)
@@ -3332,7 +3753,8 @@ def add_server_dialog(dashboard):
             appid_dialog.title("Select Dedicated Server")
             appid_dialog.transient(dialog)
             appid_dialog.grab_set()
-            appid_dialog.geometry("600x500")
+            appid_dialog.geometry("680x560")
+            appid_dialog.minsize(660, 540)
 
             search_frame = ttk.Frame(appid_dialog, padding=10)
             search_frame.pack(fill=tk.X)
@@ -3367,6 +3789,9 @@ def add_server_dialog(dashboard):
 
                 logger.info(f"Loaded {len(dedicated_servers)} dedicated servers from scanner (last updated: {metadata.get('last_updated', 'Unknown')})")
 
+                palette = _get_active_palette(dashboard)
+                muted_fg = palette.get("text_disabled_fg")
+
                 # Create lookup dictionary for faster server access
                 server_dict = {server["appid"]: server for server in dedicated_servers}
 
@@ -3379,7 +3804,7 @@ def add_server_dialog(dashboard):
                             dt = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
                             formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
                             ttk.Label(search_frame, text=f"Data last updated: {formatted_date}",
-                                    foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
+                                    foreground=muted_fg, font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
                         except (ValueError, TypeError):
                             pass
 
@@ -3393,7 +3818,7 @@ def add_server_dialog(dashboard):
             list_frame.pack(fill=tk.BOTH, expand=True)
 
             columns = ("name", "appid", "developer", "type")
-            server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
+            server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=12)
             server_tree.heading("name", text="Server Name")
             server_tree.heading("appid", text="App ID")
             server_tree.heading("developer", text="Developer")
@@ -3424,9 +3849,20 @@ def add_server_dialog(dashboard):
 
                         desc = selected_server["description"][:200] + ("..." if len(selected_server["description"]) > 200 else "")
 
-                        label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}",
-                                       background="lightyellow", relief="solid", borderwidth=1,
-                                       wraplength=300, justify=tk.LEFT, font=("Segoe UI", 9))
+                        palette = _get_active_palette(dashboard)
+                        label = tk.Label(
+                            tooltip,
+                            text=f"{selected_server['name']}\n\n{desc}",
+                            background=palette.get("panel_bg"),
+                            foreground=palette.get("text_fg"),
+                            highlightbackground=palette.get("border"),
+                            highlightcolor=palette.get("border"),
+                            relief="solid",
+                            borderwidth=1,
+                            wraplength=300,
+                            justify=tk.LEFT,
+                            font=("Segoe UI", 9),
+                        )
                         label.pack()
 
                         # Auto-hide after 3 seconds
@@ -3453,12 +3889,34 @@ def add_server_dialog(dashboard):
             ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(button_frame, text="Select Server", command=select_server, width=15).pack(side=tk.RIGHT)
 
-            centre_window(appid_dialog, 600, 500, dialog)
+            # Ensure the action buttons are never clipped on high-DPI displays.
+            try:
+                scale = float(getattr(dashboard, "dpi_scale", 1.0) or 1.0)
+            except Exception:
+                scale = 1.0
+            scale = max(1.0, min(scale, 3.0))
+
+            appid_dialog.update_idletasks()
+            required_w = appid_dialog.winfo_reqwidth() + 24
+            required_h = appid_dialog.winfo_reqheight() + 24
+
+            target_w = max(int(680 * scale), required_w)
+            target_h = max(int(560 * scale), required_h)
+
+            max_w = int(appid_dialog.winfo_screenwidth() * 0.95)
+            max_h = int(appid_dialog.winfo_screenheight() * 0.92)
+            target_w = min(target_w, max_w)
+            target_h = min(target_h, max_h)
+
+            appid_dialog.geometry(f"{target_w}x{target_h}")
+            appid_dialog.minsize(min(target_w, max_w), min(target_h, max_h))
+            centre_window(appid_dialog, target_w, target_h, dialog)
 
         ttk.Button(scrollable_frame, text="Browse", command=browse_appid, width=12).grid(row=current_row, column=2, padx=15, pady=10)
         current_row += 1
 
-        ttk.Label(scrollable_frame, text="(Enter Steam App ID or use Browse to select from list)", foreground="gray", font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
+        palette = _get_active_palette(dashboard)
+        ttk.Label(scrollable_frame, text="(Enter Steam App ID or use Browse to select from list)", foreground=palette.get("text_disabled_fg"), font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
         current_row += 1
 
     ttk.Label(scrollable_frame, text="Install Directory:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
@@ -3483,7 +3941,8 @@ def add_server_dialog(dashboard):
             help_text = "(Please specify installation directory)"
 
     # Create a wrapping label for the help text with better wrapping
-    help_label = ttk.Label(scrollable_frame, text=help_text, foreground="gray",
+    palette = _get_active_palette(dashboard)
+    help_label = ttk.Label(scrollable_frame, text=help_text, foreground=palette.get("text_disabled_fg"),
                          font=("Segoe UI", 9), wraplength=500, justify=tk.LEFT)
     help_label.grid(row=current_row, column=1, columnspan=2, padx=15, pady=(0, 5), sticky="ew")
 
@@ -3521,9 +3980,18 @@ def add_server_dialog(dashboard):
     console_container = ttk.LabelFrame(bottom_frame, text="Installation Log", padding=10)
     console_container.pack(fill=tk.BOTH, expand=True)
 
-    console_output = scrolledtext.ScrolledText(console_container, width=60, height=12,
-                                             background="black", foreground="white",
-                                             font=("Consolas", 9))
+    palette = _get_active_palette(dashboard)
+    console_output = scrolledtext.ScrolledText(
+        console_container,
+        width=60,
+        height=12,
+        background=palette.get("text_bg"),
+        foreground=palette.get("text_fg"),
+        insertbackground=palette.get("text_fg"),
+        selectbackground=palette.get("text_selection_bg"),
+        selectforeground=palette.get("text_selection_fg"),
+        font=("Consolas", 9),
+    )
     console_output.pack(fill=tk.BOTH, expand=True)
     console_output.config(state=tk.DISABLED)
 

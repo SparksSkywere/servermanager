@@ -5,7 +5,7 @@
 set -e
 
 # Configuration
-CURRENT_VERSION="1.3"
+CURRENT_VERSION="1.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/Install-Log.txt"
 SERVER_MANAGER_DIR=""
@@ -424,11 +424,30 @@ CREATE TABLE IF NOT EXISTS host_status (
 )
 ''')
 
+# Main configuration table
+c.execute('''
+CREATE TABLE IF NOT EXISTS main_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    config_key TEXT NOT NULL UNIQUE,
+    config_value TEXT,
+    config_type TEXT DEFAULT 'string',
+    category TEXT DEFAULT 'system',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+''')
+
 # Insert default host status
 c.execute('INSERT OR IGNORE INTO host_status (id, status, dashboard_active) VALUES (1, "online", 1)')
 
 # Insert cluster configuration
 c.execute('INSERT OR IGNORE INTO cluster_config (id, host_type, cluster_name) VALUES (1, "$HOST_TYPE", "ServerManager-Cluster")')
+
+# Insert default theme preference
+c.execute('''
+INSERT OR IGNORE INTO main_config (config_key, config_value, config_type, category)
+VALUES ('theme', 'light', 'string', 'settings')
+''')
 
 conn.commit()
 conn.close()
@@ -763,6 +782,12 @@ c.execute('SELECT COUNT(*) FROM host_status')
 if c.fetchone()[0] == 0:
     c.execute('INSERT INTO host_status (id, status, dashboard_active) VALUES (1, "online", 1)')
 
+# Ensure theme preference exists
+c.execute('''
+INSERT OR IGNORE INTO main_config (config_key, config_value, config_type, category)
+VALUES ('theme', 'light', 'string', 'settings')
+''')
+
 conn.commit()
 conn.close()
 print(f'CLUSTER_SECRET:{cluster_secret}')
@@ -829,6 +854,12 @@ else:
 c.execute('SELECT COUNT(*) FROM host_status')
 if c.fetchone()[0] == 0:
     c.execute('INSERT INTO host_status (id, status, dashboard_active) VALUES (1, "online", 1)')
+
+# Ensure theme preference exists
+c.execute('''
+INSERT OR IGNORE INTO main_config (config_key, config_value, config_type, category)
+VALUES ('theme', 'light', 'string', 'settings')
+''')
 
 conn.commit()
 conn.close()

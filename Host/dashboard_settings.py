@@ -9,6 +9,7 @@ import threading
 import subprocess
 import urllib.request
 import urllib.error
+import ssl
 
 import os
 import sys
@@ -17,6 +18,9 @@ from Modules.core.common import setup_module_path
 setup_module_path()
 
 from Modules.core.server_logging import get_dashboard_logger
+from Modules.core.theme import persist_theme_preference
+from Modules.core.theme import get_theme_preference
+from Modules.core.color_palettes import list_themes, get_palette
 from Host.dashboard_functions import centre_window
 
 if TYPE_CHECKING:
@@ -30,6 +34,10 @@ class DashboardSettingsMixin:
         root: tk.Tk
         server_manager: Optional[ServerManager]
         variables: Dict[str, Any]
+
+    def _get_active_palette(self):
+        theme_name = getattr(self, "current_theme", None) or get_theme_preference("light")
+        return get_palette(theme_name)
 
     def show_settings_dialog(self):
         # Show settings dialog for editing configuration
@@ -49,6 +57,13 @@ class DashboardSettingsMixin:
         settings_window.lift()
         settings_window.focus_force()
 
+        # Force theme pass so the new Toplevel gets current palette/titlebar styling.
+        try:
+            if hasattr(self, "apply_theme") and callable(getattr(self, "apply_theme")):
+                self.apply_theme(getattr(self, "current_theme", get_theme_preference("light")), force=True)
+        except Exception as e:
+            logger.debug(f"Could not apply theme to settings window: {e}")
+
         notebook = ttk.Notebook(settings_window)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -63,6 +78,9 @@ class DashboardSettingsMixin:
 
         system_frame = ttk.Frame(notebook)
         notebook.add(system_frame, text="System")
+
+        hardware_frame = ttk.Frame(notebook)
+        notebook.add(hardware_frame, text="Hardware")
 
         try:
             from Modules.Database.cluster_database import ClusterDatabase
@@ -79,6 +97,7 @@ class DashboardSettingsMixin:
         self._create_update_settings_tab(update_frame, update_config, main_config, db)
         self._create_steam_settings_tab(steam_frame, db)
         self._create_system_settings_tab(system_frame, main_config, db)
+        self._create_hardware_settings_tab(hardware_frame, main_config, db)
 
         button_frame = ttk.Frame(settings_window)
         button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
@@ -90,10 +109,27 @@ class DashboardSettingsMixin:
 
         self.settings_window = settings_window
 
+    def _create_themed_canvas(self, parent):
+        # Create a canvas with palette-based background and border to avoid bright default outlines.
+        try:
+            theme_name = getattr(self, "current_theme", None) or get_theme_preference("light")
+            palette = get_palette(theme_name)
+        except Exception:
+            palette = get_palette("light")
+
+        return tk.Canvas(
+            parent,
+            bg=palette.get("canvas_bg"),
+            highlightthickness=1,
+            highlightbackground=palette.get("border"),
+            highlightcolor=palette.get("border"),
+            bd=0,
+        )
+
     # Tabs
     def _create_dashboard_settings_tab(self, parent, config, db):
         # Create dashboard settings controls
-        canvas = tk.Canvas(parent)
+        canvas = self._create_themed_canvas(parent)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
 
@@ -108,8 +144,6 @@ class DashboardSettingsMixin:
         settings = [
             ("Debug Mode", "configuration.debugMode",
              config.get("configuration.debugMode", False), "boolean"),
-            ("Offline Mode", "configuration.offlineMode",
-             config.get("configuration.offlineMode", False), "boolean"),
             ("Hide Server Consoles", "configuration.hideServerConsoles",
              config.get("configuration.hideServerConsoles", True), "boolean"),
             ("System Refresh Interval", "configuration.systemRefreshInterval",
@@ -130,6 +164,9 @@ class DashboardSettingsMixin:
     def _create_cluster_settings_tab(self, parent, db):
         # Create cluster settings controls
         from Modules.core.common import REGISTRY_PATH, get_registry_value, set_registry_value
+
+        palette = self._get_active_palette()
+        muted_fg = palette.get("text_disabled_fg")
 
         main_frame = ttk.Frame(parent, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -154,13 +191,13 @@ class DashboardSettingsMixin:
                         variable=self.cluster_role_var, value="Host").pack(anchor=tk.W, pady=2)
         ttk.Label(role_frame,
                   text="This installation manages subhosts and accepts cluster join requests.",
-                  foreground="gray").pack(anchor=tk.W, padx=(20, 0), pady=(0, 10))
+                  foreground=muted_fg).pack(anchor=tk.W, padx=(20, 0), pady=(0, 10))
 
         ttk.Radiobutton(role_frame, text="Subhost (Slave)",
                         variable=self.cluster_role_var, value="Subhost").pack(anchor=tk.W, pady=2)
         ttk.Label(role_frame,
                   text="This installation connects to a master host for centralized management.",
-                  foreground="gray").pack(anchor=tk.W, padx=(20, 0), pady=(0, 5))
+                  foreground=muted_fg).pack(anchor=tk.W, padx=(20, 0), pady=(0, 5))
 
         master_frame = ttk.Frame(role_frame)
         master_frame.pack(fill=tk.X, padx=(20, 0), pady=(5, 0))
@@ -192,9 +229,6 @@ class DashboardSettingsMixin:
                 set_registry_value(REGISTRY_PATH, "HostType", new_role)
                 set_registry_value(REGISTRY_PATH, "HostAddress", new_host_address)
                 logger.info(f"Cluster settings updated – Role: {new_role}, Master: {new_host_address}")
-                messagebox.showinfo("Settings Saved",
-                    "Cluster settings saved successfully.\n"
-                    "Please restart the application for changes to take effect.")
                 return True
             except Exception as e:
                 logger.error(f"Failed to save cluster settings: {e}")
@@ -307,8 +341,9 @@ class DashboardSettingsMixin:
         ttk.Button(btn_frame, text="Approve", command=_approve).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(btn_frame, text="Reject", command=_reject).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(btn_frame, text="Refresh", command=_load).pack(side=tk.LEFT)
+        palette = self._get_active_palette()
         ttk.Label(btn_frame, text="Auto-refresh: 10s",
-                  foreground="gray").pack(side=tk.RIGHT, padx=(10, 0))
+              foreground=palette.get("text_disabled_fg")).pack(side=tk.RIGHT, padx=(10, 0))
 
         def _auto():
             try:
@@ -322,6 +357,8 @@ class DashboardSettingsMixin:
 
     def _create_update_settings_tab(self, parent, config, main_config, db):
         # Create ServerManager update controls
+        palette = self._get_active_palette()
+
         main_frame = ttk.Frame(parent, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -330,7 +367,7 @@ class DashboardSettingsMixin:
 
         ttk.Label(main_frame,
                   text="Check GitHub releases for a newer ServerManager version and launch the updater tool.",
-                  wraplength=700, foreground="gray").pack(anchor=tk.W, pady=(0, 15))
+                  wraplength=700, foreground=palette.get("text_disabled_fg")).pack(anchor=tk.W, pady=(0, 15))
 
         configured_version = str(main_config.get("version", "")).strip()
         if configured_version and configured_version.lower() not in {"0.1", "unknown", "none"}:
@@ -378,7 +415,7 @@ class DashboardSettingsMixin:
         self.sm_latest_version_var = tk.StringVar(value="Latest release: Unknown")
         self.sm_release_url_var = tk.StringVar(value="Release URL: N/A")
         ttk.Label(details_frame, textvariable=self.sm_latest_version_var).pack(anchor=tk.W, pady=(0, 4))
-        ttk.Label(details_frame, textvariable=self.sm_release_url_var, foreground="gray").pack(anchor=tk.W)
+        ttk.Label(details_frame, textvariable=self.sm_release_url_var, foreground=palette.get("text_disabled_fg")).pack(anchor=tk.W)
 
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=(5, 0))
@@ -441,12 +478,20 @@ class DashboardSettingsMixin:
     def _run_git_command(self, args):
         # Execute git command in repository and return stdout text, or None on failure
         try:
-            output = subprocess.check_output(
-                ["git"] + args,
-                cwd=self.server_manager_dir,
-                stderr=subprocess.DEVNULL,
-                text=True
-            )
+            popen_kwargs = {
+                "cwd": self.server_manager_dir,
+                "stderr": subprocess.DEVNULL,
+                "text": True,
+            }
+
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0
+                popen_kwargs["startupinfo"] = startupinfo
+                popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+            output = subprocess.check_output(["git"] + args, **popen_kwargs)
             return output.strip()
         except Exception:
             return None
@@ -654,6 +699,8 @@ class DashboardSettingsMixin:
 
     def _create_steam_settings_tab(self, parent, db):
         # Create Steam credentials settings tab
+        palette = self._get_active_palette()
+
         main_frame = ttk.Frame(parent, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -664,7 +711,7 @@ class DashboardSettingsMixin:
                   text="Configure your Steam credentials for automatic login during "
                        "server installations and updates. Credentials are stored locally "
                        "with encryption.",
-                  wraplength=700, foreground="gray").pack(anchor=tk.W, pady=(0, 20))
+                   wraplength=700, foreground=palette.get("text_disabled_fg")).pack(anchor=tk.W, pady=(0, 20))
 
         stored_creds = db.get_steam_credentials() or {}
 
@@ -673,12 +720,12 @@ class DashboardSettingsMixin:
         status_frame.pack(fill=tk.X, pady=(0, 15))
 
         if stored_creds.get('use_anonymous'):
-            status_text, status_color = "Using Anonymous Login", "blue"
+            status_text, status_color = "Using Anonymous Login", palette.get("info_fg")
         elif stored_creds.get('username'):
             status_text = f"Credentials saved for: {stored_creds['username']}"
-            status_color = "green"
+            status_color = palette.get("success_fg")
         else:
-            status_text, status_color = "No credentials configured", "gray"
+            status_text, status_color = "No credentials configured", palette.get("text_disabled_fg")
 
         self.steam_status_label = ttk.Label(status_frame, text=status_text,
                                             foreground=status_color,
@@ -687,7 +734,7 @@ class DashboardSettingsMixin:
 
         if stored_creds.get('steam_guard_secret'):
             ttk.Label(status_frame, text="Steam Guard (2FA) configured",
-                      foreground="green").pack(anchor=tk.W)
+                      foreground=palette.get("success_fg")).pack(anchor=tk.W)
 
         # Credentials frame
         config_frame = ttk.LabelFrame(main_frame, text="Configuration", padding=15)
@@ -732,7 +779,7 @@ class DashboardSettingsMixin:
         ttk.Label(guard_frame,
                   text="Enter your Steam Guard shared secret to automatically generate "
                        "2FA codes during login.",
-                  wraplength=650, foreground="gray").pack(anchor=tk.W, pady=(0, 10))
+                   wraplength=650, foreground=palette.get("text_disabled_fg")).pack(anchor=tk.W, pady=(0, 10))
 
         secret_frame = ttk.Frame(guard_frame)
         secret_frame.pack(fill=tk.X, pady=(0, 10))
@@ -783,7 +830,7 @@ class DashboardSettingsMixin:
                 use_anonymous=self.steam_anon_var.get())
             if success:
                 self.steam_status_label.config(
-                    text="Credentials saved successfully", foreground="green")
+                    text="Credentials saved successfully", foreground=palette.get("success_fg"))
                 messagebox.showinfo("Success", "Steam credentials saved successfully!")
             else:
                 messagebox.showerror("Error", "Failed to save Steam credentials.")
@@ -797,7 +844,7 @@ class DashboardSettingsMixin:
                 self.steam_guard_var.set("")
                 self.steam_anon_var.set(False)
                 self.steam_status_label.config(
-                    text="No credentials configured", foreground="gray")
+                    text="No credentials configured", foreground=palette.get("text_disabled_fg"))
 
         ttk.Button(button_frame, text="Save Steam Credentials",
                    command=save_steam_credentials).pack(side=tk.RIGHT, padx=(5, 0))
@@ -806,7 +853,7 @@ class DashboardSettingsMixin:
 
     def _create_system_settings_tab(self, parent, config, db):
         # Create system settings controls
-        canvas = tk.Canvas(parent)
+        canvas = self._create_themed_canvas(parent)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
 
@@ -819,6 +866,7 @@ class DashboardSettingsMixin:
         scrollbar.pack(side="right", fill="y")
 
         settings = [
+            ("Theme", "theme", config.get("theme", "light"), "theme_choice"),
             ("Web Port", "web_port", config.get("web_port", 8080), "integer"),
             ("Enable Auto Updates", "enable_auto_updates",
              config.get("enable_auto_updates", True), "boolean"),
@@ -834,11 +882,77 @@ class DashboardSettingsMixin:
         ]
         self._create_settings_controls(scrollable_frame, settings, "main")
 
+    def _create_hardware_settings_tab(self, parent, config, db):
+        # Create hardware integrations settings controls
+        canvas = self._create_themed_canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind("<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        ttk.Label(
+            scrollable_frame,
+            text="Temperature providers and BMC integration settings",
+            font=("Segoe UI", 11, "bold")
+        ).pack(anchor=tk.W, padx=10, pady=(8, 6))
+
+        settings = [
+            ("Temperature Mode", "temperatureMode", config.get("temperatureMode", "auto"), "temperature_mode_choice"),
+            ("Temperature Poll Interval (s)", "temperaturePollInterval", config.get("temperaturePollInterval", 10), "integer"),
+            ("iLO Host", "iloHost", config.get("iloHost", ""), "string"),
+            ("iLO Username", "iloUsername", config.get("iloUsername", ""), "string"),
+            ("iLO Password", "iloPassword", config.get("iloPassword", ""), "secure_string"),
+            ("iLO Verify TLS", "iloVerifyTLS", config.get("iloVerifyTLS", False), "boolean"),
+            ("iLO Timeout (s)", "iloTimeout", config.get("iloTimeout", 4), "integer"),
+            ("iDRAC Host", "idracHost", config.get("idracHost", ""), "string"),
+            ("iDRAC Username", "idracUsername", config.get("idracUsername", ""), "string"),
+            ("iDRAC Password", "idracPassword", config.get("idracPassword", ""), "secure_string"),
+            ("iDRAC Verify TLS", "idracVerifyTLS", config.get("idracVerifyTLS", False), "boolean"),
+            ("iDRAC Timeout (s)", "idracTimeout", config.get("idracTimeout", 4), "integer"),
+        ]
+        self._create_settings_controls(scrollable_frame, settings, "hardware")
+
+        test_frame = ttk.LabelFrame(scrollable_frame, text="Connection Tests", padding=10)
+        test_frame.pack(fill=tk.X, padx=10, pady=(10, 8))
+
+        self.hardware_test_status_var = tk.StringVar(value="Use the buttons below to test BMC access.")
+        palette = self._get_active_palette()
+        self.hardware_test_status_label = ttk.Label(
+            test_frame,
+            textvariable=self.hardware_test_status_var,
+            foreground=palette.get("text_disabled_fg")
+        )
+        self.hardware_test_status_label.pack(anchor=tk.W, pady=(0, 8))
+
+        button_row = ttk.Frame(test_frame)
+        button_row.pack(fill=tk.X)
+
+        self.ilo_test_button = ttk.Button(button_row, text="Test iLO", command=lambda: self._test_hardware_connection("ilo"))
+        self.ilo_test_button.pack(side=tk.LEFT, padx=(0, 6))
+        self.idrac_test_button = ttk.Button(button_row, text="Test iDRAC", command=lambda: self._test_hardware_connection("idrac"))
+        self.idrac_test_button.pack(side=tk.LEFT)
+
+        # Live mode switching for provider-specific settings.
+        hardware_vars = getattr(self, 'settings_vars', {}).get("hardware", {})
+        mode_info = hardware_vars.get("temperatureMode")
+        if mode_info:
+            mode_var, _ = mode_info
+            mode_var.trace_add("write", lambda *_: self._update_hardware_field_states())
+        self._update_hardware_field_states()
+
     # Shared helpers
     def _create_settings_controls(self, parent, settings, config_type):
         # Create form controls for a list of settings
         self.settings_vars = getattr(self, 'settings_vars', {})
         self.settings_vars[config_type] = {}
+        self.settings_widgets = getattr(self, 'settings_widgets', {})
+        self.settings_widgets[config_type] = {}
 
         for label_text, key, default_value, value_type in settings:
             frame = ttk.Frame(parent)
@@ -848,15 +962,301 @@ class DashboardSettingsMixin:
 
             if value_type == "boolean":
                 var = tk.BooleanVar(value=default_value)
-                ttk.Checkbutton(frame, variable=var).pack(side=tk.LEFT)
+                control = ttk.Checkbutton(frame, variable=var)
+                control.pack(side=tk.LEFT)
             elif value_type == "integer":
                 var = tk.StringVar(value=str(default_value))
-                ttk.Entry(frame, textvariable=var, width=20).pack(side=tk.LEFT)
+                control = ttk.Entry(frame, textvariable=var, width=20)
+                control.pack(side=tk.LEFT)
+            elif value_type == "theme_choice":
+                normalised = str(default_value).strip().lower()
+                available_themes = list_themes()
+                if normalised not in available_themes:
+                    normalised = "light"
+                var = tk.StringVar(value=normalised)
+                control = ttk.Combobox(
+                    frame,
+                    textvariable=var,
+                    state="readonly",
+                    values=available_themes,
+                    width=18
+                )
+                control.pack(side=tk.LEFT)
+            elif value_type == "temperature_mode_choice":
+                normalised = str(default_value).strip().lower()
+                available_modes = ["auto", "local", "ilo", "idrac"]
+                if normalised not in available_modes:
+                    normalised = "auto"
+                var = tk.StringVar(value=normalised)
+                control = ttk.Combobox(
+                    frame,
+                    textvariable=var,
+                    state="readonly",
+                    values=available_modes,
+                    width=18
+                )
+                control.pack(side=tk.LEFT)
+            elif value_type == "secure_string":
+                var = tk.StringVar(value=str(default_value or ""))
+                control = ttk.Entry(frame, textvariable=var, width=30, show="*")
+                control.pack(side=tk.LEFT, fill=tk.X, expand=True)
             else:
                 var = tk.StringVar(value=str(default_value))
-                ttk.Entry(frame, textvariable=var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
+                control = ttk.Entry(frame, textvariable=var, width=30)
+                control.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
             self.settings_vars[config_type][key] = (var, value_type)
+            self.settings_widgets[config_type][key] = control
+
+    def _update_hardware_field_states(self):
+        # Dynamically toggle iLO/iDRAC controls based on selected temperature mode.
+        hardware_vars = getattr(self, 'settings_vars', {}).get("hardware", {})
+        hardware_widgets = getattr(self, 'settings_widgets', {}).get("hardware", {})
+
+        mode_info = hardware_vars.get("temperatureMode")
+        if not mode_info:
+            return
+
+        mode_var, _ = mode_info
+        mode = str(mode_var.get() or "auto").strip().lower()
+
+        ilo_keys = ["iloHost", "iloUsername", "iloPassword", "iloVerifyTLS", "iloTimeout"]
+        idrac_keys = ["idracHost", "idracUsername", "idracPassword", "idracVerifyTLS", "idracTimeout"]
+
+        if mode in {"auto"}:
+            ilo_state = "normal"
+            idrac_state = "normal"
+            status_text = "Auto mode: local sensors first, then iLO/iDRAC if configured."
+            status_level = "muted"
+        elif mode in {"local", "windows"}:
+            ilo_state = "disabled"
+            idrac_state = "disabled"
+            status_text = "Local mode: remote iLO/iDRAC settings are disabled."
+            status_level = "muted"
+        elif mode == "ilo":
+            ilo_state = "normal"
+            idrac_state = "disabled"
+            status_text = "iLO mode: only iLO settings are active."
+            status_level = "muted"
+        elif mode == "idrac":
+            ilo_state = "disabled"
+            idrac_state = "normal"
+            status_text = "iDRAC mode: only iDRAC settings are active."
+            status_level = "muted"
+        else:
+            ilo_state = "normal"
+            idrac_state = "normal"
+            status_text = "Unknown mode: all remote settings enabled."
+            status_level = "warning"
+
+        for key in ilo_keys:
+            widget = hardware_widgets.get(key)
+            if widget is not None:
+                widget.configure(state=ilo_state)
+
+        for key in idrac_keys:
+            widget = hardware_widgets.get(key)
+            if widget is not None:
+                widget.configure(state=idrac_state)
+
+        if hasattr(self, 'ilo_test_button') and self.ilo_test_button:
+            self.ilo_test_button.configure(state=("normal" if ilo_state == "normal" else "disabled"))
+        if hasattr(self, 'idrac_test_button') and self.idrac_test_button:
+            self.idrac_test_button.configure(state=("normal" if idrac_state == "normal" else "disabled"))
+
+        self._set_hardware_status(status_text, status_level)
+
+        last_mode = getattr(self, '_hardware_last_mode', None)
+        if mode != last_mode:
+            self._hardware_last_mode = mode
+            if mode == "auto":
+                self._auto_detect_hardware_provider()
+            elif mode == "ilo":
+                self._auto_validate_hardware_connection("ilo")
+            elif mode == "idrac":
+                self._auto_validate_hardware_connection("idrac")
+
+    def _set_hardware_status(self, message: str, level: str = "muted"):
+        palette = self._get_active_palette()
+        color_map = {
+            "muted": palette.get("text_disabled_fg"),
+            "success": palette.get("success_fg"),
+            "warning": palette.get("warning_fg"),
+            "error": palette.get("error_fg"),
+            "info": palette.get("text_fg"),
+        }
+
+        if hasattr(self, 'hardware_test_status_var'):
+            self.hardware_test_status_var.set(message)
+        if hasattr(self, 'hardware_test_status_label') and self.hardware_test_status_label:
+            self.hardware_test_status_label.configure(foreground=color_map.get(level, palette.get("text_disabled_fg")))
+
+    def _auto_detect_hardware_provider(self):
+        # In auto mode, infer vendor and quickly probe the expected BMC endpoint.
+        hardware_vars = getattr(self, 'settings_vars', {}).get("hardware", {})
+
+        def _get_field(key, default=""):
+            info = hardware_vars.get(key)
+            if not info:
+                return default
+            var, _ = info
+            return var.get()
+
+        def _detect_vendor() -> str:
+            try:
+                output = subprocess.check_output(
+                    ["wmic", "computersystem", "get", "manufacturer"],
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                )
+                lines = [line.strip() for line in output.splitlines() if line.strip() and "manufacturer" not in line.lower()]
+                manufacturer = lines[0].lower() if lines else ""
+            except Exception:
+                manufacturer = ""
+
+            if any(token in manufacturer for token in ("hewlett", "hpe", "hp")):
+                return "ilo"
+            if "dell" in manufacturer:
+                return "idrac"
+            return ""
+
+        def _probe_redfish(host: str, verify_tls: bool) -> bool:
+            host = str(host or "").strip()
+            if not host:
+                return False
+
+            if host.startswith("https://"):
+                base = host
+            elif host.startswith("http://"):
+                base = "https://" + host.split("://", 1)[1]
+            else:
+                base = f"https://{host}"
+
+            try:
+                if verify_tls:
+                    context = ssl.create_default_context()
+                else:
+                    context = ssl._create_unverified_context()
+
+                request = urllib.request.Request(
+                    url=f"{base.rstrip('/')}/redfish/v1",
+                    method="GET",
+                    headers={"User-Agent": "ServerManager/1.0"},
+                )
+                with urllib.request.urlopen(request, timeout=2.0, context=context):
+                    return True
+            except urllib.error.HTTPError as e:
+                return e.code in {200, 401, 403, 404}
+            except Exception:
+                return False
+
+        self._set_hardware_status("Auto mode: checking server vendor and BMC endpoint...", "muted")
+
+        def _worker():
+            vendor_target = _detect_vendor()
+            if vendor_target == "ilo":
+                host = _get_field("iloHost", "")
+                verify_tls = bool(_get_field("iloVerifyTLS", False))
+                found = _probe_redfish(host, verify_tls)
+                if found:
+                    message = "Auto mode: HP detected, iLO endpoint found."
+                    level = "success"
+                else:
+                    message = "iLO not found, select type manually"
+                    level = "error"
+            elif vendor_target == "idrac":
+                host = _get_field("idracHost", "")
+                verify_tls = bool(_get_field("idracVerifyTLS", False))
+                found = _probe_redfish(host, verify_tls)
+                if found:
+                    message = "Auto mode: Dell detected, iDRAC endpoint found."
+                    level = "success"
+                else:
+                    message = "iDRAC not found, select type manually"
+                    level = "error"
+            else:
+                message = "Auto mode: vendor not HP/Dell; using local sensors unless remote type is selected."
+                level = "muted"
+
+            self.root.after(0, lambda: self._set_hardware_status(message, level))
+
+        threading.Thread(target=_worker, daemon=True, name="HardwareAutoDetect").start()
+
+    def _auto_validate_hardware_connection(self, provider_name: str):
+        # Trigger a lightweight check when switching into a remote hardware mode.
+        self._test_hardware_connection(provider_name, interactive=False, popup_on_failure=True)
+
+    def _test_hardware_connection(self, provider_name: str, interactive: bool = True, popup_on_failure: bool = True):
+        # Validate BMC connectivity for iLO/iDRAC without blocking the UI.
+        try:
+            from Modules.services.temperatures import IloTemperatureProvider, IdracTemperatureProvider
+        except Exception as e:
+            if interactive or popup_on_failure:
+                messagebox.showerror("Import Error", f"Could not load hardware providers: {e}")
+            return
+
+        settings = getattr(self, 'settings_vars', {}).get("hardware", {})
+        if not settings:
+            if interactive or popup_on_failure:
+                messagebox.showwarning("Unavailable", "Hardware settings are not available in this dialog.")
+            return
+
+        def _field(key, default=""):
+            info = settings.get(key)
+            if not info:
+                return default
+            var, _ = info
+            return var.get()
+
+        if provider_name == "ilo":
+            host = str(_field("iloHost", "")).strip()
+            username = str(_field("iloUsername", "")).strip()
+            password = str(_field("iloPassword", ""))
+            verify_tls = bool(_field("iloVerifyTLS", False))
+            timeout = float(_field("iloTimeout", 4) or 4)
+            provider = IloTemperatureProvider(host=host, username=username, password=password, verify_tls=verify_tls, timeout_seconds=timeout)
+            label = "iLO"
+        else:
+            host = str(_field("idracHost", "")).strip()
+            username = str(_field("idracUsername", "")).strip()
+            password = str(_field("idracPassword", ""))
+            verify_tls = bool(_field("idracVerifyTLS", False))
+            timeout = float(_field("idracTimeout", 4) or 4)
+            provider = IdracTemperatureProvider(host=host, username=username, password=password, verify_tls=verify_tls, timeout_seconds=timeout)
+            label = "iDRAC"
+
+        if not host or not username or not password:
+            if interactive:
+                messagebox.showwarning("Missing Fields", f"Please fill {label} host, username, and password before testing.")
+            elif hasattr(self, 'hardware_test_status_var'):
+                self._set_hardware_status(f"{label} auto-check skipped: missing host/username/password.", "warning")
+            return
+
+        self._set_hardware_status(f"Testing {label} connection...", "muted")
+
+        def _worker():
+            try:
+                output = provider.collect()
+                ok = bool(output)
+                if ok:
+                    first_line = (output.splitlines()[0] if output else "Connected")
+                    message = f"{label} test succeeded: {first_line}"
+                else:
+                    message = f"{label} test failed: no thermal data returned."
+            except Exception as e:
+                ok = False
+                message = f"{label} test failed: {e}"
+
+            def _apply():
+                self._set_hardware_status(message, "success" if ok else "error")
+                if ok and interactive:
+                    messagebox.showinfo("Hardware Test", message)
+                elif not ok and (interactive or popup_on_failure):
+                    messagebox.showwarning("Hardware Test", message)
+
+            self.root.after(0, _apply)
+
+        threading.Thread(target=_worker, daemon=True, name=f"HardwareTest-{provider_name}").start()
 
     def _save_settings(self, window, db):
         # Save all settings to database
@@ -885,6 +1285,7 @@ class DashboardSettingsMixin:
                     return
 
             if "main" in getattr(self, 'settings_vars', {}):
+                selected_theme = None
                 for key, (var, value_type) in self.settings_vars["main"].items():
                     if value_type == "boolean":
                         value = var.get()
@@ -893,12 +1294,62 @@ class DashboardSettingsMixin:
                             value = int(var.get())
                         except ValueError:
                             value = 0
+                    elif value_type == "theme_choice":
+                        value = str(var.get()).strip().lower()
+                        if value not in list_themes():
+                            value = "light"
+                        if key == "theme":
+                            selected_theme = value
+                    elif value_type == "temperature_mode_choice":
+                        value = str(var.get()).strip().lower()
+                        if value not in {"auto", "local", "ilo", "idrac"}:
+                            value = "auto"
+                    elif value_type == "secure_string":
+                        value = str(var.get())
                     else:
                         value = var.get()
-                    db.set_main_config(key, value, value_type, "settings")
+                    if value_type in {"theme_choice", "temperature_mode_choice"}:
+                        db_type = "string"
+                    elif value_type == "secure_string":
+                        db_type = "secure"
+                    else:
+                        db_type = value_type
+                    db.set_main_config(key, value, db_type, "settings")
 
-            messagebox.showinfo("Settings Saved",
-                                "Settings have been saved successfully!")
+                if selected_theme and hasattr(self, "apply_theme") and callable(getattr(self, "apply_theme")):
+                    try:
+                        persist_theme_preference(selected_theme, write_registry=True)
+                        self.apply_theme(selected_theme)
+                    except Exception as theme_error:
+                        logger.warning(f"Failed to apply theme after save: {theme_error}")
+
+            if "hardware" in getattr(self, 'settings_vars', {}):
+                for key, (var, value_type) in self.settings_vars["hardware"].items():
+                    if value_type == "boolean":
+                        value = var.get()
+                    elif value_type == "integer":
+                        try:
+                            value = int(var.get())
+                        except ValueError:
+                            value = 0
+                    elif value_type == "temperature_mode_choice":
+                        value = str(var.get()).strip().lower()
+                        if value not in {"auto", "local", "ilo", "idrac"}:
+                            value = "auto"
+                    elif value_type == "secure_string":
+                        value = str(var.get())
+                    else:
+                        value = var.get()
+
+                    if value_type == "temperature_mode_choice":
+                        db_type = "string"
+                    elif value_type == "secure_string":
+                        db_type = "secure"
+                    else:
+                        db_type = value_type
+
+                    db.set_main_config(key, value, db_type, "hardware")
+
             window.destroy()
 
         except Exception as e:

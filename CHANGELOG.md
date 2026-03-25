@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4]
+
+  UI and theme update:
+  - Theme centralisation across Dashboard UI surfaces to reduce hardcoded colour usage and improve consistency between desktop and web views.
+  - Improved dropdown/select theming behaviour so popup/list styling follows active theme settings more reliably.
+  - Added a dedicated Hardware settings panel in dashboard settings and moved temperature/BMC controls out of generic system settings.
+  - Added dynamic Hardware panel behaviour: provider-specific fields and test controls now react to selected mode (auto/local/iLO/iDRAC).
+  - Added auto-mode hardware checks with vendor-aware messaging for HP iLO / Dell iDRAC detection paths and clearer status guidance.
+  - Improved Hardware status feedback so operator guidance is clearer during mode switches and connectivity tests.
+  - Refined Admin Dashboard layout to align better with main dashboard UI design principles and overall spacing patterns.
+  - Simplified Admin Dashboard main view by removing the extra overview pane and giving primary list/filter content more usable space.
+  - Added/maintained top menu access (File/Help) in Admin Dashboard with theme-aware behaviour and direct settings access.
+  - Kept admin theme changes connected to the same shared theme preference path used by the main dashboard to avoid duplicate theme logic.
+  - Standardised Admin Settings dialog action button sizing (Save/Cancel) so controls follow dashboard sizing conventions.
+  - Applied stability fixes to theme/menu integration so admin UI startup remains reliable after menu/theming updates.
+
 ## [1.3]
 
   Modules Consolidation (Structure Refactor):

@@ -13,6 +13,8 @@ from Modules.core.common import setup_module_path
 setup_module_path()
 
 from Modules.core.server_logging import get_dashboard_logger
+from Modules.core.color_palettes import get_palette
+from Modules.core.theme import apply_theme as apply_shared_theme
 from Host.dashboard_functions import (
     centre_window, load_appid_scanner_list,
     make_canvas_width_updater, populate_server_tree,
@@ -43,13 +45,30 @@ class ServerConfigMixin:
         def get_current_subhost(self) -> Optional[str]: ...
         def update_server_list(self, force_refresh: bool = False) -> None: ...
 
+    def _get_active_palette(self):
+        theme_name = getattr(self, "current_theme", "light")
+        return get_palette(theme_name)
+
     def _create_scrollable_dialog(self, parent, title, width_ratio=0.9, height_ratio=0.8):
         # Create a scrollable dialog with standard setup
         dialog = tk.Toplevel(parent)
         dialog.title(title)
+
+        theme_name = getattr(self, "current_theme", "light")
+        palette = get_palette(theme_name)
+        try:
+            dialog.configure(bg=palette.get("bg"))
+        except Exception:
+            pass
+        try:
+            apply_shared_theme(dialog, theme_name, getattr(self, "dpi_scale", 1.0))
+        except Exception:
+            pass
+
         dialog_width = min(900, int(parent.winfo_screenwidth() * width_ratio))
         dialog_height = min(850, int(parent.winfo_screenheight() * height_ratio))
         dialog.geometry(f"{dialog_width}x{dialog_height}")
+        dialog.minsize(min(760, dialog_width), min(620, dialog_height))
 
         main_frame = ttk.Frame(dialog, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -98,11 +117,15 @@ class ServerConfigMixin:
 
     def _browse_appid(self, appid_var, parent_dialog):
         # Browse and select Steam dedicated server AppID
+        palette = self._get_active_palette()
+        muted_fg = palette.get("text_disabled_fg")
+
         appid_dialog = tk.Toplevel(parent_dialog)
         appid_dialog.title("Select Dedicated Server")
         appid_dialog.transient(parent_dialog)
         appid_dialog.grab_set()
-        appid_dialog.geometry("600x500")
+        appid_dialog.geometry("680x560")
+        appid_dialog.minsize(660, 540)
 
         search_frame = ttk.Frame(appid_dialog, padding=10)
         search_frame.pack(fill=tk.X)
@@ -142,7 +165,7 @@ class ServerConfigMixin:
                         dt = datetime.datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
                         formatted_date = dt.strftime('%Y-%m-%d %H:%M UTC')
                         ttk.Label(search_frame, text=f"Data last updated: {formatted_date}",
-                                foreground="gray", font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
+                            foreground=muted_fg, font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(10, 0))
                     except (ValueError, TypeError):
                         pass
 
@@ -156,7 +179,7 @@ class ServerConfigMixin:
         list_frame.pack(fill=tk.BOTH, expand=True)
 
         columns = ("name", "appid", "developer", "type")
-        server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
+        server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=12)
         server_tree.heading("name", text="Server Name")
         server_tree.heading("appid", text="App ID")
         server_tree.heading("developer", text="Developer")
@@ -191,9 +214,19 @@ class ServerConfigMixin:
 
                     desc = selected_server["description"][:200] + ("..." if len(selected_server["description"]) > 200 else "")
 
-                    label = tk.Label(tooltip, text=f"{selected_server['name']}\n\n{desc}",
-                                   background="lightyellow", relief="solid", borderwidth=1,
-                                   wraplength=300, justify=tk.LEFT, font=("Segoe UI", 9))
+                    label = tk.Label(
+                        tooltip,
+                        text=f"{selected_server['name']}\n\n{desc}",
+                        background=palette.get("panel_bg"),
+                        foreground=palette.get("text_fg"),
+                        highlightbackground=palette.get("border"),
+                        highlightcolor=palette.get("border"),
+                        relief="solid",
+                        borderwidth=1,
+                        wraplength=300,
+                        justify=tk.LEFT,
+                        font=("Segoe UI", 9),
+                    )
                     label.pack()
 
                     tooltip.after(3000, tooltip.destroy)
@@ -219,10 +252,34 @@ class ServerConfigMixin:
         ttk.Button(button_frame, text="Cancel", command=cancel_selection, width=12).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(button_frame, text="Select Server", command=select_server, width=15).pack(side=tk.RIGHT)
 
-        centre_window(appid_dialog, 600, 500, parent_dialog)
+        # Ensure the action buttons are never clipped on high-DPI displays.
+        try:
+            scale = float(getattr(self, "dpi_scale", 1.0) or 1.0)
+        except Exception:
+            scale = 1.0
+        scale = max(1.0, min(scale, 3.0))
+
+        appid_dialog.update_idletasks()
+        required_w = appid_dialog.winfo_reqwidth() + 24
+        required_h = appid_dialog.winfo_reqheight() + 24
+
+        target_w = max(int(680 * scale), required_w)
+        target_h = max(int(560 * scale), required_h)
+
+        max_w = int(appid_dialog.winfo_screenwidth() * 0.95)
+        max_h = int(appid_dialog.winfo_screenheight() * 0.92)
+        target_w = min(target_w, max_w)
+        target_h = min(target_h, max_h)
+
+        appid_dialog.geometry(f"{target_w}x{target_h}")
+        appid_dialog.minsize(min(target_w, max_w), min(target_h, max_h))
+        centre_window(appid_dialog, target_w, target_h, parent_dialog)
 
     def _create_startup_configuration_section(self, parent, server_config, install_dir):
         # Create the startup configuration section and return all variables
+        palette = self._get_active_palette()
+        muted_fg = palette.get("text_disabled_fg")
+
         startup_frame = ttk.LabelFrame(parent, text="Startup Configuration", padding=10)
         startup_frame.pack(fill=tk.X, pady=(0, 15))
 
@@ -285,13 +342,13 @@ class ServerConfigMixin:
         config_arg_var = tk.StringVar(value=server_config.get('ConfigArgument', '--config'))
         config_arg_entry = ttk.Entry(config_frame, textvariable=config_arg_var, width=15)
         config_arg_entry.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W)
-        ttk.Label(config_frame, text="(e.g., --config, -c, +exec)", foreground="gray").grid(row=1, column=2, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(config_frame, text="(e.g., --config, -c, +exec)", foreground=muted_fg).grid(row=1, column=2, padx=5, pady=2, sticky=tk.W)
 
         ttk.Label(config_frame, text="Additional Args:").grid(row=2, column=0, padx=5, pady=2, sticky=tk.W)
         additional_args_var = tk.StringVar(value=server_config.get('AdditionalArgs', ''))
         additional_args_entry = ttk.Entry(config_frame, textvariable=additional_args_var, width=25)
         additional_args_entry.grid(row=2, column=1, padx=5, pady=2, sticky=tk.W)
-        ttk.Label(config_frame, text="(optional)", foreground="gray").grid(row=2, column=2, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(config_frame, text="(optional)", foreground=muted_fg).grid(row=2, column=2, padx=5, pady=2, sticky=tk.W)
 
         startup_frame.grid_columnconfigure(0, weight=0, minsize=120)
         startup_frame.grid_columnconfigure(1, weight=1, minsize=200)
@@ -328,7 +385,24 @@ class ServerConfigMixin:
         preview_frame = ttk.LabelFrame(parent, text="Command Preview", padding=10)
         preview_frame.pack(fill=tk.X, pady=(0, 15))
 
-        preview_text = tk.Text(preview_frame, height=3, wrap=tk.WORD, background="lightgray", font=("Consolas", 9))
+        theme_name = getattr(self, "current_theme", "light")
+        palette = get_palette(theme_name)
+
+        preview_text = tk.Text(
+            preview_frame,
+            height=3,
+            wrap=tk.WORD,
+            bg=palette.get("text_bg"),
+            fg=palette.get("text_fg"),
+            insertbackground=palette.get("text_fg"),
+            selectbackground=palette.get("text_selection_bg"),
+            selectforeground=palette.get("text_selection_fg"),
+            highlightbackground=palette.get("border"),
+            highlightcolor=palette.get("border"),
+            relief=tk.SOLID,
+            borderwidth=1,
+            font=("Consolas", 9),
+        )
         preview_text.pack(fill=tk.X, padx=5, pady=5)
 
         def update_preview():
@@ -381,43 +455,46 @@ class ServerConfigMixin:
 
     def _create_scheduled_commands_section(self, parent, server_config):
         # Create the scheduled commands section and return all variables
+        palette = self._get_active_palette()
+        muted_fg = palette.get("text_disabled_fg")
+
         commands_frame = ttk.LabelFrame(parent, text="\u23f0 Scheduled Commands", padding=10)
         commands_frame.pack(fill=tk.X, pady=(0, 15))
 
         save_cmd_var = tk.StringVar(value=server_config.get('SaveCommand', ''))
         self._create_labeled_entry(commands_frame, "Save Command", save_cmd_var, 0, width=30)
         ttk.Label(commands_frame, text="Command to save world/data before shutdown (e.g., 'save-all', '/save')",
-                  foreground="gray", font=("Segoe UI", 8)).grid(row=0, column=2, padx=5, pady=5, sticky=tk.W)
+                  foreground=muted_fg, font=("Segoe UI", 8)).grid(row=0, column=2, padx=5, pady=5, sticky=tk.W)
 
         start_cmd_var = tk.StringVar(value=server_config.get('StartCommand', ''))
         self._create_labeled_entry(commands_frame, "Start Command", start_cmd_var, 1, width=30)
         ttk.Label(commands_frame, text="Command to run after server starts (e.g., 'say Server is ready!')",
-                  foreground="gray", font=("Segoe UI", 8)).grid(row=1, column=2, padx=5, pady=5, sticky=tk.W)
+                  foreground=muted_fg, font=("Segoe UI", 8)).grid(row=1, column=2, padx=5, pady=5, sticky=tk.W)
 
         warning_cmd_var = tk.StringVar(value=server_config.get('WarningCommand', ''))
         self._create_labeled_entry(commands_frame, "Warning Command", warning_cmd_var, 2, width=30)
         ttk.Label(commands_frame, text="Shutdown/restart warning (use {message} placeholder, e.g., 'broadcast {message}')",
-                  foreground="gray", font=("Segoe UI", 8)).grid(row=2, column=2, padx=5, pady=5, sticky=tk.W)
+                  foreground=muted_fg, font=("Segoe UI", 8)).grid(row=2, column=2, padx=5, pady=5, sticky=tk.W)
 
         warning_intervals_var = tk.StringVar(value=server_config.get('WarningIntervals', '15,10,5,1'))
         self._create_labeled_entry(commands_frame, "Warning Intervals", warning_intervals_var, 3, width=30)
         ttk.Label(commands_frame, text="Minutes before shutdown to warn (comma-separated, e.g., '15,10,5,1')",
-                  foreground="gray", font=("Segoe UI", 8)).grid(row=3, column=2, padx=5, pady=5, sticky=tk.W)
+                  foreground=muted_fg, font=("Segoe UI", 8)).grid(row=3, column=2, padx=5, pady=5, sticky=tk.W)
 
         motd_cmd_var = tk.StringVar(value=server_config.get('MotdCommand', ''))
         self._create_labeled_entry(commands_frame, "MOTD Command", motd_cmd_var, 4, width=30)
         ttk.Label(commands_frame, text="Command to broadcast messages (e.g., 'say {message}', 'broadcast {message}')",
-                  foreground="gray", font=("Segoe UI", 8)).grid(row=4, column=2, padx=5, pady=5, sticky=tk.W)
+                  foreground=muted_fg, font=("Segoe UI", 8)).grid(row=4, column=2, padx=5, pady=5, sticky=tk.W)
 
         motd_msg_var = tk.StringVar(value=server_config.get('MotdMessage', ''))
         self._create_labeled_entry(commands_frame, "MOTD Message", motd_msg_var, 5, width=30)
         ttk.Label(commands_frame, text="Default message for MOTD broadcasts",
-                  foreground="gray", font=("Segoe UI", 8)).grid(row=5, column=2, padx=5, pady=5, sticky=tk.W)
+                  foreground=muted_fg, font=("Segoe UI", 8)).grid(row=5, column=2, padx=5, pady=5, sticky=tk.W)
 
         motd_interval_var = tk.StringVar(value=str(server_config.get('MotdInterval', 0)))
         self._create_labeled_entry(commands_frame, "MOTD Interval", motd_interval_var, 6, width=30)
         ttk.Label(commands_frame, text="How often to broadcast MOTD (minutes, 0 = disabled)",
-                  foreground="gray", font=("Segoe UI", 8)).grid(row=6, column=2, padx=5, pady=5, sticky=tk.W)
+                  foreground=muted_fg, font=("Segoe UI", 8)).grid(row=6, column=2, padx=5, pady=5, sticky=tk.W)
 
         commands_frame.grid_columnconfigure(0, weight=0, minsize=140)
         commands_frame.grid_columnconfigure(1, weight=1, minsize=200)
@@ -427,6 +504,9 @@ class ServerConfigMixin:
 
     def configure_server(self):
         # Configure server settings including name, type, AppID, and startup configuration
+        palette = self._get_active_palette()
+        muted_fg = palette.get("text_disabled_fg")
+
         current_list = self.get_current_server_list()
         if not current_list:
             messagebox.showinfo("No Selection", "No server list available.")
@@ -475,7 +555,7 @@ class ServerConfigMixin:
         appid_browse_btn = ttk.Button(identity_frame, text="Browse", command=browse_appid, width=10)
         appid_browse_btn.grid(row=2, column=2, padx=5, pady=5)
 
-        appid_help = ttk.Label(identity_frame, text="(Steam servers only)", foreground="gray", font=("Segoe UI", 8))
+        appid_help = ttk.Label(identity_frame, text="(Steam servers only)", foreground=muted_fg, font=("Segoe UI", 8))
         appid_help.grid(row=2, column=3, padx=5, pady=5, sticky=tk.W)
 
         # Install directory (editable)
@@ -674,7 +754,7 @@ class ServerConfigMixin:
 
             warning_label = ttk.Label(warning_frame,
                                     text="\u26a0 Warning: Changing server name or type will update configuration files. Ensure server is stopped.",
-                                    foreground="orange", font=("Segoe UI", 9, "bold"), wraplength=650)
+                                    foreground=palette.get("warning_fg"), font=("Segoe UI", 9, "bold"), wraplength=650)
             warning_label.pack()
 
         # Button frame at bottom

@@ -10,6 +10,7 @@ import logging
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from Modules.core.common import setup_module_path, setup_module_logging, load_automation_settings, save_automation_settings
+from Modules.core.theme import get_theme_preference, apply_theme
 setup_module_path()
 from Modules.Database.server_configs_database import ServerConfigManager
 from Modules.server.server_manager import ServerManager
@@ -35,13 +36,19 @@ class AutomationSettingsWindow:
         # Create the main automation settings window
         self.window = tk.Toplevel(self.parent) if self.parent else tk.Tk()
         self.window.title("Server Automation Settings")
-        self.window.geometry("800x700")
-        self.window.minsize(820, 680)
+        self.window.geometry("900x730")
+        self.window.minsize(860, 700)
         self.window.resizable(True, True)
 
+        try:
+            apply_theme(self.window, get_theme_preference("light"))
+        except Exception as e:
+            logger.debug(f"Could not apply saved theme to automation window: {e}")
+
         # Create main frame
-        main_frame = ttk.Frame(self.window, padding="10")
+        main_frame = ttk.Frame(self.window, padding="12")
         main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame.columnconfigure(0, weight=1)
 
         # Create scrollable frame for settings
         canvas = tk.Canvas(main_frame, highlightthickness=0)
@@ -53,8 +60,16 @@ class AutomationSettingsWindow:
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
 
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Keep the scrollable content width in sync with canvas width to avoid dead space.
+        def _on_canvas_configure(event):
+            canvas.itemconfigure(canvas_window, width=event.width)
+
+        canvas.bind("<Configure>", _on_canvas_configure)
+
+        scrollable_frame.columnconfigure(0, weight=1)
 
         # Add mouse wheel scrolling
         def _on_mousewheel(event):
@@ -76,16 +91,16 @@ class AutomationSettingsWindow:
         # Title
         title_label = ttk.Label(scrollable_frame, text="Server Automation Settings",
                                font=("Segoe UI", 14, "bold"))
-        title_label.pack(pady=(0, 10))
+        title_label.pack(fill=tk.X, pady=(0, 12))
 
         # Server selection
-        server_frame = ttk.LabelFrame(scrollable_frame, text="Select Server", padding="5")
-        server_frame.pack(fill=tk.X, pady=(0, 10))
+        server_frame = ttk.LabelFrame(scrollable_frame, text="Select Server", padding="10")
+        server_frame.pack(fill=tk.X, pady=(0, 12))
 
         ttk.Label(server_frame, text="Server:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
         self.server_var = tk.StringVar()
         self.server_combo = ttk.Combobox(server_frame, textvariable=self.server_var,
-                                        state="readonly", width=40)
+                                        state="readonly")
         self.server_combo.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
         self.server_combo.bind("<<ComboboxSelected>>", self.on_server_selected)
 
@@ -95,20 +110,21 @@ class AutomationSettingsWindow:
 
         # Settings frame
         settings_frame = ttk.LabelFrame(scrollable_frame, text="Automation Settings", padding="10")
-        settings_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        settings_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 12))
+        settings_frame.columnconfigure(0, weight=1)
 
         # MOTD Settings
-        motd_frame = ttk.LabelFrame(settings_frame, text="MOTD (Message of the Day)", padding="5")
+        motd_frame = ttk.LabelFrame(settings_frame, text="MOTD (Message of the Day)", padding="8")
         motd_frame.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Label(motd_frame, text="MOTD Command:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
         self.motd_cmd_var = tk.StringVar()
-        motd_cmd_entry = ttk.Entry(motd_frame, textvariable=self.motd_cmd_var, width=50)
+        motd_cmd_entry = ttk.Entry(motd_frame, textvariable=self.motd_cmd_var)
         motd_cmd_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
 
         ttk.Label(motd_frame, text="MOTD Message:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
         self.motd_msg_var = tk.StringVar()
-        motd_msg_entry = ttk.Entry(motd_frame, textvariable=self.motd_msg_var, width=50)
+        motd_msg_entry = ttk.Entry(motd_frame, textvariable=self.motd_msg_var)
         motd_msg_entry.grid(row=1, column=1, padx=5, pady=5, sticky=tk.EW)
 
         ttk.Label(motd_frame, text="Broadcast Interval (minutes):").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
@@ -120,17 +136,17 @@ class AutomationSettingsWindow:
         motd_frame.columnconfigure(1, weight=1)
 
         # Start Command
-        start_frame = ttk.LabelFrame(settings_frame, text="Start Command", padding="5")
+        start_frame = ttk.LabelFrame(settings_frame, text="Start Command", padding="8")
         start_frame.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Label(start_frame, text="Command to run after server starts:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
         self.start_cmd_var = tk.StringVar()
-        start_cmd_entry = ttk.Entry(start_frame, textvariable=self.start_cmd_var, width=50)
+        start_cmd_entry = ttk.Entry(start_frame, textvariable=self.start_cmd_var)
         start_cmd_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
         start_frame.columnconfigure(1, weight=1)
 
         # Scheduled Restart
-        restart_frame = ttk.LabelFrame(settings_frame, text="Scheduled Restart", padding="5")
+        restart_frame = ttk.LabelFrame(settings_frame, text="Scheduled Restart", padding="8")
         restart_frame.pack(fill=tk.X, pady=(0, 10))
 
         self.scheduled_restart_var = tk.BooleanVar()
@@ -141,7 +157,7 @@ class AutomationSettingsWindow:
 
         ttk.Label(restart_frame, text="Warning Command:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
         self.warning_cmd_var = tk.StringVar()
-        warning_cmd_entry = ttk.Entry(restart_frame, textvariable=self.warning_cmd_var, width=50)
+        warning_cmd_entry = ttk.Entry(restart_frame, textvariable=self.warning_cmd_var)
         warning_cmd_entry.grid(row=1, column=1, padx=5, pady=5, sticky=tk.EW)
 
         ttk.Label(restart_frame, text="Warning Intervals (minutes):").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
@@ -153,29 +169,29 @@ class AutomationSettingsWindow:
 
         ttk.Label(restart_frame, text="Warning Restart Message:").grid(row=3, column=0, padx=5, pady=5, sticky=tk.W)
         self.warning_msg_template_var = tk.StringVar(value="Server restarting in {message}")
-        warning_msg_entry = ttk.Entry(restart_frame, textvariable=self.warning_msg_template_var, width=50)
+        warning_msg_entry = ttk.Entry(restart_frame, textvariable=self.warning_msg_template_var)
         warning_msg_entry.grid(row=3, column=1, padx=5, pady=5, sticky=tk.EW)
 
         ttk.Label(restart_frame, text="Use {message} for time", font=("Segoe UI", 8)).grid(row=3, column=2, padx=5, pady=5, sticky=tk.W)
         restart_frame.columnconfigure(1, weight=1)
 
         # Stop Command
-        stop_frame = ttk.LabelFrame(settings_frame, text="Stop Command", padding="5")
+        stop_frame = ttk.LabelFrame(settings_frame, text="Stop Command", padding="8")
         stop_frame.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Label(stop_frame, text="Command to gracefully stop the server:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
         self.stop_cmd_var = tk.StringVar()
-        stop_cmd_entry = ttk.Entry(stop_frame, textvariable=self.stop_cmd_var, width=50)
+        stop_cmd_entry = ttk.Entry(stop_frame, textvariable=self.stop_cmd_var)
         stop_cmd_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
         stop_frame.columnconfigure(1, weight=1)
 
         # Save Command
-        save_frame = ttk.LabelFrame(settings_frame, text="Save Command", padding="5")
+        save_frame = ttk.LabelFrame(settings_frame, text="Save Command", padding="8")
         save_frame.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Label(save_frame, text="Command to save world/data before shutdown:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
         self.save_cmd_var = tk.StringVar()
-        save_cmd_entry = ttk.Entry(save_frame, textvariable=self.save_cmd_var, width=50)
+        save_cmd_entry = ttk.Entry(save_frame, textvariable=self.save_cmd_var)
         save_cmd_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
         save_frame.columnconfigure(1, weight=1)
 
@@ -365,4 +381,3 @@ def open_automation_settings(parent=None, server_manager=None):
 if __name__ == "__main__":
     # Test the window
     open_automation_settings()
-

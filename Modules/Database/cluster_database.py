@@ -7,6 +7,9 @@ import threading
 from datetime import datetime
 from typing import Dict, List, Optional
 import logging
+import base64
+import hashlib
+import socket
 
 # Setup module path first before any imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -256,6 +259,29 @@ class ClusterDatabase:
     def _get_connection(self):
         # Centralized database connection for this instance
         return get_database_connection(self.db_path)
+
+    def _encrypt_secret(self, secret: str, context: str = "main_config") -> str:
+        # Encrypt sensitive settings using a machine-bound key.
+        if not secret:
+            return ""
+
+        machine_key = hashlib.sha256(f"{socket.gethostname()}_{context}_salt".encode()).digest()
+        encrypted = bytes([b ^ machine_key[i % len(machine_key)] for i, b in enumerate(secret.encode('utf-8'))])
+        return base64.b64encode(encrypted).decode('ascii')
+
+    def _decrypt_secret(self, encrypted: str, context: str = "main_config") -> str:
+        # Decrypt settings encrypted with _encrypt_secret.
+        if not encrypted:
+            return ""
+
+        try:
+            machine_key = hashlib.sha256(f"{socket.gethostname()}_{context}_salt".encode()).digest()
+            encrypted_bytes = base64.b64decode(encrypted.encode('ascii'))
+            decrypted = bytes([b ^ machine_key[i % len(machine_key)] for i, b in enumerate(encrypted_bytes)])
+            return decrypted.decode('utf-8')
+        except Exception as e:
+            logger.error(f"Failed to decrypt secure config value: {e}")
+            return ""
 
     def get_cluster_config(self) -> Optional[Dict]:
         # Get current cluster configuration
@@ -776,6 +802,8 @@ class ClusterDatabase:
                             config[key] = json.loads(value)
                         except json.JSONDecodeError:
                             config[key] = value
+                    elif config_type == 'secure':
+                        config[key] = self._decrypt_secret(value or "", "main_config")
                     elif config_type == 'boolean':
                         config[key] = value.lower() in ('true', '1', 'yes')
                     elif config_type == 'integer' and value:
@@ -802,6 +830,8 @@ class ClusterDatabase:
                 # Convert value based on type
                 if config_type == 'json':
                     value_str = json.dumps(value) if value is not None else None
+                elif config_type == 'secure':
+                    value_str = self._encrypt_secret(str(value) if value is not None else "", "main_config")
                 elif config_type == 'boolean':
                     value_str = 'true' if value else 'false'
                 else:
