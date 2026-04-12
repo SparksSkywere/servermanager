@@ -82,6 +82,9 @@ class DashboardSettingsMixin:
         hardware_frame = ttk.Frame(notebook)
         notebook.add(hardware_frame, text="Hardware")
 
+        minecraft_frame = ttk.Frame(notebook)
+        notebook.add(minecraft_frame, text="Minecraft")
+
         try:
             from Modules.Database.cluster_database import ClusterDatabase
             db = ClusterDatabase()
@@ -98,6 +101,7 @@ class DashboardSettingsMixin:
         self._create_steam_settings_tab(steam_frame, db)
         self._create_system_settings_tab(system_frame, main_config, db)
         self._create_hardware_settings_tab(hardware_frame, main_config, db)
+        self._create_minecraft_settings_tab(minecraft_frame)
 
         button_frame = ttk.Frame(settings_window)
         button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
@@ -947,6 +951,80 @@ class DashboardSettingsMixin:
         self._update_hardware_field_states()
 
     # Shared helpers
+    def _create_minecraft_settings_tab(self, parent):
+        # Create Minecraft / modded launcher settings tab (e.g. CurseForge API key)
+        from Modules.core.common import REGISTRY_PATH, get_registry_value, set_registry_value
+
+        palette = self._get_active_palette()
+
+        main_frame = ttk.Frame(parent, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(main_frame, text="Minecraft & Modded Launcher Settings",
+                  font=("Segoe UI", 14, "bold")).pack(anchor=tk.W, pady=(0, 5))
+
+        ttk.Label(main_frame,
+                  text="Configure API keys and options used when browsing and installing "
+                       "modded Minecraft server packs.",
+                  wraplength=700, foreground=palette.get("text_disabled_fg")).pack(anchor=tk.W, pady=(0, 20))
+
+        # CurseForge section
+        cf_frame = ttk.LabelFrame(main_frame, text="CurseForge", padding=15)
+        cf_frame.pack(fill=tk.X, pady=(0, 15))
+
+        ttk.Label(cf_frame,
+                  text="A CurseForge API key is required to browse and install CurseForge modpacks. "
+                       "You can obtain a free key from https://console.curseforge.com/",
+                  wraplength=650, foreground=palette.get("text_disabled_fg")).pack(anchor=tk.W, pady=(0, 12))
+
+        key_row = ttk.Frame(cf_frame)
+        key_row.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(key_row, text="API Key:", width=12, anchor=tk.W).pack(side=tk.LEFT)
+        current_key = get_registry_value(REGISTRY_PATH, "CurseForgeAPIKey", "")
+        self.curseforge_key_var = tk.StringVar(value=current_key)
+        key_entry = ttk.Entry(key_row, textvariable=self.curseforge_key_var, width=50, show="*")
+        key_entry.pack(side=tk.LEFT, padx=(10, 8))
+
+        show_var = tk.BooleanVar(value=False)
+
+        def _toggle_show():
+            key_entry.config(show="" if show_var.get() else "*")
+
+        ttk.Checkbutton(key_row, text="Show", variable=show_var,
+                        command=_toggle_show).pack(side=tk.LEFT)
+
+        # Status indicator
+        cf_status_var = tk.StringVar(value="Key saved" if current_key else "No API key configured")
+        cf_status_color = palette.get("success_fg") if current_key else palette.get("text_disabled_fg")
+        self.cf_status_label = ttk.Label(cf_frame, textvariable=cf_status_var,
+                                         foreground=cf_status_color)
+        self.cf_status_label.pack(anchor=tk.W, pady=(0, 8))
+
+        btn_row = ttk.Frame(cf_frame)
+        btn_row.pack(fill=tk.X)
+
+        def _save_cf_key():
+            new_key = self.curseforge_key_var.get().strip()
+            set_registry_value(REGISTRY_PATH, "CurseForgeAPIKey", new_key)
+            if new_key:
+                cf_status_var.set("API key saved")
+                self.cf_status_label.config(foreground=palette.get("success_fg"))
+                messagebox.showinfo("Saved", "CurseForge API key saved successfully.")
+            else:
+                cf_status_var.set("No API key configured")
+                self.cf_status_label.config(foreground=palette.get("text_disabled_fg"))
+                messagebox.showinfo("Cleared", "CurseForge API key removed.")
+
+        def _clear_cf_key():
+            if messagebox.askyesno("Confirm", "Remove the saved CurseForge API key?"):
+                self.curseforge_key_var.set("")
+                set_registry_value(REGISTRY_PATH, "CurseForgeAPIKey", "")
+                cf_status_var.set("No API key configured")
+                self.cf_status_label.config(foreground=palette.get("text_disabled_fg"))
+
+        ttk.Button(btn_row, text="Save API Key", command=_save_cf_key).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_row, text="Clear Key", command=_clear_cf_key).pack(side=tk.LEFT)
+
     def _create_settings_controls(self, parent, settings, config_type):
         # Create form controls for a list of settings
         self.settings_vars = getattr(self, 'settings_vars', {})

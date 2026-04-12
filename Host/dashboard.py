@@ -73,7 +73,7 @@ from Host.dashboard_ui import setup_ui, setup_menu_bar, expand_all_categories, c
 # Dashboard utility functions
 from Host.dashboard_functions import (
     load_dashboard_config, update_system_info_threaded, centre_window,
-    load_appid_scanner_list, load_minecraft_scanner_list,
+    load_appid_scanner_list, load_minecraft_scanner_list, load_minecraft_modded_scanner_list,
     get_current_server_list, get_current_subhost, reattach_to_running_servers,
     update_server_list_for_subhost, refresh_all_subhost_servers,
     refresh_current_subhost_servers, refresh_subhost_servers,
@@ -170,6 +170,9 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
 
         # Load Minecraft server info from database
         self.minecraft_servers, self.minecraft_metadata = load_minecraft_scanner_list(self.server_manager_dir)
+
+        # Load modded pack info from database (ATLauncher, FTB, Technic, CurseForge)
+        self.modded_packs, self.modded_metadata = load_minecraft_modded_scanner_list(self.server_manager_dir)
 
         # Initialise runtime variables from config
         try:
@@ -637,9 +640,12 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
 
         if self.system_info_visible:
             # Show the system info panel - add back to pane
-            pane_weight = int(getattr(self, 'system_pane_weight', 20))
+            pane_weight = int(getattr(self, 'system_pane_weight', 0))
             self.main_pane.add(self.system_frame, weight=pane_weight)  # type: ignore
             self.system_toggle_btn.config(text="◀")  # type: ignore
+            # Restore fixed-pixel sash after the panel is rendered
+            if callable(getattr(self, '_update_main_pane_sash', None)):
+                self.root.after(50, self._update_main_pane_sash)  # type: ignore
         else:
             # Hide the system info panel - remove from pane
             self.main_pane.forget(self.system_frame)  # type: ignore

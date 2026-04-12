@@ -118,14 +118,15 @@ def setup_ui(dashboard):
     # Server tabs frame (left side) - Tabbed interface for subhosts
     dashboard.servers_frame = ttk.LabelFrame(dashboard.main_pane, text="Host Servers", padding=10)
 
-    # Adjust pane weights based on screen size for better responsiveness
+    # Use a fixed pixel width for the system info panel so it never grows with the window.
     screen_width = dashboard.root.winfo_screenwidth()
-    if screen_width < 1366:  # Smaller screens
-        server_weight = 75  # Give more space to servers on small screens
-        system_weight = 25
-    else:  # Larger screens
-        server_weight = 70
-        system_weight = 30
+    _system_px = 280 if screen_width < 1366 else 320
+    dashboard._system_pane_px = _system_px
+
+    # System panel weight=0 means it does not absorb space on window resize.
+    server_weight = 1
+    system_weight = 0
+    dashboard.system_pane_weight = system_weight
 
     dashboard.main_pane.add(dashboard.servers_frame, weight=server_weight)
 
@@ -223,6 +224,54 @@ def setup_ui(dashboard):
     if dashboard.system_info_visible:
         dashboard.main_pane.add(dashboard.system_frame, weight=system_weight)
 
+    _sash_updating = [False]
+    _sash_after_id = [None]
+
+    def _apply_sash():
+        """Apply the fixed-width sash position — always called via after() to ensure
+        the widget has finished laying out at the correct size."""
+        _sash_updating[0] = False
+        _sash_after_id[0] = None
+        if not getattr(dashboard, "system_info_visible", True):
+            return
+        try:
+            dashboard.main_pane.update_idletasks()
+            total_w = dashboard.main_pane.winfo_width()
+            if total_w < 300:
+                return
+            collapse_px = 20
+            target = max(280, total_w - dashboard._system_pane_px - collapse_px)
+            dashboard.main_pane.sashpos(0, target)
+        except Exception:
+            pass
+
+    def _update_main_pane_sash(event=None):
+        """Re-schedule sash correction on every Configure event.  after(0) defers to
+        the next event-loop iteration — geometry is already committed at that point so
+        winfo_width() is accurate, but there is no perceptible delay for the user."""
+        if _sash_after_id[0] is not None:
+            try:
+                dashboard.root.after_cancel(_sash_after_id[0])
+            except Exception:
+                pass
+        _sash_after_id[0] = dashboard.root.after(0, _apply_sash)
+
+    def _on_root_map(event=None):
+        """Re-apply the sash after the window is restored from minimised state.
+        <Map> fires when the window becomes visible again; we wait longer here
+        because the WM may not have finished restoring the geometry yet."""
+        if _sash_after_id[0] is not None:
+            try:
+                dashboard.root.after_cancel(_sash_after_id[0])
+            except Exception:
+                pass
+        _sash_after_id[0] = dashboard.root.after(150, _apply_sash)
+
+    dashboard._update_main_pane_sash = _update_main_pane_sash
+    dashboard.main_pane.bind("<Configure>", _update_main_pane_sash)
+    dashboard.root.bind("<Map>", _on_root_map)
+    dashboard.root.after(150, _apply_sash)
+
     # Configure system frame for proper resizing
     dashboard.system_frame.columnconfigure(0, weight=1)
     dashboard.system_frame.rowconfigure(0, weight=0)  # Header
@@ -271,7 +320,7 @@ def setup_ui(dashboard):
     # Configure grid layout with proper weights for uniform sizing
     for i in range(2):
         dashboard.metrics_frame.columnconfigure(i, weight=1, uniform="metric_col")
-    for i in range(3):
+    for i in range(4):
         dashboard.metrics_frame.rowconfigure(i, weight=1, uniform="metric_row")
 
     # Create metric panels with uniform sizing
@@ -283,14 +332,15 @@ def setup_ui(dashboard):
         {"row": 1, "col": 0, "title": "Disk Space", "name": "disk", "icon": ""},
         {"row": 1, "col": 1, "title": "Network", "name": "network", "icon": ""},
         {"row": 2, "col": 0, "title": "GPU", "name": "gpu", "icon": ""},
-        {"row": 2, "col": 1, "title": "System Uptime", "name": "uptime", "icon": ""}
+        {"row": 2, "col": 1, "title": "System Uptime", "name": "uptime", "icon": ""},
+        {"row": 3, "col": 0, "title": "Temperature", "name": "temperature", "icon": "", "colspan": 2}
     ]
 
     for metric in metrics:
         # Create frame with responsive sizing - use DPI-aware padding
         scaled_padding = dashboard.scale_value(8)
         frame = ttk.LabelFrame(dashboard.metrics_frame, text=f"{metric['icon']} {metric['title']}", padding=scaled_padding)
-        frame.grid(row=metric["row"], column=metric["col"], padx=3, pady=3, sticky="nsew")
+        frame.grid(row=metric["row"], column=metric["col"], columnspan=metric.get("colspan", 1), padx=3, pady=3, sticky="nsew")
 
         # Create value label with DPI-aware wrapping
         screen_width = dashboard.root.winfo_screenwidth()
@@ -302,10 +352,27 @@ def setup_ui(dashboard):
 
         # Use DPI-aware font size
         font_size = dashboard.scale_value(9)
-        value = ttk.Label(frame, text="Loading...", font=("Segoe UI", font_size), wraplength=wrap_width, justify=tk.LEFT)
-        value.pack(anchor=tk.W, fill=tk.BOTH, expand=True)
 
-        dashboard.metric_labels[metric["name"]] = value
+        if metric["name"] == "network":
+            # Recreate network card as a mini graph + summary text.
+            graph_height = dashboard.scale_value(72)
+            graph = tk.Canvas(frame, height=graph_height, highlightthickness=0, bd=0)
+            graph.pack(fill=tk.X, expand=True, pady=(0, 4))
+
+            value = ttk.Label(frame, text="Loading network graph...",
+                              font=("Segoe UI", font_size), wraplength=wrap_width, justify=tk.LEFT)
+            value.pack(anchor=tk.W, fill=tk.X, expand=False)
+
+            dashboard.metric_labels[metric["name"]] = {
+                "canvas": graph,
+                "text": value,
+            }
+        else:
+            value = ttk.Label(frame, text="Loading...", font=("Segoe UI", font_size), wraplength=wrap_width, justify=tk.LEFT)
+            value.pack(anchor=tk.W, fill=tk.BOTH, expand=True)
+            dashboard.metric_labels[metric["name"]] = value
+
+    dashboard.system_uptime_label = dashboard.metric_labels["uptime"]
 
 def setup_menu_bar(dashboard):
     # Setup the menu bar

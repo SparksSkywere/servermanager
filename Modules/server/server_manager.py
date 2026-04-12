@@ -1909,6 +1909,14 @@ class ServerManager(ServerManagerModule):
                     progress_callback(f"[INFO] Created directory for {server_type} server: {install_dir}")
                 installation_success = True
 
+            elif server_type == "Modded Minecraft":
+                # Directory is created / populated by perform_server_installation via download.
+                # Here we just ensure the directory exists so config creation succeeds.
+                os.makedirs(install_dir, exist_ok=True)
+                if progress_callback:
+                    progress_callback(f"[INFO] Modded Minecraft server directory ready: {install_dir}")
+                installation_success = True
+
             else:
                 return False, f"Unsupported server type: {server_type}"
 
@@ -1932,7 +1940,7 @@ class ServerManager(ServerManagerModule):
             return False, f"Installation failed: {str(e)}"
 
     def get_supported_server_types(self):
-        return ["Steam", "Minecraft", "Other"]
+        return ["Steam", "Minecraft", "Modded Minecraft", "Other"]
 
     def uninstall_server(self, server_name, remove_files=False, progress_callback=None):
         try:

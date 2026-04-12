@@ -1,6 +1,6 @@
 # Server Manager — Technical Wiki
 
-**Version:** 1.3
+**Version:** 1.4.1
 **Platform:** Windows 10/11, Windows Server 2016+ (Linux support in early development)  
 **Developer:** Sparks Skywere 
 **Repository:** [https://raw.githubusercontent.com/SparksSkywere/servermanager](https://raw.githubusercontent.com/SparksSkywere/servermanager)

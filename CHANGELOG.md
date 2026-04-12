@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1]
+
+  Modded Minecraft — Pack Scanner Fixes:
+  - Fixed Technic returning 0 packs: all API requests now include `build=unset` query parameter required for public access
+  - Added `_technic_search_slugs()` for dynamic pack discovery via the Technic search endpoint (`/search?q={term}&build=unset`)
+  - Replaced fixed Technic slug list with search-based discovery (10 search terms) supplemented by an expanded static fallback list (23 known packs)
+  - Fixed Technic field mapping: `version` (was nonexistent `recommendedBuild`), `installs` (was `downloads`), `serverPackUrl` → `server_url`
+  - Fixed Technic `get_pack_versions()` missing `build=unset` parameter (was returning empty list)
+  - Fixed FTB `play_count` to prefer `installs` field over `plays`
+  - Extended `get_pack_enrichment()` to cover Modrinth (fetches latest version `.mrpack` primary file URL as `server_url`) and Technic (`serverPackUrl` + `mc_version`)
+
+  Modded Minecraft — Custom Download URL:
+  - Added `validate_and_probe_url()`: probes a URL, follows redirects, extracts filename and file size; handles CurseForge web download pages via API key resolution or browser-header redirect fallback
+  - Added `download_url_to_file()`: streams download to disk with 10%-increment progress logged to the console pane
+  - Added full download and extract pipeline in `perform_server_installation()` for Modded Minecraft with a custom URL: validates → downloads → strips single top-level zip prefix → extracts to install directory
+  - Replaced "Open URL" button with "Validate" button: probes URL in background thread, logs result to console, shows `✓ filename (size MB)` or `✗ error` status inline below the field, auto-updates field with resolved CDN URL
+  - CurseForge web download URLs (`www.curseforge.com/.../download/{id}`) are now resolved to direct CDN links via the CurseForge API when an API key is configured in Settings → Minecraft; clear actionable error shown when no key is set
+  - Pack selection from browser now auto-fills the Custom Download URL field with the pack's `server_url` (e.g. Technic `serverPackUrl`, Modrinth `.mrpack` URL)
+  - Pack enrichment on selection now also fetches and fills `server_url` if absent, then sets it into the download field automatically
+  - Added `install_server_complete()` Modded Minecraft case in `server_manager.py` (creates install directory, returns success)
+
+  Modded Minecraft — Pack Browser UI:
+  - Added Downloads column to pack browser treeview showing formatted download counts (`2.3M`, `145K`)
+
+  Dashboard — System Panel Layout Fix:
+  - Fixed system information panel drifting to centre after minimise/restore: sash correction now bound to `<Map>` on root window (fires on restore) with a 150 ms deferred `_apply_sash` call
+  - Fixed brief flash of system panel at wrong position on maximise: sash update changed from `after(60)` to `after(0)` (next event loop iteration, before repaint) with `update_idletasks()` to ensure accurate geometry
+
 ## [1.4]
 
   UI and theme update:

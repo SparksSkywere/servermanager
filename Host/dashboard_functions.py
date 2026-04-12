@@ -469,7 +469,80 @@ def get_minecraft_versions_from_database(modloader=None, dedicated_only=True):
         logger.error(error_msg)
         raise Exception(error_msg)
 
-def create_minecraft_version_browser_dialog(parent, modloader="Vanilla"):
+
+def load_minecraft_modded_scanner_list(server_manager_dir):
+    # Load modded pack list from the minecraft_modded_ID.db database (NO FALLBACKS)
+    try:
+        from Modules.Database.scanners.MinecraftModdedScanner import MinecraftModdedScanner
+
+        scanner = MinecraftModdedScanner()
+        try:
+            packs = scanner.get_packs_from_database()
+            metadata = scanner.get_database_stats()
+            logger.info(f"Loaded {len(packs)} modded packs from database")
+            return packs, metadata
+        finally:
+            scanner.close()
+
+    except ImportError as e:
+        logger.error(f"MinecraftModdedScanner not available: {e}")
+        return [], {}
+    except Exception as e:
+        logger.error(f"Failed to load modded scanner list: {e}")
+        return [], {}
+
+
+def get_modded_packs_from_database(launcher: str = None, search: str = None):
+    # Query modded packs, optionally filtered by launcher and/or name search.
+    try:
+        from Modules.Database.scanners.MinecraftModdedScanner import MinecraftModdedScanner
+
+        scanner = MinecraftModdedScanner()
+        try:
+            return scanner.get_packs_from_database(launcher=launcher, search=search)
+        finally:
+            scanner.close()
+
+    except ImportError as e:
+        logger.error(f"MinecraftModdedScanner not available: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"get_modded_packs_from_database failed: {e}")
+        return []
+
+
+def get_modded_pack_versions(pack_id: str, launcher: str, curseforge_api_key: str = "") -> list:
+    # Get available versions for a specific modded pack.
+    try:
+        from Modules.Database.scanners.MinecraftModdedScanner import MinecraftModdedScanner
+
+        scanner = MinecraftModdedScanner(curseforge_api_key=curseforge_api_key)
+        try:
+            return scanner.get_pack_versions(pack_id, launcher)
+        finally:
+            scanner.close()
+
+    except Exception as e:
+        logger.debug(f"get_modded_pack_versions({pack_id}, {launcher}): {e}")
+        return []
+
+
+def get_modded_pack_enrichment(pack_id: str, launcher: str) -> dict:
+    # Fetch any missing metadata (mc_version, authors) for a pack.
+    try:
+        from Modules.Database.scanners.MinecraftModdedScanner import MinecraftModdedScanner
+
+        scanner = MinecraftModdedScanner()
+        try:
+            return scanner.get_pack_enrichment(pack_id, launcher)
+        finally:
+            scanner.close()
+
+    except Exception as e:
+        logger.debug(f"get_modded_pack_enrichment({pack_id}, {launcher}): {e}")
+        return {}
+
+
     dialog = tk.Toplevel(parent)
     dialog.title(f"Browse {modloader} Minecraft Versions")
     dialog.geometry("700x500")
@@ -782,8 +855,181 @@ def detect_server_type_from_directory(directory_path):
         logger.error(f"Error detecting server type from directory: {e}")
         return "Other"
 
+def validate_and_probe_url(url: str, console_callback=None, cf_api_key: str = "") -> dict:
+    """Probe a URL, follow redirects, and return metadata.
+    Returns dict with keys: valid (bool), final_url, filename, size_bytes, content_type, error.
+    CurseForge web download page URLs are resolved to direct CDN links via the CurseForge API
+    when cf_api_key is provided, or via browser-header redirect fallback."""
+    result = {"valid": False, "final_url": url, "filename": "", "size_bytes": 0, "content_type": "", "error": ""}
+    try:
+        if not url.startswith(("http://", "https://")):
+            result["error"] = "URL must start with http:// or https://"
+            return result
+
+        import re as _re
+        # Browser-like headers needed for CurseForge web pages and Forge CDN
+        _CF_HEADERS = {
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.curseforge.com/",
+        }
+
+        # CurseForge web download pages are protected by Cloudflare and 403 for
+        # non-browser requests.  Resolve to the direct CDN URL via API or /file trick.
+        if _re.search(r'(?:www\.)?curseforge\.com/.+/download/\d+', url):
+            if console_callback:
+                console_callback("[INFO] CurseForge URL detected — resolving direct CDN link...")
+
+            file_id_m = _re.search(r'/download/(\d+)', url)
+            cdn_url = ""
+
+            # Strategy 1: CurseForge API (reliable, requires API key)
+            if cf_api_key and file_id_m:
+                try:
+                    api_resp = requests.get(
+                        "https://api.curseforge.com/v1/mods/files",
+                        params={"fileIds": file_id_m.group(1)},
+                        headers={"x-api-key": cf_api_key,
+                                 "User-Agent": "ServerManager/1.0"},
+                        timeout=15,
+                    )
+                    if api_resp.ok:
+                        data = api_resp.json().get("data", [])
+                        if data:
+                            cdn_url = data[0].get("downloadUrl", "")
+                            if console_callback and cdn_url:
+                                console_callback(f"[INFO] Resolved via API → {cdn_url.split('/')[-1]}")
+                except Exception as api_exc:
+                    if console_callback:
+                        console_callback(f"[WARN] CF API resolution failed: {api_exc}")
+
+            # Strategy 2: /file redirect trick with browser headers (works without key on some regions)
+            if not cdn_url:
+                try:
+                    file_url = url.rstrip('/') + '/file'
+                    cf_resp = requests.get(file_url, headers=_CF_HEADERS,
+                                           allow_redirects=True, timeout=20, stream=True)
+                    cf_resp.close()
+                    if cf_resp.status_code == 200 and "forgecdn.net" in cf_resp.url:
+                        cdn_url = cf_resp.url
+                        if console_callback:
+                            console_callback(f"[INFO] Resolved via redirect → {cdn_url.split('/')[-1]}")
+                except Exception:
+                    pass
+
+            if not cdn_url:
+                key_hint = (
+                    "Configure your CurseForge API key in Settings \u2192 Minecraft to resolve CF URLs automatically."
+                    if not cf_api_key else
+                    "The configured CurseForge API key could not resolve this file. Check its permissions."
+                )
+                result["error"] = (
+                    "CurseForge web URLs are Cloudflare-protected and cannot be downloaded directly. "
+                    f"{key_hint} "
+                    "Alternatively, copy the direct CDN link from your browser (right-click Download \u2192 Copy link address)."
+                )
+                return result
+
+            # Probe the resolved CDN URL to get size/filename
+            cdn_resp = requests.head(cdn_url, headers=_CF_HEADERS, allow_redirects=True, timeout=15)
+            if cdn_resp.status_code in (404, 405):
+                cdn_resp = requests.get(cdn_url, headers={**_CF_HEADERS, "Range": "bytes=0-0"},
+                                        stream=True, allow_redirects=True, timeout=15)
+                cdn_resp.close()
+            resp = cdn_resp
+            if resp.status_code not in (200, 206):
+                result["error"] = f"CDN returned HTTP {resp.status_code} for resolved URL"
+                return result
+        else:
+            _hdrs = _CF_HEADERS if ("forgecdn.net" in url or "curseforge.com" in url) else \
+                    {"User-Agent": "ServerManager/1.0 (github.com/SparksSkywere/servermanager)"}
+            resp = requests.head(url, headers=_hdrs, allow_redirects=True, timeout=15)
+            # Some hosts return 404/405 to HEAD — fall back to a minimal range GET
+            if resp.status_code in (404, 405):
+                resp = requests.get(url, headers={**_hdrs, "Range": "bytes=0-0"},
+                                    stream=True, allow_redirects=True, timeout=15)
+                resp.close()
+            if resp.status_code not in (200, 206):
+                result["error"] = f"Server returned HTTP {resp.status_code}"
+                return result
+
+        result["valid"] = True
+        result["final_url"] = resp.url
+        result["content_type"] = resp.headers.get("Content-Type", "")
+        raw_size = resp.headers.get("Content-Length") or resp.headers.get("content-length")
+        if raw_size:
+            try:
+                result["size_bytes"] = int(raw_size)
+            except ValueError:
+                pass
+        # Derive filename from Content-Disposition or URL path
+        cd = resp.headers.get("Content-Disposition", "")
+        if "filename=" in cd:
+            m = _re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\n]+)', cd, _re.IGNORECASE)
+            if m:
+                result["filename"] = m.group(1).strip().strip('"').strip("'")
+        if not result["filename"]:
+            from urllib.parse import urlparse, unquote
+            path_part = urlparse(resp.url).path
+            result["filename"] = unquote(path_part.split("/")[-1] or "download.zip")
+        if console_callback:
+            sz = result["size_bytes"]
+            sz_str = f"{sz / 1_048_576:.1f} MB" if sz > 0 else "unknown size"
+            console_callback(f"[OK] URL valid → {result['filename']} ({sz_str})")
+    except requests.exceptions.ConnectionError:
+        result["error"] = "Could not connect to server"
+    except requests.exceptions.Timeout:
+        result["error"] = "Connection timed out"
+    except Exception as exc:
+        result["error"] = str(exc)
+    return result
+
+
+def download_url_to_file(url: str, dest_path: str, console_callback=None,
+                          expected_size: int = 0) -> tuple:
+    """Stream-download url to dest_path, logging progress.  Returns (success, error_msg)."""
+    try:
+        # CurseForge / Forge CDN require browser-like headers to avoid 403
+        if "curseforge.com" in url or "forgecdn.net" in url:
+            headers = {
+                "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+                "Accept": "*/*",
+                "Referer": "https://www.curseforge.com/",
+            }
+        else:
+            headers = {"User-Agent": "ServerManager/1.0 (github.com/SparksSkywere/servermanager)"}
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        with requests.get(url, headers=headers, stream=True, allow_redirects=True, timeout=60) as resp:
+            resp.raise_for_status()
+            total = int(resp.headers.get("Content-Length", 0) or expected_size or 0)
+            downloaded = 0
+            last_pct = -10
+            with open(dest_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=524288):  # 512 KB chunks
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total > 0:
+                        pct = int(downloaded * 100 / total)
+                        if pct - last_pct >= 10:
+                            if console_callback:
+                                console_callback(f"[INFO] Downloading... {pct}% ({downloaded // 1_048_576} / {total // 1_048_576} MB)")
+                            last_pct = pct
+                    elif downloaded % (10 * 1_048_576) < 524288 and console_callback:
+                        console_callback(f"[INFO] Downloaded {downloaded // 1_048_576} MB...")
+        if console_callback:
+            console_callback(f"[OK] Download complete → {os.path.basename(dest_path)}")
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
 def perform_server_installation(server_type, server_name, install_dir, app_id=None,
-                               minecraft_version=None, credentials=None,
+                               minecraft_version=None, modded_pack=None, custom_download_url="", credentials=None,
                                server_manager=None, progress_callback=None, console_callback=None,
                                steam_cmd_path=None):
     # Perform server installation with progress tracking and console output
@@ -812,6 +1058,8 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
         if console_callback:
             console_callback(f"[INFO] Starting installation of {server_type} server '{server_name}'")
             console_callback(f"[INFO] Installation directory: {install_dir}")
+            if custom_download_url:
+                console_callback(f"[INFO] Custom Download URL: {custom_download_url}")
 
         server_config = {
             'Name': server_name,
@@ -832,6 +1080,102 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
                 console_callback(f"[INFO] Minecraft Version: {minecraft_version.get('version_id', '')}")
                 console_callback(f"[INFO] Modloader: {minecraft_version.get('modloader', 'vanilla')}")
 
+        if server_type == "Modded Minecraft" and modded_pack:
+            server_config['Launcher']     = modded_pack.get('launcher', '')
+            server_config['PackId']       = modded_pack.get('pack_id', '')
+            server_config['PackVersion']  = modded_pack.get('pack_version', '')
+            server_config['IsModded']     = True
+            if console_callback:
+                console_callback(f"[INFO] Launcher: {modded_pack.get('launcher', '').upper()}")
+                console_callback(f"[INFO] Pack ID: {modded_pack.get('pack_id', '')}")
+                console_callback(f"[INFO] Pack Version: {modded_pack.get('pack_version', '')}")
+
+        # ── Modded Minecraft: download server pack from custom URL ──────────────
+        downloaded_pack_path = None
+        if server_type == "Modded Minecraft" and custom_download_url:
+            if progress_callback:
+                progress_callback("Validating download URL...")
+            if console_callback:
+                console_callback(f"[INFO] Validating download URL: {custom_download_url}")
+            # Read CF API key from registry for CurseForge URL resolution
+            _cf_key = ""
+            try:
+                from Modules.core.common import get_registry_value as _grv
+                _cf_key = str(_grv(
+                    "HKEY_CURRENT_USER\\Software\\SkywereIndustries\\ServerManager",
+                    "CurseForgeAPIKey", "") or "")
+            except Exception:
+                pass
+            probe = validate_and_probe_url(custom_download_url, console_callback, cf_api_key=_cf_key)
+            if not probe["valid"]:
+                err = probe["error"]
+                if console_callback:
+                    console_callback(f"[ERROR] Download URL is not reachable: {err}")
+                return False, f"Download URL check failed: {err}"
+
+            # Use the resolved CDN URL for the actual download
+            final_url = probe["final_url"]
+            filename  = probe["filename"] or "server-pack.zip"
+            if not filename.lower().endswith((".zip", ".jar", ".tar.gz", ".tar.bz2")):
+                filename += ".zip"
+            dest_path = os.path.join(install_dir, filename)
+            os.makedirs(install_dir, exist_ok=True)
+
+            if progress_callback:
+                progress_callback(f"Downloading {filename}...")
+            if console_callback:
+                console_callback(f"[INFO] Saving to: {dest_path}")
+
+            ok, dl_err = download_url_to_file(final_url, dest_path, console_callback,
+                                               expected_size=probe["size_bytes"])
+            if not ok:
+                if console_callback:
+                    console_callback(f"[ERROR] Download failed: {dl_err}")
+                return False, f"Download failed: {dl_err}"
+
+            downloaded_pack_path = dest_path
+            # Update custom_download_url to the resolved CDN URL for config persistence
+            custom_download_url = final_url
+
+            # Extract the downloaded archive
+            if filename.lower().endswith(".zip"):
+                import zipfile
+                if progress_callback:
+                    progress_callback("Extracting server pack...")
+                if console_callback:
+                    console_callback("[INFO] Extracting server pack...")
+                try:
+                    with zipfile.ZipFile(dest_path, "r") as zf:
+                        # Detect common top-level prefix and strip it
+                        names = zf.namelist()
+                        top_dirs = {n.split("/")[0] for n in names if "/" in n}
+                        strip_prefix = ""
+                        if len(top_dirs) == 1:
+                            prefix = list(top_dirs)[0] + "/"
+                            if all(n.startswith(prefix) for n in names if not n.endswith("/")):
+                                strip_prefix = prefix
+                        for member in zf.infolist():
+                            target = member.filename
+                            if strip_prefix and target.startswith(strip_prefix):
+                                target = target[len(strip_prefix):]
+                            if not target:
+                                continue
+                            out = os.path.join(install_dir, target)
+                            if member.filename.endswith("/"):
+                                os.makedirs(out, exist_ok=True)
+                            else:
+                                os.makedirs(os.path.dirname(out), exist_ok=True)
+                                with zf.open(member) as src, open(out, "wb") as dst:
+                                    dst.write(src.read())
+                    if console_callback:
+                        console_callback("[OK] Extraction complete")
+                except zipfile.BadZipFile as ze:
+                    if console_callback:
+                        console_callback(f"[WARN] Archive extraction failed ({ze}) — keeping zip in install dir")
+            elif filename.lower().endswith(".jar"):
+                if console_callback:
+                    console_callback("[INFO] JAR file detected — no extraction needed")
+
         if progress_callback:
             progress_callback("Creating server configuration...")
         if console_callback:
@@ -847,8 +1191,16 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
             executable_path="",
             startup_args="",
             app_id=app_id or "",
-            version=minecraft_version.get('version_id', '') if minecraft_version else "",
-            modloader=minecraft_version.get('modloader', 'vanilla') if minecraft_version else "",
+            version=(
+                minecraft_version.get('version_id', '') if minecraft_version
+                else modded_pack.get('pack_id', '') if modded_pack
+                else ""
+            ),
+            modloader=(
+                minecraft_version.get('modloader', 'vanilla') if minecraft_version
+                else modded_pack.get('launcher', '') if modded_pack
+                else ""
+            ),
             steam_cmd_path=steam_cmd_path or "",
             credentials=credentials or {"anonymous": True},
             progress_callback=console_callback,
@@ -856,6 +1208,18 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
         )
 
         if success:
+            # Persist optional custom download URL in server config for all server types.
+            if custom_download_url:
+                try:
+                    cfg = server_manager.get_server_config(server_name) or {}
+                    cfg['CustomDownloadURL'] = custom_download_url
+                    cfg['DownloadURL'] = custom_download_url
+                    server_manager.update_server(server_name, cfg)
+                    if console_callback:
+                        console_callback("[INFO] Saved custom download URL to server configuration")
+                except Exception as cfg_error:
+                    logger.warning(f"Failed to persist custom download URL for {server_name}: {cfg_error}")
+
             success_msg = message or f"Server '{server_name}' installed successfully"
             if progress_callback:
                 progress_callback("Server installation completed successfully")
@@ -1607,9 +1971,6 @@ def update_system_info_threaded(metric_labels, system_name, os_info, uptime_labe
 
                 except Exception as e:
                     logger.error(f"Error updating UI with system data: {e}")
-                    # Set all labels to error state
-                    for label_name in metric_labels:
-                        set_metric_widget_text(metric_labels[label_name], f"{label_name.title()}: Error")
 
             if hasattr(system_name, 'after'):
                 system_name.after(0, update_ui)
@@ -3638,9 +3999,9 @@ def add_server_dialog(dashboard):
     paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
     paned_window.pack(fill=tk.BOTH, expand=True)
 
-    # Top frame for setup information
+    # Top frame for setup information (takes more vertical space than the log below)
     top_frame = ttk.Frame(paned_window)
-    paned_window.add(top_frame, weight=1)
+    paned_window.add(top_frame, weight=3)
 
     canvas = tk.Canvas(top_frame, highlightthickness=0)
     scrollbar = ttk.Scrollbar(top_frame, orient="vertical", command=canvas.yview)
@@ -3669,8 +4030,13 @@ def add_server_dialog(dashboard):
         'name': tk.StringVar(),
         'app_id': tk.StringVar(),
         'install_dir': tk.StringVar(),
+        'custom_download_url': tk.StringVar(),
         'minecraft_version': tk.StringVar(),
-        'modloader': tk.StringVar(value="Vanilla")
+        'modloader': tk.StringVar(value="Vanilla"),
+        # Modded Minecraft extras
+        'modded_launcher': tk.StringVar(value="ATLauncher"),
+        'modded_pack': tk.StringVar(),
+        'modded_version': tk.StringVar(),
     }
 
     ttk.Label(scrollable_frame, text="Server Name:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, padx=15, pady=15, sticky=tk.W)
@@ -3739,6 +4105,237 @@ def add_server_dialog(dashboard):
 
         except Exception as e:
             messagebox.showerror("Error", f"Minecraft support not available: {str(e)}")
+            dialog.destroy()
+            return
+
+    # ─── Modded Minecraft pack browser ───────────────────────────────────────
+    elif server_type == "Modded Minecraft":
+        try:
+            palette = _get_active_palette(dashboard)
+            muted_fg = palette.get("text_disabled_fg")
+
+            MODDED_LAUNCHERS = ["ATLauncher", "FTB", "Technic", "Modrinth", "CurseForge"]
+
+            # Launcher selector
+            ttk.Label(scrollable_frame, text="Launcher:", font=("Segoe UI", 10, "bold")).grid(
+                row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
+            launcher_combo = ttk.Combobox(scrollable_frame, textvariable=form_vars['modded_launcher'],
+                                          values=MODDED_LAUNCHERS, state="readonly", width=32, font=("Segoe UI", 10))
+            launcher_combo.grid(row=current_row, column=1, columnspan=2, padx=15, pady=10, sticky=tk.EW)
+            current_row += 1
+
+            # Active search – updates list while typing, no button needed
+            ttk.Label(scrollable_frame, text="Search Packs:", font=("Segoe UI", 10, "bold")).grid(
+                row=current_row, column=0, padx=15, pady=5, sticky=tk.W)
+            modded_search_var = tk.StringVar()
+            search_entry = ttk.Entry(scrollable_frame, textvariable=modded_search_var, width=32, font=("Segoe UI", 10))
+            search_entry.grid(row=current_row, column=1, columnspan=2, padx=15, pady=5, sticky=tk.EW)
+            current_row += 1
+
+            # Custom Download URL – above the pack list for quick access
+            ttk.Label(scrollable_frame, text="Custom Download URL:", font=("Segoe UI", 10, "bold")).grid(
+                row=current_row, column=0, padx=15, pady=5, sticky=tk.W)
+            ttk.Entry(scrollable_frame, textvariable=form_vars['custom_download_url'], width=32,
+                      font=("Segoe UI", 10)).grid(row=current_row, column=1, padx=15, pady=5, sticky=tk.EW)
+
+            _url_status_var = tk.StringVar(value="")
+
+            def _validate_modded_url():
+                url = form_vars['custom_download_url'].get().strip()
+                if not url:
+                    messagebox.showinfo("No URL", "Enter a custom download URL first.")
+                    return
+                _url_status_var.set("Checking…")
+
+                def _probe():
+                    try:
+                        # Read CF API key from registry for CurseForge URL resolution
+                        _cf_key = ""
+                        try:
+                            from Modules.core.common import get_registry_value as _grv
+                            _cf_key = str(_grv(
+                                "HKEY_CURRENT_USER\\Software\\SkywereIndustries\\ServerManager",
+                                "CurseForgeAPIKey", "") or "")
+                        except Exception:
+                            pass
+                        append_console(f"[INFO] Validating URL: {url}")
+                        probe = validate_and_probe_url(url, append_console, cf_api_key=_cf_key)
+                        def _apply():
+                            if probe["valid"]:
+                                sz = probe["size_bytes"]
+                                sz_str = f"{sz / 1_048_576:.1f} MB" if sz > 0 else "?"
+                                _url_status_var.set(f"✓ {probe['filename']} ({sz_str})")
+                                # If URL resolved to a different CDN URL, store the resolved URL
+                                if probe["final_url"] != url:
+                                    form_vars['custom_download_url'].set(probe["final_url"])
+                            else:
+                                _url_status_var.set(f"✗ {probe['error']}")
+                                append_console(f"[ERROR] URL check failed: {probe['error']}")
+                        try:
+                            dialog.after(0, _apply)
+                        except tk.TclError:
+                            pass
+                    except Exception as exc:
+                        try:
+                            dialog.after(0, lambda: _url_status_var.set(f"✗ {exc}"))
+                        except tk.TclError:
+                            pass
+
+                threading.Thread(target=_probe, daemon=True).start()
+
+            ttk.Button(scrollable_frame, text="Validate", command=_validate_modded_url, width=10).grid(
+                row=current_row, column=2, padx=5, pady=5)
+            current_row += 1
+            # Status label below the URL entry
+            palette = _get_active_palette(dashboard)
+            ttk.Label(scrollable_frame, textvariable=_url_status_var,
+                      foreground=palette.get("text_disabled_fg"),
+                      font=("Segoe UI", 8), wraplength=400).grid(
+                row=current_row, column=1, columnspan=2, padx=15, pady=(0, 4), sticky=tk.W)
+            current_row += 1
+
+            # Pack browser – full-width treeview
+            pack_frame = ttk.LabelFrame(scrollable_frame, text="Available Packs", padding=5)
+            pack_frame.grid(row=current_row, column=0, columnspan=3, padx=15, pady=5, sticky=tk.NSEW)
+            scrollable_frame.rowconfigure(current_row, weight=1)
+            current_row += 1
+
+            pack_cols = ("name", "mc_version", "modloader", "authors", "downloads", "launcher")
+            pack_tree = ttk.Treeview(pack_frame, columns=pack_cols, show="headings", height=9, selectmode="browse")
+            pack_tree.heading("name",       text="Pack Name")
+            pack_tree.heading("mc_version", text="Version")
+            pack_tree.heading("modloader",  text="Loader")
+            pack_tree.heading("authors",    text="Authors")
+            pack_tree.heading("downloads",  text="Downloads")
+            pack_tree.heading("launcher",   text="Launcher")
+            pack_tree.column("name",       width=240, minwidth=140)
+            pack_tree.column("mc_version", width=75,  minwidth=55)
+            pack_tree.column("modloader",  width=70,  minwidth=55)
+            pack_tree.column("authors",    width=150, minwidth=70)
+            pack_tree.column("downloads",  width=80,  minwidth=60, anchor=tk.E)
+            pack_tree.column("launcher",   width=0,   minwidth=0,  stretch=False)
+
+            pack_scrollbar = ttk.Scrollbar(pack_frame, orient=tk.VERTICAL, command=pack_tree.yview)
+            pack_tree.configure(yscrollcommand=pack_scrollbar.set)
+            pack_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            pack_tree.pack(fill=tk.BOTH, expand=True)
+
+            # StringVars for the details strip built below "Ready to create server…"
+            desc_var = tk.StringVar(value="Select a pack to see details.")
+            _vcm_ref = [None]  # holds the Pack Version Combobox widget once the strip is built
+
+            # Internal pack data store: iid -> pack dict
+            _pack_data_store: Dict[str, Any] = {}
+
+            def _reload_modded_packs(*_args):
+                launcher_key = form_vars['modded_launcher'].get().lower().replace(" ", "")
+                search = modded_search_var.get().strip()
+                packs = get_modded_packs_from_database(launcher=launcher_key, search=search if search else None)
+
+                pack_tree.delete(*pack_tree.get_children())
+                _pack_data_store.clear()
+                form_vars['modded_pack'].set("")
+                form_vars['modded_version'].set("")
+                if _vcm_ref[0] is not None:
+                    _vcm_ref[0]['values'] = []
+                desc_var.set("Select a pack to see details.")
+
+                if not packs:
+                    pack_tree.insert("", tk.END, values=(
+                        "No packs found – run the Modded Pack Scanner first", "", "", "", ""
+                    ))
+                    return
+
+                for pack in packs:
+                    pc = pack.get("play_count", 0) or 0
+                    if pc >= 1_000_000:
+                        dl_str = f"{pc / 1_000_000:.1f}M"
+                    elif pc >= 1_000:
+                        dl_str = f"{pc // 1_000}K"
+                    elif pc > 0:
+                        dl_str = str(pc)
+                    else:
+                        dl_str = ""
+                    iid = pack_tree.insert("", tk.END, values=(
+                        pack["name"],
+                        pack.get("mc_version", ""),
+                        pack.get("modloader", "").capitalize(),
+                        pack.get("authors", ""),
+                        dl_str,
+                        pack.get("launcher", "").upper(),
+                    ))
+                    _pack_data_store[iid] = pack
+
+            def _on_pack_select(event):
+                selection = pack_tree.selection()
+                if not selection:
+                    return
+                pack = _pack_data_store.get(selection[0])
+                if not pack:
+                    return
+
+                form_vars['modded_pack'].set(pack["pack_id"])
+                desc_text = pack.get("description") or ""
+                if len(desc_text) > 200:
+                    desc_text = desc_text[:200] + "…"
+                desc_var.set(desc_text or "No description available.")
+
+                # Pre-fill Custom Download URL with the pack's server_url if available
+                srv_url = pack.get("server_url") or ""
+                if srv_url:
+                    form_vars['custom_download_url'].set(srv_url)
+                    _url_status_var.set("")  # clear previous validation state
+
+                # Async version load to avoid UI freeze
+                def _load_versions():
+                    versions = get_modded_pack_versions(pack["pack_id"], pack["launcher"])
+
+                    # Enrich mc_version / authors / server_url if absent
+                    enrichment = {}
+                    if (not pack.get("mc_version") or not pack.get("authors")
+                            or not pack.get("server_url")):
+                        enrichment = get_modded_pack_enrichment(pack["pack_id"], pack["launcher"])
+
+                    _row_iid = selection[0]
+
+                    def _apply():
+                        if _vcm_ref[0] is not None:
+                            _vcm_ref[0]['values'] = versions
+                            if versions:
+                                form_vars['modded_version'].set(versions[0])
+                            else:
+                                form_vars['modded_version'].set(pack.get("pack_version", ""))
+                        # Update treeview cells and local cache with enriched data
+                        for col_key, col_id in (("mc_version", "mc_version"), ("authors", "authors")):
+                            if enrichment.get(col_key) and not pack.get(col_key):
+                                pack[col_key] = enrichment[col_key]
+                                try:
+                                    pack_tree.set(_row_iid, col_id, enrichment[col_key])
+                                except Exception:
+                                    pass
+                        # If enrichment gave us a server_url carry it into custom_download_url
+                        if enrichment.get("server_url") and not pack.get("server_url"):
+                            pack["server_url"] = enrichment["server_url"]
+                            try:
+                                form_vars['custom_download_url'].set(enrichment["server_url"])
+                                _url_status_var.set("")
+                            except Exception:
+                                pass
+                    try:
+                        dialog.after(0, _apply)
+                    except tk.TclError:
+                        pass
+
+                import threading as _threading
+                _threading.Thread(target=_load_versions, daemon=True).start()
+
+            pack_tree.bind("<<TreeviewSelect>>", _on_pack_select)
+            form_vars['modded_launcher'].trace('w', _reload_modded_packs)
+            modded_search_var.trace('w', lambda *_: _reload_modded_packs())
+            _reload_modded_packs()
+
+        except Exception as exc:
+            messagebox.showerror("Error", f"Modded Minecraft support not available: {exc}")
             dialog.destroy()
             return
 
@@ -3818,7 +4415,7 @@ def add_server_dialog(dashboard):
             list_frame.pack(fill=tk.BOTH, expand=True)
 
             columns = ("name", "appid", "developer", "type")
-            server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=12)
+            server_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=11)
             server_tree.heading("name", text="Server Name")
             server_tree.heading("appid", text="App ID")
             server_tree.heading("developer", text="Developer")
@@ -3834,41 +4431,28 @@ def add_server_dialog(dashboard):
             tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
             server_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-            populate_server_tree(server_tree, dedicated_servers, search_var)
+            # Description area below the list – updates on selection
+            _desc_frame = ttk.Frame(appid_dialog, padding=(10, 0, 10, 4))
+            _desc_frame.pack(fill=tk.X)
+            _srv_desc_var = tk.StringVar(value="")
+            ttk.Label(_desc_frame, textvariable=_srv_desc_var,
+                      foreground=muted_fg, font=("Segoe UI", 8),
+                      wraplength=620, justify=tk.LEFT).pack(anchor=tk.W)
 
-            def show_server_info(event):
+            def _on_tree_select(event=None):
                 item = server_tree.selection()
                 if item:
-                    item_values = server_tree.item(item[0])['values']
-                    selected_server = server_dict.get(str(item_values[1]))
+                    vals = server_tree.item(item[0])["values"]
+                    srv = server_dict.get(str(vals[1]))
+                    if srv and srv.get("description"):
+                        desc = srv["description"]
+                        _srv_desc_var.set(desc[:220] + ("…" if len(desc) > 220 else ""))
+                    else:
+                        _srv_desc_var.set("")
 
-                    if selected_server and selected_server.get("description"):
-                        tooltip = tk.Toplevel(appid_dialog)
-                        tooltip.wm_overrideredirect(True)
-                        tooltip.geometry(f"+{event.x_root+10}+{event.y_root+10}")
+            server_tree.bind("<<TreeviewSelect>>", _on_tree_select)
 
-                        desc = selected_server["description"][:200] + ("..." if len(selected_server["description"]) > 200 else "")
-
-                        palette = _get_active_palette(dashboard)
-                        label = tk.Label(
-                            tooltip,
-                            text=f"{selected_server['name']}\n\n{desc}",
-                            background=palette.get("panel_bg"),
-                            foreground=palette.get("text_fg"),
-                            highlightbackground=palette.get("border"),
-                            highlightcolor=palette.get("border"),
-                            relief="solid",
-                            borderwidth=1,
-                            wraplength=300,
-                            justify=tk.LEFT,
-                            font=("Segoe UI", 9),
-                        )
-                        label.pack()
-
-                        # Auto-hide after 3 seconds
-                        tooltip.after(3000, tooltip.destroy)
-
-            server_tree.bind('<Double-1>', show_server_info)
+            populate_server_tree(server_tree, dedicated_servers, search_var)
 
             button_frame = ttk.Frame(appid_dialog, padding=10)
             button_frame.pack(fill=tk.X)
@@ -3919,37 +4503,59 @@ def add_server_dialog(dashboard):
         ttk.Label(scrollable_frame, text="(Enter Steam App ID or use Browse to select from list)", foreground=palette.get("text_disabled_fg"), font=("Segoe UI", 9)).grid(row=current_row, column=1, columnspan=2, padx=15, sticky=tk.W)
         current_row += 1
 
-    ttk.Label(scrollable_frame, text="Install Directory:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
-    install_dir_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['install_dir'], width=25, font=("Segoe UI", 10))
-    install_dir_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
+    if server_type != "Modded Minecraft":
+        ttk.Label(scrollable_frame, text="Install Directory:", font=("Segoe UI", 10, "bold")).grid(row=current_row, column=0, padx=15, pady=10, sticky=tk.W)
+        install_dir_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['install_dir'], width=25, font=("Segoe UI", 10))
+        install_dir_entry.grid(row=current_row, column=1, padx=15, pady=10, sticky=tk.EW)
 
-    def browse_directory():
-        directory = filedialog.askdirectory(title="Select Installation Directory")
-        if directory:
-            form_vars['install_dir'].set(directory)
-    ttk.Button(scrollable_frame, text="Browse", command=browse_directory, width=12).grid(row=current_row, column=2, padx=15, pady=10)
-    current_row += 1
+        def browse_directory():
+            directory = filedialog.askdirectory(title="Select Installation Directory")
+            if directory:
+                form_vars['install_dir'].set(directory)
+        ttk.Button(scrollable_frame, text="Browse", command=browse_directory, width=12).grid(row=current_row, column=2, padx=15, pady=10)
+        current_row += 1
 
-    # Set default installation directory help text based on server type
-    if server_type == "Steam":
-        help_text = "(Leave blank for SteamCMD default location)"
-    else:  # Minecraft or Other
-        default_location = dashboard.variables.get("defaultServerManagerInstallDir", "")
-        if default_location:
-            help_text = f"(Leave blank for default: {default_location}\\ServerName)"
-        else:
-            help_text = "(Please specify installation directory)"
+        ttk.Label(scrollable_frame, text="Custom Download URL:", font=("Segoe UI", 10, "bold")).grid(
+            row=current_row, column=0, padx=15, pady=6, sticky=tk.W)
+        url_entry = ttk.Entry(scrollable_frame, textvariable=form_vars['custom_download_url'], width=25, font=("Segoe UI", 10))
+        url_entry.grid(row=current_row, column=1, padx=15, pady=6, sticky=tk.EW)
 
-    # Create a wrapping label for the help text with better wrapping
-    palette = _get_active_palette(dashboard)
-    help_label = ttk.Label(scrollable_frame, text=help_text, foreground=palette.get("text_disabled_fg"),
-                         font=("Segoe UI", 9), wraplength=500, justify=tk.LEFT)
-    help_label.grid(row=current_row, column=1, columnspan=2, padx=15, pady=(0, 5), sticky="ew")
+        def open_custom_url():
+            url = form_vars['custom_download_url'].get().strip()
+            if not url:
+                messagebox.showinfo("No URL", "Enter a custom download URL first.")
+                return
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception as e:
+                messagebox.showerror("URL Error", f"Could not open URL: {e}")
 
-    scrollable_frame.grid_columnconfigure(1, weight=1)
-    current_row += 1
+        ttk.Button(scrollable_frame, text="Open URL", command=open_custom_url, width=12).grid(
+            row=current_row, column=2, padx=15, pady=6)
+        current_row += 1
 
-    current_row += 1
+        # Set default installation directory help text based on server type
+        if server_type == "Steam":
+            help_text = "(Leave blank for SteamCMD default location)"
+        else:  # Minecraft or Other
+            default_location = dashboard.variables.get("defaultServerManagerInstallDir", "")
+            if default_location:
+                help_text = f"(Leave blank for default: {default_location}\\ServerName)"
+            else:
+                help_text = "(Please specify installation directory)"
+
+        palette = _get_active_palette(dashboard)
+        help_label = ttk.Label(scrollable_frame, text=help_text, foreground=palette.get("text_disabled_fg"),
+                             font=("Segoe UI", 9), wraplength=500, justify=tk.LEFT)
+        help_label.grid(row=current_row, column=1, columnspan=2, padx=15, pady=(0, 5), sticky="ew")
+        current_row += 1
+
+        ttk.Label(scrollable_frame,
+                  text="(Optional) Use a custom URL when you want to manually track/download server files.",
+                  foreground=palette.get("text_disabled_fg"), font=("Segoe UI", 8)).grid(
+            row=current_row, column=1, columnspan=2, padx=15, pady=(0, 5), sticky=tk.W)
+        current_row += 1
 
     button_container = ttk.Frame(top_frame)
     button_container.pack(fill=tk.X, pady=(10, 5))
@@ -3973,9 +4579,61 @@ def add_server_dialog(dashboard):
     progress = ttk.Progressbar(status_container, mode="indeterminate")
     progress.pack(fill=tk.X)
 
-    # Bottom frame for console log (50% of space)
+    # For Modded Minecraft: details strip below "Ready to create server…"
+    # All fields stacked vertically – no side-by-side to avoid overlap.
+    if server_type == "Modded Minecraft":
+        palette = _get_active_palette(dashboard)
+        muted_fg_strip = palette.get("text_disabled_fg")
+        details_strip = ttk.LabelFrame(top_frame, text="Selected Pack & Install Location", padding=(10, 6))
+        details_strip.pack(fill=tk.X, pady=(2, 4), padx=2)
+        details_strip.columnconfigure(0, weight=0, minsize=120)
+        details_strip.columnconfigure(1, weight=1)
+        details_strip.columnconfigure(2, weight=0)
+
+        # Row 0 – pack description
+        ttk.Label(details_strip, text="Description:", font=("Segoe UI", 9, "bold")).grid(
+            row=0, column=0, sticky=tk.NW, padx=(0, 8), pady=(0, 4))
+        desc_label_strip = ttk.Label(details_strip, textvariable=desc_var,
+                                     foreground=muted_fg_strip, font=("Segoe UI", 9),
+                                     wraplength=500, justify=tk.LEFT)
+        desc_label_strip.grid(row=0, column=1, columnspan=2, sticky=tk.EW, pady=(0, 6))
+
+        def _update_desc_wrap(event):
+            w = details_strip.winfo_width() - 160
+            if w > 10:
+                desc_label_strip.configure(wraplength=w)
+        details_strip.bind("<Configure>", _update_desc_wrap)
+
+        # Row 1 – pack version
+        ttk.Label(details_strip, text="Pack Version:", font=("Segoe UI", 9, "bold")).grid(
+            row=1, column=0, sticky=tk.W, padx=(0, 8), pady=(0, 4))
+        _strip_vcm = ttk.Combobox(details_strip, textvariable=form_vars['modded_version'],
+                                   values=[], state="readonly", font=("Segoe UI", 9))
+        _strip_vcm.grid(row=1, column=1, columnspan=2, sticky=tk.EW, pady=(0, 6))
+        _vcm_ref[0] = _strip_vcm
+
+        # Row 2 – install directory
+        ttk.Label(details_strip, text="Install Directory:", font=("Segoe UI", 9, "bold")).grid(
+            row=2, column=0, sticky=tk.W, padx=(0, 8), pady=(0, 2))
+        ttk.Entry(details_strip, textvariable=form_vars['install_dir'],
+                  font=("Segoe UI", 9)).grid(row=2, column=1, sticky=tk.EW, pady=(0, 2))
+
+        def _browse_modded_dir():
+            directory = filedialog.askdirectory(title="Select Installation Directory")
+            if directory:
+                form_vars['install_dir'].set(directory)
+
+        ttk.Button(details_strip, text="Browse", command=_browse_modded_dir, width=8).grid(
+            row=2, column=2, padx=(6, 0), pady=(0, 2))
+        _default_loc = dashboard.variables.get("defaultServerManagerInstallDir", "")
+        _dir_hint = f"Default: {_default_loc}\\<Name>" if _default_loc else "Specify install directory"
+        ttk.Label(details_strip, text=_dir_hint,
+                  foreground=muted_fg_strip, font=("Segoe UI", 8)).grid(
+            row=3, column=1, columnspan=2, sticky=tk.W, pady=(0, 2))
+
+    # Bottom frame for console log (small – top area gets most height)
     bottom_frame = ttk.Frame(paned_window)
-    paned_window.add(bottom_frame, weight=1)
+    paned_window.add(bottom_frame, weight=0)
 
     console_container = ttk.LabelFrame(bottom_frame, text="Installation Log", padding=10)
     console_container.pack(fill=tk.BOTH, expand=True)
@@ -3984,7 +4642,7 @@ def add_server_dialog(dashboard):
     console_output = scrolledtext.ScrolledText(
         console_container,
         width=60,
-        height=12,
+        height=7,
         background=palette.get("text_bg"),
         foreground=palette.get("text_fg"),
         insertbackground=palette.get("text_fg"),
@@ -4030,7 +4688,7 @@ def add_server_dialog(dashboard):
                     if not install_dir:
                         messagebox.showerror("Validation Error", "SteamCMD path not configured. Please set the installation directory manually.")
                         return
-                else:  # Minecraft or Other
+                else:  # Minecraft, Modded Minecraft or Other
                     default_base = dashboard.variables.get("defaultServerManagerInstallDir", "")
                     if default_base:
                         install_dir = os.path.join(default_base, server_name)
@@ -4052,6 +4710,11 @@ def add_server_dialog(dashboard):
                 minecraft_version = form_vars['minecraft_version'].get().strip()
                 if not minecraft_version:
                     messagebox.showerror("Validation Error", "Minecraft version must be selected.")
+                    return
+
+            elif server_type == "Modded Minecraft":
+                if not form_vars['modded_pack'].get().strip():
+                    messagebox.showerror("Validation Error", "Please select a modpack from the list.")
                     return
 
             # Check for invalid characters in server name
@@ -4093,6 +4756,15 @@ def add_server_dialog(dashboard):
                 version_map = getattr(dialog, 'version_map', {})
                 minecraft_version_data = version_map.get(selected_version)
 
+            # Prepare modded pack data if applicable
+            modded_pack_data = None
+            if server_type == "Modded Minecraft":
+                modded_pack_data = {
+                    "pack_id":      form_vars['modded_pack'].get().strip(),
+                    "launcher":     form_vars['modded_launcher'].get().lower(),
+                    "pack_version": form_vars['modded_version'].get().strip(),
+                }
+
             # Use the existing installation function from dashboard_functions
             success, message = perform_server_installation(
                 server_type=server_type,
@@ -4100,6 +4772,8 @@ def add_server_dialog(dashboard):
                 install_dir=install_dir,
                 app_id=form_vars.get('app_id', tk.StringVar()).get() if server_type == "Steam" else None,
                 minecraft_version=minecraft_version_data,
+                modded_pack=modded_pack_data,
+                custom_download_url=form_vars.get('custom_download_url', tk.StringVar()).get().strip(),
                 credentials=credentials,
                 server_manager=dashboard.server_manager,
                 progress_callback=safe_status_callback,

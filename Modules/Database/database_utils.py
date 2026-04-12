@@ -46,6 +46,14 @@ def get_sql_config_from_registry(db_type="user"):
                         db_path = os.path.join(server_manager_dir, "db", "minecraft_ID.db")
                     except Exception:
                         db_path = "minecraft_ID.db"
+            elif db_type == "minecraft_modded":
+                db_path = get_registry_value(REGISTRY_PATH, "MinecraftModdedSQLDatabasePath", None)
+                if not db_path:
+                    try:
+                        server_manager_dir = get_server_manager_dir()
+                        db_path = os.path.join(server_manager_dir, "db", "minecraft_modded_ID.db")
+                    except Exception:
+                        db_path = "minecraft_modded_ID.db"
             else:
                 db_path = f"{db_type}.db"
 
@@ -61,6 +69,8 @@ def get_sql_config_from_registry(db_type="user"):
                 db_name = get_registry_value(REGISTRY_PATH, "SteamSQLDatabase", "steam_apps")
             elif db_type == "minecraft":
                 db_name = get_registry_value(REGISTRY_PATH, "MinecraftSQLDatabase", "minecraft_servers")
+            elif db_type == "minecraft_modded":
+                db_name = get_registry_value(REGISTRY_PATH, "MinecraftModdedSQLDatabase", "minecraft_modded_servers")
             else:
                 db_name = db_type
 
@@ -85,6 +95,8 @@ def get_sql_config_from_registry(db_type="user"):
             default_db = "steam_ID.db"
         elif db_type == "minecraft":
             default_db = "minecraft_ID.db"
+        elif db_type == "minecraft_modded":
+            default_db = "minecraft_modded_ID.db"
         else:
             default_db = f"{db_type}.db"
         return {

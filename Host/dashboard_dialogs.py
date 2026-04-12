@@ -585,14 +585,14 @@ class DashboardDialogsMixin:
 
     # Database tools
     def update_databases(self):
-        # Run AppID and Minecraft scanners to refresh database content
+        # Show selection listbox then run chosen scanners
         dialog = tk.Toplevel(self.root)
         dialog.title("Update Databases")
-        dialog.geometry("760x560")
-        dialog.minsize(700, 520)
+        dialog.geometry("920x760")
+        dialog.minsize(860, 700)
         dialog.resizable(True, True)
         dialog.transient(self.root)
-        centre_window(dialog, 760, 560, self.root)
+        centre_window(dialog, 920, 760, self.root)
 
         main_frame = ttk.Frame(dialog, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -600,9 +600,61 @@ class DashboardDialogsMixin:
         ttk.Label(main_frame, text="Update Databases",
                   font=("Segoe UI", 14, "bold")).pack(pady=(0, 5))
 
-        status_var = tk.StringVar(value="Idle")
+        ttk.Label(main_frame, text="Select which databases to scan and update:",
+                  font=("Segoe UI", 10)).pack(anchor=tk.W, pady=(0, 4))
+
+        # ── Scan target list (add new entries here to extend in future) ───────
+        # Each entry: (key, display_label, default_selected)
+        SCAN_TARGETS = [
+            ("steam",              "Steam dedicated servers  (steam_ID.db)",                 True),
+            ("minecraft",          "Minecraft server versions  (minecraft_ID.db)",           True),
+            ("modded:atlauncher",  "Modded Minecraft: ATLauncher  (minecraft_modded_ID.db)", True),
+            ("modded:ftb",         "Modded Minecraft: FTB  (minecraft_modded_ID.db)",         True),
+            ("modded:technic",     "Modded Minecraft: Technic  (minecraft_modded_ID.db)",     True),
+            ("modded:modrinth",    "Modded Minecraft: Modrinth  (minecraft_modded_ID.db)",    True),
+            ("modded:curseforge",  "Modded Minecraft: CurseForge  (requires API key)",        False),
+        ]
+
+        # Auto-tick CurseForge if a key is already saved
+        try:
+            from Modules.core.common import REGISTRY_PATH, get_registry_value
+            if get_registry_value(REGISTRY_PATH, "CurseForgeAPIKey", ""):
+                SCAN_TARGETS = [(k, l, True) if k == "modded:curseforge" else (k, l, d)
+                                for k, l, d in SCAN_TARGETS]
+        except Exception:
+            pass
+
+        # Multi-select listbox
+        sel_frame = ttk.LabelFrame(
+            main_frame,
+            text="Databases  (Ctrl+Click or Shift+Click to select multiple)",
+            padding=8)
+        sel_frame.pack(fill=tk.X, pady=(0, 6))
+
+        listbox = tk.Listbox(sel_frame, selectmode=tk.EXTENDED, height=len(SCAN_TARGETS),
+                             font=("Segoe UI", 10), activestyle="none",
+                             exportselection=False)
+        listbox.pack(fill=tk.X, side=tk.LEFT, expand=True)
+
+        for _key, label, _default in SCAN_TARGETS:
+            listbox.insert(tk.END, f"  {label}")
+
+        # Pre-select defaults
+        for idx, (_key, _label, default) in enumerate(SCAN_TARGETS):
+            if default:
+                listbox.selection_set(idx)
+
+        # Select-all / clear buttons
+        btn_sel_frame = ttk.Frame(sel_frame)
+        btn_sel_frame.pack(side=tk.LEFT, padx=(8, 0), anchor=tk.N)
+        ttk.Button(btn_sel_frame, text="All",  width=6,
+                   command=lambda: listbox.selection_set(0, tk.END)).pack(pady=(0, 4))
+        ttk.Button(btn_sel_frame, text="None", width=6,
+                   command=lambda: listbox.selection_clear(0, tk.END)).pack()
+
+        status_var = tk.StringVar(value="Ready")
         ttk.Label(main_frame, textvariable=status_var,
-                  font=("Segoe UI", 10)).pack(pady=(0, 5))
+              font=("Segoe UI", 10)).pack(pady=(0, 3))
 
         progress = ttk.Progressbar(main_frame, mode='indeterminate')
         progress.pack(fill=tk.X, pady=(0, 5))
@@ -611,11 +663,17 @@ class DashboardDialogsMixin:
             main_frame, wrap=tk.WORD, font=("Consolas", 10), state=tk.DISABLED)
         text_widget.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
 
+        ttk.Label(main_frame, text="Press Update to run the selected database scans.",
+                  font=("Segoe UI", 9, "italic")).pack(anchor=tk.W, pady=(0, 4))
+
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=(8, 0))
-        close_btn = ttk.Button(button_frame, text="Close",
-                               command=dialog.destroy, state=tk.DISABLED)
+
+        close_btn = ttk.Button(button_frame, text="Close", command=dialog.destroy)
         close_btn.pack(side=tk.RIGHT, padx=(0, 4), pady=(2, 2))
+
+        update_btn = ttk.Button(button_frame, text="Update", default=tk.ACTIVE)
+        update_btn.pack(side=tk.RIGHT, padx=(0, 4), pady=(2, 2))
 
         def _log(msg):
             def _append():
@@ -625,53 +683,133 @@ class DashboardDialogsMixin:
                 text_widget.config(state=tk.DISABLED)
             dialog.after(0, _append)
 
+        def _warn(msg):
+            _log(f"[WARN] {msg}")
+
+        def _error(msg):
+            _log(f"[ERROR] {msg}")
+
         def _run_scanners():
+            selected_indices = listbox.curselection()
+            selected_keys = {SCAN_TARGETS[i][0] for i in selected_indices}
+            ran_any = False
             try:
-                dialog.after(0, lambda: status_var.set("Scanning Steam dedicated servers..."))
-                _log("Starting Steam AppID scan...")
-                try:
-                    from Modules.Database.scanners.AppIDScanner import AppIDScanner
-                    scanner = AppIDScanner(use_database=True, debug_mode=False)
+                if "steam" in selected_keys:
+                    ran_any = True
+                    dialog.after(0, lambda: status_var.set("Scanning Steam dedicated servers..."))
+                    _log("Starting Steam AppID scan...")
                     try:
-                        scanner.scan_steam_apps(dedicated_only=True)
-                        stats = scanner.get_dedicated_servers_from_database()
-                        _log(f"Steam scan complete — {len(stats)} dedicated servers in database")
-                    finally:
-                        scanner.close()
-                except Exception as e:
-                    _log(f"Steam scan error: {e}")
-                    logger.error(f"Steam scan error during Update Databases: {e}")
+                        from Modules.Database.scanners.AppIDScanner import AppIDScanner
+                        scanner = AppIDScanner(use_database=True, debug_mode=False)
+                        try:
+                            scanner.scan_steam_apps(dedicated_only=True)
+                            stats = scanner.get_dedicated_servers_from_database()
+                            _log(f"Steam scan complete — {len(stats)} dedicated servers in database")
+                            if not stats:
+                                _warn("Steam scan completed but returned 0 dedicated servers.")
+                        finally:
+                            scanner.close()
+                    except Exception as e:
+                        _error(f"Steam scan error: {e}")
+                        logger.error(f"Steam scan error during Update Databases: {e}")
 
-                dialog.after(0, lambda: status_var.set("Scanning Minecraft server versions..."))
-                _log("\nStarting Minecraft server scan...")
-                try:
-                    from Modules.Database.scanners.MinecraftIDScanner import MinecraftIDScanner
-                    mc_scanner = MinecraftIDScanner(use_database=True, debug_mode=False)
+                if "minecraft" in selected_keys:
+                    ran_any = True
+                    dialog.after(0, lambda: status_var.set("Scanning Minecraft server versions..."))
+                    _log("\nStarting Minecraft server scan...")
                     try:
-                        mc_scanner.scan_minecraft_servers()
-                        mc_stats = mc_scanner.get_servers_from_database(
-                            modloader=None, dedicated_only=True, filter_snapshots=True)
-                        _log(f"Minecraft scan complete — {len(mc_stats) if mc_stats else 0} server versions in database")
-                    finally:
-                        mc_scanner.close()
-                except Exception as e:
-                    _log(f"Minecraft scan error: {e}")
-                    logger.error(f"Minecraft scan error during Update Databases: {e}")
+                        from Modules.Database.scanners.MinecraftIDScanner import MinecraftIDScanner
+                        mc_scanner = MinecraftIDScanner(use_database=True, debug_mode=False)
+                        try:
+                            mc_scanner.scan_minecraft_servers()
+                            mc_stats = mc_scanner.get_servers_from_database(
+                                modloader=None, dedicated_only=True, filter_snapshots=True)
+                            _log(f"Minecraft scan complete — {len(mc_stats) if mc_stats else 0} server versions in database")
+                            if not mc_stats:
+                                _warn("Minecraft scan completed but returned 0 server versions.")
+                        finally:
+                            mc_scanner.close()
+                    except Exception as e:
+                        _error(f"Minecraft scan error: {e}")
+                        logger.error(f"Minecraft scan error during Update Databases: {e}")
 
-                dialog.after(0, lambda: status_var.set("Update complete"))
-                _log("\nAll database updates finished.")
+                # Collect any modded launcher selections
+                launchers = [k.split(":")[1] for k in selected_keys if k.startswith("modded:")]
+                if launchers:
+                    ran_any = True
+                    label = ", ".join(l.capitalize() for l in launchers)
+                    dialog.after(0, lambda: status_var.set("Scanning modded Minecraft packs..."))
+                    _log(f"\nStarting modded Minecraft pack scan ({label})...")
+                    try:
+                        from Modules.Database.scanners.MinecraftModdedScanner import MinecraftModdedScanner
+                        from Modules.core.common import REGISTRY_PATH, get_registry_value
+                        cf_key = str(get_registry_value(REGISTRY_PATH, "CurseForgeAPIKey", "") or "").strip()
+                        if "curseforge" in launchers and not cf_key:
+                            _warn("CurseForge selected but no API key found in Settings > Minecraft — skipping.")
+                            launchers.remove("curseforge")
+
+                        # Probe CurseForge search endpoint to surface key rejection in the UI log.
+                        if "curseforge" in launchers:
+                            try:
+                                import requests
+                                probe = requests.get(
+                                    "https://api.curseforge.com/v1/mods/search",
+                                    params={"gameId": 432, "classId": 4471, "pageSize": 1, "index": 0},
+                                    headers={"x-api-key": cf_key},
+                                    timeout=15,
+                                )
+                                if probe.status_code == 403:
+                                    _warn("CurseForge API rejected the current key (403 Forbidden) — skipping CurseForge.")
+                                    launchers.remove("curseforge")
+                                elif probe.status_code >= 400:
+                                    _warn(f"CurseForge API probe returned HTTP {probe.status_code} — skipping CurseForge.")
+                                    launchers.remove("curseforge")
+                            except Exception as probe_error:
+                                _warn(f"CurseForge API probe failed: {probe_error} — skipping CurseForge.")
+                                launchers.remove("curseforge")
+
+                        if launchers:
+                            modded_scanner = MinecraftModdedScanner(curseforge_api_key=cf_key, debug_mode=False)
+                            try:
+                                results = modded_scanner.scan_packs(launchers=launchers)
+                                total = sum(results.values())
+                                for lnc, count in results.items():
+                                    _log(f"  {lnc}: {count} packs")
+                                    if count == 0:
+                                        _warn(f"{lnc} scan completed but returned 0 packs.")
+                                _log(f"Modded scan complete — {total} packs total in database")
+                                if total == 0:
+                                    _warn("All selected modded launchers returned 0 packs.")
+                            finally:
+                                modded_scanner.close()
+                        else:
+                            _warn("No modded launchers available to scan after validation checks.")
+                    except Exception as e:
+                        _error(f"Modded Minecraft scan error: {e}")
+                        logger.error(f"Modded Minecraft scan error during Update Databases: {e}")
+
+                if ran_any:
+                    dialog.after(0, lambda: status_var.set("Update complete"))
+                    _log("\nAll selected database updates finished.")
+                else:
+                    dialog.after(0, lambda: status_var.set("Nothing selected"))
+                    _warn("No databases were selected.")
 
             except Exception as e:
-                _log(f"\nFatal error: {e}")
+                _error(f"Fatal error: {e}")
                 logger.error(f"Update Databases failed: {e}")
                 dialog.after(0, lambda: status_var.set("Update failed"))
             finally:
                 dialog.after(0, lambda: progress.stop())
-                dialog.after(0, lambda: close_btn.config(state=tk.NORMAL))
+                dialog.after(0, lambda: update_btn.config(state=tk.NORMAL))
 
-        progress.start(15)
-        threading.Thread(target=_run_scanners, daemon=True,
-                         name="UpdateDatabases").start()
+        def _start_update():
+            update_btn.config(state=tk.DISABLED)
+            progress.start(15)
+            threading.Thread(target=_run_scanners, daemon=True,
+                             name="UpdateDatabases").start()
+
+        update_btn.config(command=_start_update)
 
     def verify_databases(self):
         # Verify database schema and data integrity

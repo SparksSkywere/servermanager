@@ -544,7 +544,7 @@ class ServerConfigMixin:
         current_server_type = server_config.get('Type', 'Other')
         type_var = tk.StringVar(value=current_server_type)
         type_combo = self._create_labeled_combo(identity_frame, "Server Type", type_var,
-                                              ["Steam", "Minecraft", "Other"], 1)
+                                              ["Steam", "Minecraft", "Modded Minecraft", "Other"], 1)
 
         appid_var = tk.StringVar(value=str(server_config.get('appid', server_config.get('AppID', ''))))
         appid_entry = self._create_labeled_entry(identity_frame, "AppID", appid_var, 2, width=15)
@@ -659,6 +659,7 @@ class ServerConfigMixin:
         java_path_var = ram_var = jvm_args_var = mc_version_var = None
         auto_update_var = validate_files_var = None
         notes_var = None
+        modded_launcher_var = modded_packid_var = modded_packver_var = modded_java_var = modded_ram_var = None
 
         if server_type == "Minecraft":
             minecraft_section = ttk.LabelFrame(scrollable_frame, text="\U0001f3ae Minecraft Settings", padding=10)
@@ -714,6 +715,41 @@ class ServerConfigMixin:
             java_info_frame.grid_columnconfigure(1, weight=1, minsize=150)
             java_info_frame.grid_columnconfigure(2, weight=0, minsize=80)
             java_info_frame.grid_columnconfigure(3, weight=0, minsize=100)
+
+        elif server_type == "Modded Minecraft":
+            modded_section = ttk.LabelFrame(scrollable_frame, text="\U0001f9e9 Modded Minecraft Settings", padding=10)
+            modded_section.pack(fill=tk.X, pady=(15, 0))
+
+            modded_info_frame = ttk.LabelFrame(modded_section, text="Modpack Configuration", padding=10)
+            modded_info_frame.pack(fill=tk.X, pady=(0, 10))
+
+            ttk.Label(modded_info_frame, text="Launcher:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky=tk.W, pady=5, padx=10)
+            modded_launcher_var = tk.StringVar(value=server_config.get("Launcher", ""))
+            ttk.Entry(modded_info_frame, textvariable=modded_launcher_var, width=25, state="readonly",
+                      font=("Segoe UI", 10)).grid(row=0, column=1, sticky=tk.EW, padx=10, pady=5)
+
+            ttk.Label(modded_info_frame, text="Pack ID:", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky=tk.W, pady=5, padx=10)
+            modded_packid_var = tk.StringVar(value=server_config.get("PackId", ""))
+            ttk.Entry(modded_info_frame, textvariable=modded_packid_var, width=25,
+                      font=("Segoe UI", 10)).grid(row=1, column=1, sticky=tk.EW, padx=10, pady=5)
+
+            ttk.Label(modded_info_frame, text="Pack Version:", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, sticky=tk.W, pady=5, padx=10)
+            modded_packver_var = tk.StringVar(value=server_config.get("PackVersion", ""))
+            ttk.Entry(modded_info_frame, textvariable=modded_packver_var, width=25,
+                      font=("Segoe UI", 10)).grid(row=2, column=1, sticky=tk.EW, padx=10, pady=5)
+
+            ttk.Label(modded_info_frame, text="Java Path:", font=("Segoe UI", 10, "bold")).grid(row=3, column=0, sticky=tk.W, pady=5, padx=10)
+            modded_java_var = tk.StringVar(value=server_config.get("JavaPath", "java"))
+            ttk.Entry(modded_info_frame, textvariable=modded_java_var, width=25,
+                      font=("Segoe UI", 10)).grid(row=3, column=1, sticky=tk.EW, padx=10, pady=5)
+
+            ttk.Label(modded_info_frame, text="RAM (MB):", font=("Segoe UI", 10, "bold")).grid(row=4, column=0, sticky=tk.W, pady=5, padx=10)
+            modded_ram_var = tk.StringVar(value=str(server_config.get("RAM", 2048)))
+            ttk.Entry(modded_info_frame, textvariable=modded_ram_var, width=15,
+                      font=("Segoe UI", 10)).grid(row=4, column=1, sticky=tk.W, padx=10, pady=5)
+
+            modded_info_frame.grid_columnconfigure(0, weight=0, minsize=110)
+            modded_info_frame.grid_columnconfigure(1, weight=1, minsize=200)
 
         elif server_type == "Steam":
             steam_section = ttk.LabelFrame(scrollable_frame, text="\U0001f682 Steam Settings", padding=10)
@@ -931,6 +967,20 @@ class ServerConfigMixin:
                                         updated_config['JVMArgs'] = jvm_args_var.get()
                                     if mc_version_var is not None:
                                         updated_config['Version'] = mc_version_var.get()
+                                elif new_type == "Modded Minecraft":
+                                    if modded_launcher_var is not None:
+                                        updated_config['Launcher'] = modded_launcher_var.get()
+                                    if modded_packid_var is not None:
+                                        updated_config['PackId'] = modded_packid_var.get()
+                                    if modded_packver_var is not None:
+                                        updated_config['PackVersion'] = modded_packver_var.get()
+                                    if modded_java_var is not None:
+                                        updated_config['JavaPath'] = modded_java_var.get()
+                                    if modded_ram_var is not None:
+                                        try:
+                                            updated_config['RAM'] = int(modded_ram_var.get())
+                                        except ValueError:
+                                            pass
                                 elif new_type == "Steam":
                                     if auto_update_var is not None:
                                         updated_config['AutoUpdate'] = auto_update_var.get()
