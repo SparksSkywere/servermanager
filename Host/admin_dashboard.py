@@ -13,8 +13,8 @@ logger = setup_module_logging("AdminDashboard")
 from tkinter import messagebox, simpledialog
 from Modules.security.user_management import UserManager
 from Modules.Database.user_database import get_user_engine, ensure_root_admin
-from Modules.core.theme import apply_theme as apply_shared_theme, get_theme_preference, persist_theme_preference
-from Modules.core.color_palettes import get_palette, list_themes
+from Modules.ui.theme import apply_theme as apply_shared_theme, get_theme_preference, persist_theme_preference
+from Modules.ui.color_palettes import get_palette, list_themes
 from Host.dashboard_ui import setup_custom_menu_strip
 
 # Module-level placeholder for type checker
@@ -352,11 +352,46 @@ def admin_login(user_manager, parent=None):
         # Simple, visible buttons
         cancel_btn = tk.Button(button_frame, text="Cancel", command=on_cancel,
                               font=("Segoe UI", 10, "bold"), width=12)
-        cancel_btn.pack(side=tk.LEFT)
 
         login_btn = tk.Button(button_frame, text="Sign In", command=on_login,
                              font=("Segoe UI", 10, "bold"), width=12)
-        login_btn.pack(side=tk.RIGHT)
+
+        login_buttons = [cancel_btn, login_btn]
+        button_spacing = 8
+
+        def _layout_admin_login_buttons(event=None):
+            # Wrap login controls on narrow windows instead of clipping.
+            try:
+                available_width = button_frame.winfo_width()
+                if available_width <= 1:
+                    login_dialog.after(30, _layout_admin_login_buttons)
+                    return
+
+                for btn in login_buttons:
+                    btn.grid_forget()
+
+                row = 0
+                col = 0
+                used_width = 0
+
+                for btn in login_buttons:
+                    btn_width = btn.winfo_reqwidth()
+                    required = btn_width if col == 0 else (btn_width + button_spacing)
+
+                    if col > 0 and used_width + required > available_width:
+                        row += 1
+                        col = 0
+                        used_width = 0
+                        required = btn_width
+
+                    btn.grid(row=row, column=col, sticky="w", padx=(0, button_spacing), pady=(0, button_spacing))
+                    used_width += required
+                    col += 1
+            except Exception as e:
+                logger.debug(f"Failed to relayout admin login buttons: {e}")
+
+        button_frame.bind("<Configure>", _layout_admin_login_buttons)
+        login_dialog.after(0, _layout_admin_login_buttons)
 
         _apply_admin_dialog_theme(
             login_dialog,

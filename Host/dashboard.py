@@ -63,8 +63,8 @@ from Modules.updates.server_updates import ServerUpdateManager
 
 # Import core infrastructure
 from Modules.core.common import ServerManagerModule, initialise_registry_values
-from Modules.core.theme import get_theme_preference, apply_theme as apply_shared_theme
-from Modules.core.color_palettes import get_palette
+from Modules.ui.theme import get_theme_preference, apply_theme as apply_shared_theme
+from Modules.ui.color_palettes import get_palette
 from Modules.Database.cluster_database import get_cluster_database
 
 # Import UI components
@@ -115,7 +115,6 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         # Initialize UI-related attributes (created in setup_ui)
         self.loading_frame: Optional[Any] = None
         self.server_lists: dict = {}
-        self.offline_var: Optional[Any] = None
         self.main_pane: Optional[Any] = None
         self.system_frame: Optional[Any] = None
         self.system_toggle_btn: Optional[Any] = None
@@ -132,6 +131,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         # Additional UI attributes
         self.top_frame: Optional[Any] = None
         self.add_server_btn: Optional[Any] = None
+        self.start_server_btn: Optional[Any] = None
         self.stop_server_btn: Optional[Any] = None
         self.import_server_btn: Optional[Any] = None
         self.update_all_button: Optional[Any] = None
@@ -197,7 +197,6 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
             "failedProcessRestarts": {},
             # Load configuration values
             "debugMode": self.config.get("configuration", {}).get("debugMode", False),
-            "offlineMode": self.config.get("configuration", {}).get("offlineMode", False),
             "systemRefreshInterval": self.config.get("configuration", {}).get("systemRefreshInterval", 4),
             "processMonitoringInterval": self.config.get("configuration", {}).get("processMonitoringInterval", 5),
             "maxProcessHistoryPoints": self.config.get("configuration", {}).get("maxProcessHistoryPoints", 20),
@@ -474,7 +473,7 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
     def _retheme_metric_text_widgets(self):
         # Explicitly recolour tk.Text metric widgets and their plain tk.Frame
         try:
-            from Modules.core.color_palettes import get_palette
+            from Modules.ui.color_palettes import get_palette
             palette = get_palette(getattr(self, "current_theme", "light"))
             text_bg = palette.get("text_bg")
             text_fg = palette.get("text_fg")
@@ -621,10 +620,6 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
         from Host.dashboard_functions import update_server_list_logic
         update_server_list_logic(self, force_refresh)
 
-    def toggle_offline_mode(self):
-        # Offline mode was a temporary debug control and is no longer used.
-        return
-
     def _hide_loading_overlay(self):
         # Hide the loading overlay
         try:
@@ -750,7 +745,9 @@ class ServerManagerDashboard(ServerConfigMixin, ServerOpsMixin, DashboardDialogs
                 messagebox.showerror("Dashboard Error", f"An unexpected error occurred:\n{exc_value}")
             except Exception:
                 pass
-            self.on_close()
+            # Keep the dashboard alive for recoverable callback exceptions.
+            # Closing the whole app here causes console/UI callback races to look like crashes.
+            return
 
         # Override Tkinter's exception handling for this root instance.
         self.root.report_callback_exception = tkinter_exception_handler

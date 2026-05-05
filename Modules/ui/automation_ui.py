@@ -10,7 +10,7 @@ import logging
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from Modules.core.common import setup_module_path, setup_module_logging, load_automation_settings, save_automation_settings
-from Modules.core.theme import get_theme_preference, apply_theme
+from Modules.ui.theme import get_theme_preference, apply_theme
 setup_module_path()
 from Modules.Database.server_configs_database import ServerConfigManager
 from Modules.server.server_manager import ServerManager

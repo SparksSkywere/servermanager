@@ -879,18 +879,18 @@ class ServerManager(ServerManagerModule):
                         logger.info(f"Stop command sent via shared dispatcher: {stop_cmd}")
                         command_sent = True
 
-                    # Method 4: Try direct stdin write if we have the process
-                    if not command_sent:
-                        if hasattr(self, 'active_processes') and server_name in self.active_processes:
-                            proc = self.active_processes[server_name]
-                            if proc and hasattr(proc, 'stdin') and proc.stdin and not proc.stdin.closed:
-                                try:
-                                    proc.stdin.write(stop_cmd + '\n')
-                                    proc.stdin.flush()
-                                    logger.info(f"Stop command sent via direct stdin: {stop_cmd}")
-                                    command_sent = True
-                                except Exception as e:
-                                    logger.debug(f"Direct stdin write failed: {e}")
+                    # Method 4: Always try direct stdin write when available, even if the shared
+                    # dispatcher claimed success (queue_command returns True before delivery).
+                    if hasattr(self, 'active_processes') and server_name in self.active_processes:
+                        proc = self.active_processes[server_name]
+                        if proc and hasattr(proc, 'stdin') and proc.stdin and not proc.stdin.closed:
+                            try:
+                                proc.stdin.write(stop_cmd + '\n')
+                                proc.stdin.flush()
+                                logger.info(f"Stop command sent via direct stdin: {stop_cmd}")
+                                command_sent = True
+                            except Exception as e:
+                                logger.debug(f"Direct stdin write failed: {e}")
 
                     if command_sent:
                         stop_command_used = True
@@ -1152,6 +1152,18 @@ class ServerManager(ServerManagerModule):
                                 logger.debug(f"Stop command sent via shared dispatcher: {stop_cmd}")
                             else:
                                 logger.warning("Failed to send stop command via shared dispatcher")
+
+                            # Always try direct stdin as a belt-and-suspenders fallback
+                            # (queue_command returns True before delivery, so we can't rely on it alone)
+                            if hasattr(self, 'active_processes') and server_name in self.active_processes:
+                                proc = self.active_processes[server_name]
+                                if proc and hasattr(proc, 'stdin') and proc.stdin and not proc.stdin.closed:
+                                    try:
+                                        proc.stdin.write(stop_cmd + '\n')
+                                        proc.stdin.flush()
+                                        logger.info(f"Stop command also sent via direct stdin for restart: {stop_cmd}")
+                                    except Exception as e:
+                                        logger.debug(f"Direct stdin write for restart failed: {e}")
 
                             for _ in range(10):  # Try for 10 seconds
                                 if not self.is_process_running(process_id):
@@ -1802,6 +1814,10 @@ class ServerManager(ServerManagerModule):
             if server_type == "Minecraft":
                 server_config["Version"] = version
                 server_config["ModLoader"] = modloader
+                server_config["StopCommand"] = "stop"
+
+            if server_type == "Modded Minecraft":
+                server_config["StopCommand"] = "stop"
 
             if additional_config:
                 server_config.update(additional_config)

@@ -13,8 +13,8 @@ from Modules.core.common import setup_module_path
 setup_module_path()
 
 from Modules.core.server_logging import get_dashboard_logger
-from Modules.core.color_palettes import get_palette
-from Modules.core.theme import apply_theme as apply_shared_theme
+from Modules.ui.color_palettes import get_palette
+from Modules.ui.theme import apply_theme as apply_shared_theme
 from Host.dashboard_functions import (
     centre_window, load_appid_scanner_list,
     make_canvas_width_updater, populate_server_tree,

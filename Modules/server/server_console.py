@@ -78,6 +78,8 @@ if sys.platform == 'win32':
         pass
 
 from Modules.core.common import setup_module_logging, send_command_to_server
+from Modules.ui.color_palettes import get_palette
+from Modules.ui.theme import get_theme_preference
 
 # Import shared server operations from dashboard_functions
 try:
@@ -102,6 +104,18 @@ except ImportError:
     pass
 
 logger: logging.Logger = setup_module_logging("ServerConsole")
+
+
+class _ConsoleCrashTracer:
+    # Temporary crash tracer is disabled after stability fixes.
+    def record(self, event, server_name=None, **fields):
+        return
+
+    def dump_recent(self, reason, logger_obj):
+        return
+
+
+_CRASH_TRACER = _ConsoleCrashTracer()
 
 # Real-time console class
 class RealTimeConsole:
@@ -1530,6 +1544,12 @@ class RealTimeConsole:
     def _update_gui_immediately(self, text, msg_type):
         # Update GUI immediately with rate limiting to prevent excessive updates
         try:
+            # Tkinter APIs are not thread-safe; background threads should only queue updates.
+            if threading.current_thread() != threading.main_thread():
+                with self.gui_update_lock:
+                    self.pending_gui_updates.append((text, msg_type))
+                return
+
             current_time = time.time()
 
             # Rate limit GUI updates to prevent excessive refreshes (max 20 per second)
@@ -1546,7 +1566,7 @@ class RealTimeConsole:
                 return
 
             # Schedule immediate GUI update on main thread
-            if self.window and self.window.winfo_exists():
+            if self.window:
                 try:
                     self.window.after(0, lambda: self._do_gui_update(text, msg_type))
                 except tk.TclError:
@@ -1594,6 +1614,10 @@ class RealTimeConsole:
     def _process_pending_batch_updates(self):
         # Process any pending updates that accumulated during rate limiting
         try:
+            # This method must only touch Tk widgets on the main thread.
+            if threading.current_thread() != threading.main_thread():
+                return
+
             with self.gui_update_lock:
                 if not self.pending_gui_updates:
                     return
@@ -1601,7 +1625,7 @@ class RealTimeConsole:
                 self.pending_gui_updates.clear()
 
             # Schedule batch update on main thread
-            if self.window and self.window.winfo_exists() and updates:
+            if self.window and updates:
                 self.window.after(0, lambda: self._do_batch_gui_update(updates))
 
         except Exception as e:
@@ -1656,6 +1680,39 @@ class RealTimeConsole:
             else:
                 self.scroll_pause_btn.config(text="Resume Scroll")
 
+    def _bind_scroll_controls(self):
+        # Ensure scrolling works after console window recreation.
+        try:
+            if not self.text_widget:
+                return
+
+            def _on_mousewheel(event):
+                try:
+                    if event.delta:
+                        self.text_widget.yview_scroll(int(-event.delta / 120), "units")
+                    else:
+                        # X11 fallback
+                        if getattr(event, 'num', None) == 4:
+                            self.text_widget.yview_scroll(-1, "units")
+                        elif getattr(event, 'num', None) == 5:
+                            self.text_widget.yview_scroll(1, "units")
+                except tk.TclError:
+                    pass
+                return "break"
+
+            self.text_widget.bind("<MouseWheel>", _on_mousewheel)
+            self.text_widget.bind("<Button-4>", _on_mousewheel)
+            self.text_widget.bind("<Button-5>", _on_mousewheel)
+
+            # Keep scrollbar wheel behavior when pointer is over the scrollbar itself.
+            try:
+                if hasattr(self.text_widget, 'vbar'):
+                    self.text_widget.vbar.bind("<MouseWheel>", _on_mousewheel)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug(f"Error binding scroll controls for {self.server_name}: {e}")
+
     def _get_status_text(self):
         # Get status text for the console
         try:
@@ -1669,37 +1726,46 @@ class RealTimeConsole:
             return "Status: Unknown"
 
     def _start_status_updates(self):
-        # Start periodic status updates and GUI refresh using a background thread
+        # Start periodic status updates and GUI refresh on the Tk event loop
         try:
-            if hasattr(self, '_status_update_thread') and self._status_update_thread and self._status_update_thread.is_alive():
+            if getattr(self, '_status_update_scheduled', False):
                 return
+            self._status_update_scheduled = True
+            _CRASH_TRACER.record("status_updates_start", self.server_name)
 
-            def status_update_loop():
-                while self.status_updates_active:
-                    try:
-                        # Update status on main thread
-                        if self.window and self.window.winfo_exists():
-                            self.window.after(0, self._schedule_status_update)
-                    except tk.TclError:
-                        break
-                    except Exception as e:
-                        logger.debug(f"Error scheduling status update: {e}")
-                        break
+            def status_tick():
+                try:
+                    if not self.status_updates_active:
+                        self._status_update_scheduled = False
+                        _CRASH_TRACER.record("status_updates_stop_inactive", self.server_name)
+                        return
 
-                    # Sleep for 2 seconds
-                    time.sleep(2)
+                    _CRASH_TRACER.record("status_tick", self.server_name, has_window=bool(self.window), has_process=bool(self.process))
+                    self._schedule_status_update()
 
-                logger.debug(f"Status update loop ended for {self.server_name}")
+                    if self.window:
+                        self.window.after(2000, status_tick)
+                    else:
+                        self._status_update_scheduled = False
+                        _CRASH_TRACER.record("status_updates_stop_no_window", self.server_name)
+                except tk.TclError:
+                    self._status_update_scheduled = False
+                    _CRASH_TRACER.record("status_tick_tclerror", self.server_name)
+                except Exception as e:
+                    logger.debug(f"Error in status tick for {self.server_name}: {e}")
+                    self._status_update_scheduled = False
+                    _CRASH_TRACER.record("status_tick_error", self.server_name, error=str(e))
+                    _CRASH_TRACER.dump_recent("status_tick_exception", logger)
 
-            self._status_update_thread = threading.Thread(
-                target=status_update_loop,
-                daemon=True,
-                name=f"StatusUpdate-{self.server_name}"
-            )
-            self._status_update_thread.start()
+            if self.window:
+                self.window.after(2000, status_tick)
+            else:
+                self._status_update_scheduled = False
 
         except Exception as e:
             logger.debug(f"Error starting status updates: {e}")
+            self._status_update_scheduled = False
+            _CRASH_TRACER.record("status_updates_start_error", self.server_name, error=str(e))
 
     def _schedule_status_update(self):
         # Schedule the actual update
@@ -1852,6 +1918,8 @@ class RealTimeConsole:
     def show_window(self, parent=None):
         # Show the console window
         try:
+            _CRASH_TRACER.record("show_window_enter", self.server_name, has_window=bool(self.window), is_active=self.is_active)
+
             # Enable GUI updates when showing window
             self.status_updates_active = True
 
@@ -1866,7 +1934,8 @@ class RealTimeConsole:
                     self.window = None
                     # Fall through to create new window
                 else:
-                    return
+                    _CRASH_TRACER.record("show_window_focus_existing", self.server_name)
+                    return True
 
             # Create window
             if parent:
@@ -1919,6 +1988,10 @@ class RealTimeConsole:
                 maxundo=0
             )
             self.text_widget.pack(fill=tk.BOTH, expand=True)
+            self._bind_scroll_controls()
+
+            # Reset scroll state for reopened consoles.
+            self.auto_scroll_enabled = True
 
             # Configure tags for different message types
             self.text_widget.tag_configure("stdout", foreground="white")
@@ -1974,11 +2047,16 @@ class RealTimeConsole:
             self.command_entry.focus_set()
 
             logger.debug(f"Console window created successfully for {self.server_name}")
+            _CRASH_TRACER.record("show_window_created", self.server_name, has_text_widget=bool(self.text_widget))
+            return True
 
         except Exception as e:
             logger.error(f"Error showing console window for {self.server_name}: {e}")
             import traceback
             logger.debug(f"Console window creation traceback: {traceback.format_exc()}")
+            _CRASH_TRACER.record("show_window_error", self.server_name, error=str(e))
+            _CRASH_TRACER.dump_recent("show_window_exception", logger)
+            return False
 
     def _populate_existing_output(self):
         # Populate console with existing output buffer and historical log data
@@ -2368,6 +2446,14 @@ class RealTimeConsole:
                     if self.window:
                         self.window.after(0, update_ui)
 
+                # Send the stop command directly via the console's own stdin path first.
+                # This covers cases where the background stop_server_advanced cannot reach
+                # the process (reattached server, no relay running, etc.).
+                stop_cmd = (self.server_config or {}).get('StopCommand', '')
+                if stop_cmd and self.is_active:
+                    self.send_command(stop_cmd)
+                    self._add_output(f"[INFO] Sending graceful stop command: {stop_cmd}", "system")
+
                 # Use stored console_manager reference, or try to get from server_manager
                 console_manager = self.console_manager or getattr(self.server_manager, 'console_manager', None)
 
@@ -2404,13 +2490,31 @@ class RealTimeConsole:
     def _create_test_commands_dropdown(self, parent_frame):
         # Create a dropdown menu for test commands
         try:
+            palette = get_palette(get_theme_preference("light"))
+
             # Create menubutton
-            test_menu_btn = tk.Menubutton(parent_frame, text="Test Commands", relief=tk.RAISED,
-                                        bg="#f0f0f0", activebackground="#e0e0e0")
+            test_menu_btn = tk.Menubutton(
+                parent_frame,
+                text="Test Commands",
+                relief=tk.RAISED,
+                bg=palette.get("button_bg"),
+                fg=palette.get("button_fg"),
+                activebackground=palette.get("button_active_bg"),
+                activeforeground=palette.get("button_active_fg"),
+                highlightbackground=palette.get("border"),
+                highlightcolor=palette.get("border"),
+            )
             test_menu_btn.pack(side=tk.LEFT, padx=(0, 10))
 
             # Create menu
-            test_menu = tk.Menu(test_menu_btn, tearoff=0)
+            test_menu = tk.Menu(
+                test_menu_btn,
+                tearoff=0,
+                bg=palette.get("menu_bg"),
+                fg=palette.get("menu_fg"),
+                activebackground=palette.get("menu_active_bg"),
+                activeforeground=palette.get("menu_active_fg"),
+            )
             test_menu_btn.config(menu=test_menu)
 
             # Add test command options
@@ -2434,20 +2538,11 @@ class RealTimeConsole:
         self._run_automation_test("warning")
 
     def _run_automation_test(self, test_type):
-        # Run automation test using ServerAutomationManager
+        # Run automation test - sends commands via the console's own direct stdin path
         try:
-            if not self.server_manager:
-                messagebox.showerror("Error", "Server manager not available.", parent=self.window)
-                return
-
-            # Check if server is running
             if not self._is_process_running():
                 messagebox.showerror("Error", "Server not running", parent=self.window)
                 return
-
-            # Import automation manager
-            from Modules.services.server_automation import ServerAutomationManager
-            automation = ServerAutomationManager(self.server_manager)
 
             # Get server config for commands
             from Modules.Database.server_configs_database import ServerConfigManager
@@ -2469,7 +2564,8 @@ class RealTimeConsole:
                 if not motd_cmd or not motd_msg:
                     messagebox.showerror("Error", "MOTD command or message not configured.", parent=self.window)
                     return
-                success = automation.send_motd(self.server_name, motd_msg)
+                command = motd_cmd.replace('{message}', motd_msg)
+                success = self.send_command(command)
                 if success:
                     self._add_output("[INFO] MOTD command sent successfully", "system")
                 else:
@@ -2480,7 +2576,7 @@ class RealTimeConsole:
                 if not save_cmd:
                     messagebox.showerror("Error", "Save command not configured.", parent=self.window)
                     return
-                success = automation._send_command_to_server(self.server_name, save_cmd)
+                success = self.send_command(save_cmd)
                 if success:
                     self._add_output(f"[INFO] Save command sent successfully: {save_cmd}", "system")
                 else:
@@ -2509,14 +2605,12 @@ class RealTimeConsole:
 
                 # Send a single test warning
                 if "{message}" in warning_cmd:
-                    # Use {message} directly in the warning command
                     command = warning_cmd.replace("{message}", time_msg)
                 else:
-                    # Use the message template approach
                     test_message = msg_template.replace("{message}", time_msg)
                     command = warning_cmd.replace("{message}", test_message)
 
-                success = automation._send_command_to_server(self.server_name, command)
+                success = self.send_command(command)
                 if success:
                     self._add_output(f"[INFO] Test warning sent successfully: {command}", "system")
                 else:
@@ -2685,7 +2779,65 @@ class ConsoleManager:
     def __init__(self, server_manager=None):
         self.server_manager = server_manager
         self.consoles = {}
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+
+    def _recover_manager_lock(self, server_name, reason):
+        # Last-resort recovery when manager lock appears wedged.
+        try:
+            self.lock = threading.RLock()
+            logger.warning(f"Recovered console manager lock for {server_name} ({reason})")
+            _CRASH_TRACER.record("manager_lock_recovered", server_name, reason=reason)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to recover console manager lock for {server_name}: {e}")
+            _CRASH_TRACER.record("manager_lock_recover_error", server_name, error=str(e))
+            return False
+
+    def _evict_broken_console(self, server_name, console_obj=None, reason="unknown"):
+        # Remove broken console from manager and force-close its UI state.
+        removed_console = None
+        acquired = False
+        try:
+            acquired = self.lock.acquire(timeout=1.0)
+            if acquired:
+                existing = self.consoles.get(server_name)
+                if existing and (console_obj is None or existing is console_obj):
+                    removed_console = self.consoles.pop(server_name, None)
+            else:
+                _CRASH_TRACER.record("evict_console_lock_timeout", server_name, reason=reason)
+
+            target_console = removed_console or console_obj
+            if target_console:
+                try:
+                    target_console.status_updates_active = False
+                    setattr(target_console, '_status_update_scheduled', False)
+                except Exception:
+                    pass
+
+                try:
+                    target_console.force_close_window()
+                except Exception:
+                    pass
+
+                try:
+                    target_console.window = None
+                    target_console.text_widget = None
+                    target_console.command_entry = None
+                except Exception:
+                    pass
+
+            _CRASH_TRACER.record("evict_console_done", server_name, reason=reason, removed=bool(removed_console or console_obj))
+            return bool(removed_console or console_obj)
+        except Exception as e:
+            logger.debug(f"Error evicting broken console for {server_name}: {e}")
+            _CRASH_TRACER.record("evict_console_error", server_name, reason=reason, error=str(e))
+            return False
+        finally:
+            if acquired:
+                try:
+                    self.lock.release()
+                except Exception:
+                    pass
 
     # lock_timeout: max seconds to wait for lock (None = blocking, 0 = non-blocking)
     def attach_console_to_process(self, server_name, process, server_config=None, lock_timeout=None):
@@ -2718,18 +2870,49 @@ class ConsoleManager:
             logger.error(f"Error attaching console to process for {server_name}: {e}")
             return False
 
-    def show_console(self, server_name, parent=None):
+    def show_console(self, server_name, parent=None, _retry_after_reset=True):
         # Show console window for a server
         try:
+            _CRASH_TRACER.record("show_console_enter", server_name)
             logger.debug(f"show_console called for server: {server_name}")
             console = None
             server_config = None
+            stale_console_to_cleanup = None
 
             # Get or create console while holding lock, but don't show window while locked
-            with self.lock:
+            _CRASH_TRACER.record("show_console_before_lock", server_name)
+            acquired = self.lock.acquire(timeout=2.0)
+            if not acquired:
+                logger.error(f"Timed out acquiring console manager lock for {server_name}")
+                _CRASH_TRACER.record("show_console_lock_timeout", server_name)
+                _CRASH_TRACER.dump_recent("show_console_lock_timeout", logger)
+
+                if _retry_after_reset and self._recover_manager_lock(server_name, "show_console_timeout"):
+                    _CRASH_TRACER.record("show_console_retry_after_lock_recover", server_name)
+                    return self.show_console(server_name, parent=parent, _retry_after_reset=False)
+                return False
+
+            _CRASH_TRACER.record("show_console_lock_acquired", server_name)
+            try:
                 console = self.consoles.get(server_name)
                 if console:
                     logger.debug(f"Found existing console for {server_name}")
+                    _CRASH_TRACER.record("show_console_existing_console", server_name, is_active=console.is_active)
+
+                    # Never reuse a dead/inactive console object after stop.
+                    # Recreating avoids stale widget/thread state causing UI instability.
+                    try:
+                        has_live_process = bool(console.process and console._is_process_running())
+                    except Exception:
+                        has_live_process = False
+
+                    if not console.is_active and not has_live_process:
+                        stale_console_to_cleanup = console
+                        self.consoles.pop(server_name, None)
+                        console = None
+                        logger.debug(f"Discarded stale console object for {server_name}")
+                        _CRASH_TRACER.record("show_console_discard_stale", server_name)
+
                 else:
                     logger.debug(f"No existing console for {server_name}, attempting to create one")
                     # Try to create console if server exists
@@ -2740,10 +2923,36 @@ class ConsoleManager:
                                 logger.debug(f"Got server config for {server_name}, creating console")
                                 console = RealTimeConsole(server_name, server_config, self.server_manager, self)
                                 self.consoles[server_name] = console
+                                _CRASH_TRACER.record("show_console_created", server_name)
                             else:
                                 logger.warning(f"No server config found for {server_name}")
+                                _CRASH_TRACER.record("show_console_no_config", server_name)
                         except Exception as e:
                             logger.warning(f"Could not create console for {server_name}: {e}")
+                            _CRASH_TRACER.record("show_console_create_error", server_name, error=str(e))
+
+                if not console and self.server_manager:
+                    try:
+                        server_config = self.server_manager.get_server_config(server_name)
+                        if server_config:
+                            logger.debug(f"Creating fresh console for {server_name}")
+                            console = RealTimeConsole(server_name, server_config, self.server_manager, self)
+                            self.consoles[server_name] = console
+                            _CRASH_TRACER.record("show_console_created_fresh", server_name)
+                    except Exception as e:
+                        logger.warning(f"Could not create fresh console for {server_name}: {e}")
+                        _CRASH_TRACER.record("show_console_create_fresh_error", server_name, error=str(e))
+            finally:
+                self.lock.release()
+                _CRASH_TRACER.record("show_console_lock_released", server_name)
+
+            if stale_console_to_cleanup:
+                try:
+                    stale_console_to_cleanup.cleanup_on_server_stop()
+                    _CRASH_TRACER.record("show_console_stale_cleanup_done", server_name)
+                except Exception as cleanup_error:
+                    logger.debug(f"Stale console cleanup failed for {server_name}: {cleanup_error}")
+                    _CRASH_TRACER.record("show_console_stale_cleanup_error", server_name, error=str(cleanup_error))
 
             # If console exists but isn't active, try to attach to running process
             if console and not console.is_active:
@@ -2754,6 +2963,7 @@ class ConsoleManager:
                     pid = server_config.get('ProcessId') or server_config.get('PID')
                     if pid:
                         try:
+                            _CRASH_TRACER.record("show_console_try_attach", server_name, pid=pid)
                             # Validate that the PID actually belongs to this server (prevents PID reuse issues)
                             is_valid = False
                             process = None
@@ -2767,9 +2977,11 @@ class ConsoleManager:
 
                             if is_valid and process:
                                 logger.debug(f"Attaching console to validated running process for {server_name} (PID: {pid})")
+                                _CRASH_TRACER.record("show_console_attach_validated", server_name, pid=pid)
                                 # Use quick attach that skips historical output loading
                                 if not console._quick_attach_to_process(process):
                                     logger.warning(f"Failed to attach console to process for {server_name} (PID: {pid})")
+                                    _CRASH_TRACER.record("show_console_attach_failed", server_name, pid=pid)
                             elif not is_valid:
                                 # PID is stale or belongs to a different process. Do not attach to an
                                 # unvalidated PID, as that can bind the console to the wrong process.
@@ -2787,6 +2999,7 @@ class ConsoleManager:
                                 server_config.pop('ProcessCreateTime', None)
                                 if self.server_manager:
                                     self.server_manager.update_server(server_name, server_config)
+                                _CRASH_TRACER.record("show_console_cleared_stale_pid", server_name, pid=pid)
                         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
                             logger.debug(f"Could not access process {pid} for {server_name}: {e}")
                             # Clear stale PID
@@ -2796,15 +3009,30 @@ class ConsoleManager:
                             server_config.pop('ProcessCreateTime', None)
                             if self.server_manager:
                                 self.server_manager.update_server(server_name, server_config)
+                            _CRASH_TRACER.record("show_console_pid_access_error", server_name, pid=pid, error=str(e))
                         except Exception as e:
                             logger.debug(f"Error checking process for {server_name}: {e}")
+                            _CRASH_TRACER.record("show_console_pid_check_error", server_name, pid=pid, error=str(e))
 
             # Show window OUTSIDE the lock to prevent deadlocks
             if console:
-                console.show_window(parent)
-                return True
+                _CRASH_TRACER.record("show_console_before_show_window", server_name)
+                if console.show_window(parent):
+                    _CRASH_TRACER.record("show_console_success", server_name)
+                    return True
+
+                logger.error(f"Failed to show console window for {server_name}")
+                _CRASH_TRACER.record("show_console_show_window_failed", server_name)
+                _CRASH_TRACER.dump_recent("show_console_show_window_failed", logger)
+
+                if _retry_after_reset:
+                    self._evict_broken_console(server_name, console, reason="show_window_failed")
+                    _CRASH_TRACER.record("show_console_retry_after_evict", server_name)
+                    return self.show_console(server_name, parent=parent, _retry_after_reset=False)
+                return False
             else:
                 logger.error(f"Failed to create console for {server_name}")
+                _CRASH_TRACER.record("show_console_no_console", server_name)
                 messagebox.showerror("Console Error",
                                    f"No console available for server '{server_name}'. "
                                    f"Please start the server first.")
@@ -2814,6 +3042,8 @@ class ConsoleManager:
             logger.error(f"Error showing console for {server_name}: {e}")
             import traceback
             logger.debug(f"show_console error traceback: {traceback.format_exc()}")
+            _CRASH_TRACER.record("show_console_exception", server_name, error=str(e))
+            _CRASH_TRACER.dump_recent("show_console_exception", logger)
             return False
 
     def send_command(self, server_name, command):
@@ -2851,6 +3081,8 @@ class ConsoleManager:
                 console = self.consoles.get(server_name)
                 if console:
                     console.cleanup_on_server_stop()
+                    if not console.process and not console.is_active:
+                        self.consoles.pop(server_name, None)
                     logger.debug(f"Cleaned up console for {server_name} on server stop")
                     return True
                 else:
@@ -2865,6 +3097,42 @@ class ConsoleManager:
         except Exception as e:
             logger.error(f"Error cleaning up console for {server_name}: {e}")
             return False
+
+    def prune_stale_consoles(self):
+        # Remove stale/inactive console objects and clean up dead process attachments.
+        removed_count = 0
+        try:
+            with self.lock:
+                for server_name, console in list(self.consoles.items()):
+                    try:
+                        process_running = bool(console.process and console._is_process_running())
+                    except Exception:
+                        process_running = False
+
+                    if not process_running:
+                        try:
+                            console.cleanup_on_server_stop()
+                        except Exception:
+                            pass
+
+                        window_open = False
+                        try:
+                            window_open = bool(console.window and console.window.winfo_exists())
+                        except tk.TclError:
+                            window_open = False
+                        except Exception:
+                            window_open = False
+
+                        if not window_open:
+                            self.consoles.pop(server_name, None)
+                            removed_count += 1
+
+            if removed_count > 0:
+                logger.debug(f"Pruned {removed_count} stale console(s)")
+        except Exception as e:
+            logger.error(f"Error pruning stale consoles: {e}")
+
+        return removed_count
 
     def force_close_console(self, server_name):
         # Force close console window for a specific server

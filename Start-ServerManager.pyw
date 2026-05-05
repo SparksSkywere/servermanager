@@ -5,7 +5,6 @@ import sys
 import ctypes
 import json
 import time
-import winreg
 
 # Prevent Python from creating __pycache__ directories
 os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
@@ -14,7 +13,9 @@ os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
 
 # Import centralized registry constants
-from Modules.core.common import REGISTRY_ROOT, REGISTRY_PATH, is_admin, get_server_manager_dir
+from Modules.core.common import is_admin, get_server_manager_dir
+
+PID_FILES = ["launcher.pid", "trayicon.pid", "webserver.pid"]
 
 def check_process_running(pid):
     # Check if a process with given PID is still running
@@ -46,9 +47,7 @@ def cleanup_orphaned_pid_files(temp_dir):
         os.makedirs(temp_dir, exist_ok=True)
         return
         
-    pid_files = ["launcher.pid", "trayicon.pid", "webserver.pid"]
-    
-    for pid_file_name in pid_files:
+    for pid_file_name in PID_FILES:
         pid_file = os.path.join(temp_dir, pid_file_name)
         if os.path.exists(pid_file):
             try:
@@ -92,20 +91,23 @@ def is_already_running():
         if not server_manager_dir or not os.path.exists(server_manager_dir):
             server_manager_dir = os.path.dirname(os.path.abspath(__file__))
             
-        # Check for launcher PID file
+        # Check for known component PID files
         temp_dir = os.path.join(server_manager_dir, "temp")
-        pid_file = os.path.join(temp_dir, "launcher.pid")
-        
+
         # First, clean up any orphaned PID files
         cleanup_orphaned_pid_files(temp_dir)
-        
-        # Check if the main launcher PID file exists after cleanup
-        if os.path.exists(pid_file):
+
+        # If any known component is still running, treat as already running.
+        for pid_file_name in PID_FILES:
+            pid_file = os.path.join(temp_dir, pid_file_name)
+            if not os.path.exists(pid_file):
+                continue
+
             try:
                 with open(pid_file, 'r') as f:
                     pid_data = json.load(f)
                     pid = pid_data.get("ProcessId")
-                    
+
                     if pid and check_process_running(pid):
                         return True
                     else:
@@ -114,7 +116,7 @@ def is_already_running():
                             os.remove(pid_file)
                         except OSError:
                             pass
-                            
+
             except (json.JSONDecodeError, IOError):
                 # Invalid PID file, remove it
                 try:
@@ -136,10 +138,9 @@ def check_for_improper_shutdown():
             server_manager_dir = os.path.dirname(os.path.abspath(__file__))
             
         temp_dir = os.path.join(server_manager_dir, "temp")
-        pid_files = ["launcher.pid", "trayicon.pid", "webserver.pid"]
-        
+
         orphaned_files = []
-        for pid_file_name in pid_files:
+        for pid_file_name in PID_FILES:
             pid_file = os.path.join(temp_dir, pid_file_name)
             if os.path.exists(pid_file):
                 try:
@@ -259,15 +260,24 @@ try:
     # Give the process more time to start properly
     time.sleep(2.0)
     
-    # Check if the process failed to start
+    # Check if the process exited immediately.
+    # Return code 0 is treated as a non-failure (typically "already running").
     if process.poll() is not None:
         # Process terminated immediately, get error info
         stdout, stderr = process.communicate()
-        stdout_text = stdout.decode() if stdout else "No stdout output"
-        stderr_text = stderr.decode() if stderr else "No stderr output"
-        
+        stdout_text = stdout.decode(errors='replace') if stdout else "No stdout output"
+        stderr_text = stderr.decode(errors='replace') if stderr else "No stderr output"
+
+        if process.returncode == 0:
+            # Launcher can exit 0 intentionally when an existing instance is detected.
+            if sys.platform == "win32":
+                ctypes.windll.user32.MessageBoxW(0, "Server Manager is already running.", "Server Manager", 0x40)
+            else:
+                print("Server Manager is already running.")
+            sys.exit(0)
+
         error_msg = f"Failed to start Server Manager launcher.\n\nReturn code: {process.returncode}\n\nStdout:\n{stdout_text}\n\nStderr:\n{stderr_text}"
-        
+
         if sys.platform == "win32":
             # Truncate message if too long for message box
             if len(error_msg) > 1000:

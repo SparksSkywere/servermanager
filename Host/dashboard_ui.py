@@ -65,43 +65,92 @@ def setup_ui(dashboard):
     # Create top frame for action buttons
     dashboard.top_frame = ttk.Frame(dashboard.root)
     dashboard.top_frame.pack(fill=tk.X, padx=10, pady=(8, 5))
+    dashboard.top_actions_frame = ttk.Frame(dashboard.top_frame)
+    dashboard.top_actions_frame.pack(fill=tk.X)
 
     # Use DPI-aware button sizing for proper scaling
-    button_width = dashboard.scale_value(14)
-    button_spacing = dashboard.scale_value(4)
+    # Keep controls compact so Start/Stop can sit beside Add Server.
+    button_width = dashboard.scale_value(12)
+    button_spacing = dashboard.scale_value(3)
 
-    # Action buttons on the left: Add Server, Stop Server, Import Server, Update All, Schedules, Consoles, Cluster
-    dashboard.add_server_btn = ttk.Button(dashboard.top_frame, text="Add Server",
+    # Action buttons on the left: Add Server, Start Server, Stop Server, Import Server, Update All, Schedules, Consoles, Cluster, Automation
+    dashboard.add_server_btn = ttk.Button(dashboard.top_actions_frame, text="Add Server",
                                     command=dashboard.add_server, width=button_width)
-    dashboard.add_server_btn.pack(side=tk.LEFT, padx=(0, button_spacing))
 
-    dashboard.stop_server_btn = ttk.Button(dashboard.top_frame, text="Stop Server",
+    dashboard.start_server_btn = ttk.Button(dashboard.top_actions_frame, text="Start Server",
+                                      command=dashboard.start_server, width=button_width)
+
+    dashboard.stop_server_btn = ttk.Button(dashboard.top_actions_frame, text="Stop Server",
                                      command=dashboard.stop_server, width=button_width)
-    dashboard.stop_server_btn.pack(side=tk.LEFT, padx=(0, button_spacing))
 
-    dashboard.import_server_btn = ttk.Button(dashboard.top_frame, text="Import Server",
+    dashboard.import_server_btn = ttk.Button(dashboard.top_actions_frame, text="Import Server",
                                        command=dashboard.import_server, width=button_width)
-    dashboard.import_server_btn.pack(side=tk.LEFT, padx=(0, button_spacing))
 
-    dashboard.update_all_button = ttk.Button(dashboard.top_frame, text="Update All",
+    dashboard.update_all_button = ttk.Button(dashboard.top_actions_frame, text="Update All",
                                       command=dashboard.update_all_servers, width=button_width)
-    dashboard.update_all_button.pack(side=tk.LEFT, padx=(0, button_spacing))
 
-    dashboard.schedules_button = ttk.Button(dashboard.top_frame, text="Schedules",
+    dashboard.schedules_button = ttk.Button(dashboard.top_actions_frame, text="Schedules",
                                      command=dashboard.show_schedule_manager, width=button_width)
-    dashboard.schedules_button.pack(side=tk.LEFT, padx=(0, button_spacing))
 
-    dashboard.console_button = ttk.Button(dashboard.top_frame, text="Consoles",
+    dashboard.console_button = ttk.Button(dashboard.top_actions_frame, text="Consoles",
                                    command=dashboard.show_console_manager, width=button_width)
-    dashboard.console_button.pack(side=tk.LEFT, padx=(0, button_spacing))
 
-    dashboard.cluster_button = ttk.Button(dashboard.top_frame, text="Cluster",
+    dashboard.cluster_button = ttk.Button(dashboard.top_actions_frame, text="Cluster",
                                     command=dashboard.add_agent, width=button_width)
-    dashboard.cluster_button.pack(side=tk.LEFT, padx=(0, button_spacing))
 
-    dashboard.automation_button = ttk.Button(dashboard.top_frame, text="Automation",
+    dashboard.automation_button = ttk.Button(dashboard.top_actions_frame, text="Automation",
                                       command=dashboard.open_automation_settings, width=button_width)
-    dashboard.automation_button.pack(side=tk.LEFT, padx=(0, button_spacing))
+
+    dashboard._top_action_buttons = [
+        dashboard.add_server_btn,
+        dashboard.start_server_btn,
+        dashboard.stop_server_btn,
+        dashboard.import_server_btn,
+        dashboard.update_all_button,
+        dashboard.schedules_button,
+        dashboard.console_button,
+        dashboard.cluster_button,
+        dashboard.automation_button,
+    ]
+
+    def _relayout_top_actions(event=None):
+        # Wrap top action buttons to additional rows on narrow windows.
+        try:
+            frame = dashboard.top_actions_frame
+            buttons = getattr(dashboard, '_top_action_buttons', [])
+            if not buttons:
+                return
+
+            available_width = frame.winfo_width()
+            if available_width <= 1:
+                dashboard.root.after(30, _relayout_top_actions)
+                return
+
+            for btn in buttons:
+                btn.grid_forget()
+
+            row = 0
+            col = 0
+            used_width = 0
+
+            for btn in buttons:
+                btn_width = btn.winfo_reqwidth()
+                required = btn_width if col == 0 else (btn_width + button_spacing)
+
+                if col > 0 and used_width + required > available_width:
+                    row += 1
+                    col = 0
+                    used_width = 0
+                    required = btn_width
+
+                btn.grid(row=row, column=col, sticky="w", padx=(0, button_spacing), pady=(0, button_spacing))
+                used_width += required
+                col += 1
+        except Exception as e:
+            logger.debug(f"Failed to relayout top actions: {e}")
+
+    dashboard.top_actions_frame.bind("<Configure>", _relayout_top_actions)
+    dashboard.root.after(0, _relayout_top_actions)
 
     # Main container - reduced padding for tighter layout
     dashboard.container_frame = ttk.Frame(dashboard.root, padding=(10, 5, 10, 10))
@@ -302,16 +351,6 @@ def setup_ui(dashboard):
     ttk.Label(dashboard.webserver_frame, text="Web Server: ").pack(side=tk.LEFT)
     dashboard.webserver_status = ttk.Label(dashboard.webserver_frame, text="Checking...", foreground="gray")
     dashboard.webserver_status.pack(side=tk.LEFT)
-
-    # Offline mode toggle
-    dashboard.offline_var = tk.BooleanVar(value=dashboard.variables["offlineMode"])
-    dashboard.offline_check = ttk.Checkbutton(
-        dashboard.webserver_frame,
-        text="Offline Mode",
-        variable=dashboard.offline_var,
-        command=dashboard.toggle_offline_mode
-    )
-    dashboard.offline_check.pack(side=tk.LEFT, padx=(15, 0))
 
     # System metrics grid
     dashboard.metrics_frame = ttk.Frame(dashboard.system_frame, padding=(0, 10, 0, 0))

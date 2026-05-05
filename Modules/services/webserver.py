@@ -46,11 +46,27 @@ if TYPE_CHECKING:
 logger: logging.Logger = setup_module_logging("WebServer")
 
 class DummyDashboardTracker:
-    def start_auto_refresh(self): pass
-    def stop_auto_refresh(self): pass
-    def get_dashboards(self): return []
-    def get_servers(self): return []
-    def refresh(self): pass
+    def __init__(self):
+        self._auto_refresh_enabled = False
+        self._dashboards = []
+        self._servers = []
+        self._last_refresh = None
+
+    def start_auto_refresh(self):
+        self._auto_refresh_enabled = True
+        self.refresh()
+
+    def stop_auto_refresh(self):
+        self._auto_refresh_enabled = False
+
+    def get_dashboards(self):
+        return list(self._dashboards)
+
+    def get_servers(self):
+        return list(self._servers)
+
+    def refresh(self):
+        self._last_refresh = time.time()
 
 tracker = None
 try:

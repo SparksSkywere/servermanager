@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.4.1]
 
+  Misc fixes:
+  - Restored Cluster settings tab wiring in `dashboard_settings.py` so cluster settings UI is reachable from Settings
+  - Reused `_get_current_build_label(...)` in update UI initialisation and kept version display logic non-blocking
+  - Removed insecure unverified TLS context fallback in hardware endpoint probe (`ssl._create_unverified_context`)
+  - Replaced `NotImplementedError` in base temperature provider with safe no-data fallback return
+  - Implemented dummy dashboard tracker methods (`start_auto_refresh`, `stop_auto_refresh`, `refresh`) with minimal runtime-safe behavior
+  - Removed unused palette helpers `get_color` and `add_theme`, and switched temperature display path to use snapshots directly
+  - Fixed frontend XSS vulnerability: converted theme icon definitions from HTML strings to structured arrays and rewrote icon rendering to use safe DOM methods (createElementNS + replaceChildren)
+  - Fixed startup false-failure path in `Start-ServerManager.pyw`: launcher exit code `0` (already-running case) is now handled as success instead of error
+  - Expanded single-instance detection to include launcher/tray/webserver PID files so startup state is detected more reliably
+  - Hardened dashboard callback exception handling in `dashboard.py` to avoid closing the full dashboard on non-fatal Tk callback exceptions
+  - Improved refresh consistency (`refresh_all` + server-list rebuild) by running stale PID/console cleanup before refresh so stopped servers and stale console entries are removed correctly
+  - Improved console lifecycle recovery in `server_console.py`: stale/inactive console objects are discarded and recreated, lock handling was hardened (RLock + timeout), and failed open attempts now self-recover via one-shot reset/retry
+  - Fixed post-stop/reopen console scrolling regression by rebinding mouse-wheel handlers on recreated console widgets and resetting auto-scroll state on reopen
+  - Added temporary crash forensics instrumentation (`ConsoleCrashTrace.log`) during investigation, then disabled/cleaned the trace output after fixes were validated
+
+  Dashboard UI and Small-Display Layout:
+  - Added missing top-bar `Start Server` action next to `Add Server`; `Stop Server` now appears immediately to the right for a more intuitive flow
+  - Reduced top action button footprint and added responsive multi-row wrapping in `dashboard_ui.py` so controls remain usable on smaller displays
+  - Added responsive wrapping for Steam login dialog actions (`Cancel`, `Anonymous`, `Login`) in `dashboard_functions.py`
+  - Added responsive wrapping for admin login dialog actions (`Cancel`, `Sign In`) in `admin_dashboard.py`
+  - Kept all new layout controls theme-aware by using existing `ttk`/themed widget paths
+
   Modded Minecraft — Pack Scanner Fixes:
   - Fixed Technic returning 0 packs: all API requests now include `build=unset` query parameter required for public access
   - Added `_technic_search_slugs()` for dynamic pack discovery via the Technic search endpoint (`/search?q={term}&build=unset`)
@@ -32,6 +55,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Dashboard — System Panel Layout Fix:
   - Fixed system information panel drifting to centre after minimise/restore: sash correction now bound to `<Map>` on root window (fires on restore) with a 150 ms deferred `_apply_sash` call
   - Fixed brief flash of system panel at wrong position on maximise: sash update changed from `after(60)` to `after(0)` (next event loop iteration, before repaint) with `update_idletasks()` to ensure accurate geometry
+
+  Console Commands — Reliability Fixes:
+  - Fixed console `Stop Server` flow for Minecraft and other server types: stop command is now sent through the console stdin path before fallback termination logic, preventing premature `CTRL+C` in common relay-miss cases
+  - Fixed shared stop/restart handling in `server_manager.py` so direct stdin delivery is attempted even when queue dispatch reports success, improving graceful shutdown reliability
+  - Added default `StopCommand` for newly created `Minecraft` and `Modded Minecraft` servers (`stop`) so graceful stop works out-of-the-box
+  - Fixed console Test Commands dropdown actions (`MOTD`, `Save`, `Warning`) to send via live console command path, restoring reliability for test button execution
+
+  Theme and UI Module Structure:
+  - Moved theme and palette ownership from `Modules/core` to `Modules/ui` (`theme.py`, `color_palettes.py`) and updated all imports across dashboard/admin/console/ui modules
+  - Removed legacy `Modules/core/theme.py` and `Modules/core/color_palettes.py` files (no backward-compatibility layer retained)
+
+  Accessibility — Caret / Insertion Cursor Visibility:
+  - Improved insertion cursor visibility across text and input widgets by explicitly applying themed caret colour, width, and blink timing
+  - Added adaptive high-contrast caret colour selection per theme (contrast-scored against input backgrounds) to keep caret visible across all light/dark/accent palettes
+  - Applied caret visibility defaults to `Text`, `Entry`, `TEntry`, `Spinbox`, and `TSpinbox` plus global option defaults for consistent behaviour
 
 ## [1.4]
 

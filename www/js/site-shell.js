@@ -1,4 +1,25 @@
 (function() {
+    function createSvgIcon(width, height, viewBox, paths) {
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('width', String(width));
+        svg.setAttribute('height', String(height));
+        svg.setAttribute('viewBox', viewBox);
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+
+        paths.forEach(({ tag, attrs }) => {
+            const el = document.createElementNS(ns, tag);
+            Object.entries(attrs).forEach(([key, value]) => {
+                el.setAttribute(key, String(value));
+            });
+            svg.appendChild(el);
+        });
+
+        return svg;
+    }
+
     function renderSimpleHeader(options = {}) {
         const header = document.getElementById('appHeader');
         if (!header) {
@@ -6,39 +27,101 @@
         }
 
         const defaultDisplayName = options.defaultDisplayName || 'User';
-        header.innerHTML = `
-            <div class="header-brand">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="2" y="2" width="20" height="8" rx="2"></rect>
-                    <rect x="2" y="14" width="20" height="8" rx="2"></rect>
-                    <circle cx="6" cy="6" r="1" fill="currentColor"></circle>
-                    <circle cx="6" cy="18" r="1" fill="currentColor"></circle>
-                </svg>
-                <span>Server Manager</span>
-            </div>
-            <div class="user-menu" onclick="toggleUserDropdown(event)">
-                <div class="user-avatar" id="headerAvatar"><span>${defaultDisplayName.charAt(0).toUpperCase()}</span></div>
-                <span id="headerDisplayName">${defaultDisplayName}</span>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"></path></svg>
-            </div>
-            <div class="user-dropdown" id="userDropdown">
-                <a href="dashboard.html">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
-                    Dashboard
-                </a>
-                <div class="theme-control">
-                    <label class="theme-control-label" for="headerThemeSelect">Theme</label>
-                    <select id="headerThemeSelect" class="theme-select" data-theme-select onchange="selectTheme(this.value)">
-                        <option value="dark">Dark</option>
-                    </select>
-                </div>
-                <div class="divider"></div>
-                <a href="#" class="danger" onclick="logout(); return false;">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-                    Logout
-                </a>
-            </div>
-        `;
+        const safeDisplayName = String(defaultDisplayName || 'User');
+        const initial = safeDisplayName.charAt(0).toUpperCase() || 'U';
+
+        const brand = document.createElement('div');
+        brand.className = 'header-brand';
+        brand.appendChild(createSvgIcon(24, 24, '0 0 24 24', [
+            { tag: 'rect', attrs: { x: 2, y: 2, width: 20, height: 8, rx: 2 } },
+            { tag: 'rect', attrs: { x: 2, y: 14, width: 20, height: 8, rx: 2 } },
+            { tag: 'circle', attrs: { cx: 6, cy: 6, r: 1, fill: 'currentColor' } },
+            { tag: 'circle', attrs: { cx: 6, cy: 18, r: 1, fill: 'currentColor' } },
+        ]));
+        const brandText = document.createElement('span');
+        brandText.textContent = 'Server Manager';
+        brand.appendChild(brandText);
+
+        const userMenu = document.createElement('div');
+        userMenu.className = 'user-menu';
+        userMenu.addEventListener('click', toggleUserDropdown);
+
+        const avatar = document.createElement('div');
+        avatar.className = 'user-avatar';
+        avatar.id = 'headerAvatar';
+        const avatarSpan = document.createElement('span');
+        avatarSpan.textContent = initial;
+        avatar.appendChild(avatarSpan);
+
+        const displayName = document.createElement('span');
+        displayName.id = 'headerDisplayName';
+        displayName.textContent = safeDisplayName;
+
+        userMenu.appendChild(avatar);
+        userMenu.appendChild(displayName);
+        userMenu.appendChild(createSvgIcon(14, 14, '0 0 24 24', [
+            { tag: 'path', attrs: { d: 'M6 9l6 6 6-6' } },
+        ]));
+
+        const userDropdown = document.createElement('div');
+        userDropdown.className = 'user-dropdown';
+        userDropdown.id = 'userDropdown';
+
+        const dashboardLink = document.createElement('a');
+        dashboardLink.href = 'dashboard.html';
+        dashboardLink.appendChild(createSvgIcon(18, 18, '0 0 24 24', [
+            { tag: 'rect', attrs: { x: 3, y: 3, width: 7, height: 7 } },
+            { tag: 'rect', attrs: { x: 14, y: 3, width: 7, height: 7 } },
+            { tag: 'rect', attrs: { x: 14, y: 14, width: 7, height: 7 } },
+            { tag: 'rect', attrs: { x: 3, y: 14, width: 7, height: 7 } },
+        ]));
+        dashboardLink.appendChild(document.createTextNode(' Dashboard'));
+
+        const themeControl = document.createElement('div');
+        themeControl.className = 'theme-control';
+        const themeLabel = document.createElement('label');
+        themeLabel.className = 'theme-control-label';
+        themeLabel.setAttribute('for', 'headerThemeSelect');
+        themeLabel.textContent = 'Theme';
+        const themeSelect = document.createElement('select');
+        themeSelect.id = 'headerThemeSelect';
+        themeSelect.className = 'theme-select';
+        themeSelect.setAttribute('data-theme-select', '');
+        themeSelect.addEventListener('change', function onThemeChange() {
+            if (typeof window.selectTheme === 'function') {
+                window.selectTheme(this.value);
+            }
+        });
+        const defaultOption = document.createElement('option');
+        defaultOption.value = 'dark';
+        defaultOption.textContent = 'Dark';
+        themeSelect.appendChild(defaultOption);
+        themeControl.appendChild(themeLabel);
+        themeControl.appendChild(themeSelect);
+
+        const divider = document.createElement('div');
+        divider.className = 'divider';
+
+        const logoutLink = document.createElement('a');
+        logoutLink.href = '#';
+        logoutLink.className = 'danger';
+        logoutLink.addEventListener('click', function onLogoutClick(event) {
+            event.preventDefault();
+            logout();
+        });
+        logoutLink.appendChild(createSvgIcon(18, 18, '0 0 24 24', [
+            { tag: 'path', attrs: { d: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4' } },
+            { tag: 'polyline', attrs: { points: '16 17 21 12 16 7' } },
+            { tag: 'line', attrs: { x1: 21, y1: 12, x2: 9, y2: 12 } },
+        ]));
+        logoutLink.appendChild(document.createTextNode(' Logout'));
+
+        userDropdown.appendChild(dashboardLink);
+        userDropdown.appendChild(themeControl);
+        userDropdown.appendChild(divider);
+        userDropdown.appendChild(logoutLink);
+
+        header.replaceChildren(brand, userMenu, userDropdown);
 
         if (window.ThemeManager) {
             if (typeof window.ThemeManager.populateThemeSelects === 'function') {
@@ -91,7 +174,7 @@
             return;
         }
 
-        closeUserDropdown()
+        closeUserDropdown();
     }
 
     function bindShellEvents() {

@@ -18,9 +18,9 @@ from Modules.core.common import setup_module_path
 setup_module_path()
 
 from Modules.core.server_logging import get_dashboard_logger
-from Modules.core.theme import persist_theme_preference
-from Modules.core.theme import get_theme_preference
-from Modules.core.color_palettes import list_themes, get_palette
+from Modules.ui.theme import persist_theme_preference
+from Modules.ui.theme import get_theme_preference
+from Modules.ui.color_palettes import list_themes, get_palette
 from Host.dashboard_functions import centre_window
 
 if TYPE_CHECKING:
@@ -82,6 +82,9 @@ class DashboardSettingsMixin:
         hardware_frame = ttk.Frame(notebook)
         notebook.add(hardware_frame, text="Hardware")
 
+        cluster_frame = ttk.Frame(notebook)
+        notebook.add(cluster_frame, text="Cluster")
+
         minecraft_frame = ttk.Frame(notebook)
         notebook.add(minecraft_frame, text="Minecraft")
 
@@ -101,6 +104,7 @@ class DashboardSettingsMixin:
         self._create_steam_settings_tab(steam_frame, db)
         self._create_system_settings_tab(system_frame, main_config, db)
         self._create_hardware_settings_tab(hardware_frame, main_config, db)
+        self._create_cluster_settings_tab(cluster_frame, db)
         self._create_minecraft_settings_tab(minecraft_frame)
 
         button_frame = ttk.Frame(settings_window)
@@ -373,11 +377,7 @@ class DashboardSettingsMixin:
                   text="Check GitHub releases for a newer ServerManager version and launch the updater tool.",
                   wraplength=700, foreground=palette.get("text_disabled_fg")).pack(anchor=tk.W, pady=(0, 15))
 
-        configured_version = str(main_config.get("version", "")).strip()
-        if configured_version and configured_version.lower() not in {"0.1", "unknown", "none"}:
-            current_version = configured_version
-        else:
-            current_version = "Detecting local build..."
+        current_version = self._get_current_build_label(main_config)
         self.sm_current_version = current_version
         self.sm_current_build_var = tk.StringVar(value=f"Current build: {current_version}")
         ttk.Label(main_frame, textvariable=self.sm_current_build_var,
@@ -471,13 +471,8 @@ class DashboardSettingsMixin:
         if configured and configured.lower() not in {"0.1", "unknown", "none"}:
             return configured
 
-        branch = self._get_local_git_branch()
-        short_sha = self._get_local_git_short_sha()
-        if branch and short_sha:
-            return f"{branch}@{short_sha}"
-        if short_sha:
-            return short_sha
-        return configured or "Unknown"
+        # Keep startup non-blocking: background worker fills branch/sha shortly after dialog opens.
+        return "Detecting local build..."
 
     def _run_git_command(self, args):
         # Execute git command in repository and return stdout text, or None on failure
@@ -1211,10 +1206,8 @@ class DashboardSettingsMixin:
                 base = f"https://{host}"
 
             try:
-                if verify_tls:
-                    context = ssl.create_default_context()
-                else:
-                    context = ssl._create_unverified_context()
+                # Always verify certificates to avoid MITM-prone insecure TLS contexts.
+                context = ssl.create_default_context()
 
                 request = urllib.request.Request(
                     url=f"{base.rstrip('/')}/redfish/v1",
@@ -1223,6 +1216,8 @@ class DashboardSettingsMixin:
                 )
                 with urllib.request.urlopen(request, timeout=2.0, context=context):
                     return True
+            except ssl.SSLError:
+                return False
             except urllib.error.HTTPError as e:
                 return e.code in {200, 401, 403, 404}
             except Exception:

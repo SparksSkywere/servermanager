@@ -20,8 +20,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from Modules.core.common import setup_module_path, centre_window
 setup_module_path()
 from Modules.core.server_logging import get_dashboard_logger, log_dashboard_event
-from Modules.core.theme import get_theme_preference
-from Modules.core.color_palettes import get_palette
+from Modules.ui.theme import get_theme_preference
+from Modules.ui.color_palettes import get_palette
 from Modules.services.temperatures import create_temperature_service
 
 logger: logging.Logger = get_dashboard_logger()
@@ -336,9 +336,46 @@ def get_steam_credentials(root, use_stored=True):
     button_frame = ttk.Frame(main_frame)
     button_frame.pack(fill=tk.X, pady=(10, 0))
 
-    ttk.Button(button_frame, text="Login", command=on_login, width=12).pack(side=tk.RIGHT, padx=(5, 0))
-    ttk.Button(button_frame, text="Anonymous", command=on_anonymous, width=12).pack(side=tk.RIGHT, padx=(5, 0))
-    ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT)
+    cancel_btn = ttk.Button(button_frame, text="Cancel", command=on_cancel, width=12)
+    anonymous_btn = ttk.Button(button_frame, text="Anonymous", command=on_anonymous, width=12)
+    login_btn = ttk.Button(button_frame, text="Login", command=on_login, width=12)
+
+    login_buttons = [cancel_btn, anonymous_btn, login_btn]
+    button_spacing = 6
+
+    def _layout_login_buttons(event=None):
+        # Wrap login buttons when dialog width is constrained.
+        try:
+            available_width = button_frame.winfo_width()
+            if available_width <= 1:
+                dialog.after(30, _layout_login_buttons)
+                return
+
+            for btn in login_buttons:
+                btn.grid_forget()
+
+            row = 0
+            col = 0
+            used_width = 0
+
+            for btn in login_buttons:
+                btn_width = btn.winfo_reqwidth()
+                required = btn_width if col == 0 else (btn_width + button_spacing)
+
+                if col > 0 and used_width + required > available_width:
+                    row += 1
+                    col = 0
+                    used_width = 0
+                    required = btn_width
+
+                btn.grid(row=row, column=col, sticky="w", padx=(0, button_spacing), pady=(0, button_spacing))
+                used_width += required
+                col += 1
+        except Exception as e:
+            logger.debug(f"Failed to relayout Steam login buttons: {e}")
+
+    button_frame.bind("<Configure>", _layout_login_buttons)
+    dialog.after(0, _layout_login_buttons)
 
     dialog.update_idletasks()
     x = root.winfo_rootx() + (root.winfo_width() - dialog.winfo_width()) // 2
@@ -543,6 +580,7 @@ def get_modded_pack_enrichment(pack_id: str, launcher: str) -> dict:
         return {}
 
 
+def create_minecraft_version_browser_dialog(parent, modloader):
     dialog = tk.Toplevel(parent)
     dialog.title(f"Browse {modloader} Minecraft Versions")
     dialog.geometry("700x500")
@@ -1241,33 +1279,60 @@ def perform_server_installation(server_type, server_name, install_dir, app_id=No
             console_callback(f"[ERROR] {error_msg}")
         return False, error_msg
 
-def update_webserver_status(webserver_status_label, offline_var, paths, variables):
-    try:
-        palette = _get_active_palette(webserver_status_label)
-        status = check_webserver_status(paths, variables)
-        webserver_status_label.config(text=status)
-
-        if status == "Running":
-            webserver_status_label.config(foreground=palette.get("success_fg"))
-        elif status == "Stopped":
-            webserver_status_label.config(foreground=palette.get("error_fg"))
-        else:
-            webserver_status_label.config(foreground=palette.get("text_disabled_fg"))
-    except Exception as e:
-        logger.error(f"Error updating webserver status: {e}")
-        palette = _get_active_palette(webserver_status_label)
-        webserver_status_label.config(text="Unknown", foreground=palette.get("text_disabled_fg"))
 
 # Global variables for network monitoring
 _previous_network_stats = None
 _previous_network_time = None
-_network_up_history = deque(maxlen=90)
-_network_down_history = deque(maxlen=90)
-_network_history_last_reset = 0.0
+_NETWORK_GRAPH_WINDOW_SECONDS = 60.0
+_NETWORK_HISTORY_RETENTION_SECONDS = 75.0
+_network_up_history = deque(maxlen=2400)
+_network_down_history = deque(maxlen=2400)
 _memory_sticks_cache = None
 _memory_sticks_cache_time = 0.0
 _temperature_service = None
 _temperature_service_lock = threading.Lock()
+
+
+def _trim_network_history(history: deque, now_ts: float):
+    # Keep only recent data plus a small margin for smooth boundary interpolation.
+    cutoff = now_ts - _NETWORK_HISTORY_RETENTION_SECONDS
+    while len(history) > 2 and history[1][0] < cutoff:
+        history.popleft()
+
+
+def _build_visible_network_series(history: deque, now_ts: float):
+    # Clip history to a 60-second window and include a boundary point for seamless scrolling.
+    if not history:
+        return []
+
+    window_start = now_ts - _NETWORK_GRAPH_WINDOW_SECONDS
+    points = list(history)
+    first_visible_idx = 0
+    while first_visible_idx < len(points) and points[first_visible_idx][0] < window_start:
+        first_visible_idx += 1
+
+    if first_visible_idx == 0:
+        clipped = points
+    elif first_visible_idx >= len(points):
+        return []
+    else:
+        prev_ts, prev_val = points[first_visible_idx - 1]
+        curr_ts, curr_val = points[first_visible_idx]
+        if curr_ts > prev_ts:
+            ratio = (window_start - prev_ts) / (curr_ts - prev_ts)
+            ratio = max(0.0, min(1.0, ratio))
+            boundary_val = prev_val + ((curr_val - prev_val) * ratio)
+        else:
+            boundary_val = curr_val
+        clipped = [(window_start, boundary_val)] + points[first_visible_idx:]
+
+    visible = []
+    for ts, value in clipped:
+        elapsed = ts - window_start
+        elapsed = max(0.0, min(_NETWORK_GRAPH_WINDOW_SECONDS, elapsed))
+        visible.append((elapsed, max(0.0, float(value))))
+
+    return visible
 
 def _format_frequency_ghz(mhz_value):
     # Convert a MHz numeric value to a compact GHz display string.
@@ -1426,7 +1491,8 @@ def _get_temperature_info_text(variables: Optional[Dict[str, Any]] = None) -> st
         service = init_temperature_service(variables)
         if service is None:
             return "Temperature sensors not available"
-        return service.get_latest_text()
+        snapshot = service.get_latest_snapshot()
+        return snapshot.text
     except Exception as e:
         logger.error(f"Error reading temperature service snapshot: {e}")
         return "Temperature sensors not available"
@@ -1445,8 +1511,6 @@ def _get_network_palette(canvas):
 def update_network_graph(metric_widget, sent_bps, recv_bps):
     # Draw task-manager style upload/download line graph and update text summary.
     try:
-        global _network_history_last_reset
-
         if not isinstance(metric_widget, dict):
             set_metric_widget_text(metric_widget, f"Network: Up {format_speed(sent_bps)} Down {format_speed(recv_bps)}")
             return
@@ -1459,22 +1523,11 @@ def update_network_graph(metric_widget, sent_bps, recv_bps):
                 set_metric_widget_text(text_widget, f"Network: Up {format_speed(sent_bps)} Down {format_speed(recv_bps)}")
             return
 
-        now = time.time()
-        # Periodically clear graph history so old spikes do not flatten the signal over long sessions.
-        if _network_history_last_reset == 0.0:
-            _network_history_last_reset = now
-        elif (now - _network_history_last_reset) >= 900:
-            _network_up_history.clear()
-            _network_down_history.clear()
-            _network_history_last_reset = now
-
-        # Prime with a flat baseline so first visible draw starts as a straight line.
-        if not _network_up_history and not _network_down_history:
-            _network_up_history.extend([0.0] * (_network_up_history.maxlen - 1))
-            _network_down_history.extend([0.0] * (_network_down_history.maxlen - 1))
-
-        _network_up_history.append(max(0.0, float(sent_bps)))
-        _network_down_history.append(max(0.0, float(recv_bps)))
+        now_ts = time.time()
+        _network_up_history.append((now_ts, max(0.0, float(sent_bps))))
+        _network_down_history.append((now_ts, max(0.0, float(recv_bps))))
+        _trim_network_history(_network_up_history, now_ts)
+        _trim_network_history(_network_down_history, now_ts)
 
         try:
             width = max(10, int(canvas.winfo_width()))
@@ -1486,33 +1539,38 @@ def update_network_graph(metric_widget, sent_bps, recv_bps):
         canvas.configure(background=palette["bg"])
         canvas.delete("all")
 
-        if len(_network_up_history) < 2 or len(_network_down_history) < 2:
+        up_series = _build_visible_network_series(_network_up_history, now_ts)
+        down_series = _build_visible_network_series(_network_down_history, now_ts)
+
+        if len(up_series) < 2 or len(down_series) < 2:
             if text_widget is not None:
                 set_metric_widget_text(text_widget, "Network: Initialising...")
             return
 
-        max_rate = max(max(_network_up_history), max(_network_down_history), 1.0)
-        points_count = min(len(_network_up_history), len(_network_down_history))
-
-        if points_count <= 1:
-            return
-
-        x_step = width / (points_count - 1)
+        max_rate = max(
+            max((value for _, value in up_series), default=0.0),
+            max((value for _, value in down_series), default=0.0),
+            1.0,
+        )
 
         def make_points(series):
             points = []
             plot_top = 16
             plot_bottom = 8
             plot_height = max(4, height - (plot_top + plot_bottom))
-            for i in range(points_count):
-                value = series[-points_count + i]
-                x = i * x_step
-                y = plot_top + (plot_height - ((value / max_rate) * plot_height))
-                points.extend([x, y])
+            for elapsed, value in series:
+                x = (elapsed / _NETWORK_GRAPH_WINDOW_SECONDS) * width
+                try:
+                    ratio = float(value) / float(max_rate)
+                    ratio = max(0.0, min(1.0, ratio))
+                except (ZeroDivisionError, OverflowError, ValueError):
+                    ratio = 0.0
+                y = plot_top + (plot_height - ratio * plot_height)
+                points.extend([round(x, 1), round(y, 1)])
             return points
 
-        up_points = make_points(list(_network_up_history))
-        down_points = make_points(list(_network_down_history))
+        up_points = make_points(up_series)
+        down_points = make_points(down_series)
 
         canvas.create_line(0, height - 8, width, height - 8, fill=palette["grid"])
         canvas.create_line(*up_points, fill=palette["upload"], width=2)
@@ -1524,8 +1582,8 @@ def update_network_graph(metric_widget, sent_bps, recv_bps):
         canvas.create_line(76, 7, 92, 7, fill=palette["download"], width=2)
         canvas.create_text(96, 7, text="Download", anchor="w", fill=palette["legend"], font=("Segoe UI", 8))
 
-        latest_up = _network_up_history[-1]
-        latest_down = _network_down_history[-1]
+        latest_up = _network_up_history[-1][1]
+        latest_down = _network_down_history[-1][1]
 
         if text_widget is not None:
             set_metric_widget_text(
@@ -3693,6 +3751,18 @@ def update_server_list_logic(dashboard, force_refresh=False):
 
         def _background_server_list_update():
             try:
+                if hasattr(dashboard, 'server_manager') and dashboard.server_manager:
+                    try:
+                        cleanup_orphaned_process_entries(dashboard.server_manager, logger)
+                    except Exception as e:
+                        logger.debug(f"Error cleaning orphaned process entries during refresh: {e}")
+
+                if hasattr(dashboard, 'console_manager') and dashboard.console_manager and hasattr(dashboard.console_manager, 'prune_stale_consoles'):
+                    try:
+                        dashboard.console_manager.prune_stale_consoles()
+                    except Exception as e:
+                        logger.debug(f"Error pruning stale consoles during refresh: {e}")
+
                 # Periodically check for running servers that need console reattachment
                 if hasattr(dashboard, 'server_manager') and hasattr(dashboard, 'console_manager'):
                     if dashboard.server_manager and dashboard.console_manager:

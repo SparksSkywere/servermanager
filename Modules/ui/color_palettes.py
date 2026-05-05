@@ -513,26 +513,6 @@ def get_palette(theme_name: str) -> dict:
 		theme = "light"
 	return PALETTES[theme].copy()
 
-def get_color(theme_name: str, color_key: str, fallback: str = "#ffffff") -> str:
-	# Get a specific color from a theme palette.
-	palette = get_palette(theme_name)
-	return palette.get(color_key, fallback)
-
 def list_themes() -> list:
 	# List all available theme names.
 	return list(PALETTES.keys())
-
-def add_theme(theme_name: str, palette_dict: dict) -> bool:
-	# Add a new theme at runtime.
-	if not isinstance(palette_dict, dict):
-		return False
-	
-	required_keys = set(PALETTES["light"].keys())
-	provided_keys = set(palette_dict.keys())
-	
-	if not required_keys.issubset(provided_keys):
-		missing = required_keys - provided_keys
-		return False
-	
-	PALETTES[str(theme_name).strip().lower()] = palette_dict.copy()
-	return True

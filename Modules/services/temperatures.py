@@ -32,7 +32,7 @@ class TemperatureProvider:
 	name = "provider"
 
 	def collect(self) -> Optional[str]:
-		raise NotImplementedError
+		return None
 
 
 class LocalWindowsTemperatureProvider(TemperatureProvider):

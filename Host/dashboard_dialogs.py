@@ -13,7 +13,7 @@ from Modules.core.common import setup_module_path
 setup_module_path()
 
 from Modules.core.server_logging import get_dashboard_logger
-from Modules.core.color_palettes import get_palette
+from Modules.ui.color_palettes import get_palette
 from Host.dashboard_functions import (
     centre_window, batch_update_server_types, load_categories
 )

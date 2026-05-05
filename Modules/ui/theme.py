@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 
 from Modules.core.common import REGISTRY_PATH, get_registry_value, set_registry_value
 from Modules.core.server_logging import get_component_logger
-from Modules.core.color_palettes import get_palette, list_themes
+from Modules.ui.color_palettes import get_palette, list_themes
 
 logger = get_component_logger("Theme")
 
@@ -37,6 +37,69 @@ def _is_dark_palette(palette: dict) -> bool:
 		return luminance < 140
 	except Exception:
 		return False
+
+def _hex_to_rgb(hex_color: str):
+	# Convert #RRGGBB to RGB tuple.
+	try:
+		hex_value = str(hex_color or "").strip().lstrip("#")
+		if len(hex_value) != 6:
+			return None
+		return (int(hex_value[0:2], 16), int(hex_value[2:4], 16), int(hex_value[4:6], 16))
+	except Exception:
+		return None
+
+def _relative_luminance(rgb):
+	# WCAG relative luminance helper.
+	def _channel(value):
+		value = float(value) / 255.0
+		if value <= 0.03928:
+			return value / 12.92
+		return ((value + 0.055) / 1.055) ** 2.4
+
+	r, g, b = rgb
+	return (0.2126 * _channel(r)) + (0.7152 * _channel(g)) + (0.0722 * _channel(b))
+
+def _contrast_ratio(fg_hex: str, bg_hex: str) -> float:
+	# Compute WCAG contrast ratio between two hex colours.
+	fg_rgb = _hex_to_rgb(fg_hex)
+	bg_rgb = _hex_to_rgb(bg_hex)
+	if fg_rgb is None or bg_rgb is None:
+		return 1.0
+
+	fg_l = _relative_luminance(fg_rgb)
+	bg_l = _relative_luminance(bg_rgb)
+	lighter = max(fg_l, bg_l)
+	darker = min(fg_l, bg_l)
+	return (lighter + 0.05) / (darker + 0.05)
+
+def _pick_accessible_caret_color(palette: dict) -> str:
+	# Pick a caret colour that stays visible across text/entry backgrounds.
+	backgrounds = [
+		palette.get("text_bg", "#ffffff"),
+		palette.get("field_bg", "#ffffff"),
+		palette.get("panel_bg", "#ffffff"),
+	]
+	candidates = [
+		palette.get("caret_fg", ""),
+		palette.get("text_fg", ""),
+		palette.get("fg", ""),
+		palette.get("accent", ""),
+		"#ffffff",
+		"#000000",
+	]
+
+	best = "#000000"
+	best_score = 0.0
+	for candidate in candidates:
+		if not _hex_to_rgb(candidate):
+			continue
+		# Maximise worst-case contrast across all typical input backgrounds.
+		score = min(_contrast_ratio(candidate, bg) for bg in backgrounds)
+		if score > best_score:
+			best_score = score
+			best = candidate
+
+	return best
 
 def get_theme_preference(default: str = LIGHT) -> str:
 	# Prefer DB-configured theme, then registry fallback, then default.
@@ -92,6 +155,13 @@ def apply_theme(root: tk.Misc, theme_name: str, dpi_scale: float = 1.0) -> str:
 
 	# Get all colors from centralized palette
 	palette = get_palette(theme)
+	caret_color = _pick_accessible_caret_color(palette)
+	try:
+		caret_width = max(2, int(2 * float(dpi_scale or 1.0)))
+	except Exception:
+		caret_width = 2
+	caret_on_time = 700
+	caret_off_time = 350
 
 	def _apply_windows_titlebar_theme(widget: tk.Misc, theme_str: str) -> None:
 		# Use native Windows title bar theming when available.
@@ -171,7 +241,10 @@ def apply_theme(root: tk.Misc, theme_name: str, dpi_scale: float = 1.0) -> str:
 				widget.configure(
 					bg=palette.get("text_bg"),
 					fg=palette.get("text_fg"),
-					insertbackground=palette.get("text_fg"),
+					insertbackground=caret_color,
+					insertwidth=caret_width,
+					insertontime=caret_on_time,
+					insertofftime=caret_off_time,
 					selectbackground=palette.get("text_selection_bg"),
 					selectforeground=palette.get("text_selection_fg"),
 					highlightbackground=palette.get("border"),
@@ -225,18 +298,44 @@ def apply_theme(root: tk.Misc, theme_name: str, dpi_scale: float = 1.0) -> str:
 						)
 				except Exception:
 					pass
-			elif klass == "Entry":
-				widget.configure(
-					bg=palette.get("field_bg"),
-					fg=palette.get("fg"),
-					insertbackground=palette.get("fg"),
-					disabledbackground=palette.get("field_bg"),
-					disabledforeground=palette.get("fg"),
-					highlightbackground=palette.get("border"),
-					highlightcolor=palette.get("border"),
-					relief=tk.SOLID,
-					bd=1,
-				)
+			elif klass in ("Entry", "TEntry", "Spinbox", "TSpinbox"):
+				# Apply insertion cursor colour explicitly so caret remains visible
+				# on dark field backgrounds for both tk and ttk entry-like widgets.
+				widget_keys = set(widget.keys())
+				entry_cfg = {}
+				if "bg" in widget_keys:
+					entry_cfg["bg"] = palette.get("field_bg")
+				if "fieldbackground" in widget_keys:
+					entry_cfg["fieldbackground"] = palette.get("field_bg")
+				if "fg" in widget_keys:
+					entry_cfg["fg"] = palette.get("fg")
+				if "foreground" in widget_keys:
+					entry_cfg["foreground"] = palette.get("fg")
+				if "insertbackground" in widget_keys:
+					entry_cfg["insertbackground"] = caret_color
+				if "insertcolor" in widget_keys:
+					entry_cfg["insertcolor"] = caret_color
+				if "insertwidth" in widget_keys:
+					entry_cfg["insertwidth"] = caret_width
+				if "insertontime" in widget_keys:
+					entry_cfg["insertontime"] = caret_on_time
+				if "insertofftime" in widget_keys:
+					entry_cfg["insertofftime"] = caret_off_time
+				if "disabledbackground" in widget_keys:
+					entry_cfg["disabledbackground"] = palette.get("field_bg")
+				if "disabledforeground" in widget_keys:
+					entry_cfg["disabledforeground"] = palette.get("fg")
+				if "highlightbackground" in widget_keys:
+					entry_cfg["highlightbackground"] = palette.get("border")
+				if "highlightcolor" in widget_keys:
+					entry_cfg["highlightcolor"] = palette.get("border")
+				if "relief" in widget_keys:
+					entry_cfg["relief"] = tk.SOLID
+				if "bd" in widget_keys:
+					entry_cfg["bd"] = 1
+
+				if entry_cfg:
+					widget.configure(**entry_cfg)
 			elif klass == "TCombobox":
 				_theme_combobox_popdown(widget)
 			elif klass == "Label":
@@ -496,7 +595,22 @@ def apply_theme(root: tk.Misc, theme_name: str, dpi_scale: float = 1.0) -> str:
 	root.option_add("*TCombobox*Listbox.selectBackground", palette.get("listbox_selection_bg"), "interactive")
 	root.option_add("*TCombobox*Listbox.selectForeground", palette.get("listbox_selection_fg"), "interactive")
 	root.option_add("*Panedwindow.Background", palette.get("bg"), "interactive")
-	root.option_add("*insertBackground", palette.get("text_fg"), "interactive")
+	root.option_add("*insertBackground", caret_color, "interactive")
+	root.option_add("*insertWidth", str(caret_width), "interactive")
+	root.option_add("*insertOnTime", str(caret_on_time), "interactive")
+	root.option_add("*insertOffTime", str(caret_off_time), "interactive")
+	root.option_add("*Entry.insertBackground", caret_color, "interactive")
+	root.option_add("*Entry.insertWidth", str(caret_width), "interactive")
+	root.option_add("*Entry.insertOnTime", str(caret_on_time), "interactive")
+	root.option_add("*Entry.insertOffTime", str(caret_off_time), "interactive")
+	root.option_add("*TEntry.insertBackground", caret_color, "interactive")
+	root.option_add("*TEntry.insertWidth", str(caret_width), "interactive")
+	root.option_add("*TEntry.insertOnTime", str(caret_on_time), "interactive")
+	root.option_add("*TEntry.insertOffTime", str(caret_off_time), "interactive")
+	root.option_add("*Spinbox.insertBackground", caret_color, "interactive")
+	root.option_add("*Spinbox.insertWidth", str(caret_width), "interactive")
+	root.option_add("*Spinbox.insertOnTime", str(caret_on_time), "interactive")
+	root.option_add("*Spinbox.insertOffTime", str(caret_off_time), "interactive")
 
 	try:
 		_apply_palette_to_existing_widgets(root, theme)

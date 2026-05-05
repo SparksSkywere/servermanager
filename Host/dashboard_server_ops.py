@@ -17,7 +17,8 @@ from Host.dashboard_functions import (
     centre_window, update_server_status_in_treeview, open_directory_in_explorer,
     import_server_from_directory_dialog, import_server_from_export_dialog,
     export_server_dialog, create_progress_dialog_with_console,
-    start_server_operation, stop_server_operation, restart_server_operation # type: ignore
+    start_server_operation, stop_server_operation, restart_server_operation,
+    cleanup_orphaned_process_entries, cleanup_orphaned_relay_files # type: ignore
 )
 from debug.debug import get_server_process_details, log_exception, monitor_process_resources
 
@@ -627,6 +628,15 @@ Working Directory: {process_details.get('cwd', 'N/A')}
         # Refresh all dashboard data
         try:
             logger.info("Refreshing all dashboard data")
+
+            # Clean stale process metadata before rebuilding the UI list.
+            if self.server_manager:
+                cleanup_orphaned_process_entries(self.server_manager, logger)
+            cleanup_orphaned_relay_files(logger)
+
+            if self.console_manager and hasattr(self.console_manager, 'prune_stale_consoles'):
+                self.console_manager.prune_stale_consoles()
+
             self.update_system_info()
             self.update_server_list(force_refresh=True)
             self.update_webserver_status()
