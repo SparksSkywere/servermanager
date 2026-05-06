@@ -2864,7 +2864,7 @@ class RemoteHostManager:
 # Global remote host manager instance
 _remote_host_manager = RemoteHostManager()
 
-def cleanup_orphaned_process_entries(server_manager, logger):
+def cleanup_orphaned_process_entries(server_manager, logger, run_corruption_recovery=False):
     # Clean up orphaned process entries from server configurations
     try:
         if not server_manager:
@@ -2877,20 +2877,21 @@ def cleanup_orphaned_process_entries(server_manager, logger):
 
         for server_name, server_config in server_configs.items():
             try:
-                # Enhanced: Run corruption detection first
-                recovery_needed, recovery_actions, recovery_errors = server_manager.detect_and_recover_system_corruption(
-                    server_name, server_config
-                )
+                if run_corruption_recovery:
+                    # Optional deep recovery path (expensive). Keep disabled for periodic UI refresh.
+                    recovery_needed, recovery_actions, recovery_errors = server_manager.detect_and_recover_system_corruption(
+                        server_name, server_config
+                    )
 
-                if recovery_needed:
-                    logger.debug(f"Corruption recovery performed for {server_name}: {recovery_actions}")
-                    cleaned_count += 1
+                    if recovery_needed:
+                        logger.debug(f"Corruption recovery performed for {server_name}: {recovery_actions}")
+                        cleaned_count += 1
 
-                if recovery_errors:
-                    logger.debug(f"Corruption recovery errors for {server_name}: {recovery_errors}")
+                    if recovery_errors:
+                        logger.debug(f"Corruption recovery errors for {server_name}: {recovery_errors}")
 
-                # Reload config after potential recovery
-                server_config = server_manager.get_server_config(server_name)
+                    # Reload config after potential recovery
+                    server_config = server_manager.get_server_config(server_name)
 
                 pid = server_config.get('ProcessId') or server_config.get('PID')
                 if pid:
@@ -3846,9 +3847,22 @@ def _check_and_reattach_running_servers(server_manager, console_manager, logger)
                 if not pid:
                     continue
 
-                if not psutil.pid_exists(pid):
+                is_valid, process = server_manager.is_server_process_valid(server_name, pid, server_config)
+                if not is_valid:
                     # Server no longer running, remove from tracked set
                     _reattached_servers.discard(server_name)
+                    try:
+                        server_config.pop('ProcessId', None)
+                        server_config.pop('PID', None)
+                        server_config.pop('StartTime', None)
+                        server_config.pop('ProcessCreateTime', None)
+                        server_manager.update_server(server_name, server_config)
+                        if hasattr(server_manager, '_clear_runtime_process_state'):
+                            server_manager._clear_runtime_process_state(server_name)
+                        if console_manager:
+                            console_manager.cleanup_console_on_stop(server_name)
+                    except Exception:
+                        pass
                     continue
 
                 current_running.add(server_name)
@@ -3870,21 +3884,6 @@ def _check_and_reattach_running_servers(server_manager, console_manager, logger)
                     continue
 
                 try:
-                    process = psutil.Process(pid)
-                    if not process.is_running():
-                        _reattached_servers.discard(server_name)
-                        continue
-
-                    # Validate this is still the correct process using ProcessCreateTime
-                    is_valid = False
-                    if hasattr(server_manager, 'is_server_process_valid'):
-                        is_valid, _ = server_manager.is_server_process_valid(server_name, pid, server_config)
-                    else:
-                        is_valid = _process_matches_server(process, server_name, server_config)
-
-                    if not is_valid:
-                        continue
-
                     # Server is running but no console attached - reattach
                     logger.debug(f"Reattaching console to running server: {server_name} (PID: {pid})")
                     success = console_manager.attach_console_to_process(server_name, process, server_config, lock_timeout=5)
@@ -3920,6 +3919,23 @@ def start_server_operation(server_name, server_manager, console_manager=None,
                 server_name,
                 callback=status_callback
             )
+
+            # Self-heal stale process metadata that can survive stop/start races.
+            if not success and isinstance(result, str) and "already running" in result.lower():
+                try:
+                    stale_cleared = False
+                    if hasattr(server_manager, 'clear_stale_pid'):
+                        stale_cleared = bool(server_manager.clear_stale_pid(server_name))
+
+                    if stale_cleared:
+                        if status_callback:
+                            status_callback(f"Recovered stale process state for '{server_name}', retrying start...")
+                        success, result = server_manager.start_server_advanced(
+                            server_name,
+                            callback=status_callback
+                        )
+                except Exception as recovery_error:
+                    logger.warning(f"Stale PID recovery retry failed for {server_name}: {recovery_error}")
 
             # If successful and we got a process object, attach console
             if success and hasattr(result, 'pid'):

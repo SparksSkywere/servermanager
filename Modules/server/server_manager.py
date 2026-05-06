@@ -193,6 +193,28 @@ class ServerManager(ServerManagerModule):
         except Exception:
             return False
 
+    def _clear_runtime_process_state(self, server_name):
+        # Remove transient runtime process references for a server.
+        try:
+            if hasattr(self, 'active_processes') and server_name in self.active_processes:
+                self.active_processes.pop(server_name, None)
+        except Exception as e:
+            logger.debug(f"Error clearing runtime process state for {server_name}: {e}")
+
+    def _is_valid_server_process_running(self, server_name, process_id, server_config=None):
+        # Check whether a process is still the expected process for this server.
+        try:
+            if process_id is None:
+                return False
+
+            if hasattr(self, 'is_server_process_valid'):
+                is_valid, _ = self.is_server_process_valid(server_name, process_id, server_config)
+                return bool(is_valid)
+
+            return self.is_process_running(process_id)
+        except Exception:
+            return False
+
     def is_server_process_valid(self, server_name, process_id, server_config=None):
         # Validate that a PID belongs to the expected server process
         try:
@@ -584,6 +606,7 @@ class ServerManager(ServerManagerModule):
                 else:
                     # PID is stale or belongs to different process - clean up
                     logger.debug(f"Cleaning up stale/invalid process ID {pid} for server '{server_name}'")
+                    self._clear_runtime_process_state(server_name)
                     server_config.pop('ProcessId', None)
                     server_config.pop('PID', None)
                     server_config.pop('StartTime', None)
@@ -851,6 +874,8 @@ class ServerManager(ServerManagerModule):
             if not is_valid:
                 logger.warning(f"PID {process_id} is no longer valid for server '{server_name}' (stale or reused PID)")
 
+                self._clear_runtime_process_state(server_name)
+
                 server_config.pop('ProcessId', None)
                 server_config.pop('PID', None)
                 server_config.pop('StartTime', None)
@@ -899,7 +924,8 @@ class ServerManager(ServerManagerModule):
                             callback(f"Waiting for '{server_name}' to save and shutdown gracefully...")
 
                         for i in range(15):  # Try for 15 seconds (increased from 10)
-                            if not self.is_process_running(process_id):
+                            if not self._is_valid_server_process_running(server_name, process_id, server_config):
+                                self._clear_runtime_process_state(server_name)
                                 server_config.pop('ProcessId', None)
                                 server_config.pop('PID', None)
                                 server_config.pop('StartTime', None)
@@ -936,7 +962,8 @@ class ServerManager(ServerManagerModule):
 
                     # Wait up to 5 minutes (300 seconds) for graceful shutdown
                     for i in range(300):  # 300 seconds = 5 minutes
-                        if not self.is_process_running(process_id):
+                        if not self._is_valid_server_process_running(server_name, process_id, server_config):
+                            self._clear_runtime_process_state(server_name)
                             server_config.pop('ProcessId', None)
                             server_config.pop('PID', None)
                             server_config.pop('StartTime', None)
@@ -1085,18 +1112,20 @@ class ServerManager(ServerManagerModule):
 
                 # Verify all processes are dead
                 time.sleep(0.5)
-                if self.is_process_running(process_id):
+                if self._is_valid_server_process_running(server_name, process_id, server_config):
                     logger.warning(f"Process {process_id} still running after kill, forcing with taskkill")
                     if sys.platform == 'win32':
                         subprocess.call(['taskkill', '/F', '/T', '/PID', str(process_id)],
                                        stdout=subprocess.DEVNULL,
                                        stderr=subprocess.DEVNULL)
                     time.sleep(0.5)
-                    if self.is_process_running(process_id):
+                    if self._is_valid_server_process_running(server_name, process_id, server_config):
                         logger.error(f"Failed to kill process {process_id}")
                         return False, f"Failed to stop server process {process_id}"
 
                 logger.debug(f"Terminated process PID {process_id}")
+
+                self._clear_runtime_process_state(server_name)
 
                 server_config.pop('ProcessId', None)
                 server_config.pop('PID', None)
@@ -1135,7 +1164,7 @@ class ServerManager(ServerManagerModule):
             is_running = False
             process_id = server_config.get('ProcessId')
             if process_id:
-                is_running = self.is_process_running(process_id)
+                is_running = self._is_valid_server_process_running(server_name, process_id, server_config)
 
             if callback:
                 callback(f"Restarting server '{server_name}'...")
@@ -1166,7 +1195,8 @@ class ServerManager(ServerManagerModule):
                                         logger.debug(f"Direct stdin write for restart failed: {e}")
 
                             for _ in range(10):  # Try for 10 seconds
-                                if not self.is_process_running(process_id):
+                                if not self._is_valid_server_process_running(server_name, process_id, server_config):
+                                    self._clear_runtime_process_state(server_name)
                                     break
                                 time.sleep(1)
                             else:
@@ -1177,7 +1207,7 @@ class ServerManager(ServerManagerModule):
                             logger.error(f"Error sending custom stop command: {str(e)}")
                             # Fall through to force termination
 
-                    if self.is_process_running(process_id):
+                    if self._is_valid_server_process_running(server_name, process_id, server_config):
                         process = psutil.Process(process_id)
 
                         children = []
@@ -1226,12 +1256,14 @@ class ServerManager(ServerManagerModule):
 
                         # Verify process is dead before restarting
                         time.sleep(0.5)
-                        if self.is_process_running(process_id):
+                        if self._is_valid_server_process_running(server_name, process_id, server_config):
                             logger.warning(f"Process {process_id} still running, forcing with taskkill")
                             if sys.platform == 'win32':
                                 subprocess.call(['taskkill', '/F', '/T', '/PID', str(process_id)],
                                                stdout=subprocess.DEVNULL,
                                                stderr=subprocess.DEVNULL)
+
+                        self._clear_runtime_process_state(server_name)
 
                 except Exception as e:
                     logger.error(f"Failed to stop server process during restart: {str(e)}")

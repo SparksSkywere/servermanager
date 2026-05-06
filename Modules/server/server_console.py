@@ -512,10 +512,22 @@ class RealTimeConsole:
         except Exception as e:
             logger.error(f"Error clearing console state for {self.server_name}: {e}")
 
+    def _clear_pending_command_queue(self):
+        # Drop queued stdin commands so old stop/automation commands can't leak into next session.
+        try:
+            while True:
+                self.command_queue.get_nowait()
+        except queue.Empty:
+            pass
+        except Exception as e:
+            logger.debug(f"Error clearing command queue for {self.server_name}: {e}")
+
     def cleanup_on_server_stop(self):
         # Clean up console when server is properly stopped (not crashed)
         try:
             self.is_active = False
+            self.status_updates_active = False
+            self._status_update_scheduled = False
             pid = self.process.pid if self.process and hasattr(self.process, 'pid') else 'Unknown'
 
             # Clear the console state file - we don't want to restore old state
@@ -527,6 +539,9 @@ class RealTimeConsole:
 
             # Clear command history
             self.command_history.clear()
+
+            # Clear queued commands that may be stale after process stop.
+            self._clear_pending_command_queue()
 
             # Close log files
             self._close_log_files()
@@ -827,6 +842,7 @@ class RealTimeConsole:
             self.process = process
             self.is_active = True
             self.stop_event.clear()
+            self._clear_pending_command_queue()
 
             # Start periodic GUI update flush thread
             self._start_flush_thread()
@@ -899,6 +915,7 @@ class RealTimeConsole:
             self.process = process
             self.is_active = True
             self.stop_event.clear()
+            self._clear_pending_command_queue()
 
             # Start flush thread for GUI updates
             self._start_flush_thread()
@@ -2781,6 +2798,20 @@ class ConsoleManager:
         self.consoles = {}
         self.lock = threading.RLock()
 
+    def _get_console(self, server_name):
+        # Thread-safe lookup helper for a single console object.
+        with self.lock:
+            return self.consoles.get(server_name)
+
+    def _remove_console_if_same(self, server_name, expected_console):
+        # Remove a console only if mapping still points to the expected object.
+        with self.lock:
+            existing = self.consoles.get(server_name)
+            if existing is expected_console:
+                self.consoles.pop(server_name, None)
+                return True
+        return False
+
     def _recover_manager_lock(self, server_name, reason):
         # Last-resort recovery when manager lock appears wedged.
         try:
@@ -3049,13 +3080,12 @@ class ConsoleManager:
     def send_command(self, server_name, command):
         # Send command to server console
         try:
-            with self.lock:
-                console = self.consoles.get(server_name)
-                if console:
-                    return console.send_command(command)
-                else:
-                    logger.warning(f"No console available for {server_name}")
-                    return False
+            console = self._get_console(server_name)
+            if console:
+                return console.send_command(command)
+
+            logger.warning(f"No console available for {server_name}")
+            return False
         except Exception as e:
             logger.error(f"Error sending command to {server_name}: {e}")
             return False
@@ -3063,13 +3093,12 @@ class ConsoleManager:
     def kill_process(self, server_name):
         # Kill the process for a specific server console
         try:
-            with self.lock:
-                console = self.consoles.get(server_name)
-                if console:
-                    return console.kill_process()
-                else:
-                    logger.warning(f"No console available for {server_name} to kill process")
-                    return False
+            console = self._get_console(server_name)
+            if console:
+                return console.kill_process()
+
+            logger.warning(f"No console available for {server_name} to kill process")
+            return False
         except Exception as e:
             logger.error(f"Error killing process for {server_name}: {e}")
             return False
@@ -3077,23 +3106,32 @@ class ConsoleManager:
     def cleanup_console_on_stop(self, server_name):
         # Clean up a console when a server is properly stopped
         try:
-            with self.lock:
-                console = self.consoles.get(server_name)
-                if console:
-                    console.cleanup_on_server_stop()
-                    if not console.process and not console.is_active:
-                        self.consoles.pop(server_name, None)
-                    logger.debug(f"Cleaned up console for {server_name} on server stop")
-                    return True
-                else:
-                    # No console exists, but try to clear any leftover state file
-                    try:
-                        temp_console = RealTimeConsole(server_name, {}, None, None)
-                        temp_console.clear_console_state()
-                        logger.debug(f"Cleared leftover console state for {server_name}")
-                    except Exception:
-                        pass
-                    return False
+            console = self._get_console(server_name)
+            if console:
+                console.cleanup_on_server_stop()
+
+                window_open = False
+                try:
+                    window_open = bool(console.window and console.window.winfo_exists())
+                except tk.TclError:
+                    window_open = False
+                except Exception:
+                    window_open = False
+
+                if not console.process and not console.is_active and not window_open:
+                    self._remove_console_if_same(server_name, console)
+
+                logger.debug(f"Cleaned up console for {server_name} on server stop")
+                return True
+
+            # No console exists, but try to clear any leftover state file
+            try:
+                temp_console = RealTimeConsole(server_name, {}, None, None)
+                temp_console.clear_console_state()
+                logger.debug(f"Cleared leftover console state for {server_name}")
+            except Exception:
+                pass
+            return False
         except Exception as e:
             logger.error(f"Error cleaning up console for {server_name}: {e}")
             return False
@@ -3103,29 +3141,32 @@ class ConsoleManager:
         removed_count = 0
         try:
             with self.lock:
-                for server_name, console in list(self.consoles.items()):
-                    try:
-                        process_running = bool(console.process and console._is_process_running())
-                    except Exception:
-                        process_running = False
+                console_items = list(self.consoles.items())
 
-                    if not process_running:
-                        try:
-                            console.cleanup_on_server_stop()
-                        except Exception:
-                            pass
+            for server_name, console in console_items:
+                try:
+                    process_running = bool(console.process and console._is_process_running())
+                except Exception:
+                    process_running = False
 
-                        window_open = False
-                        try:
-                            window_open = bool(console.window and console.window.winfo_exists())
-                        except tk.TclError:
-                            window_open = False
-                        except Exception:
-                            window_open = False
+                if process_running:
+                    continue
 
-                        if not window_open:
-                            self.consoles.pop(server_name, None)
-                            removed_count += 1
+                try:
+                    console.cleanup_on_server_stop()
+                except Exception:
+                    pass
+
+                window_open = False
+                try:
+                    window_open = bool(console.window and console.window.winfo_exists())
+                except tk.TclError:
+                    window_open = False
+                except Exception:
+                    window_open = False
+
+                if not window_open and self._remove_console_if_same(server_name, console):
+                    removed_count += 1
 
             if removed_count > 0:
                 logger.debug(f"Pruned {removed_count} stale console(s)")
@@ -3137,13 +3178,12 @@ class ConsoleManager:
     def force_close_console(self, server_name):
         # Force close console window for a specific server
         try:
-            with self.lock:
-                console = self.consoles.get(server_name)
-                if console:
-                    return console.force_close_window()
-                else:
-                    logger.warning(f"No console available for {server_name} to force close")
-                    return False
+            console = self._get_console(server_name)
+            if console:
+                return console.force_close_window()
+
+            logger.warning(f"No console available for {server_name} to force close")
+            return False
         except Exception as e:
             logger.error(f"Error force closing console for {server_name}: {e}")
             return False
@@ -3152,17 +3192,19 @@ class ConsoleManager:
         # Save states for all active consoles (for dashboard close/crash recovery)
         try:
             with self.lock:
-                saved_count = 0
-                for server_name, console in list(self.consoles.items()):
-                    try:
-                        if console.save_console_state():
-                            saved_count += 1
-                    except Exception as e:
-                        logger.error(f"Error saving console state for {server_name}: {e}")
+                console_items = list(self.consoles.items())
 
-                if saved_count > 0:
-                    logger.debug(f"Saved {saved_count} console states")
-                return saved_count
+            saved_count = 0
+            for server_name, console in console_items:
+                try:
+                    if console.save_console_state():
+                        saved_count += 1
+                except Exception as e:
+                    logger.error(f"Error saving console state for {server_name}: {e}")
+
+            if saved_count > 0:
+                logger.debug(f"Saved {saved_count} console states")
+            return saved_count
 
         except Exception as e:
             logger.error(f"Error saving all console states: {e}")
@@ -3172,16 +3214,19 @@ class ConsoleManager:
         # Cleanup all consoles
         try:
             with self.lock:
-                for server_name, console in list(self.consoles.items()):
-                    try:
-                        # Save console state before closing (for crash recovery)
-                        console.save_console_state()
-                        console.force_close_window()
-                    except Exception as e:
-                        logger.error(f"Error closing console window {server_name}: {e}")
+                console_items = list(self.consoles.items())
 
+            for server_name, console in console_items:
+                try:
+                    # Save console state before closing (for crash recovery)
+                    console.save_console_state()
+                    console.force_close_window()
+                except Exception as e:
+                    logger.error(f"Error closing console window {server_name}: {e}")
+
+            with self.lock:
                 self.consoles.clear()
-                logger.debug("All consoles cleaned up")
+            logger.debug("All consoles cleaned up")
 
         except Exception as e:
             logger.error(f"Error cleaning up consoles: {e}")
