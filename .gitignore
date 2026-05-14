@@ -42,6 +42,7 @@ db/servermanager_users.db
 db/servermanager_servers.db
 db/servermanager.db
 db/console_states.db
+db/steam_ID.db
 data/update_config.json
 ssl/server.crt
 ssl/server.key
