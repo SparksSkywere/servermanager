@@ -17,7 +17,7 @@ A server management platform for Steam dedicated servers, Minecraft servers, and
 | **RAM** | 4 GB | 8 GB+ |
 | **Disk** | 500 MB (application only) | 10 GB+ (with game servers) |
 
-**Linux:** Experimental support — Debian-based distributions recommended. See [WIKI.md -> 2](WIKI.md#2-system-requirements) for details.
+**Linux:** Experimental support — Debian-based distributions recommended. See [Getting Started](https://github.com/SparksSkywere/servermanager/wiki/Getting-Started) for details.
 
 ---
 
@@ -38,7 +38,7 @@ A server management platform for Steam dedicated servers, Minecraft servers, and
    - Cluster configuration (Host or Subhost)
    - Admin account creation
 
-See [WIKI.md -> 3.1](WIKI.md#31-windows-installation) for the full walkthrough.
+See [Getting Started](https://github.com/SparksSkywere/servermanager/wiki/Getting-Started) for the full walkthrough.
 
 ### Linux Installation
 
@@ -49,7 +49,7 @@ chmod +x install.sh
 
 The interactive installer handles Python, Git, dependencies, databases, SSL certificate generation, firewall rules, and systemd service setup.
 
-See [WIKI.md -> 3.2](WIKI.md#32-linux-installation) for details.
+See [Getting Started](https://github.com/SparksSkywere/servermanager/wiki/Getting-Started) for details.
 
 ### Manual Installation
 
@@ -59,7 +59,7 @@ cd servermanager
 pip install -r requirements.txt
 ```
 
-After manual installation you will need to create registry keys (Windows), initialise databases, and create an admin user. See [WIKI.md -> 3.3](WIKI.md#33-manual-installation).
+After manual installation you will need to create registry keys (Windows), initialise databases, and create an admin user. See [Getting Started](https://github.com/SparksSkywere/servermanager/wiki/Getting-Started).
 
 ---
 
@@ -67,11 +67,11 @@ After manual installation you will need to create registry keys (Windows), initi
 
 - **Desktop Mode:** Run `Start-ServerManager.pyw` — right-click the system tray icon and select "Open Server Dashboard"
 - **Web Interface:** Access at `https://localhost:443` (HTTPS) or `http://localhost:8080` (HTTP), depending on your installation choice. From another machine use your server's IP address.
-- **Service Mode:** Install as a Windows service via `.\install.ps1 -ServiceAction Install`. See [WIKI.md -> 5.2](WIKI.md#52-windows-service-mode).
+- **Service Mode:** Install as a Windows service via `.\install.ps1 -ServiceAction Install`. See [Getting Started](https://github.com/SparksSkywere/servermanager/wiki/Getting-Started).
 
 **Default credentials:** `admin` / `admin` — change these immediately after first login.
 
--> **Note:** If using HTTPS with a self-signed certificate, your browser will show a security warning. This is expected — see [WIKI.md -> 14.3](WIKI.md#143-ssltls-certificate-management).
+-> **Note:** If using HTTPS with a self-signed certificate, your browser will show a security warning. This is expected — see [Security and Clustering](https://github.com/SparksSkywere/servermanager/wiki/Security-and-Clustering).
 
 ---
 
@@ -88,7 +88,7 @@ The installer configures firewall rules automatically. Key ports:
 | 7777–7800 | TCP/UDP | Game servers |
 | 27015–27030 | UDP | Steam query protocol |
 
-See [WIKI.md -> 22](WIKI.md#22-firewall-configuration) for the full firewall rule reference.
+See [Troubleshooting and Reference](https://github.com/SparksSkywere/servermanager/wiki/Troubleshooting-and-Reference) for the full firewall rule reference.
 
 ---
 
@@ -97,7 +97,7 @@ See [WIKI.md -> 22](WIKI.md#22-firewall-configuration) for the full firewall rul
 - **Windows:** Run `.\uninstaller.ps1` as Administrator
 - **Linux:** Run `./uninstaller.sh`
 
-Full uninstall. See [WIKI.md -> 23](WIKI.md#23-uninstallation).
+Full uninstall. See [Troubleshooting and Reference](https://github.com/SparksSkywere/servermanager/wiki/Troubleshooting-and-Reference).
 
 ---
 
@@ -111,4 +111,4 @@ No .ENV file is used for Windows as you should be setting it all up with the reg
 
 ## Full Documentation
 
-See [WIKI.md](WIKI.md).
+See the [GitHub Wiki](https://github.com/SparksSkywere/servermanager/wiki).
