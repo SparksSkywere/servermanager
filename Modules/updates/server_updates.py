@@ -241,6 +241,14 @@ class ServerUpdateManager(ServerManagerModule):
                 # server_status returns a tuple (status, pid)
                 if server_status and server_status[0] == 'Running':
                     server_was_running = True
+
+                    # Scheduled updates should warn connected players before the shutdown
+                    # in the same way scheduled restarts already do.
+                    if scheduled:
+                        if progress_callback:
+                            progress_callback(f"[INFO] Sending scheduled shutdown warnings for {server_name}...")
+                        self._send_restart_warnings(server_name, server_config, progress_callback)
+
                     if progress_callback:
                         progress_callback(f"[INFO] Stopping {server_name} for update...")
                     elif scheduled:
