@@ -94,7 +94,12 @@ except ImportError:
 
 # Import SQL modules
 try:
-    from Modules.Database.user_database import get_user_engine, ensure_root_admin, build_user_db_url, get_user_sql_config_from_registry
+    from Modules.Database.user_database import (
+        get_user_engine,
+        ensure_root_admin,
+        build_user_db_url,
+        get_user_sql_config_from_registry,
+    )
     from Modules.security.user_management import UserManager
     # Import server manager
     from Modules.server.server_manager import ServerManager as CoreServerManager
@@ -1942,9 +1947,19 @@ class ServerManagerWebServer(ServerManagerModule):
 
         @app.route('/<path:filename>')
         def serve_static_files(filename):
+            # Rate limit static file requests to reduce brute-force enumeration.
+            rate_resp = check_rate_limit('static')
+            if rate_resp:
+                return rate_resp
+
             # Skip API routes - these should be handled by blueprints
             if filename.startswith('api/'):
                 return jsonify({"error": "API endpoint not found"}), 404
+
+            # Block traversal and absolute path attempts early.
+            if InputValidator.check_path_traversal(filename) or os.path.isabs(filename):
+                logger.warning(f"Blocked unsafe static file path request: {filename}")
+                return jsonify({"error": "Invalid file path"}), 400
 
             try:
                 # Try multiple possible www directory locations
@@ -1965,10 +1980,11 @@ class ServerManagerWebServer(ServerManagerModule):
                     logger.error(f"WWW directory not found. Tried paths: {www_paths}")
                     return jsonify({"error": "Static files directory not found"}), 404
 
-                file_path = os.path.join(www_path, filename)
-                if os.path.exists(file_path) and os.path.isfile(file_path):
-                    logger.debug(f"Serving static file: {filename} from {www_path}")
-                    return send_from_directory(www_path, filename)
+                safe_path = PathSecurity.safe_join(www_path, filename)
+                if safe_path and os.path.exists(safe_path) and os.path.isfile(safe_path):
+                    safe_rel = os.path.relpath(safe_path, www_path).replace('\\', '/')
+                    logger.debug(f"Serving static file: {safe_rel} from {www_path}")
+                    return send_from_directory(www_path, safe_rel)
                 else:
                     logger.debug(f"Static file not found: {filename} in {www_path}")
                     return jsonify({"error": "File not found"}), 404
@@ -2210,8 +2226,8 @@ class ServerManagerWebServer(ServerManagerModule):
                     logger.debug(f"Redirected HTTP request to: {https_url}")
 
                 def log_message(self, format, *args):
-                    # Suppress default HTTP server logging
-                    return
+                    # Route low-level HTTP server logs through module logger.
+                    logger.debug("HTTP redirect server: " + (format % args))
 
             try:
                 server = HTTPServer((host, redirect_port), lambda *args: RedirectHandler(https_port, *args))

@@ -26,7 +26,7 @@ try:
     PYOTP_AVAILABLE = True
 except ImportError:
     PYOTP_AVAILABLE = False
-    print("Warning: pyotp missing. 2FA disabled.")
+    logger.warning("pyotp missing. 2FA disabled.")
 
 def handle_2fa_login_admin(user_manager, username, parent_window=None):
     # 2FA verification dialog for admin login
@@ -110,7 +110,7 @@ def handle_2fa_login_admin(user_manager, username, parent_window=None):
         return result[0]
 
     except Exception as e:
-        print(f"Error in admin 2FA login: {e}")
+        logger.error(f"Error in admin 2FA login: {e}")
         return False
 
 def _apply_admin_dialog_theme(dialog, title_label=None, status_label=None, warning_label=None):
@@ -294,15 +294,15 @@ def admin_login(user_manager, parent=None):
                 return
 
             try:
-                print(f"Attempting to authenticate admin user: {username}")
+                logger.debug(f"Attempting to authenticate admin user: {username}")
                 # Authenticate user
                 user = user_manager.authenticate_user(username, password)
                 if user:
-                    print("Authentication successful!")
+                    logger.debug("Authentication successful")
 
                     # Check if user is admin (admin-specific check)
                     if not getattr(user, 'is_admin', False):
-                        print("Authentication failed - user is not an admin")
+                        logger.warning("Authentication failed - user is not an admin")
                         status_var.set("Access denied: Administrator privileges required")
                         password_entry.delete(0, tk.END)
                         return
@@ -329,17 +329,17 @@ def admin_login(user_manager, parent=None):
                     if login_root is not None:
                         login_root.destroy()
                 else:
-                    print("Authentication failed - invalid credentials")
+                    logger.warning("Authentication failed - invalid credentials")
                     status_var.set("Invalid username or password. Please try again.")
                     password_entry.delete(0, tk.END)
 
             except Exception as e:
-                print(f"Authentication error: {e}")
+                logger.error(f"Authentication error: {e}")
                 status_var.set(f"Authentication error: {str(e)}")
                 password_entry.delete(0, tk.END)
 
         def on_cancel():
-            print("Admin login cancelled")
+            logger.info("Admin login cancelled")
             dialog_closed[0] = True
             login_dialog.destroy()
             if login_root is not None:
@@ -419,7 +419,7 @@ def admin_login(user_manager, parent=None):
         # Focus on username field
         login_dialog.after(100, username_entry.focus_set)
 
-        print("Waiting for admin dialog interaction...")  # Debug
+        logger.debug("Waiting for admin dialog interaction...")
 
         # Wait for dialog to close
         if parent:
@@ -428,7 +428,10 @@ def admin_login(user_manager, parent=None):
             assert login_root is not None, "login_root should be set when parent is None"
             login_root.wait_window(login_dialog)
 
-        print(f"Admin dialog closed. Result: success={login_result[0]}, cancelled={dialog_closed[0]}")  # Debug
+        logger.debug(
+            f"Admin dialog closed. Result: success={login_result[0]}, "
+            f"cancelled={dialog_closed[0]}"
+        )
 
         # Check results
         if dialog_closed[0]:
@@ -537,15 +540,15 @@ def admin_login_with_root(login_root, user_manager):
                 return
 
             try:
-                print(f"Attempting to authenticate admin user: {username}")
+                logger.debug(f"Attempting to authenticate admin user: {username}")
                 # Authenticate user
                 user = user_manager.authenticate_user(username, password)
                 if user:
-                    print("Authentication successful!")
+                    logger.debug("Authentication successful")
 
                     # Check if user is admin
                     if not getattr(user, 'is_admin', False):
-                        print("Authentication failed - user is not an admin")
+                        logger.warning("Authentication failed - user is not an admin")
                         status_var.set("Access denied: Administrator privileges required")
                         password_entry.delete(0, tk.END)
                         return
@@ -561,12 +564,12 @@ def admin_login_with_root(login_root, user_manager):
                     login_result[1] = user
                     login_dialog.destroy()
                 else:
-                    print("Authentication failed - invalid credentials")
+                    logger.warning("Authentication failed - invalid credentials")
                     status_var.set("Invalid username or password. Please try again.")
                     password_entry.delete(0, tk.END)
 
             except Exception as e:
-                print(f"Authentication error: {e}")
+                logger.error(f"Authentication error: {e}")
                 status_var.set(f"Authentication error: {str(e)}")
                 password_entry.delete(0, tk.END)
 
@@ -644,7 +647,7 @@ def admin_login_with_root(login_root, user_manager):
                                    f"Maximum login attempts ({max_attempts}) exceeded.\n"
                                    "Admin dashboard access denied.")
             except tk.TclError:
-                print("Failed to show error message")
+                logger.error("Failed to show error message")
             login_root.deiconify()
             return None
 
@@ -660,14 +663,14 @@ def main():
         # Require admin authentication before opening dashboard
         authenticated_user = admin_login(um)
         if not authenticated_user:
-            print("Admin authentication failed or cancelled", file=sys.stderr)
+            logger.error("Admin authentication failed or cancelled")
             sys.exit(0)
 
         # Start admin dashboard with authenticated user
         app = AdminDashboard(um, authenticated_user)
         app.mainloop()
     except Exception as e:
-        print(f"Error initialising admin dashboard: {e}", file=sys.stderr)
+        logger.error(f"Error initialising admin dashboard: {e}")
         messagebox.showerror("Initialisation Error", f"Failed to start admin dashboard:\n{str(e)}")
         sys.exit(1)
 

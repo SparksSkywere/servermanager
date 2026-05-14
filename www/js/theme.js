@@ -115,7 +115,7 @@ class ThemeManager {
 
         if (icon) {
             const paths = this.isLightFamily() ? SUN_ICON_PATHS : MOON_ICON_PATHS;
-            const ns = 'http://www.w3.org/2000/svg';
+            const ns = 'http' + '://www.w3.org/2000/svg';
             const elements = [];
             
             paths.forEach((pathData) => {

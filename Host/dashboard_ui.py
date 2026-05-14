@@ -309,12 +309,28 @@ def setup_ui(dashboard):
         """Re-apply the sash after the window is restored from minimised state.
         <Map> fires when the window becomes visible again; we wait longer here
         because the WM may not have finished restoring the geometry yet."""
+        # Apply sash alignment immediately on remap to avoid a visible
+        # middle-to-right jump while restoring from the taskbar.
+        def _apply_sash_after_restore():
+            try:
+                state = str(dashboard.root.state()).lower()
+            except Exception:
+                state = "normal"
+
+            # Skip while still minimised; remap can fire before full restore.
+            if state == "iconic":
+                return
+            _apply_sash()
+
         if _sash_after_id[0] is not None:
             try:
                 dashboard.root.after_cancel(_sash_after_id[0])
             except Exception:
                 pass
-        _sash_after_id[0] = dashboard.root.after(150, _apply_sash)
+
+        # First pass now, then a settle pass after idle for final WM geometry.
+        _apply_sash_after_restore()
+        _sash_after_id[0] = dashboard.root.after_idle(_apply_sash_after_restore)
 
     dashboard._update_main_pane_sash = _update_main_pane_sash
     dashboard.main_pane.bind("<Configure>", _update_main_pane_sash)

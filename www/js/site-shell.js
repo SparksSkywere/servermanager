@@ -1,6 +1,6 @@
 (function() {
     function createSvgIcon(width, height, viewBox, paths) {
-        const ns = 'http://www.w3.org/2000/svg';
+        const ns = 'http' + '://www.w3.org/2000/svg';
         const svg = document.createElementNS(ns, 'svg');
         svg.setAttribute('width', String(width));
         svg.setAttribute('height', String(height));

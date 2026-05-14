@@ -18,13 +18,17 @@ setup_module_path()
 
 logger: logging.Logger = setup_module_logging("StopServerManager")
 
-def run_as_admin():
-    # Re-run with admin (hidden)
+def run_as_admin(extra_args=None):
+    # Re-run with admin (hidden). Returns True if elevation launch succeeded.
+    extra_args = extra_args or []
     if sys.platform == 'win32':
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 0)
+        script_path = os.path.abspath(__file__)
+        params = subprocess.list2cmdline([script_path] + list(extra_args))
+        result = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 0)
+        return result > 32
     else:
         print("Admin required")
-    sys.exit()
+        return False
 
 class ServerManagerStopper(ServerManagerModule):
     # - Terminates all SM components
@@ -36,6 +40,7 @@ class ServerManagerStopper(ServerManagerModule):
         parser = argparse.ArgumentParser(description='Stop Server Manager')
         parser.add_argument('--debug', action='store_true', help='Debug mode')
         parser.add_argument('--force', action='store_true', help='Force stop')
+        parser.add_argument('--elevated', action='store_true', help=argparse.SUPPRESS)
         args = parser.parse_args()
 
         if args.debug:
@@ -43,6 +48,7 @@ class ServerManagerStopper(ServerManagerModule):
             self.debug_mode = True
 
         self.force_stop = args.force
+        self.elevated_run = args.elevated
 
     def stop_process_by_pid(self, pid, process_name=None):
         # Kill process by PID
@@ -129,6 +135,7 @@ class ServerManagerStopper(ServerManagerModule):
             "webserver.pid",
             "trayicon.pid",
             "dashboard.pid",
+            "admin_dashboard.pid",
             "server_automation.pid",
             "debug.pid"
         ]
@@ -158,15 +165,78 @@ class ServerManagerStopper(ServerManagerModule):
 
         return stopped_count
 
+    def _is_servermanager_process(self, proc: psutil.Process) -> bool:
+        # Determine whether a process belongs to this ServerManager instance.
+        process_names = ["trayicon", "webserver", "launcher", "dashboard", "debug", "server_automation"]
+        python_scripts = [
+            'launcher.py', 'trayicon.py', 'webserver.py', 'dashboard.py', 'server_automation.py',
+            'stdin_relay.py', 'persistent_stdin.py', 'debug_manager.py', 'debug.py',
+            'stop_servermanager.py', 'start_servermanager.py', 'admin_dashboard.py'
+        ]
+
+        try:
+            if proc.pid == os.getpid():
+                return False
+
+            proc_name = (proc.info.get('name') or proc.name() or '').lower()
+            cmdline = ' '.join(proc.info.get('cmdline') or proc.cmdline() or []).lower()
+
+            proc_match = any(name in proc_name for name in process_names)
+
+            exe_match = False
+            if self.server_manager_dir:
+                try:
+                    exe_path = proc.exe()
+                    if exe_path and os.path.isabs(exe_path):
+                        exe_match = os.path.abspath(exe_path).lower().startswith(os.path.abspath(self.server_manager_dir).lower())
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
+                    exe_match = False
+
+            python_script_match = False
+            if 'python' in proc_name and cmdline:
+                python_script_match = any(script in cmdline for script in python_scripts)
+                if self.server_manager_dir and self.server_manager_dir.lower() not in cmdline:
+                    python_script_match = False
+
+            return proc_match or exe_match or python_script_match
+        except Exception:
+            return False
+
+    def get_remaining_processes(self):
+        # Return remaining ServerManager process details after shutdown passes.
+        remaining = []
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                if self._is_servermanager_process(proc):
+                    cmdline = ' '.join(proc.info.get('cmdline') or [])
+                    remaining.append((proc.pid, proc.info.get('name', '?'), cmdline[:200]))
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            except Exception:
+                continue
+        return remaining
+
+    def _attempt_elevated_followup(self) -> bool:
+        # Try one elevated follow-up pass for stubborn leftovers.
+        if sys.platform != 'win32' or is_admin() or self.elevated_run:
+            return False
+        logger.warning("Residual processes detected; attempting elevated follow-up cleanup")
+        launched = run_as_admin(['--force', '--elevated'])
+        if not launched:
+            logger.error("Failed to launch elevated follow-up cleanup")
+            return False
+        logger.info("Elevated follow-up cleanup launched")
+        return True
+
     def stop_processes_by_name(self):
         # Stop Server Manager processes by name
         process_names = [
-            "servermanager",
             "trayicon",
             "webserver",
             "launcher",
             "dashboard",  # Added dashboard to ensure it's also terminated
-            "debug"
+            "debug",
+            "server_automation",
         ]
 
         # Add additional Python scripts to check for
@@ -359,6 +429,13 @@ class ServerManagerStopper(ServerManagerModule):
             if count4 > 0:
                 logger.info(f"Final cleanup killed {count4} additional processes")
 
+            remaining = self.get_remaining_processes()
+            if remaining:
+                logger.warning(f"{len(remaining)} Server Manager process(es) still running after stop pass")
+                for pid, name, cmdline in remaining[:10]:
+                    logger.warning(f"Remaining process: {name} (PID {pid}) cmdline={cmdline}")
+                self._attempt_elevated_followup()
+
             logger.info("Server Manager shutdown complete")
             return 0
 
@@ -367,12 +444,9 @@ class ServerManagerStopper(ServerManagerModule):
             return 1
 
 def main():
-    # Check for admin privileges
-    if not is_admin():
-        print("Requesting administrative privileges...")
-        run_as_admin()
-
     try:
+        if not is_admin():
+            logger.warning("Running without admin privileges; performing best-effort shutdown")
         # Create and run stopper
         stopper = ServerManagerStopper()
         return stopper.run()

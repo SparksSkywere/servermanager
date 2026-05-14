@@ -18,6 +18,7 @@ from collections import deque
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Modules.core.common import setup_module_path, centre_window
+import Modules.core.common as core_common
 setup_module_path()
 from Modules.core.server_logging import get_dashboard_logger, log_dashboard_event
 from Modules.ui.theme import get_theme_preference
@@ -3960,8 +3961,192 @@ def start_server_operation(server_name, server_manager, console_manager=None,
     start_thread.start()
     return start_thread
 
+
+def _format_shutdown_minutes(minutes: int) -> str:
+    return "1 minute" if minutes == 1 else f"{minutes} minutes"
+
+
+def _parse_warning_intervals(intervals_value) -> list[int]:
+    try:
+        if isinstance(intervals_value, str):
+            values = [int(item.strip()) for item in intervals_value.split(',') if item.strip()]
+        elif isinstance(intervals_value, (list, tuple, set)):
+            values = [int(item) for item in intervals_value]
+        else:
+            values = []
+    except Exception:
+        values = []
+
+    cleaned = sorted({value for value in values if value > 0}, reverse=True)
+    return cleaned
+
+
+def _send_shutdown_warnings(server_name, server_manager, server_config, delay_minutes, status_callback=None):
+    warning_command = server_config.get('WarningCommand', '')
+    if not warning_command:
+        return
+
+    warning_message_template = server_config.get(
+        'WarningMessageTemplate',
+        'Server shutting down in {message}'
+    )
+    warning_intervals = _parse_warning_intervals(server_config.get('WarningIntervals', '30,15,10,5,1'))
+
+    if delay_minutes <= 0:
+        return
+
+    warning_points = {int(delay_minutes), 1}
+    warning_points.update({interval for interval in warning_intervals if 0 < interval < delay_minutes})
+    warning_points = sorted(warning_points, reverse=True)
+
+    if not warning_points:
+        return
+
+    if status_callback:
+        status_callback(f"Server '{server_name}' will stop in {delay_minutes} minute(s)...")
+
+    if len(warning_points) == 1:
+        minutes = warning_points[0]
+        time_message = _format_shutdown_minutes(minutes)
+        full_message = warning_message_template.replace('{message}', time_message)
+        command = warning_command.replace('{message}', full_message)
+        if core_common.send_command_to_server(server_name, command):
+            logger.info(f"Sent shutdown warning to {server_name}: {full_message}")
+        if status_callback:
+            status_callback(f"Server '{server_name}' shutting down in {time_message}...")
+        time.sleep(minutes * 60)
+        return
+
+    for index, minutes in enumerate(warning_points):
+        time_message = _format_shutdown_minutes(minutes)
+        full_message = warning_message_template.replace('{message}', time_message)
+        command = warning_command.replace('{message}', full_message)
+
+        if core_common.send_command_to_server(server_name, command):
+            logger.info(f"Sent shutdown warning to {server_name}: {full_message}")
+        else:
+            logger.warning(f"Failed to send shutdown warning to {server_name}: {full_message}")
+
+        if status_callback:
+            status_callback(f"Server '{server_name}' shutting down in {time_message}...")
+
+        if index < len(warning_points) - 1:
+            next_minutes = warning_points[index + 1]
+            wait_seconds = max(0, (minutes - next_minutes) * 60)
+        else:
+            wait_seconds = minutes * 60
+
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
+
+
+def show_stop_server_dialog(parent, server_name):
+    # Show the stop-server chooser dialog.
+    # Returns 0 for immediate stop, a positive int for delayed stop (minutes),
+    # or None if the user cancelled.
+    dialog = tk.Toplevel(parent)
+    dialog.title("Stop Server")
+    dialog.transient(parent)
+    dialog.resizable(False, False)
+    dialog.grab_set()
+    centre_window(dialog, 420, 240, parent)
+
+    main_frame = ttk.Frame(dialog, padding=16)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+
+    ttk.Label(
+        main_frame,
+        text=f"How do you want to stop '{server_name}'?",
+        font=("Segoe UI", 11, "bold"),
+    ).pack(anchor=tk.W, pady=(0, 10))
+
+    ttk.Label(
+        main_frame,
+        text="Delayed stops use the configured warning command and warning intervals before shutdown.",
+        wraplength=380,
+    ).pack(anchor=tk.W, pady=(0, 12))
+
+    choice_var = tk.StringVar(value="immediate")
+    minutes_var = tk.StringVar(value="5")
+
+    options_frame = ttk.Frame(main_frame)
+    options_frame.pack(fill=tk.X, pady=(0, 10))
+
+    ttk.Radiobutton(
+        options_frame,
+        text="Stop Immediately",
+        variable=choice_var,
+        value="immediate",
+    ).grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
+
+    delayed_row = ttk.Frame(options_frame)
+    delayed_row.grid(row=1, column=0, sticky=tk.W)
+
+    ttk.Radiobutton(
+        delayed_row,
+        text="Stop In",
+        variable=choice_var,
+        value="delayed",
+    ).pack(side=tk.LEFT)
+
+    minutes_spinbox = tk.Spinbox(
+        delayed_row,
+        from_=1,
+        to=1440,
+        width=6,
+        textvariable=minutes_var,
+    )
+    minutes_spinbox.pack(side=tk.LEFT, padx=(8, 6))
+    ttk.Label(delayed_row, text="minute(s)").pack(side=tk.LEFT)
+
+    button_frame = ttk.Frame(main_frame)
+    button_frame.pack(fill=tk.X, pady=(12, 0))
+
+    result = {"minutes": None}
+
+    def toggle_minutes_state(*_args):
+        if choice_var.get() == "delayed":
+            minutes_spinbox.configure(state="normal")
+        else:
+            minutes_spinbox.configure(state="disabled")
+
+    def confirm():
+        if choice_var.get() == "immediate":
+            result["minutes"] = 0
+            dialog.destroy()
+            return
+
+        try:
+            minutes = int(minutes_var.get())
+        except ValueError:
+            messagebox.showerror("Invalid Time", "Please enter a valid number of minutes.", parent=dialog)
+            return
+
+        if minutes < 1:
+            messagebox.showerror("Invalid Time", "The stop delay must be at least 1 minute.", parent=dialog)
+            return
+
+        result["minutes"] = minutes
+        dialog.destroy()
+
+    def cancel():
+        dialog.destroy()
+
+    ttk.Button(button_frame, text="Cancel", command=cancel).pack(side=tk.RIGHT, padx=(6, 0))
+    ttk.Button(button_frame, text="Stop", command=confirm).pack(side=tk.RIGHT)
+
+    choice_var.trace_add("write", toggle_minutes_state)
+    toggle_minutes_state()
+
+    dialog.bind("<Return>", lambda _event: confirm())
+    dialog.bind("<Escape>", lambda _event: cancel())
+    dialog.wait_window()
+    return result["minutes"]
+
+
 def stop_server_operation(server_name, server_manager, console_manager=None,
-                         status_callback=None, completion_callback=None, parent_window=None):
+                         status_callback=None, completion_callback=None, parent_window=None,
+                         delay_minutes: int = 0):
     import threading
 
     # Mark server as stopping so reattach checks skip it during shutdown
@@ -3973,6 +4158,26 @@ def stop_server_operation(server_name, server_manager, console_manager=None,
                 if completion_callback:
                     completion_callback(False, "Server manager not initialised.")
                 return
+
+            server_config = None
+            try:
+                server_config = server_manager.get_server_config(server_name)
+            except Exception:
+                server_config = None
+
+            if delay_minutes > 0:
+                if status_callback:
+                    status_callback(f"Preparing to stop '{server_name}' in {delay_minutes} minute(s)...")
+                if server_config:
+                    _send_shutdown_warnings(
+                        server_name,
+                        server_manager,
+                        server_config,
+                        delay_minutes,
+                        status_callback=status_callback,
+                    )
+                else:
+                    time.sleep(delay_minutes * 60)
 
             success, message = server_manager.stop_server_advanced(
                 server_name,

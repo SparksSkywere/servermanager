@@ -348,10 +348,6 @@ class TemperatureService:
 			self._snapshot = snapshot
 		return snapshot
 
-	def get_latest_text(self) -> str:
-		with self._lock:
-			return self._snapshot.text
-
 	def get_latest_snapshot(self) -> TemperatureSnapshot:
 		with self._lock:
 			return self._snapshot

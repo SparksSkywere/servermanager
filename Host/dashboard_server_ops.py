@@ -18,7 +18,8 @@ from Host.dashboard_functions import (
     import_server_from_directory_dialog, import_server_from_export_dialog,
     export_server_dialog, create_progress_dialog_with_console,
     start_server_operation, stop_server_operation, restart_server_operation,
-    cleanup_orphaned_process_entries, cleanup_orphaned_relay_files # type: ignore
+    cleanup_orphaned_process_entries, cleanup_orphaned_relay_files, # type: ignore
+    show_stop_server_dialog,
 )
 from debug.debug import get_server_process_details, log_exception, monitor_process_resources
 
@@ -129,21 +130,29 @@ class ServerOpsMixin:
             messagebox.showerror("Error", "Server manager not initialised.")
             return
 
-        confirm = messagebox.askyesno("Confirm Stop",
-                                    f"Are you sure you want to stop the server '{server_name}'?",
-                                    icon=messagebox.WARNING)
-        if not confirm:
+        stop_choice = self._show_stop_server_dialog(server_name)
+        if stop_choice is None:
             return
 
-        self.update_server_status(server_name, "Stopping...")
+        if stop_choice == 0:
+            status_text = "Stopping..."
+        else:
+            status_text = f"Stopping in {stop_choice} minute(s)..."
+
+        self.update_server_status(server_name, status_text)
 
         stop_server_operation(
             server_name=server_name,
             server_manager=self.server_manager,
             console_manager=self.console_manager,
             status_callback=lambda status: self.update_server_status(server_name, status),
-            completion_callback=self._make_server_op_callback(error_as_info=True)
+            completion_callback=self._make_server_op_callback(error_as_info=True),
+            delay_minutes=stop_choice,
         )
+
+    def _show_stop_server_dialog(self, server_name):
+        # Ask whether to stop immediately or after a delay.
+        return show_stop_server_dialog(self.root, server_name)
 
     def restart_server(self):
         # Restart the selected game server

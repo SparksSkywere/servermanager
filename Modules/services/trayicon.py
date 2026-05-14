@@ -971,7 +971,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                     startupinfo.wShowWindow = 0
                     subprocess.Popen(
-                        [sys.executable, stop_script],
+                        [sys.executable, stop_script, "--force"],
                         startupinfo=startupinfo,
                         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
                         stdout=subprocess.DEVNULL,
@@ -981,7 +981,7 @@ class ServerManagerTrayIcon(ServerManagerModule):
                     )
                 else:
                     subprocess.Popen(
-                        [sys.executable, stop_script],
+                        [sys.executable, stop_script, "--force"],
                         start_new_session=True,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,

@@ -83,11 +83,13 @@ from Modules.ui.theme import get_theme_preference
 
 # Import shared server operations from dashboard_functions
 try:
-    from Host.dashboard_functions import start_server_operation, stop_server_operation
+    from Host.dashboard_functions import start_server_operation, stop_server_operation, restart_server_operation, show_stop_server_dialog
     _DASHBOARD_FUNCTIONS_AVAILABLE = True
 except ImportError:
     start_server_operation = None
     stop_server_operation = None
+    restart_server_operation = None
+    show_stop_server_dialog = None
     _DASHBOARD_FUNCTIONS_AVAILABLE = False
 
 # File-based command queue - declare placeholders for type checking
@@ -108,11 +110,40 @@ logger: logging.Logger = setup_module_logging("ServerConsole")
 
 class _ConsoleCrashTracer:
     # Temporary crash tracer is disabled after stability fixes.
+    def __init__(self):
+        self._events = []
+        self._max_events = 100
+        self._lock = threading.Lock()
+
     def record(self, event, server_name=None, **fields):
-        return
+        try:
+            entry = {
+                "ts": time.time(),
+                "event": str(event),
+                "server": server_name,
+                "fields": dict(fields),
+            }
+            with self._lock:
+                self._events.append(entry)
+                if len(self._events) > self._max_events:
+                    self._events.pop(0)
+        except Exception:
+            pass
 
     def dump_recent(self, reason, logger_obj):
-        return
+        try:
+            with self._lock:
+                recent = list(self._events[-10:])
+            if not recent:
+                return
+            logger_obj.debug(f"Crash tracer dump ({reason}) - {len(recent)} recent events")
+            for entry in recent:
+                logger_obj.debug(
+                    f"[tracer] {entry.get('ts')} {entry.get('event')} "
+                    f"server={entry.get('server')} fields={entry.get('fields')}"
+                )
+        except Exception:
+            pass
 
 
 _CRASH_TRACER = _ConsoleCrashTracer()
@@ -385,12 +416,19 @@ class RealTimeConsole:
 
     def _flush_thread_loop(self):
         # Periodic flush thread to ensure pending GUI updates are processed
+        _watchdog_ticks = 0
         try:
             while self.is_active and not self.stop_event.is_set():
                 try:
                     # Process any pending batch updates that weren't handled immediately
                     self._process_pending_batch_updates()
                     time.sleep(0.5)
+
+                    # Run thread watchdog every ~10 seconds (every 20 half-second ticks)
+                    _watchdog_ticks += 1
+                    if _watchdog_ticks >= 20:
+                        _watchdog_ticks = 0
+                        self._watchdog_monitoring_threads()
                 except Exception as e:
                     logger.debug(f"Flush thread error: {e}")
                     time.sleep(1)
@@ -1022,6 +1060,72 @@ class RealTimeConsole:
             logger.debug(f"Error checking if process is running: {e}")
             return False
 
+    def _watchdog_monitoring_threads(self):
+        # Check if monitoring threads are alive while process is still running; restart dead ones.
+        # Called periodically from the flush thread so that a silently-dead monitoring thread
+        # does not permanently disconnect the console from a running server.
+        try:
+            if not self.is_active or self.stop_event.is_set():
+                return
+            if not self._is_process_running():
+                return
+
+            restarted = []
+
+            # Stdout monitor — only for processes that expose a valid, open stdout stream
+            if (self.output_thread is not None and
+                    not self.output_thread.is_alive() and
+                    self.process and hasattr(self.process, 'stdout') and
+                    self.process.stdout and not self.process.stdout.closed):
+                self.output_thread = threading.Thread(
+                    target=self._monitor_stdout,
+                    daemon=True,
+                    name=f"Console-{self.server_name}-Stdout"
+                )
+                self.output_thread.start()
+                restarted.append("stdout")
+
+            # Command input handler — only when stdin is available
+            if (self.input_thread is not None and
+                    not self.input_thread.is_alive() and
+                    self.process and hasattr(self.process, 'stdin') and
+                    self.process.stdin and not self.process.stdin.closed):
+                self.input_thread = threading.Thread(
+                    target=self._handle_commands,
+                    daemon=True,
+                    name=f"Console-{self.server_name}-Input"
+                )
+                self.input_thread.start()
+                restarted.append("input")
+
+            # Log file monitor
+            if (self.log_monitor_thread is not None and
+                    not self.log_monitor_thread.is_alive() and
+                    self.server_log_paths):
+                self.log_monitor_thread = threading.Thread(
+                    target=self._monitor_log_files,
+                    daemon=True,
+                    name=f"Console-{self.server_name}-LogMonitor"
+                )
+                self.log_monitor_thread.start()
+                restarted.append("log_monitor")
+
+            # State save thread
+            if self.state_save_thread is not None and not self.state_save_thread.is_alive():
+                self._start_state_save_thread()
+                restarted.append("state_save")
+
+            if restarted:
+                logger.info(
+                    f"Console watchdog restarted dead threads for {self.server_name}: {restarted}"
+                )
+                self._add_output(
+                    f"[INFO] Console monitoring automatically recovered (restarted: {', '.join(restarted)}).",
+                    "system"
+                )
+        except Exception as e:
+            logger.debug(f"Error in console thread watchdog for {self.server_name}: {e}")
+
     def _start_monitoring_threads(self):
         # Start all monitoring threads
         try:
@@ -1123,9 +1227,22 @@ class RealTimeConsole:
                                     # Small sleep to prevent excessive CPU usage
                                     time.sleep(0.01)
                             except (OSError, ValueError, AttributeError) as e:
-                                # Process stdout became invalid
+                                # Process stdout became invalid — but a broken pipe does not
+                                # necessarily mean the process is dead (e.g. Windows pipe
+                                # buffer issues or the process redirected its own stdout).
+                                # Only trigger termination if the process is actually gone.
                                 logger.debug(f"Stdout became invalid for {self.server_name}: {e}")
-                                self._handle_process_termination()
+                                if not self._is_process_running():
+                                    self._handle_process_termination()
+                                else:
+                                    logger.warning(
+                                        f"Stdout pipe broke for {self.server_name} but process is still running; "
+                                        f"stdout monitoring will stop — log file monitoring may still be active"
+                                    )
+                                    self._add_output(
+                                        "[WARN] Live stdout stream disconnected. Output will continue via log file monitoring if available.",
+                                        "warning"
+                                    )
                                 break
 
                         # Throttle processing if too many lines are being processed rapidly
@@ -1940,6 +2057,10 @@ class RealTimeConsole:
             # Enable GUI updates when showing window
             self.status_updates_active = True
 
+            # Ensure the flush thread is running — it may have exited while the window was
+            # closed, or it may never have been started for a freshly-reattached console.
+            self._start_flush_thread()
+
             logger.debug(f"Attempting to show console window for {self.server_name}")
             if self.window and self.window.winfo_exists():
                 try:
@@ -2041,6 +2162,7 @@ class RealTimeConsole:
 
             ttk.Button(btn_frame, text="Start Server", command=self._start_server_gui).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(btn_frame, text="Stop Server", command=self._stop_server_gui).pack(side=tk.LEFT, padx=(0, 10))
+            ttk.Button(btn_frame, text="Restart Server", command=self._restart_server_gui).pack(side=tk.LEFT, padx=(0, 10))
             ttk.Button(btn_frame, text="Clear", command=self._clear_output).pack(side=tk.LEFT, padx=(0, 10))
             self.scroll_pause_btn = ttk.Button(btn_frame, text="Pause Scroll", command=self._toggle_scroll_pause)
             self.scroll_pause_btn.pack(side=tk.LEFT, padx=(0, 10))
@@ -2048,6 +2170,24 @@ class RealTimeConsole:
 
             # Test Commands dropdown
             self._create_test_commands_dropdown(btn_frame)
+
+            # Right-click context menu on the text output area (mirrors dashboard context menu)
+            self._text_context_menu = tk.Menu(self.window, tearoff=0)
+            self._text_context_menu.add_command(label="Start Server", command=self._start_server_gui)
+            self._text_context_menu.add_command(label="Stop Server", command=self._stop_server_gui)
+            self._text_context_menu.add_command(label="Restart Server", command=self._restart_server_gui)
+            self._text_context_menu.add_command(label="Kill Process", command=self._kill_process_gui)
+            self._text_context_menu.add_separator()
+            self._text_context_menu.add_command(label="Copy", command=lambda: self.window.event_generate("<<Copy>>"))
+            self._text_context_menu.add_command(label="Clear Console", command=self._clear_output)
+
+            def _show_text_context_menu(event):
+                try:
+                    self._text_context_menu.tk_popup(event.x_root, event.y_root)
+                finally:
+                    self._text_context_menu.grab_release()
+
+            self.text_widget.bind("<Button-3>", _show_text_context_menu)
 
             ttk.Button(btn_frame, text="Close", command=self.force_close_window).pack(side=tk.RIGHT)
 
@@ -2415,6 +2555,75 @@ class RealTimeConsole:
             if self.window:
                 messagebox.showerror("Error", f"Failed to start server: {str(e)}", parent=self.window)
 
+    def _restart_server_gui(self):
+        # Restart server from GUI - uses shared server operation for consistency with dashboard
+        try:
+            parent_window = self.window if self.window else None
+
+            if not self.server_manager:
+                messagebox.showerror("Error", "Server manager not available. Please restart the dashboard.",
+                                    parent=parent_window)
+                return
+
+            if not self.process or not self._is_process_running():
+                messagebox.showinfo("Server Not Running",
+                                   f"Server '{self.server_name}' is not running. Use Start Server instead.",
+                                   parent=parent_window)
+                return
+
+            if not messagebox.askyesno("Restart Server",
+                                       f"Are you sure you want to restart '{self.server_name}'?",
+                                       parent=parent_window):
+                return
+
+            if _DASHBOARD_FUNCTIONS_AVAILABLE and restart_server_operation is not None:
+                def status_callback(message):
+                    if "restarted successfully" in message.lower():
+                        return
+                    self._add_output(f"[INFO] {message}", "system")
+
+                def completion_callback(success, message):
+                    def update_ui():
+                        if success:
+                            self._add_output(f"[INFO] Server restarted successfully", "system")
+                            self._refresh_console_state()
+                        else:
+                            self._add_output(f"[ERROR] {message}", "error")
+                            messagebox.showerror("Error", message, parent=parent_window)
+                    if self.window:
+                        self.window.after(0, update_ui)
+
+                console_manager = self.console_manager or getattr(self.server_manager, 'console_manager', None)
+                restart_server_operation(
+                    server_name=self.server_name,
+                    server_manager=self.server_manager,
+                    console_manager=console_manager,
+                    status_callback=status_callback,
+                    completion_callback=completion_callback,
+                    parent_window=parent_window,
+                )
+            else:
+                # Fallback to direct call
+                def restart_callback(message):
+                    if "restarted successfully" in message.lower():
+                        return
+                    self._add_output(f"[INFO] {message}", "system")
+
+                success, message = self.server_manager.restart_server_advanced(
+                    self.server_name, callback=restart_callback
+                )
+                if success:
+                    self._add_output(f"[INFO] Server restarted successfully", "system")
+                else:
+                    messagebox.showerror("Error",
+                                        f"Failed to restart server '{self.server_name}': {message}",
+                                        parent=parent_window)
+
+        except Exception as e:
+            logger.error(f"Error in restart server GUI for {self.server_name}: {e}")
+            if self.window:
+                messagebox.showerror("Error", f"Failed to restart server: {str(e)}", parent=self.window)
+
     def _stop_server_gui(self):
         # Stop server from GUI - uses shared server operation for consistency with dashboard
         try:
@@ -2426,17 +2635,23 @@ class RealTimeConsole:
                                    parent=parent_window)
                 return
 
-            # Confirm stop
-            result = messagebox.askyesno("Stop Server",
-                                        f"Are you sure you want to stop the server '{self.server_name}'?",
-                                        parent=parent_window)
-
-            if not result:
-                return
-
             if not self.server_manager:
                 messagebox.showerror("Error", "Server manager not available. Please restart the dashboard.",
                                     parent=parent_window)
+                return
+
+            # Show the shared stop dialog (immediate vs delayed)
+            if show_stop_server_dialog is not None:
+                stop_choice = show_stop_server_dialog(parent_window or self.window, self.server_name)
+            else:
+                # Fallback if dashboard_functions is not importable
+                if not messagebox.askyesno("Stop Server",
+                                           f"Are you sure you want to stop the server '{self.server_name}'?",
+                                           parent=parent_window):
+                    return
+                stop_choice = 0
+
+            if stop_choice is None:
                 return
 
             # Use shared server operation (runs in background thread, doesn't freeze UI)
@@ -2466,10 +2681,13 @@ class RealTimeConsole:
                 # Send the stop command directly via the console's own stdin path first.
                 # This covers cases where the background stop_server_advanced cannot reach
                 # the process (reattached server, no relay running, etc.).
-                stop_cmd = (self.server_config or {}).get('StopCommand', '')
-                if stop_cmd and self.is_active:
-                    self.send_command(stop_cmd)
-                    self._add_output(f"[INFO] Sending graceful stop command: {stop_cmd}", "system")
+                # Only do this for immediate stops - for delayed stops the shared helper
+                # manages the countdown and sends the stop at the right time.
+                if stop_choice == 0:
+                    stop_cmd = (self.server_config or {}).get('StopCommand', '')
+                    if stop_cmd and self.is_active:
+                        self.send_command(stop_cmd)
+                        self._add_output(f"[INFO] Sending graceful stop command: {stop_cmd}", "system")
 
                 # Use stored console_manager reference, or try to get from server_manager
                 console_manager = self.console_manager or getattr(self.server_manager, 'console_manager', None)
@@ -2481,7 +2699,8 @@ class RealTimeConsole:
                         console_manager=console_manager,
                         status_callback=status_callback,
                         completion_callback=completion_callback,
-                        parent_window=parent_window
+                        parent_window=parent_window,
+                        delay_minutes=stop_choice,
                     )
                 else:
                     # Fallback to direct call if dashboard_functions not available
@@ -3144,6 +3363,20 @@ class ConsoleManager:
                 console_items = list(self.consoles.items())
 
             for server_name, console in console_items:
+                # Never prune a console whose window the user currently has open —
+                # even if the process check is unreliable, destroying the console
+                # while it's visible would cause an immediate loss of console access.
+                window_open = False
+                try:
+                    window_open = bool(console.window and console.window.winfo_exists())
+                except tk.TclError:
+                    window_open = False
+                except Exception:
+                    window_open = False
+
+                if window_open:
+                    continue
+
                 try:
                     process_running = bool(console.process and console._is_process_running())
                 except Exception:
@@ -3157,15 +3390,7 @@ class ConsoleManager:
                 except Exception:
                     pass
 
-                window_open = False
-                try:
-                    window_open = bool(console.window and console.window.winfo_exists())
-                except tk.TclError:
-                    window_open = False
-                except Exception:
-                    window_open = False
-
-                if not window_open and self._remove_console_if_same(server_name, console):
+                if self._remove_console_if_same(server_name, console):
                     removed_count += 1
 
             if removed_count > 0:

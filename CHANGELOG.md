@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Improved console lifecycle recovery in `server_console.py`: stale/inactive console objects are discarded and recreated, lock handling was hardened (RLock + timeout), and failed open attempts now self-recover via one-shot reset/retry
   - Fixed post-stop/reopen console scrolling regression by rebinding mouse-wheel handlers on recreated console widgets and resetting auto-scroll state on reopen
   - Added temporary crash forensics instrumentation (`ConsoleCrashTrace.log`) during investigation, then disabled/cleaned the trace output after fixes were validated
+  - Hardened stop flow so `Stop-ServerManager.pyw` and tray `Exit` both invoke force-stop mode, improving shutdown reliability for stuck child processes
+  - Improved `stop_servermanager.py` shutdown path to continue with best-effort cleanup when not elevated, then attempt elevated follow-up only if residual processes remain
+  - Expanded stop PID coverage to include `admin_dashboard.pid` and added residual process reporting for shutdown diagnostics
+  - Tightened shutdown process matching to avoid false-positive termination of unrelated Windows `ServerManager.exe`
+  - Added scanner security gate reporting to top-of-log headers and summaries (`Security Score` + `Security Gate` PASS/WARN/FAIL)
+  - Added scanner fail-fast flags for automation/CI hardening: `--fail-on-security-critical` and `--fail-on-security-high`
+  - Hardened web static-file serving with traversal/absolute-path blocking, safe joined-path resolution, and static-endpoint rate limiting
 
   Dashboard UI and Small-Display Layout:
   - Added missing top-bar `Start Server` action next to `Add Server`; `Stop Server` now appears immediately to the right for a more intuitive flow

@@ -15,4 +15,4 @@ startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 startupinfo.wShowWindow = 0  # SW_HIDE
 
 # Run the stop script
-subprocess.Popen([sys.executable, stop_script_path], startupinfo=startupinfo)
+subprocess.Popen([sys.executable, stop_script_path, "--force"], startupinfo=startupinfo)
