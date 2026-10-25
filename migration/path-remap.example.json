@@ -1,0 +1,6 @@
+{
+  "_comment": "OPTIONAL only when game install folders moved between machines. This is NOT server config — servers live in SQLite (db/servermanager_servers.db). Do not commit real paths.",
+  "pathRemap": {
+    "OLD_INSTALL_PREFIX": "NEW_INSTALL_PREFIX"
+  }
+}

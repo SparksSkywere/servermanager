@@ -1,426 +1,90 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cluster Management - Server Manager</title>
-    <link rel="stylesheet" href="css/common.css">
-    <style>
-        .main { max-width: 1200px; margin: 0 auto; padding: 24px; }
-
-        .page-header { margin-bottom: 24px; }
-        .page-header h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 8px; }
-        .page-header p { color: var(--sm-subtle-fg, #686888); }
-
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-
-        @media (max-width: 700px) { .stats-grid { grid-template-columns: 1fr; } }
-
-        .stat-card {
-            background: var(--sm-panel-bg, #1a1a2e);
-            border: 1px solid var(--sm-panel-border, #2a2a45);
-            border-radius: 12px;
-            padding: 24px;
-            text-align: center;
-        }
-
-        .stat-number {
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: #667eea;
-            margin-bottom: 6px;
-        }
-
-        .stat-label { color: var(--sm-subtle-fg, #686888); font-size: 0.9rem; font-weight: 500; }
-
-        /* Cards */
-        .card {
-            background: var(--sm-panel-bg, #1a1a2e);
-            border: 1px solid var(--sm-panel-border, #2a2a45);
-            border-radius: 16px;
-            margin-bottom: 24px;
-            overflow: hidden;
-        }
-
-        .card-header {
-            padding: 16px 20px;
-            background: var(--sm-subtle-bg, #252540);
-            border-bottom: 1px solid var(--sm-panel-border, #2a2a45);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .card-header h2 { font-size: 1rem; font-weight: 600; }
-
-        .card-body { padding: 20px; }
-
-        /* Node List */
-        .node-list { display: flex; flex-direction: column; gap: 12px; }
-
-        .node-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            padding: 18px;
-            background: var(--sm-subtle-bg, #252540);
-            border: 1px solid var(--sm-panel-border, #2a2a45);
-            border-radius: 10px;
-            transition: border-color 0.2s;
-        }
-        .node-item:hover { border-color: #667eea; }
-
-        .node-info h4 { font-size: 1rem; margin-bottom: 6px; }
-        .node-info p { font-size: 0.85rem; color: var(--sm-subtle-fg, #686888); margin: 4px 0; }
-        .node-info strong { color: var(--sm-body-fg, #e8e8f0); }
-
-        .node-actions { display: flex; gap: 8px; flex-shrink: 0; }
-
-        .node-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .node-status.online { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
-        .node-status.offline { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
-        .node-status.pending { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: currentColor;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 50px 20px;
-            color: var(--sm-subtle-fg, #686888);
-        }
-
-        .empty-state h3 { margin-bottom: 8px; color: var(--sm-muted-fg, #a8a8c0); }
-
-        @media (max-width: 768px) {
-            .node-item { flex-direction: column; gap: 12px; }
-            .node-actions { width: 100%; }
-            .node-actions .btn { flex: 1; }
-        }
-    </style>
+  <meta charset="utf-8" />
+  <title>Cluster</title>
+  <link rel="stylesheet" href="/css/site.css" />
 </head>
 <body>
-    <header class="header" id="appHeader"></header>
-
-    <nav class="nav">
-        <a href="dashboard.html">Dashboard</a>
-        <a href="create-server.html">Create Server</a>
-        <a href="cluster.html" class="active">Cluster</a>
-        <a href="admin.html">Admin</a>
+  <header class="top">
+    <strong>Server Manager</strong>
+    <nav>
+      <a href="/dashboard.html">Servers</a>
+      <a href="/cluster.html">Cluster</a>
+      <a href="/admin.html">Admin</a>
+      <button id="logout">Logout</button>
     </nav>
+  </header>
+  <main>
+    <h1>Cluster</h1>
+    <p id="banner" class="muted">Loading…</p>
+    <div class="toolbar">
+      <button id="refresh">Refresh</button>
+    </div>
+    <h2>Pending joins</h2>
+    <ul id="pending"></ul>
+    <h2>Nodes</h2>
+    <ul id="nodes"></ul>
+  </main>
+  <script src="/js/config.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/api.js"></script>
+  <script>
+    Auth.require();
+    document.getElementById('logout').onclick = () => Auth.logout();
 
-    <main class="main">
-        <div class="page-header">
-            <h1>Cluster Management</h1>
-            <p>Manage your cluster nodes and approve join requests from subhosts</p>
-        </div>
+    async function load() {
+      const banner = document.getElementById('banner');
+      const pendingUl = document.getElementById('pending');
+      const nodesUl = document.getElementById('nodes');
+      pendingUl.innerHTML = '';
+      nodesUl.innerHTML = '';
+      try {
+        const st = await API.clusterStatus();
+        banner.textContent = st.enabled
+          ? `Role: ${(st.role || '').toUpperCase()} · Cluster ON · peer port ${st.port}`
+          : 'Cluster is disabled. Enable ClusterEnabled in Settings (HostUI) or system-settings.';
+        if (!st.enabled) return;
 
-        <!-- Stats -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-number" id="pendingCount">0</div>
-                <div class="stat-label">Pending Requests</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="approvedCount">0</div>
-                <div class="stat-label">Active Nodes</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="totalRequests">0</div>
-                <div class="stat-label">Total Requests</div>
-            </div>
-        </div>
+        const pending = await API.clusterPending();
+        (pending || []).forEach(p => {
+          const id = p.id || p.Id;
+          const li = document.createElement('li');
+          li.textContent = `${p.subhostId || p.SubhostId} (${p.machineName || p.MachineName || ''}) @ ${p.address || p.Address || ''} `;
+          const a = document.createElement('button');
+          a.textContent = 'Approve';
+          a.onclick = async () => {
+            const r = await API.clusterApprove(id);
+            alert(r && r.token ? `Approved. Token: ${r.token}` : 'Approved.');
+            load();
+          };
+          const rj = document.createElement('button');
+          rj.textContent = 'Reject';
+          rj.onclick = async () => { await API.clusterReject(id); load(); };
+          li.appendChild(a);
+          li.appendChild(rj);
+          pendingUl.appendChild(li);
+        });
 
-        <!-- Pending Requests -->
-        <div class="card">
-            <div class="card-header">
-                <h2>Pending Requests</h2>
-                <button class="btn btn-sm btn-secondary" onclick="loadClusterData()">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                    Refresh
-                </button>
-            </div>
-            <div class="card-body">
-                <div class="node-list" id="pendingList">
-                    <div class="empty-state">
-                        <h3>No pending requests</h3>
-                        <p>Cluster join requests will appear here</p>
-                    </div>
-                </div>
-            </div>
-        </div>
+        const nodes = await API.clusterNodes();
+        (nodes || []).forEach(n => {
+          const id = n.nodeId || n.NodeId;
+          const li = document.createElement('li');
+          li.textContent = `${id} — ${n.status || n.Status} @ ${n.address || n.Address} · last ${n.lastHeartbeat || n.LastHeartbeat || 'n/a'} `;
+          const rm = document.createElement('button');
+          rm.textContent = 'Remove';
+          rm.onclick = async () => { await API.clusterRemove(id); load(); };
+          li.appendChild(rm);
+          nodesUl.appendChild(li);
+        });
+      } catch (e) {
+        banner.textContent = String(e.message || e);
+      }
+    }
 
-        <!-- Active Nodes -->
-        <div class="card">
-            <div class="card-header">
-                <h2>Active Nodes</h2>
-            </div>
-            <div class="card-body">
-                <div class="node-list" id="activeList">
-                    <div class="empty-state">
-                        <h3>No active nodes</h3>
-                        <p>Approved cluster nodes will appear here</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </main>
-
-    <div class="notification" id="notification"></div>
-
-    <script src="js/theme.js"></script>
-    <script src="js/site-shell.js"></script>
-    <script>
-        ServerManagerWeb.renderSimpleHeader({ defaultDisplayName: 'Admin' });
-
-        function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
-
-        async function loadProfile() {
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                const r = await fetch('/api/profile', { headers: { 'Authorization': `Bearer ${token}` } });
-                if (r.ok) {
-                    const p = await r.json();
-                    ServerManagerWeb.applySimpleProfile(p, 'Admin');
-                    if (p.theme_preference) ThemeManager.syncFromProfile(p.theme_preference);
-                }
-            } catch {}
-        }
-
-        async function loadClusterData() {
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                const r = await fetch('/api/cluster/requests', { headers: { 'Authorization': `Bearer ${token}` } });
-                
-                if (!r.ok) {
-                    if (r.status === 404) {
-                        // Cluster API not available
-                        renderEmptyState();
-                        return;
-                    }
-                    throw new Error();
-                }
-
-                const data = await r.json();
-                const pending = data.pending || [];
-                const approved = data.approved || [];
-
-                document.getElementById('pendingCount').textContent = pending.length;
-                document.getElementById('approvedCount').textContent = approved.length;
-                document.getElementById('totalRequests').textContent = pending.length + approved.length;
-
-                renderPendingList(pending);
-                renderActiveList(approved);
-            } catch (e) {
-                console.error('Error loading cluster data:', e);
-                renderEmptyState();
-            }
-        }
-
-        function renderEmptyState() {
-            const pendingList = document.getElementById('pendingList');
-            pendingList.textContent = '';
-            const pendingEmpty = document.createElement('div');
-            pendingEmpty.className = 'empty-state';
-            const pendingH3 = document.createElement('h3');
-            pendingH3.textContent = 'No pending requests';
-            const pendingP = document.createElement('p');
-            pendingP.textContent = 'Cluster join requests will appear here';
-            pendingEmpty.appendChild(pendingH3);
-            pendingEmpty.appendChild(pendingP);
-            pendingList.appendChild(pendingEmpty);
-
-            const activeList = document.getElementById('activeList');
-            activeList.textContent = '';
-            const activeEmpty = document.createElement('div');
-            activeEmpty.className = 'empty-state';
-            const activeH3 = document.createElement('h3');
-            activeH3.textContent = 'No active nodes';
-            const activeP = document.createElement('p');
-            activeP.textContent = 'Approved cluster nodes will appear here';
-            activeEmpty.appendChild(activeH3);
-            activeEmpty.appendChild(activeP);
-            activeList.appendChild(activeEmpty);
-        }
-
-        function renderPendingList(nodes) {
-            const container = document.getElementById('pendingList');
-            container.textContent = '';
-            if (!nodes.length) {
-                const emptyDiv = document.createElement('div');
-                emptyDiv.className = 'empty-state';
-                const h3 = document.createElement('h3');
-                h3.textContent = 'No pending requests';
-                const p = document.createElement('p');
-                p.textContent = 'Cluster join requests will appear here';
-                emptyDiv.appendChild(h3);
-                emptyDiv.appendChild(p);
-                container.appendChild(emptyDiv);
-                return;
-            }
-
-            nodes.forEach(node => {
-                const nodeItem = document.createElement('div');
-                nodeItem.className = 'node-item';
-                
-                const nodeInfo = document.createElement('div');
-                nodeInfo.className = 'node-info';
-                const h4 = document.createElement('h4');
-                h4.textContent = node.hostname || node.name || 'Unknown';
-                const pIp = document.createElement('p');
-                pIp.innerHTML = 'IP: <strong>' + escapeHtml(node.ip || node.address || 'N/A') + '</strong>';
-                const pReq = document.createElement('p');
-                pReq.textContent = 'Requested: ' + (node.requested_at || 'Unknown');
-                const statusSpan = document.createElement('span');
-                statusSpan.className = 'node-status pending';
-                statusSpan.innerHTML = '<span class="status-dot"></span> Pending';
-                nodeInfo.appendChild(h4);
-                nodeInfo.appendChild(pIp);
-                nodeInfo.appendChild(pReq);
-                nodeInfo.appendChild(statusSpan);
-                
-                const nodeActions = document.createElement('div');
-                nodeActions.className = 'node-actions';
-                const approveBtn = document.createElement('button');
-                approveBtn.className = 'btn btn-sm btn-success';
-                approveBtn.textContent = 'Approve';
-                approveBtn.addEventListener('click', () => handleRequest(node.id, 'approve'));
-                const rejectBtn = document.createElement('button');
-                rejectBtn.className = 'btn btn-sm btn-danger';
-                rejectBtn.textContent = 'Reject';
-                rejectBtn.addEventListener('click', () => handleRequest(node.id, 'reject'));
-                nodeActions.appendChild(approveBtn);
-                nodeActions.appendChild(rejectBtn);
-                
-                nodeItem.appendChild(nodeInfo);
-                nodeItem.appendChild(nodeActions);
-                container.appendChild(nodeItem);
-            });
-        }
-
-        function renderActiveList(nodes) {
-            const container = document.getElementById('activeList');
-            container.textContent = '';
-            if (!nodes.length) {
-                const emptyDiv = document.createElement('div');
-                emptyDiv.className = 'empty-state';
-                const h3 = document.createElement('h3');
-                h3.textContent = 'No active nodes';
-                const p = document.createElement('p');
-                p.textContent = 'Approved cluster nodes will appear here';
-                emptyDiv.appendChild(h3);
-                emptyDiv.appendChild(p);
-                container.appendChild(emptyDiv);
-                return;
-            }
-
-            nodes.forEach(node => {
-                const nodeItem = document.createElement('div');
-                nodeItem.className = 'node-item';
-                
-                const nodeInfo = document.createElement('div');
-                nodeInfo.className = 'node-info';
-                const h4 = document.createElement('h4');
-                h4.textContent = node.hostname || node.name || 'Unknown';
-                const pIp = document.createElement('p');
-                pIp.innerHTML = 'IP: <strong>' + escapeHtml(node.ip || node.address || 'N/A') + '</strong>';
-                const pSeen = document.createElement('p');
-                pSeen.textContent = 'Last seen: ' + (node.last_seen || 'Unknown');
-                const statusSpan = document.createElement('span');
-                statusSpan.className = 'node-status ' + (node.online ? 'online' : 'offline');
-                statusSpan.innerHTML = '<span class="status-dot"></span> ' + (node.online ? 'Online' : 'Offline');
-                nodeInfo.appendChild(h4);
-                nodeInfo.appendChild(pIp);
-                nodeInfo.appendChild(pSeen);
-                nodeInfo.appendChild(statusSpan);
-                
-                const nodeActions = document.createElement('div');
-                nodeActions.className = 'node-actions';
-                const revokeBtn = document.createElement('button');
-                revokeBtn.className = 'btn btn-sm btn-danger';
-                revokeBtn.textContent = 'Revoke';
-                revokeBtn.addEventListener('click', () => revokeNode(node.id));
-                nodeActions.appendChild(revokeBtn);
-                
-                nodeItem.appendChild(nodeInfo);
-                nodeItem.appendChild(nodeActions);
-                container.appendChild(nodeItem);
-            });
-        }
-
-        async function handleRequest(nodeId, action) {
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                const r = await fetch(`/api/cluster/requests/${encodeURIComponent(nodeId)}/${action}`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (r.ok) {
-                    showNotification(`Request ${action}d successfully`, 'success');
-                    await loadClusterData();
-                } else {
-                    const res = await r.json();
-                    showNotification(res.error || `Failed to ${action}`, 'error');
-                }
-            } catch { showNotification(`Failed to ${action} request`, 'error'); }
-        }
-
-        async function revokeNode(nodeId) {
-            if (!confirm('Are you sure you want to revoke this node?')) return;
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                const r = await fetch(`/api/cluster/nodes/${encodeURIComponent(nodeId)}`, {
-                    method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (r.ok) {
-                    showNotification('Node revoked', 'success');
-                    await loadClusterData();
-                } else {
-                    const res = await r.json();
-                    showNotification(res.error || 'Failed to revoke', 'error');
-                }
-            } catch { showNotification('Failed to revoke node', 'error'); }
-        }
-
-        async function init() {
-            const token = sessionStorage.getItem('auth_token');
-            if (!token) { window.location.replace('login.html'); return; }
-            try { const r = await fetch('/api/auth/verify', { headers: { 'Authorization': `Bearer ${token}` } }); if (!r.ok) throw 0; } catch { sessionStorage.clear(); window.location.replace('login.html'); return; }
-
-            const isAdmin = sessionStorage.getItem('isAdmin') === 'true';
-            if (!isAdmin) {
-                showNotification('Access denied. Admin privileges required.', 'error');
-                setTimeout(() => window.location.replace('dashboard.html'), 2000);
-                return;
-            }
-
-            ThemeManager.applyCurrentTheme();
-            await loadProfile();
-            await loadClusterData();
-            setInterval(loadClusterData, 30000);
-        }
-
-        document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
-    </script>
+    document.getElementById('refresh').onclick = load;
+    load();
+    setInterval(load, 10000);
+  </script>
 </body>
 </html>

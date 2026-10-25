@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Cluster</title>
+  <link rel="stylesheet" href="/css/site.css" />
+</head>
+<body>
+  <header class="top">
+    <strong>Server Manager</strong>
+    <nav>
+      <a href="/dashboard.html">Servers</a>
+      <a href="/cluster.html">Cluster</a>
+      <a href="/admin.html">Admin</a>
+      <button id="logout">Logout</button>
+    </nav>
+  </header>
+  <main>
+    <h1>Cluster</h1>
+    <p id="banner" class="muted">Loading…</p>
+    <div class="toolbar">
+      <button id="refresh">Refresh</button>
+    </div>
+    <h2>Pending joins</h2>
+    <ul id="pending"></ul>
+    <h2>Nodes</h2>
+    <ul id="nodes"></ul>
+  </main>
+  <script src="/js/config.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/api.js"></script>
+  <script>
+    Auth.require();
+    document.getElementById('logout').onclick = () => Auth.logout();
+
+    async function load() {
+      const banner = document.getElementById('banner');
+      const pendingUl = document.getElementById('pending');
+      const nodesUl = document.getElementById('nodes');
+      pendingUl.innerHTML = '';
+      nodesUl.innerHTML = '';
+      try {
+        const st = await API.clusterStatus();
+        banner.textContent = st.enabled
+          ? `Role: ${(st.role || '').toUpperCase()} · Cluster ON · peer port ${st.port}`
+          : 'Cluster is disabled. Enable ClusterEnabled in Settings (HostUI) or system-settings.';
+        if (!st.enabled) return;
+
+        const pending = await API.clusterPending();
+        (pending || []).forEach(p => {
+          const id = p.id || p.Id;
+          const li = document.createElement('li');
+          li.textContent = `${p.subhostId || p.SubhostId} (${p.machineName || p.MachineName || ''}) @ ${p.address || p.Address || ''} `;
+          const a = document.createElement('button');
+          a.textContent = 'Approve';
+          a.onclick = async () => {
+            const r = await API.clusterApprove(id);
+            alert(r && r.token ? `Approved. Token: ${r.token}` : 'Approved.');
+            load();
+          };
+          const rj = document.createElement('button');
+          rj.textContent = 'Reject';
+          rj.onclick = async () => { await API.clusterReject(id); load(); };
+          li.appendChild(a);
+          li.appendChild(rj);
+          pendingUl.appendChild(li);
+        });
+
+        const nodes = await API.clusterNodes();
+        (nodes || []).forEach(n => {
+          const id = n.nodeId || n.NodeId;
+          const li = document.createElement('li');
+          li.textContent = `${id} — ${n.status || n.Status} @ ${n.address || n.Address} · last ${n.lastHeartbeat || n.LastHeartbeat || 'n/a'} `;
+          const rm = document.createElement('button');
+          rm.textContent = 'Remove';
+          rm.onclick = async () => { await API.clusterRemove(id); load(); };
+          li.appendChild(rm);
+          nodesUl.appendChild(li);
+        });
+      } catch (e) {
+        banner.textContent = String(e.message || e);
+      }
+    }
+
+    document.getElementById('refresh').onclick = load;
+    load();
+    setInterval(load, 10000);
+  </script>
+</body>
+</html>

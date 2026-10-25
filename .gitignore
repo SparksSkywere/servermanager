@@ -1,127 +1,28 @@
-# Byte-compiled / optimised / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-
-# C extensions
-*.so
-
-# Distribution / packaging
-.Python
-.vscode/
-logs/
-servers/
-temp/
-build/
-builds/
-develop-eggs/
+## Build
+**/bin/
+**/obj/
+**/publish/
+artifacts/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Development Environment files
-Install-log.txt
-pip-log.txt
-pip-delete-this-directory.txt
-todo
-todo.txt
-todo.md
-dev-requirements.txt
-db/servermanager_users.db
-db/servermanager_servers.db
-db/servermanager.db
-db/console_states.db
-db/steam_ID.db
-data/update_config.json
-ssl/server.crt
-ssl/server.key
-__Scanner__/
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
-
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
+nuget-packages/
+tools/InnoSetup/
+tools/innosetup-installer.exe
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
 *.log
-local_settings.py
-db.sqlite3
+*.pid
+TestResults/
 
-# Flask stuff:
-instance/
-.webassets-cache
+## Runtime (local installs)
+runtime/logs/
+runtime/temp/
+runtime/db/
+runtime/ssl/
 
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# pyenv
-.python-version
-
-# celery beat schedule file
-celerybeat-schedule
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
+## OS
+Thumbs.db
+Desktop.ini
+ehthumbs.db

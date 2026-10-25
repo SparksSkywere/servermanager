@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Login — Server Manager</title>
+  <link rel="stylesheet" href="/css/site.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>Login</h1>
+    <form id="login-form">
+      <label>Username <input id="username" value="admin" required /></label>
+      <label>Password <input id="password" type="password" value="admin" required /></label>
+      <label>2FA (if enabled) <input id="totp" autocomplete="one-time-code" /></label>
+      <button type="submit">Sign in</button>
+      <p id="error" class="error"></p>
+    </form>
+  </main>
+  <script src="/js/config.js"></script>
+  <script src="/js/auth.js"></script>
+  <script>
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = document.getElementById('error');
+      err.textContent = '';
+      try {
+        await Auth.login(
+          document.getElementById('username').value,
+          document.getElementById('password').value,
+          document.getElementById('totp').value || null
+        );
+        location.href = '/dashboard.html';
+      } catch (ex) {
+        err.textContent = ex.message || String(ex);
+      }
+    });
+  </script>
+</body>
+</html>

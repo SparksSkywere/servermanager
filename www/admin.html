@@ -1,420 +1,49 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Panel - Server Manager</title>
-    <link rel="stylesheet" href="css/common.css">
-    <style>
-        .main { max-width: 1200px; margin: 0 auto; padding: 24px; }
-
-        .admin-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 24px;
-        }
-
-        @media (max-width: 1000px) { .admin-grid { grid-template-columns: 1fr; } }
-
-        .card {
-            background: var(--sm-panel-bg, #1a1a2e);
-            border: 1px solid var(--sm-panel-border, #2a2a45);
-            border-radius: 16px;
-            overflow: hidden;
-        }
-
-        .card-header {
-            padding: 16px 20px;
-            background: var(--sm-subtle-bg, #252540);
-            border-bottom: 1px solid var(--sm-panel-border, #2a2a45);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .card-header h2 { font-size: 1rem; font-weight: 600; }
-
-        .card-body { padding: 20px; }
-
-        /* Table */
-        .table-container { overflow-x: auto; }
-
-        table { width: 100%; border-collapse: collapse; }
-
-        th, td {
-            padding: 12px 14px;
-            text-align: left;
-            border-bottom: 1px solid var(--sm-panel-border, #2a2a45);
-        }
-
-        th {
-            background: var(--sm-subtle-bg, #252540);
-            font-weight: 600;
-            font-size: 0.85rem;
-            color: var(--sm-muted-fg, #a8a8c0);
-        }
-
-        td { font-size: 0.9rem; }
-
-        tbody tr:hover { background: var(--sm-hover-bg, #252540); }
-
-        .admin-badge {
-            background: #ef4444;
-            color: white;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-
-        .badge {
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-
-        .badge-success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
-        .badge-danger { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
-
-        .user-actions { display: flex; gap: 8px; }
-
-        .modal-content {
-            max-width: 440px;
-        }
-
-        .checkbox-label {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            cursor: pointer;
-        }
-
-        .checkbox-label input { width: auto; }
-
-    </style>
+  <meta charset="utf-8" />
+  <title>Admin</title>
+  <link rel="stylesheet" href="/css/site.css" />
 </head>
 <body>
-    <header class="header" id="appHeader"></header>
-
-    <nav class="nav">
-        <a href="dashboard.html">Dashboard</a>
-        <a href="create-server.html">Create Server</a>
-        <a href="cluster.html">Cluster</a>
-        <a href="admin.html" class="active">Admin</a>
-    </nav>
-
-    <main class="main">
-        <div class="admin-grid">
-            <!-- User Management -->
-            <div class="card">
-                <div class="card-header">
-                    <h2>User Management</h2>
-                    <button class="btn btn-primary btn-sm" onclick="showCreateUserModal()">Add User</button>
-                </div>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Username</th>
-                                <th>Role</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="userTableBody">
-                            <tr><td colspan="4" class="text-muted" style="text-align:center;">Loading users...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- System Settings -->
-            <div class="card">
-                <div class="card-header">
-                    <h2>System Settings</h2>
-                </div>
-                <div class="card-body">
-                    <div class="form-group">
-                        <label>Server Manager Port</label>
-                        <input type="number" value="5000" disabled>
-                        <div class="help-text">Change requires restart</div>
-                    </div>
-                    <div class="form-group">
-                        <label>Auto-start Servers on Boot</label>
-                        <select disabled>
-                            <option value="true">Enabled</option>
-                            <option value="false">Disabled</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Log Retention (Days)</label>
-                        <input type="number" value="30" disabled>
-                    </div>
-                    <button class="btn btn-secondary" disabled>Save Settings</button>
-                    <p class="text-muted" style="margin-top: 12px; font-size: 0.85rem;">System settings coming soon</p>
-                </div>
-            </div>
-        </div>
-    </main>
-
-    <!-- Create User Modal -->
-    <div class="modal" id="createUserModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>Create New User</h2>
-                <button class="modal-close" onclick="hideCreateUserModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form id="createUserForm" onsubmit="handleCreateUser(event)">
-                    <div class="form-group">
-                        <label>Username *</label>
-                        <input type="text" id="newUsername" required placeholder="Enter username">
-                    </div>
-                    <div class="form-group">
-                        <label>Password *</label>
-                        <input type="password" id="newPassword" required placeholder="Min 6 characters">
-                    </div>
-                    <div class="form-group">
-                        <label>Email</label>
-                        <input type="email" id="newEmail" placeholder="user@example.com">
-                    </div>
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="newIsAdmin">
-                            <span>Administrator privileges</span>
-                        </label>
-                    </div>
-                    <button type="submit" class="btn btn-primary" style="width: 100%; padding: 14px;">Create User</button>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Reset Password Modal -->
-    <div class="modal" id="resetPasswordModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>Reset Password</h2>
-                <button class="modal-close" onclick="hideResetPasswordModal()">&times;</button>
-            </div>
-            <div class="modal-body">
-                <p style="margin-bottom: 16px;">Reset password for: <strong id="resetUsername"></strong></p>
-                <form id="resetPasswordForm" onsubmit="handleResetPassword(event)">
-                    <div class="form-group">
-                        <label>New Password *</label>
-                        <input type="password" id="resetNewPassword" required placeholder="Min 6 characters">
-                    </div>
-                    <button type="submit" class="btn btn-primary" style="width: 100%; padding: 14px;">Reset Password</button>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <div class="notification" id="notification"></div>
-
-    <script src="js/theme.js"></script>
-    <script src="js/site-shell.js"></script>
-    <script>
-        ServerManagerWeb.renderSimpleHeader({ defaultDisplayName: 'Admin' });
-        let currentResetUser = null;
-
-        function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
-
-        async function loadProfile() {
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                const r = await fetch('/api/profile', { headers: { 'Authorization': `Bearer ${token}` } });
-                if (r.ok) {
-                    const p = await r.json();
-                    ServerManagerWeb.applySimpleProfile(p, 'Admin');
-                    if (p.theme_preference) ThemeManager.syncFromProfile(p.theme_preference);
-                }
-            } catch {}
-        }
-
-        async function loadUsers() {
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                const r = await fetch('/api/users', { headers: { 'Authorization': `Bearer ${token}` } });
-                if (!r.ok) throw new Error();
-                const users = await r.json();
-                const tbody = document.getElementById('userTableBody');
-
-                if (!users || users.length === 0) {
-                    tbody.textContent = '';
-                    const emptyRow = document.createElement('tr');
-                    const emptyCell = document.createElement('td');
-                    emptyCell.colSpan = 4;
-                    emptyCell.className = 'text-muted';
-                    emptyCell.style.textAlign = 'center';
-                    emptyCell.textContent = 'No users found';
-                    emptyRow.appendChild(emptyCell);
-                    tbody.appendChild(emptyRow);
-                    return;
-                }
-
-                tbody.textContent = '';
-                users.forEach(u => {
-                    const tr = document.createElement('tr');
-                    
-                    const tdName = document.createElement('td');
-                    const strong = document.createElement('strong');
-                    strong.textContent = u.username;
-                    tdName.appendChild(strong);
-                    if (u.email) {
-                        tdName.appendChild(document.createElement('br'));
-                        const emailSpan = document.createElement('span');
-                        emailSpan.className = 'text-muted';
-                        emailSpan.style.fontSize = '0.8rem';
-                        emailSpan.textContent = u.email;
-                        tdName.appendChild(emailSpan);
-                    }
-                    tr.appendChild(tdName);
-                    
-                    const tdRole = document.createElement('td');
-                    if (u.is_admin) {
-                        const badge = document.createElement('span');
-                        badge.className = 'admin-badge';
-                        badge.textContent = 'Admin';
-                        tdRole.appendChild(badge);
-                    } else {
-                        tdRole.textContent = 'User';
-                    }
-                    tr.appendChild(tdRole);
-                    
-                    const tdStatus = document.createElement('td');
-                    const statusBadge = document.createElement('span');
-                    statusBadge.className = 'badge ' + (u.is_active !== false ? 'badge-success' : 'badge-danger');
-                    statusBadge.textContent = u.is_active !== false ? 'Active' : 'Inactive';
-                    tdStatus.appendChild(statusBadge);
-                    tr.appendChild(tdStatus);
-                    
-                    const tdActions = document.createElement('td');
-                    const actionsDiv = document.createElement('div');
-                    actionsDiv.className = 'user-actions';
-                    const resetBtn = document.createElement('button');
-                    resetBtn.className = 'btn btn-sm btn-secondary';
-                    resetBtn.textContent = 'Reset';
-                    resetBtn.addEventListener('click', () => showResetPasswordModal(u.username));
-                    actionsDiv.appendChild(resetBtn);
-                    if (u.username !== 'admin') {
-                        const deleteBtn = document.createElement('button');
-                        deleteBtn.className = 'btn btn-sm btn-danger';
-                        deleteBtn.textContent = 'Delete';
-                        deleteBtn.addEventListener('click', () => deleteUser(u.username));
-                        actionsDiv.appendChild(deleteBtn);
-                    }
-                    tdActions.appendChild(actionsDiv);
-                    tr.appendChild(tdActions);
-                    
-                    tbody.appendChild(tr);
-                });
-            } catch {
-                const failTbody = document.getElementById('userTableBody');
-                failTbody.textContent = '';
-                const failRow = document.createElement('tr');
-                const failCell = document.createElement('td');
-                failCell.colSpan = 4;
-                failCell.className = 'text-muted';
-                failCell.style.textAlign = 'center';
-                failCell.textContent = 'Failed to load';
-                failRow.appendChild(failCell);
-                failTbody.appendChild(failRow);
-            }
-        }
-
-        function showCreateUserModal() {
-            document.getElementById('createUserModal').classList.add('show');
-            document.getElementById('createUserForm').reset();
-        }
-
-        function hideCreateUserModal() { document.getElementById('createUserModal').classList.remove('show'); }
-
-        function showResetPasswordModal(username) {
-            currentResetUser = username;
-            document.getElementById('resetUsername').textContent = username;
-            document.getElementById('resetPasswordModal').classList.add('show');
-            document.getElementById('resetPasswordForm').reset();
-        }
-
-        function hideResetPasswordModal() { document.getElementById('resetPasswordModal').classList.remove('show'); currentResetUser = null; }
-
-        async function handleCreateUser(e) {
-            e.preventDefault();
-            const data = {
-                username: document.getElementById('newUsername').value.trim(),
-                password: document.getElementById('newPassword').value,
-                email: document.getElementById('newEmail').value.trim(),
-                is_admin: document.getElementById('newIsAdmin').checked
-            };
-
-            if (data.password.length < 6) { showNotification('Password must be at least 6 characters', 'error'); return; }
-
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                const r = await fetch('/api/users', {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                if (r.ok) { showNotification('User created', 'success'); hideCreateUserModal(); await loadUsers(); }
-                else { const res = await r.json(); showNotification(res.error || 'Failed', 'error'); }
-            } catch { showNotification('Failed to create user', 'error'); }
-        }
-
-        async function handleResetPassword(e) {
-            e.preventDefault();
-            const newPwd = document.getElementById('resetNewPassword').value;
-            if (newPwd.length < 6) { showNotification('Password must be at least 6 characters', 'error'); return; }
-
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                const r = await fetch(`/api/users/${encodeURIComponent(currentResetUser)}/password`, {
-                    method: 'PUT',
-                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password: newPwd })
-                });
-                if (r.ok) { showNotification(`Password reset for ${currentResetUser}`, 'success'); hideResetPasswordModal(); }
-                else { const res = await r.json(); showNotification(res.error || 'Failed', 'error'); }
-            } catch { showNotification('Failed to reset password', 'error'); }
-        }
-
-        async function deleteUser(username) {
-            if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                const r = await fetch(`/api/users/${encodeURIComponent(username)}`, {
-                    method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (r.ok) { showNotification(`User ${username} deleted`, 'success'); await loadUsers(); }
-                else { const res = await r.json(); showNotification(res.error || 'Failed', 'error'); }
-            } catch { showNotification('Failed to delete user', 'error'); }
-        }
-
-        // Modal close on outside click
-        document.querySelectorAll('.modal').forEach(m => {
-            m.addEventListener('click', e => { if (e.target === m) m.classList.remove('show'); });
-        });
-
-        async function init() {
-            const token = sessionStorage.getItem('auth_token');
-            if (!token) { window.location.replace('login.html'); return; }
-            try { const r = await fetch('/api/auth/verify', { headers: { 'Authorization': `Bearer ${token}` } }); if (!r.ok) throw 0; } catch { sessionStorage.clear(); window.location.replace('login.html'); return; }
-
-            const isAdmin = sessionStorage.getItem('isAdmin') === 'true';
-            if (!isAdmin) {
-                showNotification('Access denied. Admin privileges required.', 'error');
-                setTimeout(() => window.location.replace('dashboard.html'), 2000);
-                return;
-            }
-
-            ThemeManager.applyCurrentTheme();
-            await loadProfile();
-            await loadUsers();
-        }
-
-        document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
-    </script>
+  <main>
+    <h1>Users</h1>
+    <ul id="users"></ul>
+    <form id="add">
+      <h2>Add user</h2>
+      <input name="username" placeholder="username" required />
+      <input name="password" type="password" placeholder="password" required />
+      <label><input name="isAdmin" type="checkbox" /> Admin</label>
+      <button type="submit">Create</button>
+    </form>
+  </main>
+  <script src="/js/config.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/api.js"></script>
+  <script>
+    Auth.require();
+    async function load() {
+      const users = await API.get('/api/users');
+      const ul = document.getElementById('users');
+      ul.innerHTML = '';
+      (users || []).forEach(u => {
+        const li = document.createElement('li');
+        li.textContent = `${u.username} ${u.isAdmin || u.is_admin ? '(admin)' : ''}`;
+        ul.appendChild(li);
+      });
+    }
+    document.getElementById('add').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      await API.post('/api/users', {
+        username: fd.get('username'),
+        password: fd.get('password'),
+        isAdmin: fd.get('isAdmin') === 'on'
+      });
+      e.target.reset();
+      await load();
+    });
+    load();
+  </script>
 </body>
 </html>

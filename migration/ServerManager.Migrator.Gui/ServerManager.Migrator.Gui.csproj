@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>ServerManager.Migrator.Gui</RootNamespace>
+    <AssemblyName>ServerManager.Migrator.Gui</AssemblyName>
+    <Product>Server Manager Migrator</Product>
+    <Description>GUI for migrating legacy Server Manager data</Description>
+    <ApplicationIcon>..\..\icons\servermanager.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
+  </PropertyGroup>
+</Project>

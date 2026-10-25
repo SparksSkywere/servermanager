@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Ship English only — culture satellite folders (cs/de/fr/…) clutter the install root -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+</Project>

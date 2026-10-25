@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Create Server</title>
+  <link rel="stylesheet" href="/css/site.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>Create server</h1>
+    <form id="create">
+      <label>Name <input name="name" required /></label>
+      <label>Type
+        <select name="serverType">
+          <option value="steam">Steam</option>
+          <option value="minecraft">Minecraft</option>
+        </select>
+      </label>
+      <label>App ID <input name="appId" /></label>
+      <label>Version <input name="version" placeholder="1.21.1" /></label>
+      <label>Install dir <input name="installDir" required /></label>
+      <label>Executable <input name="executable" /></label>
+      <label>Stop command <input name="stopCommand" placeholder="stop" /></label>
+      <button type="submit">Create</button>
+      <p id="msg"></p>
+    </form>
+    <p><a href="/dashboard.html">Back</a></p>
+  </main>
+  <script src="/js/config.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/api.js"></script>
+  <script>
+    Auth.require();
+    document.getElementById('create').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const body = Object.fromEntries(fd.entries());
+      await API.createServer(body);
+      document.getElementById('msg').textContent = 'Created';
+      location.href = '/dashboard.html';
+    });
+  </script>
+</body>
+</html>

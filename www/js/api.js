@@ -1,299 +1,50 @@
-/**
- * API client for Server Manager
- */
-
-const API_URL = '/api';
-
-class API {
-    /**
-     * Get authentication token from session storage
-     * @returns {string|null} Auth token or null if not authenticated
-     */
-    static getToken() {
-        return sessionStorage.getItem('auth_token');
-    }
-
-    /**
-     * Make authenticated API request
-     * @param {string} endpoint - API endpoint
-     * @param {Object} options - Fetch options
-     * @returns {Promise<Object>} - API response
-     */
-    static async request(endpoint, options = {}) {
-        const token = this.getToken();
-        if (!token) {
-            throw new Error('Not authenticated');
-        }
-
-        const url = `${API_URL}${endpoint}`;
-        const headers = {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            ...options.headers
-        };
-
-        try {
-            const response = await fetch(url, {
-                ...options,
-                headers
-            });
-
-            if (!response.ok) {
-                if (response.status === 401) {
-                    // Token expired or invalid
-                    sessionStorage.clear();
-                    window.location.replace('login.html');
-                    throw new Error('Authentication expired');
-                }
-
-                let errorData;
-                try {
-                    const responseText = await response.text();
-                    try {
-                        errorData = JSON.parse(responseText);
-                    } catch (jsonError) {
-                        errorData = { error: 'Server returned invalid response format' };
-                    }
-                } catch (parseError) {
-                    errorData = { error: 'Failed to read server response' };
-                }
-                throw new Error(errorData.error || 'API request failed');
-            }
-
-            return await response.json();
-        } catch (error) {
-            console.error(`API error (${endpoint}):`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Get all servers
-     * @returns {Promise<Array>} List of servers
-     */
-    static async getServers() {
-        const response = await this.request('/servers');
-        // API returns {count, servers, success} - extract the servers array
-        return response.servers || [];
-    }
-
-    /**
-     * Start a server
-     * @param {string} serverId - Server ID
-     * @returns {Promise<Object>} Operation result
-     */
-    static async startServer(serverId) {
-        return this.request(`/servers/${serverId}/start`, {
-            method: 'POST'
-        });
-    }
-
-    /**
-     * Stop a server
-     * @param {string} serverId - Server ID
-     * @param {boolean} force - Force stop
-     * @returns {Promise<Object>} Operation result
-     */
-    static async stopServer(serverId, force = false) {
-        return this.request(`/servers/${serverId}/stop`, {
-            method: 'POST',
-            body: JSON.stringify({ force })
-        });
-    }
-
-    /**
-     * Restart a server
-     * @param {string} serverId - Server ID
-     * @returns {Promise<Object>} Operation result
-     */
-    static async restartServer(serverId) {
-        return this.request(`/servers/${serverId}/restart`, {
-            method: 'POST'
-        });
-    }
-
-    /**
-     * Remove a server
-     * @param {string} serverId - Server ID
-     * @returns {Promise<Object>} Operation result
-     */
-    static async removeServer(serverId) {
-        return this.request(`/servers/${serverId}`, {
-            method: 'DELETE'
-        });
-    }
-
-    /**
-     * Get all users (admin only)
-     * @returns {Promise<Array>} List of users
-     */
-    static async getUsers() {
-        return this.request('/users');
-    }
-
-    /**
-     * Create a new user (admin only)
-     * @param {Object} userData - User data
-     * @returns {Promise<Object>} Operation result
-     */
-    static async createUser(userData) {
-        return this.request('/users', {
-            method: 'POST',
-            body: JSON.stringify(userData)
-        });
-    }
-
-    /**
-     * Delete a user (admin only)
-     * @param {string} username - Username to delete
-     * @returns {Promise<Object>} Operation result
-     */
-    static async deleteUser(username) {
-        return this.request(`/users/${username}`, {
-            method: 'DELETE'
-        });
-    }
-
-    /**
-     * Reset user password (admin only)
-     * @param {string} username - Username
-     * @param {string} newPassword - New password
-     * @returns {Promise<Object>} Operation result
-     */
-    static async resetUserPassword(username, newPassword) {
-        return this.request(`/users/${username}/password`, {
-            method: 'PUT',
-            body: JSON.stringify({ password: newPassword })
-        });
-    }
-
-    /**
-     * Get system settings
-     * @returns {Promise<Object>} System settings
-     */
-    static async getSystemSettings() {
-        return this.request('/settings');
-    }
-
-    /**
-     * Create a new server
-     * @param {Object} serverData - Server data
-     * @returns {Promise<Object>} Operation result
-     */
-    static async createServer(serverData) {
-        return this.request('/servers', {
-            method: 'POST',
-            body: JSON.stringify(serverData)
-        });
-    }
-
-    /**
-     * Get console output for a server
-     * @param {string} serverId - Server ID
-     * @param {number} lines - Number of lines to fetch
-     * @returns {Promise<Object>} Console output
-     */
-    static async getConsoleOutput(serverId, lines = 100) {
-        return this.request(`/servers/${encodeURIComponent(serverId)}/console?lines=${lines}`);
-    }
-
-    /**
-     * Send command to server console
-     * @param {string} serverId - Server ID
-     * @param {string} command - Command to send
-     * @returns {Promise<Object>} Operation result
-     */
-    static async sendConsoleCommand(serverId, command) {
-        return this.request(`/servers/${encodeURIComponent(serverId)}/console`, {
-            method: 'POST',
-            body: JSON.stringify({ command })
-        });
-    }
-
-    // ==================== Profile Methods ====================
-
-    /**
-     * Get current user's profile
-     * @returns {Promise<Object>} User profile data
-     */
-    static async getProfile() {
-        return this.request('/profile');
-    }
-
-    /**
-     * Update current user's profile
-     * @param {Object} profileData - Profile fields to update
-     * @returns {Promise<Object>} Operation result
-     */
-    static async updateProfile(profileData) {
-        return this.request('/profile', {
-            method: 'PUT',
-            body: JSON.stringify(profileData)
-        });
-    }
-
-    /**
-     * Change current user's password
-     * @param {string} currentPassword - Current password for verification
-     * @param {string} newPassword - New password to set
-     * @returns {Promise<Object>} Operation result
-     */
-    static async changePassword(currentPassword, newPassword) {
-        return this.request('/profile/password', {
-            method: 'PUT',
-            body: JSON.stringify({
-                current_password: currentPassword,
-                new_password: newPassword
-            })
-        });
-    }
-
-    /**
-     * Upload a new avatar
-     * @param {string} avatarBase64 - Base64 encoded avatar image
-     * @returns {Promise<Object>} Operation result
-     */
-    static async uploadAvatar(avatarBase64) {
-        return this.request('/profile/avatar', {
-            method: 'POST',
-            body: JSON.stringify({ avatar: avatarBase64 })
-        });
-    }
-
-    /**
-     * Test MOTD command
-     * @param {string} serverId - Server ID
-     * @returns {Promise<Object>} Operation result
-     */
-    static async testMOTD(serverId) {
-        return this.request(`/servers/${encodeURIComponent(serverId)}/test-motd`, {
-            method: 'POST'
-        });
-    }
-
-    /**
-     * Test save command
-     * @param {string} serverId - Server ID
-     * @returns {Promise<Object>} Operation result
-     */
-    static async testSave(serverId) {
-        return this.request(`/servers/${encodeURIComponent(serverId)}/test-save`, {
-            method: 'POST'
-        });
-    }
-
-    /**
-     * Test warning command
-     * @param {string} serverId - Server ID
-     * @param {number} minutes - Warning time in minutes
-     * @returns {Promise<Object>} Operation result
-     */
-    static async testWarning(serverId, minutes = 5) {
-        return this.request(`/servers/${encodeURIComponent(serverId)}/test-warning`, {
-            method: 'POST',
-            body: JSON.stringify({ minutes: minutes })
-        });
-    }
-}
-
-export default API;
+const API = {
+  headers() {
+    const h = { 'Content-Type': 'application/json' };
+    const t = Auth.getToken();
+    if (t) h['Authorization'] = `Bearer ${t}`;
+    return h;
+  },
+  async get(path) {
+    const res = await fetch(path, { headers: this.headers() });
+    if (res.status === 401) { Auth.logout(); return; }
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+  async post(path, body) {
+    const res = await fetch(path, { method: 'POST', headers: this.headers(), body: body ? JSON.stringify(body) : null });
+    if (res.status === 401) { Auth.logout(); return; }
+    if (!res.ok) throw new Error(await res.text());
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
+  },
+  async del(path) {
+    const res = await fetch(path, { method: 'DELETE', headers: this.headers() });
+    if (res.status === 401) { Auth.logout(); return; }
+    if (!res.ok) throw new Error(await res.text());
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
+  },
+  listServers() { return this.get('/api/servers'); },
+  createServer(body) { return this.post('/api/servers', body); },
+  start(id) { return this.post(`/api/servers/${encodeURIComponent(id)}/start`); },
+  stop(id) { return this.post(`/api/servers/${encodeURIComponent(id)}/stop`); },
+  restart(id) { return this.post(`/api/servers/${encodeURIComponent(id)}/restart`); },
+  kill(id) { return this.post(`/api/servers/${encodeURIComponent(id)}/kill`); },
+  console(id, lines = 100) { return this.get(`/api/servers/${encodeURIComponent(id)}/console?lines=${lines}`); },
+  command(id, command) { return this.post(`/api/servers/${encodeURIComponent(id)}/console`, { command }); },
+  reattach(id) { return this.post(`/api/servers/${encodeURIComponent(id)}/reattach`); },
+  reattachAll() { return this.post('/api/runtime/reattach-all'); },
+  exportServer(id) { return this.get(`/api/servers/${encodeURIComponent(id)}/export`); },
+  importServer(body, mode = 'overwrite') { return this.post(`/api/servers/import?mode=${encodeURIComponent(mode)}`, body); },
+  hostMetrics() { return this.get('/api/runtime/metrics/host'); },
+  updateAll() { return this.post('/api/runtime/servers/update-all'); },
+  dbAction(action) { return this.post(`/api/runtime/db/${encodeURIComponent(action)}`); },
+  clusterStatus() { return this.get('/api/cluster/status'); },
+  clusterPending() { return this.get('/api/cluster/pending'); },
+  clusterNodes() { return this.get('/api/cluster/nodes'); },
+  clusterApprove(id) { return this.post(`/api/cluster/approve/${id}`); },
+  clusterReject(id) { return this.post(`/api/cluster/reject/${id}`); },
+  clusterRemove(id) { return this.del(`/api/cluster/nodes/${encodeURIComponent(id)}`); }
+};
+window.API = API;

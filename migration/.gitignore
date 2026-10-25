@@ -1,0 +1,6 @@
+# Local path remap — do not commit real machine paths
+path-remap.json
+dist/
+**/bin/
+**/obj/
+*.user

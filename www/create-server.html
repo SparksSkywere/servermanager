@@ -1,183 +1,44 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create Server - Server Manager</title>
-    <link rel="stylesheet" href="css/common.css">
-    <style>
-        .main { max-width: 700px; margin: 0 auto; padding: 24px; }
-
-        .card {
-            background: var(--sm-panel-bg, #1a1a2e);
-            border: 1px solid var(--sm-panel-border, #2a2a45);
-            border-radius: 16px;
-            overflow: hidden;
-        }
-
-        .card-header {
-            padding: 20px 24px;
-            background: var(--sm-subtle-bg, #252540);
-            border-bottom: 1px solid var(--sm-panel-border, #2a2a45);
-        }
-        .card-header h2 { font-size: 1.1rem; font-weight: 600; }
-
-        .card-body { padding: 24px; }
-
-        .form-section {
-            margin-bottom: 28px;
-        }
-
-        .form-section h3 {
-            font-size: 0.9rem;
-            color: var(--sm-subtle-fg, #686888);
-            font-weight: 600;
-            margin-bottom: 18px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid var(--sm-panel-border, #2a2a45);
-        }
-
-        .form-actions {
-            display: flex;
-            gap: 12px;
-            margin-top: 28px;
-        }
-
-        .form-actions .btn { flex: 1; padding: 14px; font-size: 0.9rem; }
-
-    </style>
+  <meta charset="utf-8" />
+  <title>Create Server</title>
+  <link rel="stylesheet" href="/css/site.css" />
 </head>
 <body>
-    <header class="header" id="appHeader"></header>
-
-    <nav class="nav">
-        <a href="dashboard.html">Dashboard</a>
-        <a href="create-server.html" class="active">Create Server</a>
-        <a href="cluster.html" id="clusterLink" class="hidden">Cluster</a>
-        <a href="admin.html" id="adminLink" class="hidden">Admin</a>
-    </nav>
-
-    <main class="main">
-        <div class="card">
-            <div class="card-header">
-                <h2>Create New Server</h2>
-            </div>
-            <div class="card-body">
-                <form id="createForm">
-                    <div class="form-section">
-                        <h3>Basic Information</h3>
-                        <div class="form-group">
-                            <label for="serverName">Server Name *</label>
-                            <input type="text" id="serverName" required placeholder="e.g., My Minecraft Server">
-                            <div class="help-text">A unique name to identify your server</div>
-                        </div>
-                        <div class="form-group">
-                            <label for="serverType">Server Type *</label>
-                            <select id="serverType" required>
-                                <option value="">Select a server type...</option>
-                                <option value="steam">Steam Game Server</option>
-                                <option value="minecraft">Minecraft Server</option>
-                                <option value="custom">Custom Application</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="form-section">
-                        <h3>Server Configuration</h3>
-                        <div class="form-group">
-                            <label for="serverPath">Server Path *</label>
-                            <input type="text" id="serverPath" required placeholder="e.g., C:\Servers\MyServer">
-                            <div class="help-text">Full path to the server installation directory</div>
-                        </div>
-                        <div class="form-group">
-                            <label for="executablePath">Executable Path</label>
-                            <input type="text" id="executablePath" placeholder="e.g., server.exe or start.bat">
-                            <div class="help-text">Path to the server executable (relative to server path)</div>
-                        </div>
-                        <div class="form-group">
-                            <label for="launchArgs">Launch Arguments</label>
-                            <input type="text" id="launchArgs" placeholder="e.g., -port 25565 -nogui">
-                            <div class="help-text">Additional command-line arguments for the server</div>
-                        </div>
-                    </div>
-
-                    <div class="form-actions">
-                        <button type="button" class="btn btn-secondary" onclick="history.back()">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Create Server</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </main>
-
-    <div class="notification" id="notification"></div>
-
-    <script src="js/theme.js"></script>
-    <script src="js/site-shell.js"></script>
-    <script>
-        ServerManagerWeb.renderSimpleHeader({ defaultDisplayName: 'User' });
-
-        // HTML escaping utility for XSS prevention
-        function escapeHtml(str) {
-            const div = document.createElement('div');
-            div.textContent = str;
-            return div.innerHTML;
-        }
-
-        async function loadProfile() {
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                const r = await fetch('/api/profile', { headers: { 'Authorization': `Bearer ${token}` } });
-                if (r.ok) {
-                    const p = await r.json();
-                    ServerManagerWeb.applySimpleProfile(p, 'User');
-                    if (p.theme_preference) ThemeManager.syncFromProfile(p.theme_preference);
-                }
-            } catch {}
-        }
-
-        document.getElementById('createForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            const data = {
-                name: document.getElementById('serverName').value.trim(),
-                type: document.getElementById('serverType').value,
-                path: document.getElementById('serverPath').value.trim(),
-                executable: document.getElementById('executablePath').value.trim(),
-                args: document.getElementById('launchArgs').value.trim()
-            };
-
-            if (!data.name || !data.type || !data.path) {
-                showNotification('Please fill in all required fields', 'error');
-                return;
-            }
-
-            try {
-                const token = sessionStorage.getItem('auth_token');
-                const r = await fetch('/api/servers', {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                const res = await r.json();
-                if (r.ok) {
-                    showNotification('Server created successfully!', 'success');
-                    setTimeout(() => window.location.href = 'dashboard.html', 1500);
-                } else {
-                    showNotification(res.error || 'Failed to create server', 'error');
-                }
-            } catch { showNotification('Failed to create server', 'error'); }
-        });
-
-        async function init() {
-            const token = sessionStorage.getItem('auth_token');
-            if (!token) { window.location.replace('login.html'); return; }
-            try { const r = await fetch('/api/auth/verify', { headers: { 'Authorization': `Bearer ${token}` } }); if (!r.ok) throw 0; } catch { sessionStorage.clear(); window.location.replace('login.html'); return; }
-            ThemeManager.applyCurrentTheme();
-            if (sessionStorage.getItem('isAdmin') === 'true') { document.getElementById('adminLink').classList.remove('hidden'); document.getElementById('clusterLink').classList.remove('hidden'); }
-            await loadProfile();
-        }
-
-        document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
-    </script>
+  <main class="card">
+    <h1>Create server</h1>
+    <form id="create">
+      <label>Name <input name="name" required /></label>
+      <label>Type
+        <select name="serverType">
+          <option value="steam">Steam</option>
+          <option value="minecraft">Minecraft</option>
+        </select>
+      </label>
+      <label>App ID <input name="appId" /></label>
+      <label>Version <input name="version" placeholder="1.21.1" /></label>
+      <label>Install dir <input name="installDir" required /></label>
+      <label>Executable <input name="executable" /></label>
+      <label>Stop command <input name="stopCommand" placeholder="stop" /></label>
+      <button type="submit">Create</button>
+      <p id="msg"></p>
+    </form>
+    <p><a href="/dashboard.html">Back</a></p>
+  </main>
+  <script src="/js/config.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/api.js"></script>
+  <script>
+    Auth.require();
+    document.getElementById('create').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const body = Object.fromEntries(fd.entries());
+      await API.createServer(body);
+      document.getElementById('msg').textContent = 'Created';
+      location.href = '/dashboard.html';
+    });
+  </script>
 </body>
 </html>

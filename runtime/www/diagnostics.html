@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Diagnostics</title>
+  <link rel="stylesheet" href="/css/site.css" />
+</head>
+<body>
+  <main>
+    <h1>Diagnostics</h1>
+    <pre id="out">Loading…</pre>
+  </main>
+  <script src="/js/config.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/api.js"></script>
+  <script>
+    Auth.require();
+    (async () => {
+      try {
+        const d = await API.get('/api/runtime/diagnostics');
+        document.getElementById('out').textContent = JSON.stringify(d, null, 2);
+      } catch (e) {
+        document.getElementById('out').textContent = String(e);
+      }
+    })();
+  </script>
+</body>
+</html>

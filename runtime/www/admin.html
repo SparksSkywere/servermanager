@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Admin</title>
+  <link rel="stylesheet" href="/css/site.css" />
+</head>
+<body>
+  <main>
+    <h1>Users</h1>
+    <ul id="users"></ul>
+    <form id="add">
+      <h2>Add user</h2>
+      <input name="username" placeholder="username" required />
+      <input name="password" type="password" placeholder="password" required />
+      <label><input name="isAdmin" type="checkbox" /> Admin</label>
+      <button type="submit">Create</button>
+    </form>
+  </main>
+  <script src="/js/config.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/api.js"></script>
+  <script>
+    Auth.require();
+    async function load() {
+      const users = await API.get('/api/users');
+      const ul = document.getElementById('users');
+      ul.innerHTML = '';
+      (users || []).forEach(u => {
+        const li = document.createElement('li');
+        li.textContent = `${u.username} ${u.isAdmin || u.is_admin ? '(admin)' : ''}`;
+        ul.appendChild(li);
+      });
+    }
+    document.getElementById('add').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      await API.post('/api/users', {
+        username: fd.get('username'),
+        password: fd.get('password'),
+        isAdmin: fd.get('isAdmin') === 'on'
+      });
+      e.target.reset();
+      await load();
+    });
+    load();
+  </script>
+</body>
+</html>
